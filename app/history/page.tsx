@@ -130,6 +130,22 @@ export default function History() {
                   <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0 0' }}>{v.notes}</p>
                 </div>
               )}
+              {v.photos && v.photos.length > 0 && (
+                <div style={{ gridColumn:'span 2', marginTop:'8px' }}>
+                  <p style={{ color:'#555', fontSize:'11px', margin:'0 0 6px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Photos ({v.photos.length})</p>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px' }}>
+                    {v.photos.map((url: string, i: number) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                        <img
+                          src={url}
+                          alt={`Violation photo ${i+1}`}
+                          style={{ width:'100%', aspectRatio:'4/3', objectFit:'cover', borderRadius:'6px', border:'1px solid #2a2f3d', cursor:'pointer' }}
+                        />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ))}

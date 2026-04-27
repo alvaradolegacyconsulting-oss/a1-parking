@@ -8,13 +8,13 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [showViolation, setShowViolation] = useState(false)
   const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '' })
+  const [photos, setPhotos] = useState<File[]>([])
 
- async function searchPlate() {
+  async function searchPlate() {
     setLoading(true)
     setResult(null)
     const clean = plate.toUpperCase().trim()
 
-    // Check registered vehicles first
     const { data: vehicle } = await supabase
       .from('vehicles')
       .select('*')
@@ -33,7 +33,6 @@ export default function Home() {
       return
     }
 
-    // Check active visitor passes
     const now = new Date().toISOString()
     const { data: pass } = await supabase
       .from('visitor_passes')
@@ -52,6 +51,21 @@ export default function Home() {
   }
 
   async function submitViolation() {
+    const photoUrls: string[] = []
+
+    for (const photo of photos) {
+      const fileName = `${Date.now()}-${photo.name}`
+      const { error: uploadError } = await supabase.storage
+        .from('violation-photos')
+        .upload(fileName, photo)
+      if (!uploadError) {
+        const { data } = supabase.storage
+          .from('violation-photos')
+          .getPublicUrl(fileName)
+        photoUrls.push(data.publicUrl)
+      }
+    }
+
     const { error } = await supabase
       .from('violations')
       .insert([{
@@ -60,14 +74,17 @@ export default function Home() {
         location: violation.location,
         notes: violation.notes,
         property: violation.property,
+        photos: photoUrls,
         created_at: new Date().toISOString()
       }])
+
     if (error) {
       alert('Error saving violation: ' + error.message)
     } else {
-      alert('Violation logged successfully!')
+      alert(`Violation logged! ${photoUrls.length} photo(s) uploaded.`)
       setShowViolation(false)
       setViolation({ type: '', location: '', notes: '', property: '' })
+      setPhotos([])
     }
   }
 
@@ -98,8 +115,8 @@ export default function Home() {
 
         {result && (
           <div style={{ marginTop:'20px', padding:'16px', borderRadius:'8px',
-            background: result.status === 'authorized' ? '#1a3a1a' : result.status === 'expired' ? '#3a2a00' : '#3a1a1a',
-            border: `1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'expired' ? '#e65100' : '#b71c1c'}`
+            background: result.status === 'authorized' ? '#1a3a1a' : result.status === 'expired' ? '#3a2a00' : result.status === 'visitor' ? '#2a2000' : '#3a1a1a',
+            border: `1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'expired' ? '#e65100' : result.status === 'visitor' ? '#f59e0b' : '#b71c1c'}`
           }}>
             {result.status === 'authorized' && (
               <>
@@ -180,6 +197,24 @@ export default function Home() {
               style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
             />
 
+            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Photos</label>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={e => setPhotos(Array.from(e.target.files || []))}
+              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'#aaa', fontSize:'13px', boxSizing:'border-box' }}
+            />
+            {photos.length > 0 && (
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px', marginBottom:'12px' }}>
+                {photos.map((photo, i) => (
+                  <div key={i} style={{ background:'#1e2535', borderRadius:'6px', padding:'6px', fontSize:'10px', color:'#aaa', textAlign:'center', border:'1px solid #3a4055' }}>
+                    📷 {photo.name.substring(0, 12)}...
+                  </div>
+                ))}
+              </div>
+            )}
+
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Notes</label>
             <textarea
               value={violation.notes}
@@ -206,12 +241,12 @@ export default function Home() {
         )}
       </div>
 
-    <div style={{ marginTop:'24px', textAlign:'center' }}>
-  <a href="/history" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none', marginRight:'16px' }}>View Violation History →</a>
-  <a href="/visitor" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>Visitor Pass →</a>
-  <a href="/qr" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>QR Codes →</a>
-  <p style={{ color:'#444', fontSize:'11px', marginTop:'8px' }}>A1 Wrecker, LLC · a1wreckerllc.net</p>
-</div>
+      <div style={{ marginTop:'24px', textAlign:'center' }}>
+        <a href="/history" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none', marginRight:'16px' }}>View Violation History →</a>
+        <a href="/visitor" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none', marginRight:'16px' }}>Visitor Pass →</a>
+        <a href="/qr" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>QR Codes →</a>
+        <p style={{ color:'#444', fontSize:'11px', marginTop:'8px' }}>A1 Wrecker, LLC · a1wreckerllc.net</p>
+      </div>
     </main>
   )
 }
