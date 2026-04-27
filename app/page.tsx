@@ -9,22 +9,45 @@ export default function Home() {
   const [showViolation, setShowViolation] = useState(false)
   const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '' })
 
-  async function searchPlate() {
+ async function searchPlate() {
     setLoading(true)
     setResult(null)
     const clean = plate.toUpperCase().trim()
-    const { data, error } = await supabase
+
+    // Check registered vehicles first
+    const { data: vehicle } = await supabase
       .from('vehicles')
       .select('*')
       .ilike('plate', clean)
       .single()
+
+    if (vehicle && vehicle.is_active) {
+      setLoading(false)
+      setResult({ status: 'authorized', data: vehicle })
+      return
+    }
+
+    if (vehicle && !vehicle.is_active) {
+      setLoading(false)
+      setResult({ status: 'expired', data: vehicle })
+      return
+    }
+
+    // Check active visitor passes
+    const now = new Date().toISOString()
+    const { data: pass } = await supabase
+      .from('visitor_passes')
+      .select('*')
+      .ilike('plate', clean)
+      .eq('is_active', true)
+      .gte('expires_at', now)
+      .single()
+
     setLoading(false)
-    if (error || !data) {
-      setResult({ status: 'notfound' })
-    } else if (!data.is_active) {
-      setResult({ status: 'expired', data })
+    if (pass) {
+      setResult({ status: 'visitor', data: pass })
     } else {
-      setResult({ status: 'authorized', data })
+      setResult({ status: 'notfound' })
     }
   }
 
@@ -92,6 +115,15 @@ export default function Home() {
                 <p style={{ color:'#ff9800', fontWeight:'bold', fontSize:'16px', margin:'0 0 10px' }}>⚠ PERMIT EXPIRED</p>
                 <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Unit: <span style={{color:'white'}}>{result.data.unit}</span></p>
                 <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Vehicle: <span style={{color:'white'}}>{result.data.color} {result.data.make} {result.data.model}</span></p>
+              </>
+            )}
+            {result.status === 'visitor' && (
+              <>
+                <p style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'16px', margin:'0 0 10px' }}>✓ VALID VISITOR PASS</p>
+                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Visiting: <span style={{color:'white'}}>{result.data.visiting_unit}</span></p>
+                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Vehicle: <span style={{color:'white'}}>{result.data.vehicle_desc || '—'}</span></p>
+                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Expires: <span style={{color:'white'}}>{new Date(result.data.expires_at).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}</span></p>
+                <p style={{ color:'#f59e0b', fontSize:'12px', margin:'8px 0 0', fontWeight:'bold' }}>Do not tow — active visitor pass</p>
               </>
             )}
             {result.status === 'notfound' && (
@@ -176,6 +208,7 @@ export default function Home() {
 
     <div style={{ marginTop:'24px', textAlign:'center' }}>
   <a href="/history" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none', marginRight:'16px' }}>View Violation History →</a>
+  <a href="/visitor" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>Visitor Pass →</a>
   <p style={{ color:'#444', fontSize:'11px', marginTop:'8px' }}>A1 Wrecker, LLC · a1wreckerllc.net</p>
 </div>
     </main>
