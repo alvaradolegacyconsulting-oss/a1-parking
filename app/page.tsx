@@ -209,6 +209,7 @@ export default function Home() {
     <div style={{ marginTop:'24px', textAlign:'center' }}>
   <a href="/history" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none', marginRight:'16px' }}>View Violation History →</a>
   <a href="/visitor" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>Visitor Pass →</a>
+  <a href="/qr" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>QR Codes →</a>
   <p style={{ color:'#444', fontSize:'11px', marginTop:'8px' }}>A1 Wrecker, LLC · a1wreckerllc.net</p>
 </div>
     </main>
