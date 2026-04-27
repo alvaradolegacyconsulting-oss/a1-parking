@@ -174,7 +174,10 @@ export default function Home() {
         )}
       </div>
 
-      <p style={{ color:'#444', fontSize:'11px', marginTop:'24px' }}>A1 Wrecker, LLC · a1wreckerllc.net</p>
+    <div style={{ marginTop:'24px', textAlign:'center' }}>
+  <a href="/history" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none', marginRight:'16px' }}>View Violation History →</a>
+  <p style={{ color:'#444', fontSize:'11px', marginTop:'8px' }}>A1 Wrecker, LLC · a1wreckerllc.net</p>
+</div>
     </main>
   )
 }
