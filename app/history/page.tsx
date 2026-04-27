@@ -67,11 +67,12 @@ export default function History() {
               key={f.key}
               onClick={() => setFilter(f.key)}
               style={{ 
-                flex:1, padding:'10px', border:'none', borderRadius:'8px', 
+                flex:1, padding:'10px', borderRadius:'8px', 
                 cursor:'pointer', fontWeight:'bold', fontSize:'13px',
                 background: filter === f.key ? '#C9A227' : '#161b26',
                 color: filter === f.key ? '#0f1117' : '#888',
-                border: filter === f.key ? 'none' : '1px solid #2a2f3d'
+                outline: 'none',
+                border: filter === f.key ? '2px solid #C9A227' : '1px solid #2a2f3d'
               }}
             >
               {f.label}
