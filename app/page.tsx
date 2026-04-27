@@ -6,17 +6,18 @@ export default function Home() {
   const [plate, setPlate] = useState('')
   const [result, setResult] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+  const [showViolation, setShowViolation] = useState(false)
+  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '' })
 
   async function searchPlate() {
     setLoading(true)
     setResult(null)
-   const clean = plate.toUpperCase().trim()
-   const { data, error } = await supabase
+    const clean = plate.toUpperCase().trim()
+    const { data, error } = await supabase
       .from('vehicles')
       .select('*')
       .ilike('plate', clean)
       .single()
-
     setLoading(false)
     if (error || !data) {
       setResult({ status: 'notfound' })
@@ -24,6 +25,26 @@ export default function Home() {
       setResult({ status: 'expired', data })
     } else {
       setResult({ status: 'authorized', data })
+    }
+  }
+
+  async function submitViolation() {
+    const { error } = await supabase
+      .from('violations')
+      .insert([{
+        plate: plate.toUpperCase().trim(),
+        violation_type: violation.type,
+        location: violation.location,
+        notes: violation.notes,
+        property: violation.property,
+        created_at: new Date().toISOString()
+      }])
+    if (error) {
+      alert('Error saving violation: ' + error.message)
+    } else {
+      alert('Violation logged successfully!')
+      setShowViolation(false)
+      setViolation({ type: '', location: '', notes: '', property: '' })
     }
   }
 
@@ -76,9 +97,79 @@ export default function Home() {
             {result.status === 'notfound' && (
               <>
                 <p style={{ color:'#f44336', fontWeight:'bold', fontSize:'16px', margin:'0 0 6px' }}>✗ NOT FOUND</p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'0' }}>This plate is not registered. May be subject to towing.</p>
+                <p style={{ color:'#aaa', fontSize:'13px', margin:'0 0 12px' }}>This plate is not registered. May be subject to towing.</p>
+                <button
+                  onClick={() => setShowViolation(true)}
+                  style={{ width:'100%', padding:'12px', background:'#b71c1c', color:'white', fontWeight:'bold', fontSize:'14px', border:'none', borderRadius:'8px', cursor:'pointer' }}
+                >
+                  Issue Violation
+                </button>
               </>
             )}
+          </div>
+        )}
+
+        {showViolation && (
+          <div style={{ marginTop:'20px', background:'#1a0000', border:'1px solid #b71c1c', borderRadius:'8px', padding:'16px' }}>
+            <p style={{ color:'#f44336', fontWeight:'bold', fontSize:'15px', margin:'0 0 14px' }}>Issue Violation — {plate.toUpperCase()}</p>
+            
+            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Property</label>
+            <select
+              value={violation.property}
+              onChange={e => setViolation({...violation, property: e.target.value})}
+              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px' }}
+            >
+              <option value=''>Select property...</option>
+              <option>Oakwood Heights</option>
+              <option>Riverdale Apartments</option>
+              <option>Sunset Plaza</option>
+            </select>
+
+            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Violation Type</label>
+            <select
+              value={violation.type}
+              onChange={e => setViolation({...violation, type: e.target.value})}
+              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px' }}
+            >
+              <option value=''>Select type...</option>
+              <option>No Parking Permit</option>
+              <option>Expired Visitor Pass</option>
+              <option>Wrong Space</option>
+              <option>Fire Lane</option>
+              <option>Handicap Zone</option>
+              <option>Blocking Driveway</option>
+            </select>
+
+            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Space / Location</label>
+            <input
+              value={violation.location}
+              onChange={e => setViolation({...violation, location: e.target.value})}
+              placeholder="e.g. Space A-14"
+              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
+            />
+
+            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Notes</label>
+            <textarea
+              value={violation.notes}
+              onChange={e => setViolation({...violation, notes: e.target.value})}
+              placeholder="Additional details..."
+              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', minHeight:'70px', boxSizing:'border-box' }}
+            />
+
+            <div style={{ display:'flex', gap:'8px' }}>
+              <button
+                onClick={submitViolation}
+                style={{ flex:1, padding:'12px', background:'#b71c1c', color:'white', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}
+              >
+                Submit Violation
+              </button>
+              <button
+                onClick={() => setShowViolation(false)}
+                style={{ padding:'12px 16px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer' }}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
       </div>
