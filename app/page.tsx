@@ -4,7 +4,7 @@ import { supabase } from './supabase'
 
 export default function Home() {
   const [plate, setPlate] = useState('')
-  const [result, setResult] = useState(null)
+  const [result, setResult] = useState<any>(null)
   const [loading, setLoading] = useState(false)
 
   async function searchPlate() {
