@@ -15,6 +15,10 @@ export default function ManagerPortal() {
   const [showAddVehicle, setShowAddVehicle] = useState(false)
   const [newVehicle, setNewVehicle] = useState({ plate: '', state: 'TX', make: '', model: '', year: '', color: '', unit: '', space: '', permit_expiry: '' })
   const [violationFilter, setViolationFilter] = useState('today')
+  const [residents, setResidents] = useState<any[]>([])
+  const [showAddResident, setShowAddResident] = useState(false)
+  const [newResident, setNewResident] = useState({ name: '', email: '', phone: '', unit: '', space: '', lease_end: '' })
+  const [editingResident, setEditingResident] = useState<any>(null)
 
   async function findManager() {
     if (!email) return
@@ -39,6 +43,7 @@ export default function ManagerPortal() {
     fetchVehicles(property)
     fetchViolations(property)
     fetchPasses(property)
+    fetchResidents(property)
   }
 
   async function fetchVehicles(property: string) {
@@ -102,7 +107,63 @@ export default function ManagerPortal() {
       fetchVehicles(manager.name)
     }
   }
+async function fetchResidents(property: string) {
+    const { data } = await supabase
+      .from('residents')
+      .select('*')
+      .ilike('property', property)
+      .order('unit', { ascending: true })
+    setResidents(data || [])
+  }
 
+  async function addResident() {
+    if (!newResident.name || !newResident.unit || !newResident.email) {
+      alert('Name, email and unit are required')
+      return
+    }
+    const { error } = await supabase
+      .from('residents')
+      .insert([{
+        ...newResident,
+        property: manager.name,
+        is_active: true
+      }])
+    if (error) {
+      alert('Error: ' + error.message)
+    } else {
+      alert('Resident added!')
+      setShowAddResident(false)
+      setNewResident({ name: '', email: '', phone: '', unit: '', space: '', lease_end: '' })
+      fetchResidents(manager.name)
+    }
+  }
+
+  async function saveResident() {
+    const { error } = await supabase
+      .from('residents')
+      .update({
+        name: editingResident.name,
+        email: editingResident.email,
+        phone: editingResident.phone,
+        unit: editingResident.unit,
+        space: editingResident.space,
+        lease_end: editingResident.lease_end,
+      })
+      .eq('id', editingResident.id)
+    if (error) {
+      alert('Error: ' + error.message)
+    } else {
+      alert('Resident updated!')
+      setEditingResident(null)
+      fetchResidents(manager.name)
+    }
+  }
+
+  async function deactivateResident(id: string) {
+    if (!confirm('Deactivate this resident?')) return
+    await supabase.from('residents').update({ is_active: false }).eq('id', id)
+    fetchResidents(manager.name)
+  }
   async function removeVehicle(id: string) {
     if (!confirm('Remove this vehicle?')) return
     await supabase.from('vehicles').update({ is_active: false }).eq('id', id)
@@ -202,6 +263,7 @@ export default function ManagerPortal() {
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
           <button style={tabStyle('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
           <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>Vehicles</button>
+          <button style={tabStyle('residents')} onClick={() => setActiveTab('residents')}>Residents</button>
           <button style={tabStyle('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
         </div>
@@ -335,7 +397,293 @@ export default function ManagerPortal() {
             ))}
           </div>
         )}
+{/* RESIDENTS TAB */}
+        {activeTab === 'residents' && (
+          <div>
+            <button onClick={() => setShowAddResident(!showAddResident)}
+              style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
+              + Add Resident
+            </button>
 
+            {showAddResident && (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Add New Resident</p>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                  <div style={{ gridColumn:'span 2' }}>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Full Name *</label>
+                    <input value={newResident.name} onChange={e => setNewResident({...newResident, name: e.target.value})}
+                      placeholder="John Smith" style={inputStyle} />
+                  </div>
+                  <div style={{ gridColumn:'span 2' }}>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Email *</label>
+                    <input value={newResident.email} onChange={e => setNewResident({...newResident, email: e.target.value})}
+                      placeholder="john@email.com" style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Phone</label>
+                    <input value={newResident.phone} onChange={e => setNewResident({...newResident, phone: e.target.value})}
+                      placeholder="713-555-0100" style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Unit *</label>
+                    <input value={newResident.unit} onChange={e => setNewResident({...newResident, unit: e.target.value})}
+                      placeholder="Apt 214" style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Space</label>
+                    <input value={newResident.space} onChange={e => setNewResident({...newResident, space: e.target.value})}
+                      placeholder="A-12" style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Lease End</label>
+                    <input type="date" value={newResident.lease_end} onChange={e => setNewResident({...newResident, lease_end: e.target.value})}
+                      style={inputStyle} />
+                  </div>
+                </div>
+                <div style={{ display:'flex', gap:'8px', marginTop:'4px' }}>
+                  <button onClick={addResident}
+                    style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>
+                    Add Resident
+                  </button>
+                  <button onClick={() => setShowAddResident(false)}
+                    style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {editingResident && (
+              <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Editing — {editingResident.unit}</p>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                  <div style={{ gridColumn:'span 2' }}>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Full Name</label>
+                    <input value={editingResident.name || ''} onChange={e => setEditingResident({...editingResident, name: e.target.value})}
+                      style={inputStyle} />
+                  </div>
+                  <div style={{ gridColumn:'span 2' }}>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Email</label>
+                    <input value={editingResident.email || ''} onChange={e => setEditingResident({...editingResident, email: e.target.value})}
+                      style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Phone</label>
+                    <input value={editingResident.phone || ''} onChange={e => setEditingResident({...editingResident, phone: e.target.value})}
+                      style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Unit</label>
+                    <input value={editingResident.unit || ''} onChange={e => setEditingResident({...editingResident, unit: e.target.value})}
+                      style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Space</label>
+                    <input value={editingResident.space || ''} onChange={e => setEditingResident({...editingResident, space: e.target.value})}
+                      style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Lease End</label>
+                    <input type="date" value={editingResident.lease_end || ''} onChange={e => setEditingResident({...editingResident, lease_end: e.target.value})}
+                      style={inputStyle} />
+                  </div>
+                </div>
+                <div style={{ display:'flex', gap:'8px', marginTop:'4px' }}>
+                  <button onClick={saveResident}
+                    style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>
+                    Save Changes
+                  </button>
+                  <button onClick={() => setEditingResident(null)}
+                    style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                    Cancel
+                  </button>
+                </div>
+
+                {/* Vehicles for this resident */}
+                <div style={{ marginTop:'16px', borderTop:'1px solid #2a2f3d', paddingTop:'16px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
+                    <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>
+                      Vehicles — {editingResident.unit}
+                    </p>
+                    <button
+                      onClick={() => setShowAddVehicle(true)}
+                      style={{ padding:'5px 10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'11px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
+                      + Add Vehicle
+                    </button>
+                  </div>
+
+                  {showAddVehicle && (
+                    <div style={{ background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', padding:'12px', marginBottom:'10px' }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                        <div>
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Plate *</label>
+                          <input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: e.target.value.toUpperCase()})}
+                            placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} />
+                        </div>
+                        <div>
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>State</label>
+                          <select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inputStyle}>
+                            {['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Make</label>
+                          <input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})}
+                            placeholder="Toyota" style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Model</label>
+                          <input value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})}
+                            placeholder="Camry" style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Year</label>
+                          <input value={newVehicle.year} onChange={e => setNewVehicle({...newVehicle, year: e.target.value})}
+                            placeholder="2022" style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Color</label>
+                          <input value={newVehicle.color} onChange={e => setNewVehicle({...newVehicle, color: e.target.value})}
+                            placeholder="Black" style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Space 1</label>
+                          <input value={newVehicle.space} onChange={e => setNewVehicle({...newVehicle, space: e.target.value})}
+                            placeholder="A-12" style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Permit Expiry</label>
+                          <input type="date" value={newVehicle.permit_expiry} onChange={e => setNewVehicle({...newVehicle, permit_expiry: e.target.value})}
+                            style={inputStyle} />
+                        </div>
+                      </div>
+                      <div style={{ display:'flex', gap:'8px', marginTop:'4px' }}>
+                        <button
+                          onClick={async () => {
+                            if (!newVehicle.plate) { alert('Plate is required'); return }
+                            const { error } = await supabase.from('vehicles').insert([{
+                              ...newVehicle,
+                              plate: newVehicle.plate.toUpperCase().trim(),
+                              unit: editingResident.unit,
+                              property: manager.name,
+                              is_active: true,
+                              year: parseInt(newVehicle.year) || null
+                            }])
+                            if (error) { alert('Error: ' + error.message) } 
+                            else {
+                              alert('Vehicle added!')
+                              setShowAddVehicle(false)
+                              setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', unit:'', space:'', permit_expiry:'' })
+                              fetchVehicles(manager.name)
+                            }
+                          }}
+                          style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer' }}>
+                          Add Vehicle
+                        </button>
+                        <button onClick={() => setShowAddVehicle(false)}
+                          style={{ padding:'9px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {vehicles
+                    .filter(v => v.unit?.toLowerCase() === editingResident.unit?.toLowerCase())
+                    .length === 0 ? (
+                      <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No vehicles registered for this unit</p>
+                    ) : vehicles
+                      .filter(v => v.unit?.toLowerCase() === editingResident.unit?.toLowerCase())
+                      .map((v, i) => (
+                        <div key={i} style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'8px' }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
+                            <div>
+                              <p style={{ color:'white', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
+                              <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{v.color} {v.make} {v.model} {v.year}</p>
+                            </div>
+                            <div style={{ display:'flex', gap:'6px' }}>
+                              <span style={{ background: v.is_active ? '#1a3a1a' : '#3a1a1a', color: v.is_active ? '#4caf50' : '#f44336', padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold' }}>
+                                {v.is_active ? 'Active' : 'Inactive'}
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'6px', fontSize:'11px', marginBottom:'8px' }}>
+                            <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
+                            <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state}</span></div>
+                            <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
+                          </div>
+                          <div style={{ display:'flex', gap:'6px' }}>
+                            <button
+                              onClick={async () => {
+                                const space = prompt('Update space assignment:', v.space || '')
+                                if (space === null) return
+                                await supabase.from('vehicles').update({ space }).eq('id', v.id)
+                                fetchVehicles(manager.name)
+                              }}
+                              style={{ flex:1, padding:'6px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>
+                              Edit Space
+                            </button>
+                            <button
+                              onClick={async () => {
+                                const plate = prompt('Update plate:', v.plate)
+                                if (plate === null) return
+                                await supabase.from('vehicles').update({ plate: plate.toUpperCase().trim() }).eq('id', v.id)
+                                fetchVehicles(manager.name)
+                              }}
+                              style={{ flex:1, padding:'6px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                              Edit Plate
+                            </button>
+                            <button
+                              onClick={() => removeVehicle(v.id)}
+                              style={{ padding:'6px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                  }
+                </div>
+              </div>
+            )}
+
+            {residents.length === 0 ? (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
+                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No residents found for this property</p>
+              </div>
+            ) : residents.map((r,i) => (
+              <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
+                  <div>
+                    <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{r.name}</p>
+                    <p style={{ color:'#aaa', fontSize:'12px', margin:'3px 0 0' }}>{r.unit} · {r.email}</p>
+                  </div>
+                  <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
+                    <span style={{ background: r.is_active ? '#1a3a1a' : '#3a1a1a', color: r.is_active ? '#4caf50' : '#f44336', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>
+                      {r.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px', fontSize:'11px', marginBottom:'10px' }}>
+                  <div><span style={{ color:'#555' }}>Phone</span><br/><span style={{ color:'#aaa' }}>{r.phone || '—'}</span></div>
+                  <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{r.space || '—'}</span></div>
+                  <div><span style={{ color:'#555' }}>Lease End</span><br/><span style={{ color:'#aaa' }}>{r.lease_end ? new Date(r.lease_end).toLocaleDateString() : '—'}</span></div>
+                </div>
+                <div style={{ display:'flex', gap:'6px' }}>
+                  <button onClick={() => setEditingResident(r)}
+                    style={{ flex:1, padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>
+                    Edit
+                  </button>
+                  {r.is_active && (
+                    <button onClick={() => deactivateResident(r.id)}
+                      style={{ padding:'7px 12px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                      Deactivate
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {/* VIOLATIONS TAB */}
         {activeTab === 'violations' && (
           <div>
