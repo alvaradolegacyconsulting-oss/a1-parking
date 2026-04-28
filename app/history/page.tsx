@@ -36,17 +36,16 @@ export default function History() {
 
   function formatDate(dateStr: string) {
     const d = new Date(dateStr)
-    return d.toLocaleDateString('en-US', { 
-      month: 'short', day: 'numeric', 
-      hour: '2-digit', minute: '2-digit' 
+    return d.toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit'
     })
   }
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-      
       <div style={{ maxWidth:'600px', margin:'0 auto' }}>
-        
+
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
           <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Violation History</p>
@@ -56,8 +55,7 @@ export default function History() {
           ← Back to Plate Lookup
         </a>
 
-        {/* Filter Tabs */}
-        <div style={{ display:'flex', gap:'8px', marginBottom:'20px' }}>
+        <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'20px' }}>
           {[
             { key:'today', label:'Today' },
             { key:'week', label:'Past Week' },
@@ -66,13 +64,14 @@ export default function History() {
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
-              style={{ 
-                flex:1, padding:'10px', borderRadius:'8px', 
+              style={{
+                flex:1, padding:'10px', borderRadius:'6px',
                 cursor:'pointer', fontWeight:'bold', fontSize:'13px',
-                background: filter === f.key ? '#C9A227' : '#161b26',
+                background: filter === f.key ? '#C9A227' : 'transparent',
                 color: filter === f.key ? '#0f1117' : '#888',
+                border: filter === f.key ? 'none' : '1px solid transparent',
                 outline: 'none',
-                border: filter === f.key ? '2px solid #C9A227' : '1px solid #2a2f3d'
+                fontFamily:'Arial'
               }}
             >
               {f.label}
@@ -80,7 +79,6 @@ export default function History() {
           ))}
         </div>
 
-        {/* Stats Bar */}
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div>
             <p style={{ color:'#aaa', fontSize:'11px', margin:'0', textTransform:'uppercase', letterSpacing:'0.08em' }}>Total Violations</p>
@@ -94,7 +92,6 @@ export default function History() {
           </div>
         </div>
 
-        {/* Violation List */}
         {loading && (
           <p style={{ color:'#888', textAlign:'center', padding:'40px' }}>Loading...</p>
         )}
@@ -134,11 +131,11 @@ export default function History() {
                 <div style={{ gridColumn:'span 2', marginTop:'8px' }}>
                   <p style={{ color:'#555', fontSize:'11px', margin:'0 0 6px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Photos ({v.photos.length})</p>
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px' }}>
-                    {v.photos.map((url: string, i: number) => (
-                      <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                    {v.photos.map((url: string, pi: number) => (
+                      <a key={pi} href={url} target="_blank" rel="noopener noreferrer">
                         <img
                           src={url}
-                          alt={`Violation photo ${i+1}`}
+                          alt={`Violation photo ${pi+1}`}
                           style={{ width:'100%', aspectRatio:'4/3', objectFit:'cover', borderRadius:'6px', border:'1px solid #2a2f3d', cursor:'pointer' }}
                         />
                       </a>

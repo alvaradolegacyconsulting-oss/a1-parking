@@ -11,10 +11,38 @@ export default function Login() {
   async function handleLogin() {
     setLoading(true)
     setError('')
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+
+    // Sign in with Supabase Auth
+    const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
+    
+    if (authError) {
+      setLoading(false)
+      setError('Invalid email or password. Please try again.')
+      return
+    }
+
+    // Check user role
+    const { data: roleData } = await supabase
+      .from('user_roles')
+      .select('*')
+      .ilike('email', email.trim())
+      .single()
+
     setLoading(false)
-    if (error) {
-      setError(error.message)
+
+    if (!roleData) {
+      setError('No role assigned. Please contact A1 Wrecker to get access.')
+      await supabase.auth.signOut()
+      return
+    }
+
+    // Redirect based on role
+    if (roleData.role === 'admin') {
+      window.location.href = '/'
+    } else if (roleData.role === 'manager') {
+      window.location.href = '/manager'
+    } else if (roleData.role === 'resident') {
+      window.location.href = '/resident'
     } else {
       window.location.href = '/'
     }
@@ -71,7 +99,13 @@ export default function Login() {
 
         </div>
 
-        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'16px' }}>A1 Wrecker, LLC · Parking Management Platform</p>
+        <div style={{ marginTop:'16px', textAlign:'center' }}>
+          <a href="/visitor" style={{ color:'#C9A227', fontSize:'12px', textDecoration:'none' }}>
+            Visitor? Get a parking pass here →
+          </a>
+        </div>
+
+        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'12px' }}>A1 Wrecker, LLC · Parking Management Platform</p>
       </div>
     </main>
   )

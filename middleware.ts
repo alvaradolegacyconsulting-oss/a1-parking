@@ -24,12 +24,13 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Public pages — no login needed
-  const publicPaths = ['/login', '/visitor']
-  const isPublic = publicPaths.some(path => 
-    request.nextUrl.pathname.startsWith(path)
-  )
+  const { pathname } = request.nextUrl
 
+  // Always public — no login needed
+  const publicPaths = ['/login', '/visitor']
+  const isPublic = publicPaths.some(path => pathname.startsWith(path))
+
+  // Not logged in — redirect to login
   if (!user && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
