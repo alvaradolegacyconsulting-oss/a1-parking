@@ -37,16 +37,17 @@ export default function Login() {
     }
 
     // Redirect based on role
-    if (roleData.role === 'admin') {
+   if (roleData.role === 'admin') {
       window.location.href = '/'
     } else if (roleData.role === 'manager') {
       window.location.href = '/manager'
+    } else if (roleData.role === 'driver') {
+      window.location.href = '/driver'
     } else if (roleData.role === 'resident') {
       window.location.href = '/resident'
     } else {
       window.location.href = '/'
     }
-  }
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
