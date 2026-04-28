@@ -179,11 +179,43 @@ export default function DriverPortal() {
 
   function generateTicket() {
     if (!ticketTarget) return
-    const storage = storageFacilities.find(s => s.id === selectedStorage)
+    const storage = storageFacilities.find(s => String(s.id) === selectedStorage)
     const tw = window.open('', '_blank')
     if (!tw) return
     const v = ticketTarget
     const total = (parseFloat(towFee || '0') + parseFloat(mileage || '0')).toFixed(2)
+    const mailSubject = encodeURIComponent(`Tow Ticket - ${v.plate}`)
+    const mailBody = encodeURIComponent([
+      `TOW TICKET — A1 Wrecker, LLC`,
+      `Date/Time: ${new Date(v.created_at).toLocaleString()}`,
+      `Ticket #: ${String(v.id).substring(0, 8).toUpperCase()}`,
+      ``,
+      `VEHICLE`,
+      `Plate: ${v.plate}`,
+      `Vehicle: ${[v.year, v.color, v.make, v.model].filter(Boolean).join(' ') || '—'}`,
+      `VIN: ${vin || v.vin || '—'}`,
+      ``,
+      `VIOLATION`,
+      `Type: ${v.violation_type || '—'}`,
+      `Location: ${v.location || '—'}`,
+      `Property: ${v.property || '—'}`,
+      `Notes: ${v.notes || 'None'}`,
+      ``,
+      `STORAGE / IMPOUND`,
+      `Facility: ${storage?.name || '—'}`,
+      `Address: ${storage?.address || '—'}`,
+      `Phone: ${storage?.phone || '—'}`,
+      ``,
+      `TOW OPERATOR`,
+      `Name: ${driver?.name || '—'}`,
+      `License #: ${driver?.operator_license || '—'}`,
+      `Company: ${driver?.company || 'A1 Wrecker, LLC'}`,
+      ``,
+      `FEES`,
+      `Tow Fee: $${parseFloat(towFee || '0').toFixed(2)}`,
+      `Mileage Fee: $${parseFloat(mileage || '0').toFixed(2)}`,
+      `Total Due: $${total}`,
+    ].join('\n'))
     const photosHtml = v.photos?.length
       ? `<div style="margin-top:20px"><p style="font-weight:bold;margin-bottom:8px">EVIDENCE PHOTOS</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${v.photos.map((u: string) => `<img src="${u}" style="width:100%;border-radius:4px;border:1px solid #ddd" onerror="this.style.display='none'">`).join('')}</div></div>`
       : ''
@@ -275,6 +307,7 @@ export default function DriverPortal() {
       <div class="ftr">A1 Wrecker, LLC &middot; Houston's #1 Towing &amp; Recovery &middot; a1wreckerllc.net<br>Generated ${new Date().toLocaleString()}</div>
       <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center">
         <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
+        <a href="mailto:?subject=${mailSubject}&body=${mailBody}" style="padding:11px 22px;background:#1e3a5f;color:#fff;font-weight:bold;font-size:13px;border-radius:7px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center">Email Ticket</a>
         <button onclick="window.close()" style="padding:11px 22px;background:#333;color:#fff;font-size:13px;border:none;border-radius:7px;cursor:pointer">Close</button>
       </div>
     </body></html>`)
