@@ -92,6 +92,7 @@ export default function Home() {
     <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       
       <div style={{ marginBottom:'32px', textAlign:'center' }}>
+        <img src="/logo.jpeg" alt="A1 Wrecker" style={{ width:'80px', height:'80px', borderRadius:'12px', marginBottom:'12px', border:'2px solid #C9A227' }} />
         <h1 style={{ color:'#C9A227', fontSize:'28px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
         <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Houston's #1 Towing & Recovery · Plate Lookup</p>
       </div>
