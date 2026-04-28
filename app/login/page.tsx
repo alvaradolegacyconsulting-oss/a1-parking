@@ -12,16 +12,13 @@ export default function Login() {
     setLoading(true)
     setError('')
 
-    // Sign in with Supabase Auth
     const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
-    
     if (authError) {
       setLoading(false)
       setError('Invalid email or password. Please try again.')
       return
     }
 
-    // Check user role
     const { data: roleData } = await supabase
       .from('user_roles')
       .select('*')
@@ -36,8 +33,7 @@ export default function Login() {
       return
     }
 
-    // Redirect based on role
-   if (roleData.role === 'admin') {
+    if (roleData.role === 'admin') {
       window.location.href = '/'
     } else if (roleData.role === 'manager') {
       window.location.href = '/manager'
@@ -48,18 +44,20 @@ export default function Login() {
     } else {
       window.location.href = '/'
     }
+  }
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       <div style={{ maxWidth:'380px', width:'100%' }}>
 
         <div style={{ marginBottom:'32px', textAlign:'center' }}>
+          <img src="/logo.jpeg" alt="A1 Wrecker" style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px' }} />
           <h1 style={{ color:'#C9A227', fontSize:'26px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Parking Management · Sign In</p>
         </div>
 
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'28px' }}>
-          
+
           {error && (
             <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'10px 14px', marginBottom:'16px' }}>
               <p style={{ color:'#f44336', fontSize:'13px', margin:'0' }}>{error}</p>
