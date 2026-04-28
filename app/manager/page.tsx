@@ -18,13 +18,10 @@ export default function ManagerPortal() {
   const [showAddResident, setShowAddResident] = useState(false)
   const [newResident, setNewResident] = useState({ name: '', email: '', phone: '', unit: '', space: '', lease_end: '' })
   const [editingResident, setEditingResident] = useState<any>(null)
-  const [selectedProperty, setSelectedProperty] = useState<any>(null)
   const [allProperties, setAllProperties] = useState<any[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
 
-  useEffect(() => {
-    loadManager()
-  }, [])
+  useEffect(() => { loadManager() }, [])
 
   async function loadManager() {
     setLoading(true)
@@ -37,7 +34,11 @@ export default function ManagerPortal() {
       .ilike('email', user.email!)
       .single()
 
-    if (!roleData) { setError('No role assigned. Contact A1 Wrecker.'); setLoading(false); return }
+    if (!roleData) {
+      setError('No role assigned. Contact A1 Wrecker.')
+      setLoading(false)
+      return
+    }
 
     if (roleData.role === 'admin') {
       setIsAdmin(true)
@@ -45,7 +46,6 @@ export default function ManagerPortal() {
       setAllProperties(props || [])
       if (props && props.length > 0) {
         setManager(props[0])
-        setSelectedProperty(props[0].name)
         fetchAll(props[0].name)
       }
       setLoading(false)
@@ -53,13 +53,10 @@ export default function ManagerPortal() {
       const { data, error } = await supabase
         .from('properties')
         .select('*')
-        .ilike('pm_email', user.email!)
+        .ilike('name', roleData.property)
       setLoading(false)
-      console.log('PM lookup - user email:', user.email)
-      console.log('PM lookup - data:', data)
-      console.log('PM lookup - error:', error)
       if (error || !data || data.length === 0) {
-        setError(`No property linked to ${user.email}. Error: ${error?.message || 'no record found'}`)
+        setError(`No property found matching "${roleData.property}". Check your user_roles table.`)
       } else {
         setManager(data[0])
         fetchAll(data[0].name)
@@ -72,7 +69,7 @@ export default function ManagerPortal() {
 
   async function switchProperty(name: string) {
     const prop = allProperties.find(p => p.name === name)
-    if (prop) { setManager(prop); setSelectedProperty(name); fetchAll(name) }
+    if (prop) { setManager(prop); fetchAll(prop.name) }
   }
 
   async function fetchAll(property: string) {
@@ -148,9 +145,12 @@ export default function ManagerPortal() {
 
   async function saveResident() {
     const { error } = await supabase.from('residents').update({
-      name: editingResident.name, email: editingResident.email,
-      phone: editingResident.phone, unit: editingResident.unit,
-      space: editingResident.space, lease_end: editingResident.lease_end,
+      name: editingResident.name,
+      email: editingResident.email,
+      phone: editingResident.phone,
+      unit: editingResident.unit,
+      space: editingResident.space,
+      lease_end: editingResident.lease_end,
     }).eq('id', editingResident.id)
     if (error) { alert('Error: ' + error.message) }
     else { alert('Resident updated!'); setEditingResident(null); fetchResidents(manager.name) }
@@ -188,24 +188,20 @@ export default function ManagerPortal() {
     borderRadius:'6px', color:'white', fontSize:'12px', boxSizing:'border-box'
   }
 
-  if (loading) {
-    return (
-      <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif' }}>
-        <p style={{ color:'#888' }}>Loading...</p>
-      </main>
-    )
-  }
+  if (loading) return (
+    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif' }}>
+      <p style={{ color:'#888' }}>Loading...</p>
+    </main>
+  )
 
-  if (error) {
-    return (
-      <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-        <div style={{ textAlign:'center' }}>
-          <p style={{ color:'#f44336', fontSize:'14px', marginBottom:'16px' }}>{error}</p>
-          <a href="/login" style={{ color:'#C9A227', fontSize:'13px' }}>← Back to Login</a>
-        </div>
-      </main>
-    )
-  }
+  if (error) return (
+    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+      <div style={{ textAlign:'center' }}>
+        <p style={{ color:'#f44336', fontSize:'14px', marginBottom:'16px' }}>{error}</p>
+        <a href="/login" style={{ color:'#C9A227', fontSize:'13px' }}>← Back to Login</a>
+      </div>
+    </main>
+  )
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
@@ -216,36 +212,28 @@ export default function ManagerPortal() {
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Property Manager Portal</p>
         </div>
 
-        {/* Admin property switcher */}
         {isAdmin && allProperties.length > 1 && (
           <div style={{ marginBottom:'12px' }}>
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Viewing Property</label>
-            <select
-              value={selectedProperty || ''}
-              onChange={e => switchProperty(e.target.value)}
-              style={{ ...inputStyle, marginTop:'6px', fontSize:'13px' }}
-            >
-              {allProperties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
+            <select onChange={e => switchProperty(e.target.value)} style={{ ...inputStyle, marginTop:'6px', fontSize:'13px' }}>
+              {allProperties.map((p,i) => <option key={i} value={p.name}>{p.name}</option>)}
             </select>
           </div>
         )}
 
-        {/* Property Header */}
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px 16px', marginBottom:'14px' }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
             <div>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'15px', margin:'0' }}>{manager?.name}</p>
               <p style={{ color:'#aaa', fontSize:'12px', margin:'4px 0 0' }}>{manager?.address || ''} · {manager?.pm_name || ''}</p>
             </div>
-            <button
-              onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}
+            <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}
               style={{ padding:'6px 12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
               Sign Out
             </button>
           </div>
         </div>
 
-        {/* Stats */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px', marginBottom:'14px' }}>
           {[
             { label:'Vehicles', value: stats.total_vehicles, color:'#C9A227' },
@@ -260,7 +248,6 @@ export default function ManagerPortal() {
           ))}
         </div>
 
-        {/* Tabs */}
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
           <button style={tabStyle('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
           <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>Vehicles</button>
@@ -269,14 +256,13 @@ export default function ManagerPortal() {
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
         </div>
 
-        {/* OVERVIEW TAB */}
+        {/* OVERVIEW */}
         {activeTab === 'overview' && (
           <div>
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Recent Violations</p>
-              {violations.slice(0,3).length === 0 ? (
-                <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No recent violations</p>
-              ) : violations.slice(0,3).map((v,i) => (
+              {violations.slice(0,3).length === 0 ? <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No recent violations</p>
+              : violations.slice(0,3).map((v,i) => (
                 <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
                   <span style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'13px', fontWeight:'bold' }}>{v.plate}</span>
                   <span style={{ color:'#aaa', fontSize:'12px' }}>{v.violation_type}</span>
@@ -286,9 +272,8 @@ export default function ManagerPortal() {
             </div>
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px' }}>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Active Visitor Passes</p>
-              {passes.length === 0 ? (
-                <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No active visitor passes</p>
-              ) : passes.map((p,i) => (
+              {passes.length === 0 ? <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No active visitor passes</p>
+              : passes.map((p,i) => (
                 <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
                   <span style={{ color:'#f59e0b', fontFamily:'Courier New', fontSize:'13px', fontWeight:'bold' }}>{p.plate}</span>
                   <span style={{ color:'#aaa', fontSize:'12px' }}>{p.visiting_unit}</span>
@@ -299,7 +284,7 @@ export default function ManagerPortal() {
           </div>
         )}
 
-        {/* VEHICLES TAB */}
+        {/* VEHICLES */}
         {activeTab === 'vehicles' && (
           <div>
             <button onClick={() => setShowAddVehicle(!showAddVehicle)}
@@ -348,7 +333,7 @@ export default function ManagerPortal() {
           </div>
         )}
 
-        {/* RESIDENTS TAB */}
+        {/* RESIDENTS */}
         {activeTab === 'residents' && (
           <div>
             <button onClick={() => setShowAddResident(!showAddResident)}
@@ -372,7 +357,6 @@ export default function ManagerPortal() {
                 </div>
               </div>
             )}
-
             {editingResident && (
               <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
                 <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Editing — {editingResident.unit}</p>
@@ -384,13 +368,10 @@ export default function ManagerPortal() {
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Space</label><input value={editingResident.space || ''} onChange={e => setEditingResident({...editingResident, space: e.target.value})} style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Lease End</label><input type="date" value={editingResident.lease_end || ''} onChange={e => setEditingResident({...editingResident, lease_end: e.target.value})} style={inputStyle} /></div>
                 </div>
-
                 <div style={{ display:'flex', gap:'8px', marginTop:'4px', marginBottom:'16px' }}>
                   <button onClick={saveResident} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Save Changes</button>
                   <button onClick={() => setEditingResident(null)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                 </div>
-
-                {/* Vehicles for this resident */}
                 <div style={{ borderTop:'1px solid #2a2f3d', paddingTop:'14px' }}>
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
                     <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>Vehicles — {editingResident.unit}</p>
@@ -414,36 +395,36 @@ export default function ManagerPortal() {
                       </div>
                     </div>
                   )}
-                  {vehicles.filter(v => v.unit?.toLowerCase() === editingResident.unit?.toLowerCase()).length === 0 ? (
-                    <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No vehicles for this unit</p>
-                  ) : vehicles.filter(v => v.unit?.toLowerCase() === editingResident.unit?.toLowerCase()).map((v,i) => (
-                    <div key={i} style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'8px' }}>
-                      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'6px' }}>
-                        <div>
-                          <p style={{ color:'white', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
-                          <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{v.color} {v.make} {v.model} {v.year}</p>
+                  {vehicles.filter(v => v.unit?.toLowerCase() === editingResident.unit?.toLowerCase()).length === 0
+                    ? <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No vehicles for this unit</p>
+                    : vehicles.filter(v => v.unit?.toLowerCase() === editingResident.unit?.toLowerCase()).map((v,i) => (
+                      <div key={i} style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'8px' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'6px' }}>
+                          <div>
+                            <p style={{ color:'white', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
+                            <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{v.color} {v.make} {v.model} {v.year}</p>
+                          </div>
+                          <span style={{ background: v.is_active ? '#1a3a1a' : '#3a1a1a', color: v.is_active ? '#4caf50' : '#f44336', padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', alignSelf:'flex-start' }}>{v.is_active ? 'Active' : 'Inactive'}</span>
                         </div>
-                        <span style={{ background: v.is_active ? '#1a3a1a' : '#3a1a1a', color: v.is_active ? '#4caf50' : '#f44336', padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', alignSelf:'flex-start' }}>{v.is_active ? 'Active' : 'Inactive'}</span>
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'6px', fontSize:'11px', marginBottom:'8px' }}>
+                          <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
+                          <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state}</span></div>
+                          <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
+                        </div>
+                        <div style={{ display:'flex', gap:'6px' }}>
+                          <button onClick={async () => { const space = prompt('Update space:', v.space || ''); if (space === null) return; await supabase.from('vehicles').update({ space }).eq('id', v.id); fetchVehicles(manager.name) }}
+                            style={{ flex:1, padding:'6px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>Edit Space</button>
+                          <button onClick={async () => { const plate = prompt('Update plate:', v.plate); if (plate === null) return; await supabase.from('vehicles').update({ plate: plate.toUpperCase().trim() }).eq('id', v.id); fetchVehicles(manager.name) }}
+                            style={{ flex:1, padding:'6px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Edit Plate</button>
+                          <button onClick={() => removeVehicle(v.id)}
+                            style={{ padding:'6px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Remove</button>
+                        </div>
                       </div>
-                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'6px', fontSize:'11px', marginBottom:'8px' }}>
-                        <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
-                        <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state}</span></div>
-                        <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
-                      </div>
-                      <div style={{ display:'flex', gap:'6px' }}>
-                        <button onClick={async () => { const space = prompt('Update space:', v.space || ''); if (space === null) return; await supabase.from('vehicles').update({ space }).eq('id', v.id); fetchVehicles(manager.name) }}
-                          style={{ flex:1, padding:'6px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>Edit Space</button>
-                        <button onClick={async () => { const plate = prompt('Update plate:', v.plate); if (plate === null) return; await supabase.from('vehicles').update({ plate: plate.toUpperCase().trim() }).eq('id', v.id); fetchVehicles(manager.name) }}
-                          style={{ flex:1, padding:'6px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Edit Plate</button>
-                        <button onClick={() => removeVehicle(v.id)}
-                          style={{ padding:'6px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Remove</button>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  }
                 </div>
               </div>
             )}
-
             {residents.map((r,i) => (
               <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
@@ -469,7 +450,7 @@ export default function ManagerPortal() {
           </div>
         )}
 
-        {/* VIOLATIONS TAB */}
+        {/* VIOLATIONS */}
         {activeTab === 'violations' && (
           <div>
             <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'12px' }}>
@@ -480,60 +461,58 @@ export default function ManagerPortal() {
                 </button>
               ))}
             </div>
-            {filteredViolations().length === 0 ? (
-              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
-                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No violations for this period</p>
-              </div>
-            ) : filteredViolations().map((v,i) => (
-              <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'8px' }}>
-                  <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'18px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
-                  <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
-                </div>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px' }}>
-                  <div><span style={{ color:'#555' }}>Type</span><br/><span style={{ color:'#aaa' }}>{v.violation_type || '—'}</span></div>
-                  <div><span style={{ color:'#555' }}>Location</span><br/><span style={{ color:'#aaa' }}>{v.location || '—'}</span></div>
-                  {v.notes && <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Notes</span><br/><span style={{ color:'#aaa' }}>{v.notes}</span></div>}
-                </div>
-                {v.photos && v.photos.length > 0 && (
-                  <div style={{ marginTop:'8px' }}>
-                    <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', margin:'0 0 6px' }}>Photos</p>
-                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px' }}>
-                      {v.photos.map((url: string, pi: number) => (
-                        <a key={pi} href={url} target="_blank" rel="noopener noreferrer">
-                          <img src={url} alt={`Photo ${pi+1}`} style={{ width:'100%', aspectRatio:'4/3', objectFit:'cover', borderRadius:'6px', border:'1px solid #2a2f3d' }} />
-                        </a>
-                      ))}
-                    </div>
+            {filteredViolations().length === 0
+              ? <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No violations for this period</p></div>
+              : filteredViolations().map((v,i) => (
+                <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'8px' }}>
+                    <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'18px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
+                    <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
                   </div>
-                )}
-              </div>
-            ))}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px' }}>
+                    <div><span style={{ color:'#555' }}>Type</span><br/><span style={{ color:'#aaa' }}>{v.violation_type || '—'}</span></div>
+                    <div><span style={{ color:'#555' }}>Location</span><br/><span style={{ color:'#aaa' }}>{v.location || '—'}</span></div>
+                    {v.notes && <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Notes</span><br/><span style={{ color:'#aaa' }}>{v.notes}</span></div>}
+                  </div>
+                  {v.photos && v.photos.length > 0 && (
+                    <div style={{ marginTop:'8px' }}>
+                      <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', margin:'0 0 6px' }}>Photos</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px' }}>
+                        {v.photos.map((url: string, pi: number) => (
+                          <a key={pi} href={url} target="_blank" rel="noopener noreferrer">
+                            <img src={url} alt={`Photo ${pi+1}`} style={{ width:'100%', aspectRatio:'4/3', objectFit:'cover', borderRadius:'6px', border:'1px solid #2a2f3d' }} />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            }
           </div>
         )}
 
-        {/* VISITORS TAB */}
+        {/* VISITORS */}
         {activeTab === 'visitors' && (
           <div>
-            {passes.length === 0 ? (
-              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
-                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No active visitor passes</p>
-              </div>
-            ) : passes.map((p,i) => (
-              <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'8px' }}>
-                  <p style={{ color:'#f59e0b', fontFamily:'Courier New', fontSize:'18px', fontWeight:'bold', margin:'0' }}>{p.plate}</p>
-                  <span style={{ background:'#1a3a1a', color:'#4caf50', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>Active</span>
+            {passes.length === 0
+              ? <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No active visitor passes</p></div>
+              : passes.map((p,i) => (
+                <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'8px' }}>
+                    <p style={{ color:'#f59e0b', fontFamily:'Courier New', fontSize:'18px', fontWeight:'bold', margin:'0' }}>{p.plate}</p>
+                    <span style={{ background:'#1a3a1a', color:'#4caf50', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>Active</span>
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px' }}>
+                    <div><span style={{ color:'#555' }}>Visiting</span><br/><span style={{ color:'#aaa' }}>{p.visiting_unit}</span></div>
+                    <div><span style={{ color:'#555' }}>Visitor</span><br/><span style={{ color:'#aaa' }}>{p.visitor_name || '—'}</span></div>
+                    <div><span style={{ color:'#555' }}>Vehicle</span><br/><span style={{ color:'#aaa' }}>{p.vehicle_desc || '—'}</span></div>
+                    <div><span style={{ color:'#555' }}>Duration</span><br/><span style={{ color:'#aaa' }}>{p.duration_hours} hours</span></div>
+                    <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Expires</span><br/><span style={{ color:'#f59e0b' }}>{new Date(p.expires_at).toLocaleString()}</span></div>
+                  </div>
                 </div>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px' }}>
-                  <div><span style={{ color:'#555' }}>Visiting</span><br/><span style={{ color:'#aaa' }}>{p.visiting_unit}</span></div>
-                  <div><span style={{ color:'#555' }}>Visitor</span><br/><span style={{ color:'#aaa' }}>{p.visitor_name || '—'}</span></div>
-                  <div><span style={{ color:'#555' }}>Vehicle</span><br/><span style={{ color:'#aaa' }}>{p.vehicle_desc || '—'}</span></div>
-                  <div><span style={{ color:'#555' }}>Duration</span><br/><span style={{ color:'#aaa' }}>{p.duration_hours} hours</span></div>
-                  <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Expires</span><br/><span style={{ color:'#f59e0b' }}>{new Date(p.expires_at).toLocaleString()}</span></div>
-                </div>
-              </div>
-            ))}
+              ))
+            }
           </div>
         )}
 
