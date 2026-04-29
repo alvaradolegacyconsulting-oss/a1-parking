@@ -324,14 +324,15 @@ export default function CompanyAdminPortal() {
           <div class="f" style="grid-column:span 2"><label>Address</label><span>${storage?.address || '—'}</span></div>
         </div>
       </div>
+      ${(parseFloat(towFee || '0') > 0 || parseFloat(mileage || '0') > 0) ? `
       <div class="sec">
         <div class="sh">Fees</div>
         <div class="g2">
-          <div class="f"><label>Tow Fee</label><span>$${parseFloat(towFee || '0').toFixed(2)}</span></div>
-          <div class="f"><label>Mileage Fee</label><span>$${parseFloat(mileage || '0').toFixed(2)}</span></div>
+          ${parseFloat(towFee || '0') > 0 ? `<div class="f"><label>Tow Fee</label><span>$${parseFloat(towFee).toFixed(2)}</span></div>` : ''}
+          ${parseFloat(mileage || '0') > 0 ? `<div class="f"><label>Mileage Fee</label><span>$${parseFloat(mileage).toFixed(2)}</span></div>` : ''}
           <div class="f"><label>Total Due</label><span style="font-size:16px;font-weight:bold">$${total}</span></div>
         </div>
-      </div>
+      </div>` : ''}
       ${photosHtml}
       <div class="sig-wrap">
         <div><div class="sig-line">Authorized Signature</div></div>
