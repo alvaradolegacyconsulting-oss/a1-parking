@@ -6,6 +6,18 @@ export default function History() {
   const [violations, setViolations] = useState<any[]>([])
   const [filter, setFilter] = useState('today')
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+
+  function filteredViolations() {
+    if (!search) return violations
+    const q = search.toLowerCase()
+    return violations.filter(v =>
+      v.plate?.toLowerCase().includes(q) ||
+      v.property?.toLowerCase().includes(q) ||
+      v.violation_type?.toLowerCase().includes(q) ||
+      v.location?.toLowerCase().includes(q)
+    )
+  }
 
   useEffect(() => {
     fetchViolations()
@@ -55,6 +67,13 @@ export default function History() {
           ← Back to Plate Lookup
         </a>
 
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search plate, property, violation type, location..."
+          style={{ display:'block', width:'100%', padding:'10px 12px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', fontSize:'13px', boxSizing:'border-box', outline:'none' }}
+        />
+
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'20px' }}>
           {[
             { key:'today', label:'Today' },
@@ -82,7 +101,7 @@ export default function History() {
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div>
             <p style={{ color:'#aaa', fontSize:'11px', margin:'0', textTransform:'uppercase', letterSpacing:'0.08em' }}>Total Violations</p>
-            <p style={{ color:'#C9A227', fontSize:'32px', fontWeight:'bold', margin:'4px 0 0' }}>{violations.length}</p>
+            <p style={{ color:'#C9A227', fontSize:'32px', fontWeight:'bold', margin:'4px 0 0' }}>{filteredViolations().length}</p>
           </div>
           <div style={{ textAlign:'right' }}>
             <p style={{ color:'#aaa', fontSize:'11px', margin:'0', textTransform:'uppercase', letterSpacing:'0.08em' }}>Period</p>
@@ -96,13 +115,13 @@ export default function History() {
           <p style={{ color:'#888', textAlign:'center', padding:'40px' }}>Loading...</p>
         )}
 
-        {!loading && violations.length === 0 && (
+        {!loading && filteredViolations().length === 0 && (
           <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}>
             <p style={{ color:'#888', fontSize:'14px', margin:'0' }}>No violations found for this period</p>
           </div>
         )}
 
-        {!loading && violations.map((v, i) => (
+        {!loading && filteredViolations().map((v, i) => (
           <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'10px' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
               <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
