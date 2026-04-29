@@ -20,6 +20,10 @@ export default function ManagerPortal() {
   const [editingResident, setEditingResident] = useState<any>(null)
   const [allProperties, setAllProperties] = useState<any[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
+  const [spaces, setSpaces] = useState<any[]>([])
+  const [editingSpace, setEditingSpace] = useState<any>(null)
+  const [spaceError, setSpaceError] = useState('')
+  const [hoveredSpaceId, setHoveredSpaceId] = useState<string | null>(null)
 
   useEffect(() => { loadManager() }, [])
 
@@ -77,6 +81,43 @@ export default function ManagerPortal() {
     fetchViolations(property)
     fetchPasses(property)
     fetchResidents(property)
+    fetchSpaces(property)
+  }
+
+  async function fetchSpaces(property: string) {
+    const { data } = await supabase.from('spaces').select('*').ilike('property', property).order('space_number')
+    setSpaces(data || [])
+  }
+
+  async function saveSpace() {
+    if (!editingSpace) return
+    setSpaceError('')
+
+    const isOccupied = editingSpace.status === 'occupied'
+    const isReleasing = editingSpace.status === 'available'
+
+    if (isOccupied && editingSpace.assigned_to_plate) {
+      const conflict = spaces.find(s =>
+        s.id !== editingSpace.id &&
+        s.status === 'occupied' &&
+        s.assigned_to_plate?.toLowerCase() === editingSpace.assigned_to_plate?.toLowerCase()
+      )
+      if (conflict) {
+        setSpaceError(`Space ${conflict.space_number} is already assigned to ${conflict.assigned_to_unit || '—'} - ${conflict.assigned_to_plate}`)
+        return
+      }
+    }
+
+    const updates: any = {
+      status: editingSpace.status,
+      notes: editingSpace.notes ?? '',
+      assigned_to_unit: isReleasing ? null : editingSpace.assigned_to_unit,
+      assigned_to_plate: isReleasing ? null : editingSpace.assigned_to_plate,
+    }
+
+    const { error } = await supabase.from('spaces').update(updates).eq('id', editingSpace.id)
+    if (error) { alert('Error: ' + error.message) }
+    else { setEditingSpace(null); fetchSpaces(manager.name) }
   }
 
   async function fetchVehicles(property: string) {
@@ -251,6 +292,7 @@ export default function ManagerPortal() {
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
           <button style={tabStyle('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
           <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>Vehicles</button>
+          <button style={tabStyle('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
           <button style={tabStyle('residents')} onClick={() => setActiveTab('residents')}>Residents</button>
           <button style={tabStyle('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
@@ -330,6 +372,148 @@ export default function ManagerPortal() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* SPACES */}
+        {activeTab === 'spaces' && (
+          <div>
+            {spaces.length === 0 ? (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
+                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No spaces found for this property</p>
+              </div>
+            ) : (
+              <>
+                {/* Visual grid */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'14px' }}>
+                  <div style={{ display:'flex', gap:'12px', marginBottom:'10px', flexWrap:'wrap' }}>
+                    {[{color:'#4caf50', bg:'#1a3a1a', label:'Available'},{color:'#f44336', bg:'#3a1a1a', label:'Occupied'},{color:'#C9A227', bg:'#2a1e00', label:'Reserved'}].map(l => (
+                      <div key={l.label} style={{ display:'flex', alignItems:'center', gap:'5px' }}>
+                        <div style={{ width:'12px', height:'12px', borderRadius:'3px', background:l.bg, border:`1px solid ${l.color}` }} />
+                        <span style={{ color:'#aaa', fontSize:'11px' }}>{l.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(52px, 1fr))', gap:'6px' }}>
+                    {spaces.map((s) => {
+                      const isOccupied = s.status === 'occupied'
+                      const isReserved = s.status === 'reserved'
+                      const borderColor = isOccupied ? '#f44336' : isReserved ? '#C9A227' : '#4caf50'
+                      const bgColor = isOccupied ? '#3a1a1a' : isReserved ? '#2a1e00' : '#1a3a1a'
+                      const isHovered = hoveredSpaceId === s.id
+                      return (
+                        <div key={s.id}
+                          onClick={() => setHoveredSpaceId(isHovered ? null : s.id)}
+                          style={{ background:bgColor, border:`2px solid ${borderColor}`, borderRadius:'6px', padding:'6px 4px', textAlign:'center', cursor:'pointer', position:'relative', userSelect:'none' }}>
+                          <span style={{ color:'white', fontSize:'10px', fontWeight:'bold', display:'block', lineHeight:'1.2' }}>{s.space_number}</span>
+                          {isHovered && (isOccupied || isReserved) && (
+                            <div style={{ position:'absolute', top:'calc(100% + 4px)', left:'50%', transform:'translateX(-50%)', background:'#0f1117', border:'1px solid #3a4055', borderRadius:'6px', padding:'6px 8px', zIndex:20, minWidth:'110px', pointerEvents:'none' }}>
+                              <p style={{ color:'#aaa', fontSize:'10px', margin:'0', whiteSpace:'nowrap' }}>
+                                {isOccupied ? `${s.assigned_to_unit || '—'} · ${s.assigned_to_plate || '—'}` : (s.notes || 'Reserved')}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Space list */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', overflow:'hidden' }}>
+                  {/* Header row */}
+                  <div style={{ display:'grid', gridTemplateColumns:'80px 80px 1fr 1fr 28px', gap:'8px', padding:'8px 12px', borderBottom:'1px solid #2a2f3d', background:'#1e2535' }}>
+                    {['Space','Status','Unit','Plate',''].map((h,i) => (
+                      <span key={i} style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>{h}</span>
+                    ))}
+                  </div>
+
+                  {spaces.map((s) => (
+                    <div key={s.id}>
+                      <div style={{ display:'grid', gridTemplateColumns:'80px 80px 1fr 1fr 28px', gap:'8px', padding:'10px 12px', borderBottom:'1px solid #1e2535', alignItems:'center' }}>
+                        <span style={{ color:'white', fontWeight:'bold', fontSize:'12px', fontFamily:'Courier New' }}>{s.space_number}</span>
+                        <span style={{
+                          fontSize:'10px', fontWeight:'bold', padding:'2px 7px', borderRadius:'8px', textAlign:'center',
+                          background: s.status === 'occupied' ? '#3a1a1a' : s.status === 'reserved' ? '#2a1e00' : '#1a3a1a',
+                          color: s.status === 'occupied' ? '#f44336' : s.status === 'reserved' ? '#C9A227' : '#4caf50',
+                        }}>{s.status}</span>
+                        <span style={{ color:'#aaa', fontSize:'12px' }}>{s.assigned_to_unit || '—'}</span>
+                        <span style={{ color:'#aaa', fontSize:'12px', fontFamily: s.assigned_to_plate ? 'Courier New' : undefined }}>{s.assigned_to_plate || '—'}</span>
+                        <button
+                          onClick={() => { setEditingSpace({ ...s }); setSpaceError('') }}
+                          style={{ padding:'3px 7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', fontFamily:'Arial' }}>
+                          Edit
+                        </button>
+                      </div>
+
+                      {/* Inline edit form */}
+                      {editingSpace?.id === s.id && (
+                        <div style={{ background:'#0f1117', borderBottom:'1px solid #2a2f3d', padding:'14px 12px' }}>
+                          <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', margin:'0 0 12px' }}>Editing Space {s.space_number}</p>
+
+                          {spaceError && (
+                            <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
+                              <p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spaceError}</p>
+                            </div>
+                          )}
+
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Status</label>
+                          <select
+                            value={editingSpace.status}
+                            onChange={e => setEditingSpace({ ...editingSpace, status: e.target.value })}
+                            style={inputStyle}>
+                            <option value='available'>Available</option>
+                            <option value='occupied'>Occupied</option>
+                            <option value='reserved'>Reserved</option>
+                          </select>
+
+                          {editingSpace.status !== 'available' && (
+                            <>
+                              <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Assigned Unit</label>
+                              <input
+                                value={editingSpace.assigned_to_unit || ''}
+                                onChange={e => setEditingSpace({ ...editingSpace, assigned_to_unit: e.target.value })}
+                                placeholder="Apt 214"
+                                style={inputStyle} />
+
+                              <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Assigned Plate</label>
+                              <select
+                                value={editingSpace.assigned_to_plate || ''}
+                                onChange={e => setEditingSpace({ ...editingSpace, assigned_to_plate: e.target.value })}
+                                style={inputStyle}>
+                                <option value=''>Select plate...</option>
+                                {vehicles.filter(v => v.is_active).map((v, i) => (
+                                  <option key={i} value={v.plate}>{v.plate} — {v.unit} ({v.color} {v.make})</option>
+                                ))}
+                              </select>
+                            </>
+                          )}
+
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Notes</label>
+                          <input
+                            value={editingSpace.notes || ''}
+                            onChange={e => setEditingSpace({ ...editingSpace, notes: e.target.value })}
+                            placeholder="Optional notes"
+                            style={inputStyle} />
+
+                          <div style={{ display:'flex', gap:'8px', marginTop:'4px' }}>
+                            <button onClick={saveSpace} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'7px', cursor:'pointer' }}>Save</button>
+                            <button onClick={() => { setEditingSpace(null); setSpaceError('') }} style={{ padding:'9px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Notes row if no edit open */}
+                      {editingSpace?.id !== s.id && s.notes && (
+                        <div style={{ padding:'4px 12px 8px', borderBottom:'1px solid #1e2535' }}>
+                          <span style={{ color:'#555', fontSize:'10px' }}>{s.notes}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 
