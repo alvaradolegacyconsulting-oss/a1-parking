@@ -140,7 +140,29 @@ export default function ManagerPortal() {
 
   async function fetchPasses(property: string) {
     const now = new Date().toISOString()
-    const { data } = await supabase.from('visitor_passes').select('*').gte('expires_at', now).eq('is_active', true).order('created_at', { ascending: false })
+
+    // visitor_passes has no property column — resolve units for this property first
+    const { data: propResidents } = await supabase
+      .from('residents')
+      .select('unit')
+      .ilike('property', property)
+
+    const units = [...new Set((propResidents || []).map((r: any) => r.unit).filter(Boolean))]
+
+    if (units.length === 0) {
+      setPasses([])
+      setStats(s => ({ ...s, active_passes: 0 }))
+      return
+    }
+
+    const { data } = await supabase
+      .from('visitor_passes')
+      .select('*')
+      .gte('expires_at', now)
+      .eq('is_active', true)
+      .in('visiting_unit', units)
+      .order('created_at', { ascending: false })
+
     setPasses(data || [])
     setStats(s => ({ ...s, active_passes: data?.length || 0 }))
   }
