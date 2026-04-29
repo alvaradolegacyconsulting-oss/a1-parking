@@ -24,6 +24,9 @@ export default function ManagerPortal() {
   const [editingSpace, setEditingSpace] = useState<any>(null)
   const [spaceError, setSpaceError] = useState('')
   const [hoveredSpaceId, setHoveredSpaceId] = useState<string | null>(null)
+  const [vehicleSearch, setVehicleSearch] = useState('')
+  const [residentSearch, setResidentSearch] = useState('')
+  const [violationSearch, setViolationSearch] = useState('')
 
   useEffect(() => { loadManager() }, [])
 
@@ -203,15 +206,40 @@ export default function ManagerPortal() {
     fetchResidents(manager.name)
   }
 
+  function filteredVehicles() {
+    if (!vehicleSearch) return vehicles
+    const q = vehicleSearch.toLowerCase()
+    return vehicles.filter(v =>
+      v.plate?.toLowerCase().includes(q) ||
+      v.unit?.toLowerCase().includes(q) ||
+      v.make?.toLowerCase().includes(q) ||
+      v.model?.toLowerCase().includes(q) ||
+      v.color?.toLowerCase().includes(q)
+    )
+  }
+
+  function filteredResidents() {
+    if (!residentSearch) return residents
+    const q = residentSearch.toLowerCase()
+    return residents.filter(r =>
+      r.name?.toLowerCase().includes(q) ||
+      r.email?.toLowerCase().includes(q) ||
+      r.unit?.toLowerCase().includes(q) ||
+      r.phone?.toLowerCase().includes(q)
+    )
+  }
+
   function filteredViolations() {
     const today = new Date(); today.setHours(0,0,0,0)
     const week = new Date(); week.setDate(week.getDate()-7)
     const sixmo = new Date(); sixmo.setMonth(sixmo.getMonth()-6)
     return violations.filter(v => {
       const d = new Date(v.created_at)
-      if (violationFilter === 'today') return d >= today
-      if (violationFilter === 'week') return d >= week
-      return d >= sixmo
+      const inPeriod = violationFilter === 'today' ? d >= today : violationFilter === 'week' ? d >= week : d >= sixmo
+      if (!inPeriod) return false
+      if (!violationSearch) return true
+      const q = violationSearch.toLowerCase()
+      return v.plate?.toLowerCase().includes(q) || v.violation_type?.toLowerCase().includes(q) || v.location?.toLowerCase().includes(q)
     })
   }
 
@@ -329,6 +357,7 @@ export default function ManagerPortal() {
         {/* VEHICLES */}
         {activeTab === 'vehicles' && (
           <div>
+            <input value={vehicleSearch} onChange={e => setVehicleSearch(e.target.value)} placeholder="Search plate, unit, make, model, color..." style={{ ...inputStyle, marginBottom:'12px' }} />
             <button onClick={() => setShowAddVehicle(!showAddVehicle)}
               style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
               + Add Vehicle
@@ -353,7 +382,7 @@ export default function ManagerPortal() {
                 </div>
               </div>
             )}
-            {vehicles.map((v,i) => (
+            {filteredVehicles().map((v,i) => (
               <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
                   <div>
@@ -520,6 +549,7 @@ export default function ManagerPortal() {
         {/* RESIDENTS */}
         {activeTab === 'residents' && (
           <div>
+            <input value={residentSearch} onChange={e => setResidentSearch(e.target.value)} placeholder="Search name, email, unit, phone..." style={{ ...inputStyle, marginBottom:'12px' }} />
             <button onClick={() => setShowAddResident(!showAddResident)}
               style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
               + Add Resident
@@ -609,7 +639,7 @@ export default function ManagerPortal() {
                 </div>
               </div>
             )}
-            {residents.map((r,i) => (
+            {filteredResidents().map((r,i) => (
               <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
                   <div>
@@ -637,6 +667,7 @@ export default function ManagerPortal() {
         {/* VIOLATIONS */}
         {activeTab === 'violations' && (
           <div>
+            <input value={violationSearch} onChange={e => setViolationSearch(e.target.value)} placeholder="Search plate, violation type, location..." style={{ ...inputStyle, marginBottom:'10px' }} />
             <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'12px' }}>
               {[{k:'today',l:'Today'},{k:'week',l:'This Week'},{k:'sixmonths',l:'6 Months'}].map(f => (
                 <button key={f.k} onClick={() => setViolationFilter(f.k)}
