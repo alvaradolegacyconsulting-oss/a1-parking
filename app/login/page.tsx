@@ -25,13 +25,29 @@ export default function Login() {
       .ilike('email', email.trim())
       .single()
 
-    setLoading(false)
-
     if (!roleData) {
+      setLoading(false)
       setError('No role assigned. Please contact A1 Wrecker to get access.')
       await supabase.auth.signOut()
       return
     }
+
+    if (roleData.role !== 'admin' && roleData.company) {
+      const { data: companyData } = await supabase
+        .from('companies')
+        .select('is_active')
+        .ilike('name', roleData.company)
+        .single()
+
+      if (companyData && companyData.is_active === false) {
+        setLoading(false)
+        setError('Your account has been deactivated. Contact A1 Wrecker, LLC at a1wreckerllc.net')
+        await supabase.auth.signOut()
+        return
+      }
+    }
+
+    setLoading(false)
 
     if (roleData.role === 'admin') {
       window.location.href = '/'
