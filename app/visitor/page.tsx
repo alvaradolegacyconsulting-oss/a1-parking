@@ -1,9 +1,9 @@
 'use client'
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 
-export default function Visitor() {
+function VisitorForm() {
   const searchParams = useSearchParams()
   const propertyName = searchParams.get('property') || 'A1 Wrecker Managed Property'
   const [step, setStep] = useState<'form' | 'success'>('form')
@@ -184,5 +184,17 @@ export default function Visitor() {
         <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'16px' }}>A1 Wrecker, LLC · Houston's #1 Towing & Recovery · a1wreckerllc.net</p>
       </div>
     </main>
+  )
+}
+
+export default function Visitor() {
+  return (
+    <Suspense fallback={
+      <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif' }}>
+        <p style={{ color:'#888' }}>Loading...</p>
+      </main>
+    }>
+      <VisitorForm />
+    </Suspense>
   )
 }
