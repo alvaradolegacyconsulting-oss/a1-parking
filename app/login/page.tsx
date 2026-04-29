@@ -49,8 +49,10 @@ export default function Login() {
 
     setLoading(false)
 
-    if (roleData.role === 'admin') {
+   if (roleData.role === 'admin') {
       window.location.href = '/'
+    } else if (roleData.role === 'company_admin') {
+      window.location.href = '/company_admin'
     } else if (roleData.role === 'manager') {
       window.location.href = '/manager'
     } else if (roleData.role === 'driver') {
