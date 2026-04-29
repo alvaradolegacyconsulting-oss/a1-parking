@@ -1,8 +1,11 @@
 'use client'
 import { useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 
 export default function Visitor() {
+  const searchParams = useSearchParams()
+  const propertyName = searchParams.get('property') || 'A1 Wrecker Managed Property'
   const [step, setStep] = useState<'form' | 'success'>('form')
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({
@@ -104,7 +107,7 @@ export default function Visitor() {
 
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
           <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
-          <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass · Oakwood Heights</p>
+          <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass · {propertyName}</p>
           <p style={{ color:'#555', fontSize:'11px', margin:'4px 0 0' }}>Valid up to 24 hours · No app download required</p>
         </div>
 
