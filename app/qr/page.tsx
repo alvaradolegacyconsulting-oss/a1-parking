@@ -3,9 +3,17 @@ import { useState } from 'react'
 import { QRCodeCanvas as QRCode } from 'qrcode.react'
 
 const PROPERTIES = [
-  { name: 'Oakwood Heights', address: '1042 Oak Drive, Houston TX' },
-  { name: 'Riverdale Apartments', address: '220 River Road, Houston TX' },
-  { name: 'Sunset Plaza', address: '88 Sunset Blvd, Houston TX' },
+  { name: 'Miramar', address: '13150 Bissonnet St, Houston, TX 77099' },
+  { name: 'Villa Barcelona Apartments', address: '7222 Bellerive Dr, Houston, TX 77036' },
+  { name: 'Alden Park Kingsland', address: '18021 Kingsland Blvd, Houston, TX' },
+  { name: 'Charleston at Fannin Station Apartments', address: '9779 Fannin Rail Wy, Houston, TX' },
+  { name: 'Crossing at Cherry', address: '1100 S Cherry St, Tomball, TX' },
+  { name: 'Green Acres', address: '13501 Hopper Rd, Houston, TX' },
+  { name: 'Nantucket at Fannin Station', address: '10000 Fannin St, Houston, TX' },
+  { name: 'Oak Bend Place', address: '915 Baker Dr, Tomball, TX' },
+  { name: 'SouthFork Lake', address: '3333 Southfork Pkwy, Manvel, TX' },
+  { name: 'Sugarberry Place', address: '9850 Boudreaux Rd, Tomball, TX' },
+  { name: 'Summerset Landing Condominiums', address: '6161 Reims Rd, Houston, TX' },
 ]
 
 export default function QRPage() {
