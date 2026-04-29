@@ -689,6 +689,10 @@ export default function ManagerPortal() {
         {/* VIOLATIONS */}
         {activeTab === 'violations' && (
           <div>
+            <div style={{ background:'#1a2a1a', border:'1px solid #2e7d32', borderRadius:'8px', padding:'12px 14px', marginBottom:'12px' }}>
+              <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'12px', margin:'0 0 2px' }}>View Only</p>
+              <p style={{ color:'#aaa', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>Violations are filed by A1 Wrecker drivers. Contact A1 Wrecker to report an issue.</p>
+            </div>
             <input value={violationSearch} onChange={e => setViolationSearch(e.target.value)} placeholder="Search plate, violation type, location..." style={{ ...inputStyle, marginBottom:'10px' }} />
             <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'12px' }}>
               {[{k:'today',l:'Today'},{k:'week',l:'This Week'},{k:'sixmonths',l:'6 Months'}].map(f => (
@@ -753,9 +757,6 @@ export default function ManagerPortal() {
           </div>
         )}
 
-        <div style={{ textAlign:'center', marginTop:'20px' }}>
-          <a href="/" style={{ color:'#C9A227', fontSize:'12px', textDecoration:'none' }}>← Back to Plate Lookup</a>
-        </div>
 
       </div>
     </main>
