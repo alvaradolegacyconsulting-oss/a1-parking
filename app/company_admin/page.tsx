@@ -6,17 +6,12 @@ export default function CompanyAdminPortal() {
   const [user, setUser] = useState<any>(null)
   const [role, setRole] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
 
-  // Properties
   const [properties, setProperties] = useState<any[]>([])
   const [selectedProperty, setSelectedProperty] = useState<any>(null)
-
-  // Stats
   const [stats, setStats] = useState({ total_vehicles: 0, violations_today: 0, violations_week: 0, active_passes: 0 })
-
-  // Plate lookup
   const [activeTab, setActiveTab] = useState('overview')
+
   const [plate, setPlate] = useState('')
   const [result, setResult] = useState<any>(null)
   const [searching, setSearching] = useState(false)
@@ -25,7 +20,6 @@ export default function CompanyAdminPortal() {
   const [photos, setPhotos] = useState<File[]>([])
   const [submitting, setSubmitting] = useState(false)
 
-  // Tow ticket
   const [storageFacilities, setStorageFacilities] = useState<any[]>([])
   const [ticketTarget, setTicketTarget] = useState<any>(null)
   const [selectedStorage, setSelectedStorage] = useState('')
@@ -34,13 +28,34 @@ export default function CompanyAdminPortal() {
   const [vin, setVin] = useState('')
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null)
 
-  // Violations tab
   const [violations, setViolations] = useState<any[]>([])
   const [violationFilter, setViolationFilter] = useState('today')
   const [violationSearch, setViolationSearch] = useState('')
-
-  // Visitors tab
   const [passes, setPasses] = useState<any[]>([])
+
+  // Manage tab
+  const [manageSection, setManageSection] = useState<'properties' | 'users' | 'drivers' | 'storage'>('properties')
+  const [manageLoaded, setManageLoaded] = useState(false)
+
+  const [editingProperty, setEditingProperty] = useState<any>(null)
+  const [showAddProperty, setShowAddProperty] = useState(false)
+  const [newProperty, setNewProperty] = useState({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '' })
+  const [propMsg, setPropMsg] = useState('')
+
+  const [companyUsers, setCompanyUsers] = useState<any[]>([])
+  const [showAddUser, setShowAddUser] = useState(false)
+  const [newUser, setNewUser] = useState({ email: '', password: '', role: 'manager', property: '' })
+  const [userMsg, setUserMsg] = useState('')
+
+  const [companyDrivers, setCompanyDrivers] = useState<any[]>([])
+  const [showAddDriver, setShowAddDriver] = useState(false)
+  const [newDriver, setNewDriver] = useState({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] as string[] })
+  const [driverMsg, setDriverMsg] = useState('')
+
+  const [allFacilities, setAllFacilities] = useState<any[]>([])
+  const [showAddFacility, setShowAddFacility] = useState(false)
+  const [newFacility, setNewFacility] = useState({ name: '', address: '', phone: '', email: '' })
+  const [facilityMsg, setFacilityMsg] = useState('')
 
   useEffect(() => { loadUser() }, [])
 
@@ -53,8 +68,7 @@ export default function CompanyAdminPortal() {
       .from('user_roles').select('*').ilike('email', authUser.email!).single()
 
     if (!roleData || (roleData.role !== 'company_admin' && roleData.role !== 'admin')) {
-      window.location.href = '/login'
-      return
+      window.location.href = '/login'; return
     }
 
     setUser(authUser)
@@ -82,30 +96,22 @@ export default function CompanyAdminPortal() {
     const prop = properties.find(p => p.name === name)
     if (!prop) return
     setSelectedProperty(prop)
-    setResult(null)
-    setTicketTarget(null)
-    setExpandedTicketId(null)
+    setResult(null); setTicketTarget(null); setExpandedTicketId(null)
     await fetchAll(prop)
   }
 
   async function fetchAll(prop: any) {
-    await Promise.all([
-      fetchViolations(prop.name),
-      fetchStats(prop.name),
-      fetchPasses(prop.name),
-    ])
+    await Promise.all([fetchViolations(prop.name), fetchStats(prop.name), fetchPasses(prop.name)])
   }
 
   async function fetchStats(property: string) {
     const sixmo = new Date(); sixmo.setMonth(sixmo.getMonth() - 6)
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const week = new Date(); week.setDate(week.getDate() - 7)
-
     const [{ data: vehicles }, { data: viol }] = await Promise.all([
       supabase.from('vehicles').select('id').ilike('property', property).eq('is_active', true),
       supabase.from('violations').select('created_at').ilike('property', property).gte('created_at', sixmo.toISOString()),
     ])
-
     const todayCount = (viol || []).filter(v => new Date(v.created_at) >= today).length
     const weekCount = (viol || []).filter(v => new Date(v.created_at) >= week).length
     setStats(s => ({ ...s, total_vehicles: vehicles?.length || 0, violations_today: todayCount, violations_week: weekCount }))
@@ -119,8 +125,7 @@ export default function CompanyAdminPortal() {
   async function fetchViolations(property: string) {
     const sixmo = new Date(); sixmo.setMonth(sixmo.getMonth() - 6)
     const { data } = await supabase.from('violations').select('*')
-      .ilike('property', property)
-      .gte('created_at', sixmo.toISOString())
+      .ilike('property', property).gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
     setViolations(data || [])
   }
@@ -137,29 +142,174 @@ export default function CompanyAdminPortal() {
     setStats(s => ({ ...s, active_passes: data?.length || 0 }))
   }
 
+  async function auditLog(action: string, table_name: string, record_id: string, new_values: any) {
+    await supabase.from('audit_logs').insert([{
+      user_email: user?.email, action, table_name,
+      record_id: String(record_id), new_values,
+      created_at: new Date().toISOString()
+    }])
+  }
+
+  async function loadManageData() {
+    await Promise.all([fetchCompanyUsers(), fetchCompanyDrivers(), fetchAllFacilitiesManage()])
+    setManageLoaded(true)
+  }
+
+  async function fetchCompanyUsers() {
+    if (!role?.company) return
+    const { data } = await supabase.from('user_roles').select('*').ilike('company', role.company).order('email')
+    setCompanyUsers(data || [])
+  }
+
+  async function fetchCompanyDrivers() {
+    if (!role?.company) return
+    const { data } = await supabase.from('drivers').select('*').ilike('company', role.company).order('name')
+    setCompanyDrivers(data || [])
+  }
+
+  async function fetchAllFacilitiesManage() {
+    const { data } = await supabase.from('storage_facilities').select('*').order('name')
+    setAllFacilities(data || [])
+  }
+
+  async function reloadProperties() {
+    const { data } = await supabase.from('properties').select('*').ilike('company', role?.company || '').order('name')
+    setProperties(data || [])
+  }
+
+  async function saveProperty() {
+    if (!newProperty.name) { setPropMsg('Property name is required'); return }
+    setPropMsg('')
+    const { data, error: insErr } = await supabase.from('properties').insert([{
+      name: newProperty.name, address: newProperty.address || null,
+      city: newProperty.city || null, state: newProperty.state || null,
+      zip: newProperty.zip || null,
+      total_spaces: newProperty.total_spaces ? parseInt(newProperty.total_spaces) : null,
+      pm_name: newProperty.pm_name || null, pm_phone: newProperty.pm_phone || null,
+      pm_email: newProperty.pm_email || null, company: role?.company, is_active: true
+    }]).select().single()
+    if (insErr) { setPropMsg('Error: ' + insErr.message); return }
+    await auditLog('create_property', 'properties', data.id, { name: newProperty.name, company: role?.company })
+    setPropMsg('Property added!')
+    setNewProperty({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '' })
+    setShowAddProperty(false)
+    await reloadProperties()
+  }
+
+  async function updateProperty() {
+    if (!editingProperty) return
+    setPropMsg('')
+    const { id, company, created_at, ...fields } = editingProperty
+    const { error: updErr } = await supabase.from('properties').update({
+      ...fields, total_spaces: fields.total_spaces ? parseInt(fields.total_spaces) : null
+    }).eq('id', id)
+    if (updErr) { setPropMsg('Error: ' + updErr.message); return }
+    await auditLog('update_property', 'properties', id, fields)
+    setPropMsg('Property updated!')
+    setEditingProperty(null)
+    await reloadProperties()
+  }
+
+  async function togglePropertyActive(prop: any) {
+    const { error: updErr } = await supabase.from('properties').update({ is_active: !prop.is_active }).eq('id', prop.id)
+    if (updErr) { setPropMsg('Error: ' + updErr.message); return }
+    await auditLog(prop.is_active ? 'deactivate_property' : 'activate_property', 'properties', prop.id, { is_active: !prop.is_active })
+    await reloadProperties()
+  }
+
+  async function createUser() {
+    if (!newUser.email || !newUser.password || !newUser.role) { setUserMsg('Email, password, and role are required'); return }
+    setUserMsg('Creating...')
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
+    const { data: { session } } = await supabase.auth.getSession()
+    try {
+      const res = await fetch(fnBase + '/swift-handler', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ action: 'create_user', email: newUser.email, password: newUser.password })
+      })
+      const json = await res.json()
+      if (!res.ok) { setUserMsg('Error: ' + (json.error || 'Failed to create auth account')); return }
+    } catch (e: any) { setUserMsg('Error: ' + e.message); return }
+    const { data: inserted, error: insErr } = await supabase.from('user_roles').insert([{
+      email: newUser.email, role: newUser.role,
+      company: role?.company, property: newUser.property || null
+    }]).select().single()
+    if (insErr) { setUserMsg('Auth created but role insert failed: ' + insErr.message); return }
+    await auditLog('create_user', 'user_roles', inserted.id, { email: newUser.email, role: newUser.role, company: role?.company })
+    setUserMsg('User created successfully!')
+    setNewUser({ email: '', password: '', role: 'manager', property: '' })
+    setShowAddUser(false)
+    fetchCompanyUsers()
+  }
+
+  async function createDriver() {
+    if (!newDriver.name || !newDriver.email) { setDriverMsg('Name and email are required'); return }
+    setDriverMsg('Creating...')
+    const tempPass = Math.random().toString(36).slice(-8) + 'A1!'
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
+    const { data: { session } } = await supabase.auth.getSession()
+    try {
+      const res = await fetch(fnBase + '/swift-handler', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ action: 'create_user', email: newDriver.email, password: tempPass })
+      })
+      const json = await res.json()
+      if (!res.ok) { setDriverMsg('Error: ' + (json.error || 'Failed to create auth account')); return }
+    } catch (e: any) { setDriverMsg('Error: ' + e.message); return }
+    const { data: inserted, error: insErr } = await supabase.from('drivers').insert([{
+      name: newDriver.name, email: newDriver.email,
+      phone: newDriver.phone || null, operator_license: newDriver.operator_license || null,
+      assigned_properties: newDriver.assigned_properties,
+      company: role?.company, is_active: true
+    }]).select().single()
+    if (insErr) { setDriverMsg('Auth created but driver insert failed: ' + insErr.message); return }
+    await supabase.from('user_roles').insert([{ email: newDriver.email, role: 'driver', company: role?.company }])
+    await auditLog('create_driver', 'drivers', inserted.id, { name: newDriver.name, email: newDriver.email, company: role?.company })
+    setDriverMsg(`Driver created! Temp password: ${tempPass}`)
+    setNewDriver({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] })
+    setShowAddDriver(false)
+    fetchCompanyDrivers()
+  }
+
+  async function toggleDriverActive(driver: any) {
+    const { error: updErr } = await supabase.from('drivers').update({ is_active: !driver.is_active }).eq('id', driver.id)
+    if (updErr) { setDriverMsg('Error: ' + updErr.message); return }
+    await auditLog(driver.is_active ? 'deactivate_driver' : 'activate_driver', 'drivers', driver.id, { is_active: !driver.is_active })
+    fetchCompanyDrivers()
+  }
+
+  async function createFacility() {
+    if (!newFacility.name || !newFacility.address) { setFacilityMsg('Name and address are required'); return }
+    setFacilityMsg('Creating...')
+    const { data, error: insErr } = await supabase.from('storage_facilities').insert([{
+      name: newFacility.name, address: newFacility.address,
+      phone: newFacility.phone || null, email: newFacility.email || null, is_active: true
+    }]).select().single()
+    if (insErr) { setFacilityMsg('Error: ' + insErr.message); return }
+    await auditLog('create_facility', 'storage_facilities', data.id, newFacility)
+    setFacilityMsg('Facility added!')
+    setNewFacility({ name: '', address: '', phone: '', email: '' })
+    setShowAddFacility(false)
+    fetchAllFacilitiesManage()
+    fetchStorageFacilities()
+  }
+
   async function searchPlate() {
     if (!plate || searching) return
-    setSearching(true)
-    setResult(null)
-    setShowViolation(false)
-    setTicketTarget(null)
+    setSearching(true); setResult(null); setShowViolation(false); setTicketTarget(null)
     const clean = plate.toUpperCase().trim()
-
-    const { data: activeVeh } = await supabase
-      .from('vehicles').select('*').ilike('plate', clean).eq('is_active', true).single()
+    const { data: activeVeh } = await supabase.from('vehicles').select('*').ilike('plate', clean).eq('is_active', true).single()
     if (activeVeh) {
       if (selectedProperty && activeVeh.property?.toLowerCase() !== selectedProperty.name?.toLowerCase()) {
         setSearching(false); setResult({ status: 'otherproperty', data: activeVeh }); return
       }
       setSearching(false); setResult({ status: 'authorized', data: activeVeh }); return
     }
-
-    const { data: expiredVeh } = await supabase
-      .from('vehicles').select('*').ilike('plate', clean).eq('is_active', false).single()
+    const { data: expiredVeh } = await supabase.from('vehicles').select('*').ilike('plate', clean).eq('is_active', false).single()
     if (expiredVeh) { setSearching(false); setResult({ status: 'expired', data: expiredVeh }); return }
-
-    const { data: pass } = await supabase
-      .from('visitor_passes').select('*')
+    const { data: pass } = await supabase.from('visitor_passes').select('*')
       .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString()).single()
     setSearching(false)
     if (pass) setResult({ status: 'visitor', data: pass })
@@ -179,13 +329,9 @@ export default function CompanyAdminPortal() {
       }
     }
     const { data: newV, error: insErr } = await supabase.from('violations').insert([{
-      plate: plate.toUpperCase().trim(),
-      violation_type: violation.type,
-      location: violation.location,
-      notes: violation.notes,
-      property: violation.property,
-      driver_name: role?.email,
-      photos: photoUrls,
+      plate: plate.toUpperCase().trim(), violation_type: violation.type,
+      location: violation.location, notes: violation.notes,
+      property: violation.property, driver_name: role?.email, photos: photoUrls,
     }]).select().single()
     setSubmitting(false)
     if (insErr) { alert('Error: ' + insErr.message); return }
@@ -211,12 +357,8 @@ export default function CompanyAdminPortal() {
   }
 
   function openTicketFor(v: any) {
-    setTicketTarget(v)
-    setExpandedTicketId(v.id)
-    setSelectedStorage('')
-    setTowFee('')
-    setMileage('')
-    setVin('')
+    setTicketTarget(v); setExpandedTicketId(v.id)
+    setSelectedStorage(''); setTowFee(''); setMileage(''); setVin('')
   }
 
   function generateTicket() {
@@ -231,30 +373,16 @@ export default function CompanyAdminPortal() {
       `TOW TICKET — A1 Wrecker, LLC`,
       `Date/Time: ${new Date(v.created_at).toLocaleString()}`,
       `Ticket #: ${String(v.id).substring(0, 8).toUpperCase()}`,
-      ``,
-      `VEHICLE`,
-      `Plate: ${v.plate}`,
+      ``,`VEHICLE`,`Plate: ${v.plate}`,
       `Vehicle: ${[v.year, v.color, v.make, v.model].filter(Boolean).join(' ') || '—'}`,
-      `VIN: ${vin || v.vin || '—'}`,
-      ``,
-      `VIOLATION`,
-      `Type: ${v.violation_type || '—'}`,
-      `Location: ${v.location || '—'}`,
-      `Property: ${v.property || '—'}`,
-      `Notes: ${v.notes || 'None'}`,
-      ``,
-      `STORAGE / IMPOUND`,
-      `Facility: ${storage?.name || '—'}`,
-      `Address: ${storage?.address || '—'}`,
-      `Phone: ${storage?.phone || '—'}`,
-      ``,
-      `AUTHORIZED BY`,
-      `Company: ${role?.company || '—'}`,
-      ``,
-      `FEES`,
-      `Tow Fee: $${parseFloat(towFee || '0').toFixed(2)}`,
-      `Mileage Fee: $${parseFloat(mileage || '0').toFixed(2)}`,
-      `Total Due: $${total}`,
+      `VIN: ${vin || v.vin || '—'}`,``,`VIOLATION`,
+      `Type: ${v.violation_type || '—'}`,`Location: ${v.location || '—'}`,
+      `Property: ${v.property || '—'}`,`Notes: ${v.notes || 'None'}`,
+      ``,`STORAGE / IMPOUND`,`Facility: ${storage?.name || '—'}`,
+      `Address: ${storage?.address || '—'}`,`Phone: ${storage?.phone || '—'}`,
+      ``,`AUTHORIZED BY`,`Company: ${role?.company || '—'}`,
+      ``,`FEES`,`Tow Fee: $${parseFloat(towFee || '0').toFixed(2)}`,
+      `Mileage Fee: $${parseFloat(mileage || '0').toFixed(2)}`,`Total Due: $${total}`,
     ].join('\n'))
     const photosHtml = v.photos?.length
       ? `<div style="margin-top:20px"><p style="font-weight:bold;margin-bottom:8px">EVIDENCE PHOTOS</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${v.photos.map((u: string) => `<img src="${u}" style="width:100%;border-radius:4px;border:1px solid #ddd" onerror="this.style.display='none'">`).join('')}</div></div>`
@@ -264,8 +392,7 @@ export default function CompanyAdminPortal() {
       body{font-family:Arial,sans-serif;padding:28px;max-width:680px;margin:0 auto;color:#111;font-size:13px}
       .hdr{display:flex;align-items:center;gap:14px;margin-bottom:22px;padding-bottom:14px;border-bottom:3px solid #C9A227}
       .logo{width:64px;height:64px;border-radius:8px;border:2px solid #C9A227;object-fit:contain}
-      .sec{margin-bottom:18px}
-      .sh{font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:.08em;color:#777;margin-bottom:8px;padding-bottom:3px;border-bottom:1px solid #eee}
+      .sec{margin-bottom:18px}.sh{font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:.08em;color:#777;margin-bottom:8px;padding-bottom:3px;border-bottom:1px solid #eee}
       .g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
       .f label{font-size:10px;font-weight:bold;color:#555;text-transform:uppercase;letter-spacing:.05em;display:block}
       .f span{font-size:13px;color:#111;display:block;margin-top:1px}
@@ -291,53 +418,35 @@ export default function CompanyAdminPortal() {
         </div>
       </div>
       <div class="warn">⚠ This vehicle has been towed pursuant to Texas Transportation Code §683. Contact the storage facility below to recover your vehicle.</div>
-      <div class="sec">
-        <div class="sh">Vehicle Information</div>
-        <div class="g2">
-          <div class="f"><label>License Plate</label><span class="plate">${v.plate}</span></div>
-          <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
-          <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
-          <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
-          <div class="f"><label>VIN</label><span>${vin || v.vin || '—'}</span></div>
-        </div>
-      </div>
-      <div class="sec">
-        <div class="sh">Violation</div>
-        <div class="g2">
-          <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
-          <div class="f"><label>Location / Space</label><span>${v.location || '—'}</span></div>
-          <div class="f" style="grid-column:span 2"><label>Notes</label><span>${v.notes || 'No additional notes.'}</span></div>
-        </div>
-      </div>
-      <div class="sec">
-        <div class="sh">Property</div>
-        <div class="g2">
-          <div class="f"><label>Authorized By</label><span>${v.property || '—'}</span></div>
-          <div class="f"><label>Company</label><span>${role?.company || '—'}</span></div>
-        </div>
-      </div>
-      <div class="sec">
-        <div class="sh">Storage / Impound</div>
-        <div class="g2">
-          <div class="f"><label>Facility</label><span>${storage?.name || '—'}</span></div>
-          <div class="f"><label>Phone</label><span>${storage?.phone || '—'}</span></div>
-          <div class="f" style="grid-column:span 2"><label>Address</label><span>${storage?.address || '—'}</span></div>
-        </div>
-      </div>
+      <div class="sec"><div class="sh">Vehicle Information</div><div class="g2">
+        <div class="f"><label>License Plate</label><span class="plate">${v.plate}</span></div>
+        <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
+        <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
+        <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
+        <div class="f"><label>VIN</label><span>${vin || v.vin || '—'}</span></div>
+      </div></div>
+      <div class="sec"><div class="sh">Violation</div><div class="g2">
+        <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
+        <div class="f"><label>Location / Space</label><span>${v.location || '—'}</span></div>
+        <div class="f" style="grid-column:span 2"><label>Notes</label><span>${v.notes || 'No additional notes.'}</span></div>
+      </div></div>
+      <div class="sec"><div class="sh">Property</div><div class="g2">
+        <div class="f"><label>Authorized By</label><span>${v.property || '—'}</span></div>
+        <div class="f"><label>Company</label><span>${role?.company || '—'}</span></div>
+      </div></div>
+      <div class="sec"><div class="sh">Storage / Impound</div><div class="g2">
+        <div class="f"><label>Facility</label><span>${storage?.name || '—'}</span></div>
+        <div class="f"><label>Phone</label><span>${storage?.phone || '—'}</span></div>
+        <div class="f" style="grid-column:span 2"><label>Address</label><span>${storage?.address || '—'}</span></div>
+      </div></div>
       ${(parseFloat(towFee || '0') > 0 || parseFloat(mileage || '0') > 0) ? `
-      <div class="sec">
-        <div class="sh">Fees</div>
-        <div class="g2">
-          ${parseFloat(towFee || '0') > 0 ? `<div class="f"><label>Tow Fee</label><span>$${parseFloat(towFee).toFixed(2)}</span></div>` : ''}
-          ${parseFloat(mileage || '0') > 0 ? `<div class="f"><label>Mileage Fee</label><span>$${parseFloat(mileage).toFixed(2)}</span></div>` : ''}
-          <div class="f"><label>Total Due</label><span style="font-size:16px;font-weight:bold">$${total}</span></div>
-        </div>
-      </div>` : ''}
+      <div class="sec"><div class="sh">Fees</div><div class="g2">
+        ${parseFloat(towFee || '0') > 0 ? `<div class="f"><label>Tow Fee</label><span>$${parseFloat(towFee).toFixed(2)}</span></div>` : ''}
+        ${parseFloat(mileage || '0') > 0 ? `<div class="f"><label>Mileage Fee</label><span>$${parseFloat(mileage).toFixed(2)}</span></div>` : ''}
+        <div class="f"><label>Total Due</label><span style="font-size:16px;font-weight:bold">$${total}</span></div>
+      </div></div>` : ''}
       ${photosHtml}
-      <div class="sig-wrap">
-        <div><div class="sig-line">Authorized Signature</div></div>
-        <div><div class="sig-line">Date</div></div>
-      </div>
+      <div class="sig-wrap"><div><div class="sig-line">Authorized Signature</div></div><div><div class="sig-line">Date</div></div></div>
       <div class="ftr">A1 Wrecker, LLC &middot; Houston's #1 Towing &amp; Recovery &middot; a1wreckerllc.net<br>Generated ${new Date().toLocaleString()}</div>
       <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center">
         <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
@@ -355,18 +464,13 @@ export default function CompanyAdminPortal() {
         <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'14px', margin:'0 0 14px' }}>
           Generate Tow Ticket — <span style={{ fontFamily:'Courier New' }}>{ticketTarget.plate}</span>
         </p>
-
         <label style={lbl}>Storage Facility *</label>
         <select value={selectedStorage} onChange={e => setSelectedStorage(e.target.value)} style={inp}>
           <option value=''>Select storage facility...</option>
-          {storageFacilities.map((s, i) => (
-            <option key={i} value={s.id}>{s.name} — {s.address}</option>
-          ))}
+          {storageFacilities.map((s, i) => <option key={i} value={s.id}>{s.name} — {s.address}</option>)}
         </select>
-
         <label style={lbl}>VIN</label>
         <input value={vin} onChange={e => setVin(e.target.value)} placeholder="17-character VIN" style={inp} />
-
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
           <div>
             <label style={lbl}>Tow Fee ($)</label>
@@ -377,13 +481,11 @@ export default function CompanyAdminPortal() {
             <input type="number" value={mileage} onChange={e => setMileage(e.target.value)} placeholder="0.00" style={inp} />
           </div>
         </div>
-
         {(towFee || mileage) && (
           <p style={{ color:'#C9A227', fontSize:'12px', margin:'-6px 0 10px', textAlign:'right', fontWeight:'bold' }}>
             Total: ${(parseFloat(towFee || '0') + parseFloat(mileage || '0')).toFixed(2)}
           </p>
         )}
-
         <div style={{ display:'flex', gap:'8px' }}>
           <button onClick={generateTicket} disabled={!selectedStorage}
             style={{ flex:1, padding:'11px', background:!selectedStorage ? '#2a2f3d' : '#C9A227', color:!selectedStorage ? '#555' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:!selectedStorage ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
@@ -416,28 +518,36 @@ export default function CompanyAdminPortal() {
     color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em'
   }
 
+  const msgBox = (msg: string) => {
+    const isErr = msg.startsWith('Error') || msg.includes('failed')
+    return (
+      <div style={{ background: isErr ? '#3a1a1a' : '#1a3a1a', border: `1px solid ${isErr ? '#b71c1c' : '#2e7d32'}`, borderRadius:'8px', padding:'10px 12px', marginBottom:'10px' }}>
+        <p style={{ color: isErr ? '#f44336' : '#4caf50', fontSize:'12px', margin:'0', whiteSpace:'pre-wrap', wordBreak:'break-all' }}>{msg}</p>
+      </div>
+    )
+  }
+
+  const addBtn = (label: string, onClick: () => void) => (
+    <button onClick={onClick}
+      style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#C9A227', border:'1px dashed #C9A227', borderRadius:'8px', cursor:'pointer', fontSize:'13px', fontWeight:'bold', fontFamily:'Arial', marginBottom:'12px' }}>
+      {label}
+    </button>
+  )
+
   if (loading) return (
     <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif' }}>
       <p style={{ color:'#888' }}>Loading...</p>
     </main>
   )
 
-  if (error) return (
-    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-      <div style={{ textAlign:'center' }}>
-        <p style={{ color:'#f44336', fontSize:'14px', marginBottom:'16px' }}>{error}</p>
-        <a href="/login" style={{ color:'#C9A227', fontSize:'13px' }}>← Back to Login</a>
-      </div>
-    </main>
-  )
 
   const fvs = filteredViolations()
+  const isCA = role?.role === 'company_admin'
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       <div style={{ maxWidth:'540px', margin:'0 auto' }}>
 
-        {/* Header */}
         <div style={{ marginBottom:'16px', textAlign:'center' }}>
           <img src="/logo.jpeg" alt="A1 Wrecker"
             style={{ width:'60px', height:'60px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 8px' }}
@@ -446,7 +556,6 @@ export default function CompanyAdminPortal() {
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Company Admin Portal</p>
         </div>
 
-        {/* User bar */}
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div>
             <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>{role?.company || 'Company Admin'}</p>
@@ -458,20 +567,15 @@ export default function CompanyAdminPortal() {
           </button>
         </div>
 
-        {/* Property switcher */}
         {properties.length > 1 && (
           <div style={{ marginBottom:'14px' }}>
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Viewing Property</label>
-            <select
-              onChange={e => switchProperty(e.target.value)}
-              value={selectedProperty?.name || ''}
-              style={{ ...inp, marginTop:'6px', fontSize:'13px' }}>
+            <select onChange={e => switchProperty(e.target.value)} value={selectedProperty?.name || ''} style={{ ...inp, marginTop:'6px', fontSize:'13px' }}>
               {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
             </select>
           </div>
         )}
 
-        {/* Property card */}
         {selectedProperty && (
           <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px' }}>
             <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0' }}>{selectedProperty.name}</p>
@@ -479,7 +583,6 @@ export default function CompanyAdminPortal() {
           </div>
         )}
 
-        {/* Stats */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px', marginBottom:'14px' }}>
           {[
             { label:'Vehicles', value:stats.total_vehicles, color:'#C9A227' },
@@ -494,12 +597,12 @@ export default function CompanyAdminPortal() {
           ))}
         </div>
 
-        {/* Tabs */}
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
           <button style={tab('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
           <button style={tab('lookup')} onClick={() => setActiveTab('lookup')}>Plate Lookup</button>
           <button style={tab('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tab('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
+          <button style={tab('manage')} onClick={() => { setActiveTab('manage'); if (!manageLoaded) loadManageData() }}>Manage</button>
         </div>
 
         {/* ── OVERVIEW ── */}
@@ -539,12 +642,8 @@ export default function CompanyAdminPortal() {
           <div>
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'22px', marginBottom:'14px' }}>
               <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.1em' }}>License Plate</label>
-              <input
-                value={plate}
-                onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null) }}
-                onKeyDown={e => e.key === 'Enter' && searchPlate()}
-                placeholder="ABC1234"
-                maxLength={10}
+              <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null) }}
+                onKeyDown={e => e.key === 'Enter' && searchPlate()} placeholder="ABC1234" maxLength={10}
                 style={{ display:'block', width:'100%', marginTop:'8px', padding:'16px', fontSize:'28px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.12em', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box', textTransform:'uppercase' }}
               />
               <button onClick={searchPlate} disabled={searching || !plate}
@@ -612,19 +711,16 @@ export default function CompanyAdminPortal() {
                 </div>
               )}
 
-              {/* Violation form */}
               {showViolation && (
                 <div style={{ marginTop:'14px', background:'#0f0505', border:'1px solid #991b1b', borderRadius:'10px', padding:'16px' }}>
                   <p style={{ color:'#f44336', fontWeight:'bold', fontSize:'14px', margin:'0 0 14px' }}>
                     Issue Violation — <span style={{ fontFamily:'Courier New' }}>{plate}</span>
                   </p>
-
                   <label style={lbl}>Property *</label>
                   <select value={violation.property} onChange={e => setViolation({ ...violation, property: e.target.value })} style={inp}>
                     <option value=''>Select property...</option>
                     {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
                   </select>
-
                   <label style={lbl}>Violation Type *</label>
                   <select value={violation.type} onChange={e => setViolation({ ...violation, type: e.target.value })} style={inp}>
                     <option value=''>Select type...</option>
@@ -637,15 +733,11 @@ export default function CompanyAdminPortal() {
                     <option>Double Parked</option>
                     <option>Abandoned Vehicle</option>
                   </select>
-
                   <label style={lbl}>Space / Location</label>
                   <input value={violation.location} onChange={e => setViolation({ ...violation, location: e.target.value })} placeholder="e.g. Space A-14, North lot" style={inp} />
-
                   <label style={lbl}>Notes</label>
                   <textarea value={violation.notes} onChange={e => setViolation({ ...violation, notes: e.target.value })}
-                    placeholder="Additional details..."
-                    style={{ ...inp, minHeight:'60px', resize:'vertical' as const }} />
-
+                    placeholder="Additional details..." style={{ ...inp, minHeight:'60px', resize:'vertical' as const }} />
                   <div style={{ display:'flex', gap:'8px' }}>
                     <button onClick={submitViolation} disabled={submitting}
                       style={{ flex:1, padding:'11px', background:submitting ? '#555' : '#991b1b', color:'white', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:submitting ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
@@ -659,8 +751,6 @@ export default function CompanyAdminPortal() {
                 </div>
               )}
             </div>
-
-            {/* Tow ticket after violation submit */}
             {ticketTarget && activeTab === 'lookup' && renderTicketForm()}
           </div>
         )}
@@ -668,9 +758,7 @@ export default function CompanyAdminPortal() {
         {/* ── VIOLATIONS ── */}
         {activeTab === 'violations' && (
           <div>
-            <input
-              value={violationSearch}
-              onChange={e => setViolationSearch(e.target.value)}
+            <input value={violationSearch} onChange={e => setViolationSearch(e.target.value)}
               placeholder="Search plate, violation type, location..."
               style={{ ...inp, fontSize:'13px', padding:'11px 12px', marginBottom:'10px' }}
             />
@@ -682,11 +770,7 @@ export default function CompanyAdminPortal() {
                 </button>
               ))}
             </div>
-
-            <p style={{ color:'#444', fontSize:'11px', margin:'0 0 10px', textAlign:'right' }}>
-              {fvs.length} result{fvs.length !== 1 ? 's' : ''}
-            </p>
-
+            <p style={{ color:'#444', fontSize:'11px', margin:'0 0 10px', textAlign:'right' }}>{fvs.length} result{fvs.length !== 1 ? 's' : ''}</p>
             {fvs.length === 0 ? (
               <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}>
                 <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No violations found for this period</p>
@@ -708,7 +792,6 @@ export default function CompanyAdminPortal() {
                   {v.driver_name && <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Issued By</span><br /><span style={{ color:'#aaa' }}>{v.driver_name}</span></div>}
                   {v.notes && <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Notes</span><br /><span style={{ color:'#aaa' }}>{v.notes}</span></div>}
                 </div>
-
                 {v.photos && v.photos.length > 0 && (
                   <div style={{ marginBottom:'10px' }}>
                     <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', margin:'0 0 6px' }}>Evidence Photos</p>
@@ -721,13 +804,10 @@ export default function CompanyAdminPortal() {
                     </div>
                   </div>
                 )}
-
-                <button
-                  onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
+                <button onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
                   style={{ width:'100%', padding:'9px', background:expandedTicketId === v.id ? '#1a1200' : '#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
                   {expandedTicketId === v.id ? '▲ Close Ticket' : 'Generate Tow Ticket'}
                 </button>
-
                 {expandedTicketId === v.id && renderTicketForm()}
               </div>
             ))}
@@ -756,6 +836,263 @@ export default function CompanyAdminPortal() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ── MANAGE ── */}
+        {activeTab === 'manage' && (
+          <div>
+            {/* Sub-tab bar */}
+            <div style={{ display:'flex', gap:'3px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
+              {(['properties', 'users', 'drivers', 'storage'] as const).map(s => (
+                <button key={s} onClick={() => setManageSection(s)} style={{
+                  flex:1, padding:'7px 4px', border:'none', borderRadius:'6px', cursor:'pointer',
+                  fontWeight:'bold', fontSize:'10px', fontFamily:'Arial, sans-serif',
+                  background: manageSection === s ? '#C9A227' : 'transparent',
+                  color: manageSection === s ? '#0f1117' : '#888',
+                }}>
+                  {s === 'properties' ? 'Properties' : s === 'users' ? 'Users' : s === 'drivers' ? 'Drivers' : 'Storage'}
+                </button>
+              ))}
+            </div>
+
+            {/* SECTION 1 — Properties */}
+            {manageSection === 'properties' && (
+              <div>
+                {propMsg && msgBox(propMsg)}
+                {isCA && addBtn('+ Add Property', () => { setShowAddProperty(true); setPropMsg('') })}
+
+                {showAddProperty && isCA && (
+                  <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Property</p>
+                    {[
+                      { key:'name', label:'Property Name *', placeholder:'Sunset Apartments' },
+                      { key:'address', label:'Address', placeholder:'123 Main St' },
+                      { key:'city', label:'City', placeholder:'Houston' },
+                      { key:'state', label:'State', placeholder:'TX' },
+                      { key:'zip', label:'ZIP Code', placeholder:'77001' },
+                      { key:'total_spaces', label:'Total Spaces', placeholder:'120' },
+                      { key:'pm_name', label:'Property Manager Name', placeholder:'John Smith' },
+                      { key:'pm_phone', label:'PM Phone', placeholder:'(713) 555-0123' },
+                      { key:'pm_email', label:'PM Email', placeholder:'pm@example.com' },
+                    ].map(f => (
+                      <div key={f.key}>
+                        <label style={lbl}>{f.label}</label>
+                        <input value={(newProperty as any)[f.key]} onChange={e => setNewProperty({ ...newProperty, [f.key]: e.target.value })} placeholder={f.placeholder} style={inp} />
+                      </div>
+                    ))}
+                    <div style={{ display:'flex', gap:'8px' }}>
+                      <button onClick={saveProperty} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Save Property</button>
+                      <button onClick={() => { setShowAddProperty(false); setPropMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {properties.map((prop, i) => (
+                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'4px' }}>
+                      <div style={{ flex:1 }}>
+                        <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>{prop.name}</p>
+                        {prop.address && <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{prop.address}{prop.city ? `, ${prop.city}` : ''}{prop.state ? ` ${prop.state}` : ''}{prop.zip ? ` ${prop.zip}` : ''}</p>}
+                        {prop.pm_name && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>PM: {prop.pm_name}{prop.pm_phone ? ` · ${prop.pm_phone}` : ''}</p>}
+                        {prop.total_spaces && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{prop.total_spaces} spaces</p>}
+                      </div>
+                      <span style={{ background: prop.is_active ? '#1a3a1a' : '#2a1a1a', color: prop.is_active ? '#4caf50' : '#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold', flexShrink:0 }}>
+                        {prop.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    {isCA && (
+                      <div style={{ display:'flex', gap:'6px', marginTop:'10px' }}>
+                        <button onClick={() => { setEditingProperty({ ...prop, total_spaces: prop.total_spaces ? String(prop.total_spaces) : '' }); setPropMsg('') }}
+                          style={{ flex:1, padding:'7px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Edit</button>
+                        <button onClick={() => togglePropertyActive(prop)}
+                          style={{ flex:1, padding:'7px', background: prop.is_active ? '#3a1a1a' : '#1a3a1a', color: prop.is_active ? '#f44336' : '#4caf50', border:`1px solid ${prop.is_active ? '#b71c1c' : '#2e7d32'}`, borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                          {prop.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </div>
+                    )}
+                    {editingProperty?.id === prop.id && isCA && (
+                      <div style={{ marginTop:'12px', padding:'12px', background:'#0d1520', borderRadius:'8px', border:'1px solid #3a4055' }}>
+                        {[
+                          { key:'name', label:'Name *' }, { key:'address', label:'Address' },
+                          { key:'city', label:'City' }, { key:'state', label:'State' },
+                          { key:'zip', label:'ZIP' }, { key:'total_spaces', label:'Total Spaces' },
+                          { key:'pm_name', label:'PM Name' }, { key:'pm_phone', label:'PM Phone' },
+                          { key:'pm_email', label:'PM Email' },
+                        ].map(f => (
+                          <div key={f.key}>
+                            <label style={lbl}>{f.label}</label>
+                            <input value={(editingProperty as any)[f.key] || ''} onChange={e => setEditingProperty({ ...editingProperty, [f.key]: e.target.value })} style={inp} />
+                          </div>
+                        ))}
+                        <div style={{ display:'flex', gap:'6px' }}>
+                          <button onClick={updateProperty} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Save Changes</button>
+                          <button onClick={() => setEditingProperty(null)} style={{ padding:'9px 10px', background:'#1e2535', color:'#aaa', fontSize:'11px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {properties.length === 0 && <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No properties found</p></div>}
+              </div>
+            )}
+
+            {/* SECTION 2 — Users */}
+            {manageSection === 'users' && (
+              <div>
+                {userMsg && msgBox(userMsg)}
+                {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg('') })}
+
+                {showAddUser && isCA && (
+                  <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New User</p>
+                    <label style={lbl}>Email *</label>
+                    <input type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="user@example.com" style={inp} />
+                    <label style={lbl}>Password *</label>
+                    <input type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} placeholder="Temporary password" style={inp} />
+                    <label style={lbl}>Role *</label>
+                    <select value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })} style={inp}>
+                      <option value="manager">Manager</option>
+                      <option value="leasing_agent">Leasing Agent</option>
+                      <option value="driver">Driver</option>
+                      <option value="resident">Resident</option>
+                    </select>
+                    <label style={lbl}>Property</label>
+                    <select value={newUser.property} onChange={e => setNewUser({ ...newUser, property: e.target.value })} style={inp}>
+                      <option value="">No specific property</option>
+                      {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
+                    </select>
+                    <div style={{ display:'flex', gap:'8px' }}>
+                      <button onClick={createUser} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Create User</button>
+                      <button onClick={() => { setShowAddUser(false); setUserMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {companyUsers.map((u, i) => (
+                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                    <div>
+                      <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.email}</p>
+                      {u.property && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{u.property}</p>}
+                    </div>
+                    <span style={{ background:'#1e2535', color:'#C9A227', padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', textTransform:'capitalize' as const }}>
+                      {u.role.replace('_', ' ')}
+                    </span>
+                  </div>
+                ))}
+                {companyUsers.length === 0 && <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No users found</p></div>}
+              </div>
+            )}
+
+            {/* SECTION 3 — Drivers */}
+            {manageSection === 'drivers' && (
+              <div>
+                {driverMsg && msgBox(driverMsg)}
+                {isCA && addBtn('+ Add Driver', () => { setShowAddDriver(true); setDriverMsg('') })}
+
+                {showAddDriver && isCA && (
+                  <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Driver</p>
+                    <label style={lbl}>Full Name *</label>
+                    <input value={newDriver.name} onChange={e => setNewDriver({ ...newDriver, name: e.target.value })} placeholder="Jane Doe" style={inp} />
+                    <label style={lbl}>Email *</label>
+                    <input type="email" value={newDriver.email} onChange={e => setNewDriver({ ...newDriver, email: e.target.value })} placeholder="driver@example.com" style={inp} />
+                    <label style={lbl}>Phone</label>
+                    <input value={newDriver.phone} onChange={e => setNewDriver({ ...newDriver, phone: e.target.value })} placeholder="(713) 555-0123" style={inp} />
+                    <label style={lbl}>Operator License</label>
+                    <input value={newDriver.operator_license} onChange={e => setNewDriver({ ...newDriver, operator_license: e.target.value })} placeholder="License number" style={inp} />
+                    <label style={lbl}>Assigned Properties</label>
+                    <div style={{ marginBottom:'10px' }}>
+                      {properties.map((p, i) => (
+                        <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'5px 0', cursor:'pointer' }}>
+                          <input type="checkbox"
+                            checked={newDriver.assigned_properties.includes(p.name)}
+                            onChange={e => {
+                              if (e.target.checked) setNewDriver({ ...newDriver, assigned_properties: [...newDriver.assigned_properties, p.name] })
+                              else setNewDriver({ ...newDriver, assigned_properties: newDriver.assigned_properties.filter(n => n !== p.name) })
+                            }}
+                          />
+                          <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display:'flex', gap:'8px' }}>
+                      <button onClick={createDriver} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Create Driver</button>
+                      <button onClick={() => { setShowAddDriver(false); setDriverMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {companyDrivers.map((d, i) => (
+                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                      <div>
+                        <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{d.name}</p>
+                        <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{d.email}</p>
+                        {d.phone && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{d.phone}</p>}
+                        {d.operator_license && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>Lic: {d.operator_license}</p>}
+                      </div>
+                      <span style={{ background: d.is_active ? '#1a3a1a' : '#2a1a1a', color: d.is_active ? '#4caf50' : '#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
+                        {d.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    {isCA && (
+                      <button onClick={() => toggleDriverActive(d)}
+                        style={{ marginTop:'8px', width:'100%', padding:'7px', background: d.is_active ? '#3a1a1a' : '#1a3a1a', color: d.is_active ? '#f44336' : '#4caf50', border:`1px solid ${d.is_active ? '#b71c1c' : '#2e7d32'}`, borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                        {d.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {companyDrivers.length === 0 && <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No drivers found</p></div>}
+              </div>
+            )}
+
+            {/* SECTION 4 — Storage Facilities */}
+            {manageSection === 'storage' && (
+              <div>
+                <div style={{ background:'#1a1e2e', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 12px', marginBottom:'12px' }}>
+                  <p style={{ color:'#888', fontSize:'11px', margin:'0' }}>Storage facilities are shared across all companies.</p>
+                </div>
+                {facilityMsg && msgBox(facilityMsg)}
+                {isCA && addBtn('+ Add Storage Facility', () => { setShowAddFacility(true); setFacilityMsg('') })}
+
+                {showAddFacility && isCA && (
+                  <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Storage Facility</p>
+                    <label style={lbl}>Facility Name *</label>
+                    <input value={newFacility.name} onChange={e => setNewFacility({ ...newFacility, name: e.target.value })} placeholder="Houston Impound" style={inp} />
+                    <label style={lbl}>Address *</label>
+                    <input value={newFacility.address} onChange={e => setNewFacility({ ...newFacility, address: e.target.value })} placeholder="456 Storage Blvd, Houston TX" style={inp} />
+                    <label style={lbl}>Phone</label>
+                    <input value={newFacility.phone} onChange={e => setNewFacility({ ...newFacility, phone: e.target.value })} placeholder="(713) 555-0100" style={inp} />
+                    <label style={lbl}>Email</label>
+                    <input type="email" value={newFacility.email} onChange={e => setNewFacility({ ...newFacility, email: e.target.value })} placeholder="storage@example.com" style={inp} />
+                    <div style={{ display:'flex', gap:'8px' }}>
+                      <button onClick={createFacility} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Add Facility</button>
+                      <button onClick={() => { setShowAddFacility(false); setFacilityMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {allFacilities.map((f, i) => (
+                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                      <div>
+                        <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{f.name}</p>
+                        <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{f.address}</p>
+                        {f.phone && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{f.phone}</p>}
+                        {f.email && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{f.email}</p>}
+                      </div>
+                      <span style={{ background: f.is_active ? '#1a3a1a' : '#2a1a1a', color: f.is_active ? '#4caf50' : '#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
+                        {f.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                {allFacilities.length === 0 && <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No storage facilities found</p></div>}
+              </div>
+            )}
           </div>
         )}
 
