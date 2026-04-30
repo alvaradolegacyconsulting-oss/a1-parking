@@ -20,6 +20,7 @@ export default function ManagerPortal() {
   const [editingResident, setEditingResident] = useState<any>(null)
   const [allProperties, setAllProperties] = useState<any[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
+  const [isReadOnly, setIsReadOnly] = useState(false)
   const [spaces, setSpaces] = useState<any[]>([])
   const [editingSpace, setEditingSpace] = useState<any>(null)
   const [spaceError, setSpaceError] = useState('')
@@ -56,7 +57,8 @@ export default function ManagerPortal() {
         fetchAll(props[0].name)
       }
       setLoading(false)
-    } else if (roleData.role === 'manager') {
+    } else if (roleData.role === 'manager' || roleData.role === 'leasing_agent') {
+      if (roleData.role === 'leasing_agent') setIsReadOnly(true)
       const { data, error } = await supabase
         .from('properties')
         .select('*')
@@ -325,6 +327,13 @@ export default function ManagerPortal() {
           </div>
         </div>
 
+        {isReadOnly && (
+          <div style={{ background:'#1a1a2a', border:'1px solid #3a4055', borderRadius:'8px', padding:'10px 14px', marginBottom:'14px', display:'flex', alignItems:'center', gap:'8px' }}>
+            <span style={{ color:'#C9A227', fontSize:'13px' }}>⚠</span>
+            <p style={{ color:'#aaa', fontSize:'12px', margin:'0' }}>Read-Only Access — Contact your Property Manager to make changes.</p>
+          </div>
+        )}
+
         <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px', marginBottom:'14px' }}>
           {[
             { label:'Vehicles', value: stats.total_vehicles, color:'#C9A227' },
@@ -380,10 +389,12 @@ export default function ManagerPortal() {
         {activeTab === 'vehicles' && (
           <div>
             <input value={vehicleSearch} onChange={e => setVehicleSearch(e.target.value)} placeholder="Search plate, unit, make, model, color..." style={{ ...inputStyle, marginBottom:'12px' }} />
-            <button onClick={() => setShowAddVehicle(!showAddVehicle)}
-              style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
-              + Add Vehicle
-            </button>
+            {!isReadOnly && (
+              <button onClick={() => setShowAddVehicle(!showAddVehicle)}
+                style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
+                + Add Vehicle
+              </button>
+            )}
             {showAddVehicle && (
               <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Add New Vehicle</p>
@@ -413,7 +424,7 @@ export default function ManagerPortal() {
                   </div>
                   <div style={{ textAlign:'right' }}>
                     <span style={{ background: v.is_active ? '#1a3a1a' : '#3a1a1a', color: v.is_active ? '#4caf50' : '#f44336', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold', display:'block', marginBottom:'6px' }}>{v.is_active ? 'Active' : 'Inactive'}</span>
-                    <button onClick={() => removeVehicle(v.id)} style={{ padding:'4px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Remove</button>
+                    {!isReadOnly && <button onClick={() => removeVehicle(v.id)} style={{ padding:'4px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Remove</button>}
                   </div>
                 </div>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px', fontSize:'11px' }}>
@@ -490,11 +501,13 @@ export default function ManagerPortal() {
                         }}>{s.status}</span>
                         <span style={{ color:'#aaa', fontSize:'12px' }}>{s.assigned_to_unit || '—'}</span>
                         <span style={{ color:'#aaa', fontSize:'12px', fontFamily: s.assigned_to_plate ? 'Courier New' : undefined }}>{s.assigned_to_plate || '—'}</span>
-                        <button
-                          onClick={() => { setEditingSpace({ ...s }); setSpaceError('') }}
-                          style={{ padding:'3px 7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', fontFamily:'Arial' }}>
-                          Edit
-                        </button>
+                        {!isReadOnly && (
+                          <button
+                            onClick={() => { setEditingSpace({ ...s }); setSpaceError('') }}
+                            style={{ padding:'3px 7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', fontFamily:'Arial' }}>
+                            Edit
+                          </button>
+                        )}
                       </div>
 
                       {/* Inline edit form */}
@@ -572,10 +585,12 @@ export default function ManagerPortal() {
         {activeTab === 'residents' && (
           <div>
             <input value={residentSearch} onChange={e => setResidentSearch(e.target.value)} placeholder="Search name, email, unit, phone..." style={{ ...inputStyle, marginBottom:'12px' }} />
-            <button onClick={() => setShowAddResident(!showAddResident)}
-              style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
-              + Add Resident
-            </button>
+            {!isReadOnly && (
+              <button onClick={() => setShowAddResident(!showAddResident)}
+                style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
+                + Add Resident
+              </button>
+            )}
             {showAddResident && (
               <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Add New Resident</p>
@@ -675,12 +690,14 @@ export default function ManagerPortal() {
                   <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{r.space || '—'}</span></div>
                   <div><span style={{ color:'#555' }}>Lease End</span><br/><span style={{ color:'#aaa' }}>{r.lease_end ? new Date(r.lease_end).toLocaleDateString() : '—'}</span></div>
                 </div>
-                <div style={{ display:'flex', gap:'6px' }}>
-                  <button onClick={() => { setEditingResident(r); setShowAddVehicle(false) }}
-                    style={{ flex:1, padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>Edit</button>
-                  {r.is_active && <button onClick={() => deactivateResident(r.id)}
-                    style={{ padding:'7px 12px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Deactivate</button>}
-                </div>
+                {!isReadOnly && (
+                  <div style={{ display:'flex', gap:'6px' }}>
+                    <button onClick={() => { setEditingResident(r); setShowAddVehicle(false) }}
+                      style={{ flex:1, padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>Edit</button>
+                    {r.is_active && <button onClick={() => deactivateResident(r.id)}
+                      style={{ padding:'7px 12px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Deactivate</button>}
+                  </div>
+                )}
               </div>
             ))}
           </div>

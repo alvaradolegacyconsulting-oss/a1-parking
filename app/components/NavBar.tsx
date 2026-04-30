@@ -26,6 +26,9 @@ const NAV_LINKS: Record<string, { label: string; href: string }[]> = {
   resident: [
     { label: 'My Account', href: '/resident' },
   ],
+  leasing_agent: [
+    { label: 'Dashboard', href: '/manager' },
+  ],
 }
 
 export default function NavBar() {

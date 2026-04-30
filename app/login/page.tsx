@@ -55,6 +55,8 @@ export default function Login() {
       window.location.href = '/company_admin'
     } else if (roleData.role === 'manager') {
       window.location.href = '/manager'
+    } else if (roleData.role === 'leasing_agent') {
+      window.location.href = '/manager'
     } else if (roleData.role === 'driver') {
       window.location.href = '/driver'
     } else if (roleData.role === 'resident') {
