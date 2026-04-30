@@ -13,6 +13,11 @@ export default function ResidentPortal() {
   const [editForm, setEditForm] = useState<any>({})
   const [showVisitorForm, setShowVisitorForm] = useState(false)
   const [visitorForm, setVisitorForm] = useState({ plate: '', name: '', vehicle_desc: '', duration: '4' })
+  const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null)
+  const [editingVehicle, setEditingVehicle] = useState<any>({})
+  const [showRequestForm, setShowRequestForm] = useState(false)
+  const [newVehicle, setNewVehicle] = useState({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
+  const [requestMsg, setRequestMsg] = useState('')
 
   useEffect(() => { loadResident() }, [])
 
@@ -73,6 +78,44 @@ export default function ResidentPortal() {
       setResident(editForm)
       setEditing(false)
       alert('Profile updated!')
+    }
+  }
+
+  async function saveVehicle() {
+    const { error } = await supabase.from('vehicles').update({
+      plate: editingVehicle.plate.toUpperCase().trim(),
+      state: editingVehicle.state,
+      make: editingVehicle.make,
+      model: editingVehicle.model,
+      year: editingVehicle.year,
+      color: editingVehicle.color,
+      space: editingVehicle.space,
+    }).eq('id', editingVehicle.id)
+    if (error) { alert('Error: ' + error.message) }
+    else { setEditingVehicleId(null); fetchVehicles(resident.unit, resident.property) }
+  }
+
+  async function requestVehicle() {
+    if (!newVehicle.plate) { alert('Plate is required'); return }
+    const { error } = await supabase.from('vehicles').insert([{
+      plate: newVehicle.plate.toUpperCase().trim(),
+      state: newVehicle.state,
+      make: newVehicle.make,
+      model: newVehicle.model,
+      year: parseInt(newVehicle.year) || null,
+      color: newVehicle.color,
+      space: newVehicle.space,
+      unit: resident.unit,
+      property: resident.property,
+      is_active: false,
+      status: 'pending',
+    }])
+    if (error) { alert('Error: ' + error.message) }
+    else {
+      setRequestMsg('Vehicle submitted for Property Manager approval. You will see the status update here.')
+      setShowRequestForm(false)
+      setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
+      fetchVehicles(resident.unit, resident.property)
     }
   }
 
@@ -206,32 +249,120 @@ export default function ResidentPortal() {
         {/* VEHICLES TAB */}
         {activeTab === 'vehicles' && (
           <div>
-            {vehicles.length === 0 ? (
-              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
-                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No vehicles registered yet.</p>
-                <p style={{ color:'#555', fontSize:'12px', margin:'8px 0 0' }}>Contact your property manager to register a vehicle.</p>
-              </div>
-            ) : (
-              vehicles.map((v, i) => (
-                <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'10px' }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
-                    <p style={{ color:'white', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
-                    <span style={{ background: v.is_active ? '#1a3a1a' : '#3a1a1a', color: v.is_active ? '#4caf50' : '#f44336', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>
-                      {v.is_active ? 'Active' : 'Expired'}
-                    </span>
-                  </div>
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', fontSize:'12px' }}>
-                    <div><span style={{ color:'#555' }}>Vehicle</span><br/><span style={{ color:'#aaa' }}>{v.color} {v.make} {v.model} {v.year}</span></div>
-                    <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
-                    <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state}</span></div>
-                    <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
-                  </div>
-                </div>
-              ))
-            )}
-            <div style={{ background:'#161b26', border:'1px dashed #2a2f3d', borderRadius:'10px', padding:'14px', textAlign:'center', marginTop:'8px' }}>
-              <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Need to add or update a vehicle? Contact your property manager.</p>
-            </div>
+            {(() => {
+              const inp: React.CSSProperties = { display:'block', width:'100%', marginTop:'6px', marginBottom:'10px', padding:'9px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'12px', boxSizing:'border-box', outline:'none' }
+              const lbl: React.CSSProperties = { color:'#aaa', fontSize:'10px', textTransform:'uppercase' as const, letterSpacing:'0.08em' }
+              const states = ['TX','AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','UT','VT','VA','WA','WV','WI','WY']
+
+              function statusBadge(v: any) {
+                if (v.status === 'pending') return { bg:'#2a1e00', color:'#C9A227', border:'#C9A227', text:'Pending Approval' }
+                if (v.status === 'declined') return { bg:'#3a1a1a', color:'#f44336', border:'#b71c1c', text:'Declined' }
+                return { bg:'#1a3a1a', color:'#4caf50', border:'#2e7d32', text:'Active' }
+              }
+
+              return (
+                <>
+                  <button onClick={() => { setShowRequestForm(s => !s); setRequestMsg('') }}
+                    style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
+                    + Request New Vehicle
+                  </button>
+
+                  {showRequestForm && (
+                    <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                      <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Vehicle Request</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                        <div style={{ gridColumn:'span 2' }}>
+                          <label style={lbl}>Plate *</label>
+                          <input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: e.target.value.toUpperCase()})} placeholder="ABC1234" style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
+                        </div>
+                        <div>
+                          <label style={lbl}>State</label>
+                          <select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inp}>
+                            {states.map(s => <option key={s}>{s}</option>)}
+                          </select>
+                        </div>
+                        <div><label style={lbl}>Color</label><input value={newVehicle.color} onChange={e => setNewVehicle({...newVehicle, color: e.target.value})} placeholder="Black" style={inp} /></div>
+                        <div><label style={lbl}>Make</label><input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} placeholder="Toyota" style={inp} /></div>
+                        <div><label style={lbl}>Model</label><input value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} placeholder="Camry" style={inp} /></div>
+                        <div><label style={lbl}>Year</label><input value={newVehicle.year} onChange={e => setNewVehicle({...newVehicle, year: e.target.value})} placeholder="2022" style={inp} /></div>
+                        <div><label style={lbl}>Space</label><input value={newVehicle.space} onChange={e => setNewVehicle({...newVehicle, space: e.target.value})} placeholder="A-12" style={inp} /></div>
+                      </div>
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={requestVehicle} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Submit Request</button>
+                        <button onClick={() => setShowRequestForm(false)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {requestMsg && (
+                    <div style={{ background:'#1a2a1a', border:'1px solid #2e7d32', borderRadius:'8px', padding:'10px 12px', marginBottom:'12px' }}>
+                      <p style={{ color:'#4caf50', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>{requestMsg}</p>
+                    </div>
+                  )}
+
+                  {vehicles.length === 0 && !requestMsg && (
+                    <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
+                      <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No vehicles registered yet.</p>
+                    </div>
+                  )}
+
+                  {vehicles.map((v) => {
+                    const badge = statusBadge(v)
+                    const isEditing = editingVehicleId === v.id
+                    return (
+                      <div key={v.id} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', marginBottom:'10px', overflow:'hidden' }}>
+                        <div style={{ padding:'16px' }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
+                            <p style={{ color:'white', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
+                            <span style={{ background:badge.bg, color:badge.color, border:`1px solid ${badge.border}`, padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>{badge.text}</span>
+                          </div>
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', fontSize:'12px', marginBottom:'10px' }}>
+                            <div><span style={{ color:'#555' }}>Vehicle</span><br/><span style={{ color:'#aaa' }}>{[v.color, v.make, v.model, v.year].filter(Boolean).join(' ') || '—'}</span></div>
+                            <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
+                            <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state || '—'}</span></div>
+                            <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
+                          </div>
+                          {(v.status === 'pending' || v.status === 'declined') && v.manager_note && (
+                            <div style={{ background: v.status === 'declined' ? '#3a1a1a' : '#1e2535', border:`1px solid ${v.status === 'declined' ? '#b71c1c' : '#3a4055'}`, borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
+                              <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 3px' }}>Manager Note</p>
+                              <p style={{ color: v.status === 'declined' ? '#f44336' : '#aaa', fontSize:'12px', margin:'0' }}>{v.manager_note}</p>
+                            </div>
+                          )}
+                          <button onClick={() => { setEditingVehicleId(isEditing ? null : v.id); setEditingVehicle({...v}) }}
+                            style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                            {isEditing ? 'Cancel Edit' : 'Edit'}
+                          </button>
+                        </div>
+
+                        {isEditing && (
+                          <div style={{ background:'#0f1117', borderTop:'1px solid #2a2f3d', padding:'16px' }}>
+                            <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', margin:'0 0 12px' }}>Edit Vehicle</p>
+                            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                              <div style={{ gridColumn:'span 2' }}>
+                                <label style={lbl}>Plate</label>
+                                <input value={editingVehicle.plate || ''} onChange={e => setEditingVehicle({...editingVehicle, plate: e.target.value.toUpperCase()})} style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
+                              </div>
+                              <div>
+                                <label style={lbl}>State</label>
+                                <select value={editingVehicle.state || 'TX'} onChange={e => setEditingVehicle({...editingVehicle, state: e.target.value})} style={inp}>
+                                  {states.map(s => <option key={s}>{s}</option>)}
+                                </select>
+                              </div>
+                              <div><label style={lbl}>Color</label><input value={editingVehicle.color || ''} onChange={e => setEditingVehicle({...editingVehicle, color: e.target.value})} style={inp} /></div>
+                              <div><label style={lbl}>Make</label><input value={editingVehicle.make || ''} onChange={e => setEditingVehicle({...editingVehicle, make: e.target.value})} style={inp} /></div>
+                              <div><label style={lbl}>Model</label><input value={editingVehicle.model || ''} onChange={e => setEditingVehicle({...editingVehicle, model: e.target.value})} style={inp} /></div>
+                              <div><label style={lbl}>Year</label><input value={editingVehicle.year || ''} onChange={e => setEditingVehicle({...editingVehicle, year: e.target.value})} style={inp} /></div>
+                              <div><label style={lbl}>Space</label><input value={editingVehicle.space || ''} onChange={e => setEditingVehicle({...editingVehicle, space: e.target.value})} style={inp} /></div>
+                            </div>
+                            <button onClick={saveVehicle} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Save Changes</button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </>
+              )
+            })()}
           </div>
         )}
 

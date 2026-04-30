@@ -28,6 +28,8 @@ export default function ManagerPortal() {
   const [vehicleSearch, setVehicleSearch] = useState('')
   const [residentSearch, setResidentSearch] = useState('')
   const [violationSearch, setViolationSearch] = useState('')
+  const [pendingVehicles, setPendingVehicles] = useState<any[]>([])
+  const [pendingNotes, setPendingNotes] = useState<Record<string, string>>({})
 
   useEffect(() => { loadManager() }, [])
 
@@ -127,8 +129,24 @@ export default function ManagerPortal() {
 
   async function fetchVehicles(property: string) {
     const { data } = await supabase.from('vehicles').select('*').ilike('property', property).order('unit')
-    setVehicles(data || [])
-    setStats(s => ({ ...s, total_vehicles: data?.length || 0 }))
+    const all = data || []
+    const pending = all.filter(v => v.status === 'pending')
+    const rest = all.filter(v => v.status !== 'pending')
+    setPendingVehicles(pending)
+    setVehicles(rest)
+    setStats(s => ({ ...s, total_vehicles: rest.length }))
+  }
+
+  async function approveVehicle(id: string) {
+    await supabase.from('vehicles').update({ is_active: true, status: 'active', manager_note: pendingNotes[id] || null }).eq('id', id)
+    setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
+    fetchVehicles(manager.name)
+  }
+
+  async function declineVehicle(id: string) {
+    await supabase.from('vehicles').update({ is_active: false, status: 'declined', manager_note: pendingNotes[id] || null }).eq('id', id)
+    setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
+    fetchVehicles(manager.name)
   }
 
   async function fetchViolations(property: string) {
@@ -388,6 +406,48 @@ export default function ManagerPortal() {
         {/* VEHICLES */}
         {activeTab === 'vehicles' && (
           <div>
+            {pendingVehicles.length > 0 && (
+              <div style={{ background:'#1e1800', border:'1px solid #C9A227', borderRadius:'10px', padding:'14px', marginBottom:'16px' }}>
+                <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px' }}>
+                  Pending Vehicle Requests ({pendingVehicles.length})
+                </p>
+                {pendingVehicles.map((v) => (
+                  <div key={v.id} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'10px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
+                      <div>
+                        <p style={{ color:'white', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
+                        <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{[v.color, v.make, v.model, v.year].filter(Boolean).join(' ') || '—'}</p>
+                      </div>
+                      <span style={{ background:'#2a1e00', color:'#C9A227', border:'1px solid #C9A227', padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold' }}>Pending</span>
+                    </div>
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px', fontSize:'11px', marginBottom:'10px' }}>
+                      <div><span style={{ color:'#555' }}>Unit</span><br/><span style={{ color:'#aaa' }}>{v.unit || '—'}</span></div>
+                      <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
+                      <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state || '—'}</span></div>
+                    </div>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Note for resident (optional)</label>
+                    <input
+                      value={pendingNotes[v.id] || ''}
+                      onChange={e => setPendingNotes(n => ({...n, [v.id]: e.target.value}))}
+                      placeholder="e.g. Welcome! or Plate already registered."
+                      style={{ ...inputStyle, marginTop:'4px', marginBottom:'10px' }}
+                    />
+                    {!isReadOnly && (
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => approveVehicle(v.id)}
+                          style={{ flex:1, padding:'8px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                          Approve
+                        </button>
+                        <button onClick={() => declineVehicle(v.id)}
+                          style={{ flex:1, padding:'8px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                          Decline
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             <input value={vehicleSearch} onChange={e => setVehicleSearch(e.target.value)} placeholder="Search plate, unit, make, model, color..." style={{ ...inputStyle, marginBottom:'12px' }} />
             {!isReadOnly && (
               <button onClick={() => setShowAddVehicle(!showAddVehicle)}

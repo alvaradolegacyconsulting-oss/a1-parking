@@ -8,6 +8,7 @@ function VisitorForm() {
   const propertyName = searchParams.get('property') || 'A1 Wrecker Managed Property'
   const [step, setStep] = useState<'form' | 'success'>('form')
   const [loading, setLoading] = useState(false)
+  const [plateError, setPlateError] = useState('')
   const [form, setForm] = useState({
     plate: '',
     name: '',
@@ -22,6 +23,25 @@ function VisitorForm() {
       return
     }
     setLoading(true)
+    setPlateError('')
+
+    const plate = form.plate.toUpperCase().trim()
+
+    if (propertyName !== 'A1 Wrecker Managed Property') {
+      const { data: existing } = await supabase
+        .from('vehicles')
+        .select('id')
+        .ilike('plate', plate)
+        .ilike('property', propertyName)
+        .eq('is_active', true)
+        .limit(1)
+
+      if (existing && existing.length > 0) {
+        setLoading(false)
+        setPlateError('This plate is already registered to a resident at this property and does not need a visitor pass.')
+        return
+      }
+    }
 
     const now = new Date()
     const expires = new Date()
@@ -30,7 +50,7 @@ function VisitorForm() {
     const { error } = await supabase
       .from('visitor_passes')
       .insert([{
-        plate: form.plate.toUpperCase().trim(),
+        plate,
         visitor_name: form.name,
         visiting_unit: form.unit,
         vehicle_desc: form.vehicle_desc,
@@ -167,6 +187,12 @@ function VisitorForm() {
               <option value='24'>24 hours (maximum)</option>
             </select>
           </div>
+
+          {plateError && (
+            <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'10px 12px', marginBottom:'14px' }}>
+              <p style={{ color:'#f44336', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>{plateError}</p>
+            </div>
+          )}
 
           <button
             onClick={submitPass}
