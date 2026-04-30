@@ -41,6 +41,42 @@ function VisitorForm() {
         setPlateError('This plate is already registered to a resident at this property and does not need a visitor pass.')
         return
       }
+
+      const { data: propData } = await supabase
+        .from('properties')
+        .select('visitor_pass_limit, exempt_plates')
+        .ilike('name', propertyName)
+        .single()
+
+      if (propData && propData.visitor_pass_limit && propData.visitor_pass_limit > 0) {
+        const exemptPlates: string[] = propData.exempt_plates || []
+        const isExempt = exemptPlates.some(ep => ep.toUpperCase() === plate)
+
+        if (!isExempt) {
+          const { data: units } = await supabase
+            .from('residents')
+            .select('unit')
+            .ilike('property', propertyName)
+
+          const unitList = (units || []).map((r: { unit: string }) => r.unit)
+
+          if (unitList.length > 0) {
+            const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString()
+            const { count } = await supabase
+              .from('visitor_passes')
+              .select('id', { count: 'exact', head: true })
+              .ilike('plate', plate)
+              .in('visiting_unit', unitList)
+              .gte('created_at', yearStart)
+
+            if ((count ?? 0) >= propData.visitor_pass_limit) {
+              setLoading(false)
+              setPlateError('This vehicle has reached the maximum number of visitor passes allowed per year for this property.')
+              return
+            }
+          }
+        }
+      }
     }
 
     const now = new Date()

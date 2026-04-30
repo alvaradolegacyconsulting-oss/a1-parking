@@ -30,8 +30,18 @@ export default function ManagerPortal() {
   const [violationSearch, setViolationSearch] = useState('')
   const [pendingVehicles, setPendingVehicles] = useState<any[]>([])
   const [pendingNotes, setPendingNotes] = useState<Record<string, string>>({})
+  const [passLimit, setPassLimit] = useState('')
+  const [exemptPlates, setExemptPlates] = useState<string[]>([])
+  const [newExemptPlate, setNewExemptPlate] = useState('')
+  const [settingsMsg, setSettingsMsg] = useState('')
 
   useEffect(() => { loadManager() }, [])
+  useEffect(() => {
+    if (manager) {
+      setPassLimit(manager.visitor_pass_limit != null ? String(manager.visitor_pass_limit) : '')
+      setExemptPlates(manager.exempt_plates || [])
+    }
+  }, [manager])
 
   async function loadManager() {
     setLoading(true)
@@ -89,6 +99,29 @@ export default function ManagerPortal() {
     fetchPasses(property)
     fetchResidents(property)
     fetchSpaces(property)
+  }
+
+  async function savePassLimit() {
+    const val = passLimit === '' ? null : parseInt(passLimit)
+    const { error } = await supabase.from('properties').update({ visitor_pass_limit: val }).eq('id', manager.id)
+    if (error) { setSettingsMsg('Error: ' + error.message) }
+    else { setSettingsMsg('Pass limit saved.'); setManager({ ...manager, visitor_pass_limit: val }) }
+  }
+
+  async function addExemptPlate() {
+    const plate = newExemptPlate.toUpperCase().trim()
+    if (!plate || exemptPlates.includes(plate)) { setNewExemptPlate(''); return }
+    const updated = [...exemptPlates, plate]
+    const { error } = await supabase.from('properties').update({ exempt_plates: updated }).eq('id', manager.id)
+    if (error) { setSettingsMsg('Error: ' + error.message) }
+    else { setExemptPlates(updated); setManager({ ...manager, exempt_plates: updated }); setNewExemptPlate(''); setSettingsMsg('') }
+  }
+
+  async function removeExemptPlate(plate: string) {
+    const updated = exemptPlates.filter(p => p !== plate)
+    const { error } = await supabase.from('properties').update({ exempt_plates: updated }).eq('id', manager.id)
+    if (error) { setSettingsMsg('Error: ' + error.message) }
+    else { setExemptPlates(updated); setManager({ ...manager, exempt_plates: updated }) }
   }
 
   async function fetchSpaces(property: string) {
@@ -373,6 +406,7 @@ export default function ManagerPortal() {
           <button style={tabStyle('residents')} onClick={() => setActiveTab('residents')}>Residents</button>
           <button style={tabStyle('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
+          <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
         </div>
 
         {/* OVERVIEW */}
@@ -807,6 +841,76 @@ export default function ManagerPortal() {
                 </div>
               ))
             }
+          </div>
+        )}
+
+        {/* SETTINGS */}
+        {activeTab === 'settings' && (
+          <div>
+            {/* Section A — Visitor Pass Limit */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'14px' }}>
+              <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Visitor Pass Limit</p>
+              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>Max visitor passes per plate per year. Leave blank for unlimited. Applies to all visitors at this property.</p>
+              <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Max Passes Per Plate Per Year</label>
+              <input
+                type="number"
+                min="0"
+                value={passLimit}
+                onChange={e => { setPassLimit(e.target.value); setSettingsMsg('') }}
+                placeholder="Unlimited"
+                disabled={isReadOnly}
+                style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'9px 10px', background: isReadOnly ? '#1a1a2a' : '#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color: isReadOnly ? '#555' : 'white', fontSize:'13px', boxSizing:'border-box', outline:'none' }}
+              />
+              {!isReadOnly && (
+                <button onClick={savePassLimit}
+                  style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>
+                  Save Pass Limit
+                </button>
+              )}
+              {settingsMsg && (
+                <p style={{ color: settingsMsg.startsWith('Error') ? '#f44336' : '#4caf50', fontSize:'12px', margin:'10px 0 0' }}>{settingsMsg}</p>
+              )}
+            </div>
+
+            {/* Section B — Exempt Plates */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px' }}>
+              <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Exempt Plates</p>
+              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>These plates bypass the annual visitor pass limit entirely.</p>
+
+              {exemptPlates.length === 0 ? (
+                <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px' }}>No exempt plates yet.</p>
+              ) : (
+                <div style={{ marginBottom:'14px' }}>
+                  {exemptPlates.map(plate => (
+                    <div key={plate} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 10px', background:'#1e2535', borderRadius:'6px', marginBottom:'6px' }}>
+                      <span style={{ color:'white', fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold', letterSpacing:'0.08em' }}>{plate}</span>
+                      {!isReadOnly && (
+                        <button onClick={() => removeExemptPlate(plate)}
+                          style={{ padding:'3px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'5px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!isReadOnly && (
+                <div style={{ display:'flex', gap:'8px' }}>
+                  <input
+                    value={newExemptPlate}
+                    onChange={e => setNewExemptPlate(e.target.value.toUpperCase())}
+                    onKeyDown={e => e.key === 'Enter' && addExemptPlate()}
+                    placeholder="ABC1234"
+                    style={{ flex:1, padding:'9px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', fontFamily:'Courier New', fontWeight:'bold', outline:'none', boxSizing:'border-box' as const }}
+                  />
+                  <button onClick={addExemptPlate}
+                    style={{ padding:'9px 16px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
+                    Add
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
