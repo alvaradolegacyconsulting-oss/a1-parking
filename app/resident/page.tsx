@@ -3,11 +3,10 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 
 export default function ResidentPortal() {
-  const [email, setEmail] = useState('')
   const [resident, setResident] = useState<any>(null)
   const [vehicles, setVehicles] = useState<any[]>([])
   const [passes, setPasses] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState('info')
   const [editing, setEditing] = useState(false)
@@ -15,18 +14,22 @@ export default function ResidentPortal() {
   const [showVisitorForm, setShowVisitorForm] = useState(false)
   const [visitorForm, setVisitorForm] = useState({ plate: '', name: '', vehicle_desc: '', duration: '4' })
 
-  async function findResident() {
-    if (!email) return
+  useEffect(() => { loadResident() }, [])
+
+  async function loadResident() {
     setLoading(true)
-    setError('')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { window.location.href = '/login'; return }
+
     const { data, error } = await supabase
       .from('residents')
       .select('*')
-      .ilike('email', email.trim())
+      .ilike('email', user.email!)
       .single()
+
     setLoading(false)
     if (error || !data) {
-      setError('No resident found with that email address.')
+      setError('Your resident account was not found. Please contact your property manager.')
     } else {
       setResident(data)
       setEditForm(data)
@@ -107,47 +110,20 @@ export default function ResidentPortal() {
     fontFamily: 'Arial, sans-serif'
   })
 
-  if (!resident) {
-    return (
-      <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-        <div style={{ maxWidth:'380px', width:'100%' }}>
-          <div style={{ marginBottom:'32px', textAlign:'center' }}>
-            <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
-            <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Resident Portal</p>
-          </div>
-          <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'28px' }}>
-            <p style={{ color:'#aaa', fontSize:'13px', margin:'0 0 16px', lineHeight:'1.6' }}>Enter your email address to access your resident account.</p>
-            
-            {error && (
-              <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'10px', marginBottom:'14px' }}>
-                <p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{error}</p>
-              </div>
-            )}
+  if (loading) return (
+    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif' }}>
+      <p style={{ color:'#888' }}>Loading...</p>
+    </main>
+  )
 
-            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Email Address</label>
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && findResident()}
-              placeholder="you@example.com"
-              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'14px', padding:'10px 12px', fontSize:'13px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none', boxSizing:'border-box' }}
-            />
-            <button
-              onClick={findResident}
-              disabled={loading || !email}
-              style={{ width:'100%', padding:'12px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'14px', border:'none', borderRadius:'8px', cursor:'pointer' }}
-            >
-              {loading ? 'Looking up...' : 'Access My Account'}
-            </button>
-          </div>
-          <div style={{ textAlign:'center', marginTop:'16px' }}>
-            <a href="/" style={{ color:'#C9A227', fontSize:'12px', textDecoration:'none' }}>← Back to Plate Lookup</a>
-          </div>
-        </div>
-      </main>
-    )
-  }
+  if (error || !resident) return (
+    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+      <div style={{ textAlign:'center' }}>
+        <p style={{ color:'#f44336', fontSize:'14px', marginBottom:'16px' }}>{error || 'Account not found.'}</p>
+        <a href="/login" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>← Back to Login</a>
+      </div>
+    </main>
+  )
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
@@ -341,9 +317,6 @@ export default function ResidentPortal() {
           </div>
         )}
 
-        <div style={{ textAlign:'center', marginTop:'20px' }}>
-          <a href="/" style={{ color:'#C9A227', fontSize:'12px', textDecoration:'none' }}>← Back to Plate Lookup</a>
-        </div>
 
       </div>
     </main>
