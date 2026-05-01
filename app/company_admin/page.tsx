@@ -255,12 +255,18 @@ export default function CompanyAdminPortal() {
       const json = await res.json()
       if (!res.ok) { setUserMsg('Error: ' + (json.error || 'Failed to create auth account')); return }
     } catch (e: any) { setUserMsg('Error: ' + e.message); return }
-    const { data: inserted, error: insErr } = await supabase.from('user_roles').insert([{
-      email: newUser.email, role: newUser.role,
-      company: role?.company, property: newUser.property || null
-    }]).select().single()
+    const propertyArray = newUser.property
+      ? newUser.property.split('|').map(p => p.trim()).filter(Boolean)
+      : []
+    const { error: insErr } = await supabase
+      .rpc('insert_user_role', {
+        p_email: newUser.email.trim(),
+        p_role: newUser.role,
+        p_company: role?.company || '',
+        p_property: propertyArray.length > 0 ? propertyArray : []
+      })
     if (insErr) { setUserMsg('Auth created but role insert failed: ' + insErr.message); return }
-    await auditLog('create_user', 'user_roles', inserted.id, { email: newUser.email, role: newUser.role, company: role?.company })
+    await auditLog('create_user', 'user_roles', newUser.email, { email: newUser.email, role: newUser.role, company: role?.company })
     setUserMsg('User created successfully!')
     setNewUser({ email: '', password: '', role: 'manager', property: '' })
     setShowAddUser(false)
