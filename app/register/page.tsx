@@ -55,7 +55,10 @@ function RegisterForm() {
       const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
       const res = await fetch(fnBase + '/swift-handler', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+        },
         body: JSON.stringify({ action: 'create_user', email: account.email.trim(), password: account.password }),
       })
       const json = await res.json().catch(() => ({}))
