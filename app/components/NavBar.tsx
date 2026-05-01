@@ -14,8 +14,7 @@ const NAV_LINKS: Record<string, { label: string; href: string }[]> = {
     { label: 'QR Codes', href: '/qr' },
   ],
   company_admin: [
-    { label: 'Home', href: '/company_admin' },
-    { label: 'Driver', href: '/driver' },
+    { label: 'Dashboard', href: '/company_admin' },
   ],
   manager: [
     { label: 'Dashboard', href: '/manager' },
