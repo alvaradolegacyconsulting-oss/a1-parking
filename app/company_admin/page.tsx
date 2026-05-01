@@ -266,6 +266,25 @@ export default function CompanyAdminPortal() {
         p_property: propertyArray.length > 0 ? propertyArray : []
       })
     if (insErr) { setUserMsg('Auth created but role insert failed: ' + insErr.message); return }
+    if (newUser.role === 'resident') {
+      await supabase.from('residents').insert([{
+        email: newUser.email.trim(),
+        name: newUser.email.trim(),
+        property: propertyArray[0] || null,
+        company: role?.company || null,
+        unit: '',
+        is_active: true
+      }])
+    }
+    if (newUser.role === 'driver') {
+      await supabase.from('drivers').insert([{
+        email: newUser.email.trim(),
+        name: newUser.email.trim(),
+        company: role?.company || null,
+        assigned_properties: propertyArray,
+        is_active: true
+      }])
+    }
     await auditLog('create_user', 'user_roles', newUser.email, { email: newUser.email, role: newUser.role, company: role?.company })
     setUserMsg('User created successfully!')
     setNewUser({ email: '', password: '', role: 'manager', property: '' })
