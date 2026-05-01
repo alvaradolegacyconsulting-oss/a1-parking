@@ -167,10 +167,15 @@ export default function AdminPortal() {
     const propertyArray = newUser.property
       ? newUser.property.split('|').map(p => p.trim()).filter(Boolean)
       : []
-    const { error: roleError } = await supabase.from('user_roles').insert([{
-      email: newUser.email, role: newUser.role,
-      company: newUser.company || null, property: propertyArray
-    }])
+    console.log('propertyArray type:', typeof propertyArray, 'value:', JSON.stringify(propertyArray), 'isArray:', Array.isArray(propertyArray))
+    const { error: roleError } = await supabase
+      .from('user_roles')
+      .insert([{
+        email: newUser.email.trim(),
+        role: newUser.role,
+        company: newUser.company.trim() || null,
+        property: propertyArray.length > 0 ? propertyArray : null
+      }])
     if (roleError) { setUserMsg('Auth created but role insert failed: ' + roleError.message); return }
     await auditLog(adminEmail, 'ADD_USER', 'user_roles', newUser.email, { email: newUser.email, role: newUser.role })
     setUserMsg('User created successfully!')
