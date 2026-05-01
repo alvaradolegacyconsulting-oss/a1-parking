@@ -84,6 +84,13 @@ function RegisterForm() {
         return
       }
 
+      await supabase.rpc('insert_user_role', {
+        p_email: account.email.trim().toLowerCase(),
+        p_role: 'resident',
+        p_company: company || null,
+        p_property: property ? [property] : [],
+      })
+
       for (const v of vehicles) {
         if (!v.plate.trim()) continue
         await supabase.from('vehicles').insert([{
