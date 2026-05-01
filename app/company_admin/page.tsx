@@ -37,7 +37,7 @@ export default function CompanyAdminPortal() {
   const [passes, setPasses] = useState<any[]>([])
 
   // Manage tab
-  const [manageSection, setManageSection] = useState<'properties' | 'users' | 'drivers' | 'storage'>('properties')
+  const [manageSection, setManageSection] = useState<'properties' | 'users' | 'drivers' | 'storage' | 'auditlog'>('properties')
   const [manageLoaded, setManageLoaded] = useState(false)
 
   const [editingProperty, setEditingProperty] = useState<any>(null)
@@ -59,6 +59,10 @@ export default function CompanyAdminPortal() {
   const [showAddFacility, setShowAddFacility] = useState(false)
   const [newFacility, setNewFacility] = useState({ name: '', address: '', phone: '', email: '' })
   const [facilityMsg, setFacilityMsg] = useState('')
+  const [companyAuditLogs, setCompanyAuditLogs] = useState<any[]>([])
+  const [auditDateFilter, setAuditDateFilter] = useState('week')
+  const [auditSearch, setAuditSearch] = useState('')
+  const [auditLoaded, setAuditLoaded] = useState(false)
 
   useEffect(() => { loadUser() }, [])
 
@@ -151,6 +155,23 @@ export default function CompanyAdminPortal() {
       record_id: String(record_id), new_values,
       created_at: new Date().toISOString()
     }])
+  }
+
+  async function fetchCompanyAuditLogs() {
+    setAuditLoaded(false)
+    const userEmails = companyUsers.map(u => (u.email || '').toLowerCase())
+    const companyName = (role?.company || '').toLowerCase()
+    const { data } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200)
+    const filtered = (data || []).filter(log =>
+      userEmails.includes((log.user_email || '').toLowerCase()) ||
+      JSON.stringify(log.new_values || {}).toLowerCase().includes(companyName)
+    )
+    setCompanyAuditLogs(filtered)
+    setAuditLoaded(true)
   }
 
   async function loadManageData() {
@@ -338,6 +359,7 @@ export default function CompanyAdminPortal() {
     }]).select().single()
     setSubmitting(false)
     if (insErr) { alert('Error: ' + insErr.message); return }
+    await auditLog('ADD_VIOLATION', 'violations', newV?.id, { plate: plate.toUpperCase().trim(), property: violation.property, violation_type: violation.type })
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '' })
     setPhotos([])
@@ -933,14 +955,16 @@ export default function CompanyAdminPortal() {
           <div>
             {/* Sub-tab bar */}
             <div style={{ display:'flex', gap:'3px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
-              {(['properties', 'users', 'drivers', 'storage'] as const).map(s => (
-                <button key={s} onClick={() => setManageSection(s)} style={{
-                  flex:1, padding:'7px 4px', border:'none', borderRadius:'6px', cursor:'pointer',
-                  fontWeight:'bold', fontSize:'10px', fontFamily:'Arial, sans-serif',
-                  background: manageSection === s ? '#C9A227' : 'transparent',
-                  color: manageSection === s ? '#0f1117' : '#888',
-                }}>
-                  {s === 'properties' ? 'Properties' : s === 'users' ? 'Users' : s === 'drivers' ? 'Drivers' : 'Storage'}
+              {(['properties', 'users', 'drivers', 'storage', 'auditlog'] as const).map(s => (
+                <button key={s}
+                  onClick={() => { setManageSection(s); if (s === 'auditlog') fetchCompanyAuditLogs() }}
+                  style={{
+                    flex:1, padding:'7px 4px', border:'none', borderRadius:'6px', cursor:'pointer',
+                    fontWeight:'bold', fontSize:'10px', fontFamily:'Arial, sans-serif',
+                    background: manageSection === s ? '#C9A227' : 'transparent',
+                    color: manageSection === s ? '#0f1117' : '#888',
+                  }}>
+                  {s === 'properties' ? 'Properties' : s === 'users' ? 'Users' : s === 'drivers' ? 'Drivers' : s === 'storage' ? 'Storage' : 'Audit Log'}
                 </button>
               ))}
             </div>
@@ -1182,6 +1206,68 @@ export default function CompanyAdminPortal() {
                 {allFacilities.length === 0 && <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No storage facilities found</p></div>}
               </div>
             )}
+
+            {/* SECTION 5 — Audit Log */}
+            {manageSection === 'auditlog' && (() => {
+              const actionColor: Record<string, { bg: string; color: string }> = {
+                ADD_VIOLATION:        { bg:'#3a1a1a', color:'#f44336' },
+                create_property:      { bg:'#1a2a3a', color:'#2196f3' },
+                update_property:      { bg:'#1e2535', color:'#aaa' },
+                activate_property:    { bg:'#1a3a1a', color:'#4caf50' },
+                deactivate_property:  { bg:'#3a1a1a', color:'#f44336' },
+                create_user:          { bg:'#1a2a3a', color:'#2196f3' },
+                create_driver:        { bg:'#1a2a3a', color:'#2196f3' },
+                activate_driver:      { bg:'#1a3a1a', color:'#4caf50' },
+                deactivate_driver:    { bg:'#3a1a1a', color:'#f44336' },
+                create_facility:      { bg:'#1a2a3a', color:'#2196f3' },
+              }
+              const today = new Date(); today.setHours(0,0,0,0)
+              const week = new Date(); week.setDate(week.getDate()-7)
+              const month = new Date(); month.setMonth(month.getMonth()-1)
+              const filtered = companyAuditLogs.filter(log => {
+                const d = new Date(log.created_at)
+                const inPeriod = auditDateFilter === 'today' ? d >= today : auditDateFilter === 'week' ? d >= week : auditDateFilter === 'month' ? d >= month : true
+                if (!inPeriod) return false
+                if (!auditSearch) return true
+                const q = auditSearch.toLowerCase()
+                return (log.user_email || '').toLowerCase().includes(q) ||
+                  (log.action || '').toLowerCase().includes(q) ||
+                  JSON.stringify(log.new_values || {}).toLowerCase().includes(q)
+              })
+              return (
+                <div>
+                  <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'10px' }}>
+                    {[{k:'today',l:'Today'},{k:'week',l:'This Week'},{k:'month',l:'Month'},{k:'all',l:'All'}].map(f => (
+                      <button key={f.k} onClick={() => setAuditDateFilter(f.k)}
+                        style={{ flex:1, padding:'7px', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', background: auditDateFilter === f.k ? '#C9A227' : 'transparent', color: auditDateFilter === f.k ? '#0f1117' : '#888', fontFamily:'Arial' }}>
+                        {f.l}
+                      </button>
+                    ))}
+                  </div>
+                  <input value={auditSearch} onChange={e => setAuditSearch(e.target.value)} placeholder="Search email, action..." style={{ ...inp, marginBottom:'10px' }} />
+                  {!auditLoaded ? (
+                    <p style={{ color:'#555', fontSize:'13px', textAlign:'center', margin:'32px 0' }}>Loading...</p>
+                  ) : filtered.length === 0 ? (
+                    <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
+                      <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No activity for this period</p>
+                    </div>
+                  ) : filtered.map((log, i) => {
+                    const badge2 = actionColor[log.action] || { bg:'#1e2535', color:'#aaa' }
+                    const vals = log.new_values ? Object.entries(log.new_values as Record<string,unknown>).map(([k,v]) => `${k}: ${v}`).join(' · ') : ''
+                    return (
+                      <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'8px' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
+                          <span style={{ background:badge2.bg, color:badge2.color, padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
+                          <span style={{ color:'#555', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
+                        </div>
+                        <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>{log.user_email}</p>
+                        {vals && <p style={{ color:'#555', fontSize:'11px', margin:'0', fontFamily:'Courier New', wordBreak:'break-all' }}>{vals}</p>}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
           </div>
         )}
 

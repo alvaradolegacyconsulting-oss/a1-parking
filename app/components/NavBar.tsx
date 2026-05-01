@@ -37,6 +37,7 @@ export default function NavBar() {
   const [email, setEmail] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [pendingCount, setPendingCount] = useState(0)
 
   const hidden = pathname === '/login' || pathname === '/visitor' || pathname === '/visitor-select'
 
@@ -47,9 +48,18 @@ export default function NavBar() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { setLoaded(true); return }
       const { data } = await supabase
-        .from('user_roles').select('role').ilike('email', user.email!).single()
-      setRole(data?.role ?? null)
+        .from('user_roles').select('role, property').ilike('email', user.email!).single()
+      const userRole = data?.role ?? null
+      setRole(userRole)
       setEmail(user.email!)
+      if ((userRole === 'manager' || userRole === 'leasing_agent') && data?.property) {
+        const { count } = await supabase
+          .from('vehicles')
+          .select('id', { count: 'exact', head: true })
+          .ilike('property', data.property)
+          .eq('status', 'pending')
+        setPendingCount(count ?? 0)
+      }
       setLoaded(true)
     }
     load()
@@ -91,8 +101,14 @@ export default function NavBar() {
                 borderRadius: '6px',
                 background: isActive(l.href) ? 'rgba(201,162,39,0.12)' : 'transparent',
                 transition: 'color 0.15s',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
               }}>
                 {l.label}
+                {l.href === '/manager' && pendingCount > 0 && (
+                  <span style={{ background: '#B71C1C', color: 'white', borderRadius: '10px', fontSize: '9px', padding: '1px 6px', fontWeight: 'bold', lineHeight: '1.4' }}>{pendingCount}</span>
+                )}
               </a>
             ))}
           </div>
@@ -123,13 +139,16 @@ export default function NavBar() {
           <div className="md:hidden" style={{ borderTop: '1px solid #2a2f3d', paddingBottom: '12px' }}>
             {links.map(l => (
               <a key={l.href} href={l.href} onClick={() => setMenuOpen(false)} style={{
-                display: 'block', padding: '11px 8px',
+                display: 'flex', alignItems: 'center', gap: '6px', padding: '11px 8px',
                 color: isActive(l.href) ? '#C9A227' : '#aaa',
                 fontWeight: isActive(l.href) ? 'bold' : 'normal',
                 fontSize: '13px', textDecoration: 'none',
                 borderBottom: '1px solid #1e2535',
               }}>
                 {l.label}
+                {l.href === '/manager' && pendingCount > 0 && (
+                  <span style={{ background: '#B71C1C', color: 'white', borderRadius: '10px', fontSize: '10px', padding: '1px 7px', fontWeight: 'bold', lineHeight: '1.4' }}>{pendingCount}</span>
+                )}
               </a>
             ))}
             <div style={{ padding: '10px 8px 0' }}>

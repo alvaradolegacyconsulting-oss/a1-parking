@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { logAudit } from '../lib/audit'
 
 export default function DriverPortal() {
   const [driver, setDriver] = useState<any>(null)
@@ -135,6 +136,7 @@ export default function DriverPortal() {
     }]).select().single()
     setSubmitting(false)
     if (insErr) { alert('Error: ' + insErr.message); return }
+    await logAudit({ action: 'ADD_VIOLATION', table_name: 'violations', record_id: newV?.id, new_values: { plate: plate.toUpperCase().trim(), property: violation.property, violation_type: violation.type, driver_name: driver?.name } })
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '' })
     setPhotos([])

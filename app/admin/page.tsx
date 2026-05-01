@@ -38,7 +38,13 @@ export default function AdminPortal() {
   const [editingFacility, setEditingFacility] = useState<any>(null)
   const [newFacility, setNewFacility] = useState({ name:'', address:'', phone:'', email:'', is_active:true })
 
+  const [allAuditLogs, setAllAuditLogs] = useState<any[]>([])
+  const [auditDateFilter, setAuditDateFilter] = useState('week')
+  const [auditSearch, setAuditSearch] = useState('')
+  const [auditLoaded, setAuditLoaded] = useState(false)
+
   useEffect(() => { loadAdmin() }, [])
+  useEffect(() => { if (activeTab === 'auditlog') fetchAuditLogs() }, [activeTab])
 
   async function loadAdmin() {
     const { data: { user } } = await supabase.auth.getUser()
@@ -61,6 +67,17 @@ export default function AdminPortal() {
       new_values,
       created_at: new Date().toISOString()
     }])
+  }
+
+  async function fetchAuditLogs() {
+    setAuditLoaded(false)
+    const { data } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    setAllAuditLogs(data || [])
+    setAuditLoaded(true)
   }
 
   async function fetchCompanies() {
@@ -277,7 +294,7 @@ export default function AdminPortal() {
         </div>
 
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'16px' }}>
-          {[['companies','Companies'],['properties','Properties'],['users','Users & Roles'],['drivers','Drivers'],['facilities','Facilities']].map(([k,l]) => (
+          {[['companies','Companies'],['properties','Properties'],['users','Users & Roles'],['drivers','Drivers'],['facilities','Facilities'],['auditlog','Audit Log']].map(([k,l]) => (
             <button key={k} style={tabSt(k)} onClick={() => setActiveTab(k)}>{l}</button>
           ))}
         </div>
@@ -631,6 +648,76 @@ export default function AdminPortal() {
             ))}
           </div>
         )}
+
+        {/* ── AUDIT LOG ── */}
+        {activeTab === 'auditlog' && (() => {
+          const actionColor: Record<string, { bg: string; color: string }> = {
+            ADD_COMPANY:        { bg:'#1a2a3a', color:'#2196f3' },
+            EDIT_COMPANY:       { bg:'#1e2535', color:'#aaa' },
+            ACTIVATE_COMPANY:   { bg:'#1a3a1a', color:'#4caf50' },
+            DEACTIVATE_COMPANY: { bg:'#3a1a1a', color:'#f44336' },
+            ADD_PROPERTY:       { bg:'#1a2a3a', color:'#2196f3' },
+            EDIT_PROPERTY:      { bg:'#1e2535', color:'#aaa' },
+            ADD_USER:           { bg:'#1a2a3a', color:'#2196f3' },
+            ADD_DRIVER:         { bg:'#1a2a3a', color:'#2196f3' },
+            EDIT_DRIVER:        { bg:'#1e2535', color:'#aaa' },
+            ACTIVATE_DRIVER:    { bg:'#1a3a1a', color:'#4caf50' },
+            DEACTIVATE_DRIVER:  { bg:'#3a1a1a', color:'#f44336' },
+            ADD_FACILITY:       { bg:'#1a2a3a', color:'#2196f3' },
+            EDIT_FACILITY:      { bg:'#1e2535', color:'#aaa' },
+            ADD_VIOLATION:      { bg:'#3a1a1a', color:'#f44336' },
+            ADD_VEHICLE:        { bg:'#1a3a1a', color:'#4caf50' },
+            REMOVE_VEHICLE:     { bg:'#3a1a1a', color:'#f44336' },
+            ADD_RESIDENT:       { bg:'#1a3a1a', color:'#4caf50' },
+            ISSUE_VISITOR_PASS: { bg:'#1e1800', color:'#C9A227' },
+          }
+          const today = new Date(); today.setHours(0,0,0,0)
+          const week = new Date(); week.setDate(week.getDate()-7)
+          const month = new Date(); month.setMonth(month.getMonth()-1)
+          const filtered = allAuditLogs.filter(log => {
+            const d = new Date(log.created_at)
+            const inPeriod = auditDateFilter === 'today' ? d >= today : auditDateFilter === 'week' ? d >= week : auditDateFilter === 'month' ? d >= month : true
+            if (!inPeriod) return false
+            if (!auditSearch) return true
+            const q = auditSearch.toLowerCase()
+            return (log.user_email || '').toLowerCase().includes(q) ||
+              (log.action || '').toLowerCase().includes(q) ||
+              (log.table_name || '').toLowerCase().includes(q) ||
+              JSON.stringify(log.new_values || {}).toLowerCase().includes(q)
+          })
+          return (
+            <div>
+              <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'10px' }}>
+                {[{k:'today',l:'Today'},{k:'week',l:'This Week'},{k:'month',l:'Month'},{k:'all',l:'All'}].map(f => (
+                  <button key={f.k} onClick={() => setAuditDateFilter(f.k)}
+                    style={{ flex:1, padding:'7px', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', background: auditDateFilter === f.k ? '#C9A227' : 'transparent', color: auditDateFilter === f.k ? '#0f1117' : '#888', fontFamily:'Arial' }}>
+                    {f.l}
+                  </button>
+                ))}
+              </div>
+              <input value={auditSearch} onChange={e => setAuditSearch(e.target.value)} placeholder="Search email, action, table, values..." style={{ ...inp, marginBottom:'10px' }} />
+              {!auditLoaded ? (
+                <p style={{ color:'#555', fontSize:'13px', textAlign:'center', margin:'32px 0' }}>Loading...</p>
+              ) : filtered.length === 0 ? (
+                <div style={card}><p style={{ color:'#555', fontSize:'13px', margin:'0', textAlign:'center' }}>No audit entries for this period</p></div>
+              ) : filtered.map((log, i) => {
+                const badge2 = actionColor[log.action] || { bg:'#1e2535', color:'#aaa' }
+                const vals = log.new_values ? Object.entries(log.new_values as Record<string,unknown>).map(([k,v]) => `${k}: ${v}`).join(' · ') : ''
+                return (
+                  <div key={i} style={card}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
+                      <span style={{ background:badge2.bg, color:badge2.color, padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
+                      <span style={{ color:'#555', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
+                    </div>
+                    <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>{log.user_email} <span style={{ color:'#555' }}>· {log.table_name}</span></p>
+                    {log.record_id && <p style={{ color:'#555', fontSize:'10px', margin:'0 0 2px', fontFamily:'Courier New' }}>id: {log.record_id}</p>}
+                    {vals && <p style={{ color:'#555', fontSize:'11px', margin:'0', fontFamily:'Courier New', wordBreak:'break-all' }}>{vals}</p>}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
 
       </div>
     </main>

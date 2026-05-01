@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { logAudit } from '../lib/audit'
 
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
@@ -92,7 +93,10 @@ export default function ResidentPortal() {
       space: editingVehicle.space,
     }).eq('id', editingVehicle.id)
     if (error) { alert('Error: ' + error.message) }
-    else { setEditingVehicleId(null); fetchVehicles(resident.unit, resident.property) }
+    else {
+      await logAudit({ action: 'EDIT_VEHICLE', table_name: 'vehicles', record_id: editingVehicle.id, new_values: { plate: editingVehicle.plate.toUpperCase().trim(), make: editingVehicle.make, model: editingVehicle.model, color: editingVehicle.color, year: editingVehicle.year } })
+      setEditingVehicleId(null); fetchVehicles(resident.unit, resident.property)
+    }
   }
 
   async function requestVehicle() {
@@ -112,6 +116,7 @@ export default function ResidentPortal() {
     }])
     if (error) { alert('Error: ' + error.message) }
     else {
+      await logAudit({ action: 'REQUEST_VEHICLE', table_name: 'vehicles', new_values: { plate: newVehicle.plate.toUpperCase().trim(), make: newVehicle.make, model: newVehicle.model, unit: resident.unit, property: resident.property } })
       setRequestMsg('Vehicle submitted for Property Manager approval. You will see the status update here.')
       setShowRequestForm(false)
       setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
@@ -138,6 +143,7 @@ export default function ResidentPortal() {
     if (error) {
       alert('Error: ' + error.message)
     } else {
+      await logAudit({ action: 'ISSUE_VISITOR_PASS', table_name: 'visitor_passes', new_values: { plate: visitorForm.plate.toUpperCase().trim(), visiting_unit: resident.unit, duration_hours: parseInt(visitorForm.duration) } })
       alert('Visitor pass issued!')
       setShowVisitorForm(false)
       setVisitorForm({ plate: '', name: '', vehicle_desc: '', duration: '4' })
@@ -192,7 +198,15 @@ export default function ResidentPortal() {
         {/* Tabs */}
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'16px' }}>
           <button style={tabStyle('info')} onClick={() => setActiveTab('info')}>My Info</button>
-          <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>Vehicles</button>
+          <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>
+            Vehicles{(() => {
+              const hasDeclined = vehicles.some(v => v.status === 'declined')
+              const hasPending = vehicles.some(v => v.status === 'pending')
+              if (!hasDeclined && !hasPending) return null
+              const count = vehicles.filter(v => v.status === 'pending' || v.status === 'declined').length
+              return <span style={{ background: hasDeclined ? '#B71C1C' : '#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{count}</span>
+            })()}
+          </button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
         </div>
 

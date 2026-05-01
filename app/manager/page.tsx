@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { logAudit } from '../lib/audit'
 
 export default function ManagerPortal() {
   const [manager, setManager] = useState<any>(null)
@@ -34,8 +35,13 @@ export default function ManagerPortal() {
   const [exemptPlates, setExemptPlates] = useState<string[]>([])
   const [newExemptPlate, setNewExemptPlate] = useState('')
   const [settingsMsg, setSettingsMsg] = useState('')
+  const [auditLogs, setAuditLogs] = useState<any[]>([])
+  const [auditDateFilter, setAuditDateFilter] = useState('week')
+  const [auditSearch, setAuditSearch] = useState('')
+  const [auditLoaded, setAuditLoaded] = useState(false)
 
   useEffect(() => { loadManager() }, [])
+  useEffect(() => { if (activeTab === 'activity' && manager) fetchActivityLogs() }, [activeTab, manager])
   useEffect(() => {
     if (manager) {
       setPassLimit(manager.visitor_pass_limit != null ? String(manager.visitor_pass_limit) : '')
@@ -105,7 +111,10 @@ export default function ManagerPortal() {
     const val = passLimit === '' ? null : parseInt(passLimit)
     const { error } = await supabase.from('properties').update({ visitor_pass_limit: val }).eq('id', manager.id)
     if (error) { setSettingsMsg('Error: ' + error.message) }
-    else { setSettingsMsg('Pass limit saved.'); setManager({ ...manager, visitor_pass_limit: val }) }
+    else {
+      await logAudit({ action: 'SET_PASS_LIMIT', table_name: 'properties', record_id: manager.id, new_values: { visitor_pass_limit: val, property: manager.name } })
+      setSettingsMsg('Pass limit saved.'); setManager({ ...manager, visitor_pass_limit: val })
+    }
   }
 
   async function addExemptPlate() {
@@ -114,14 +123,20 @@ export default function ManagerPortal() {
     const updated = [...exemptPlates, plate]
     const { error } = await supabase.from('properties').update({ exempt_plates: updated }).eq('id', manager.id)
     if (error) { setSettingsMsg('Error: ' + error.message) }
-    else { setExemptPlates(updated); setManager({ ...manager, exempt_plates: updated }); setNewExemptPlate(''); setSettingsMsg('') }
+    else {
+      await logAudit({ action: 'ADD_EXEMPT_PLATE', table_name: 'properties', record_id: manager.id, new_values: { plate, property: manager.name } })
+      setExemptPlates(updated); setManager({ ...manager, exempt_plates: updated }); setNewExemptPlate(''); setSettingsMsg('')
+    }
   }
 
   async function removeExemptPlate(plate: string) {
     const updated = exemptPlates.filter(p => p !== plate)
     const { error } = await supabase.from('properties').update({ exempt_plates: updated }).eq('id', manager.id)
     if (error) { setSettingsMsg('Error: ' + error.message) }
-    else { setExemptPlates(updated); setManager({ ...manager, exempt_plates: updated }) }
+    else {
+      await logAudit({ action: 'REMOVE_EXEMPT_PLATE', table_name: 'properties', record_id: manager.id, new_values: { plate, property: manager.name } })
+      setExemptPlates(updated); setManager({ ...manager, exempt_plates: updated })
+    }
   }
 
   async function fetchSpaces(property: string) {
@@ -157,7 +172,10 @@ export default function ManagerPortal() {
 
     const { error } = await supabase.from('spaces').update(updates).eq('id', editingSpace.id)
     if (error) { alert('Error: ' + error.message) }
-    else { setEditingSpace(null); fetchSpaces(manager.name) }
+    else {
+      await logAudit({ action: 'EDIT_SPACE', table_name: 'spaces', record_id: editingSpace.id, new_values: { space_number: editingSpace.space_number, status: editingSpace.status, assigned_to_unit: editingSpace.assigned_to_unit, assigned_to_plate: editingSpace.assigned_to_plate, property: manager.name } })
+      setEditingSpace(null); fetchSpaces(manager.name)
+    }
   }
 
   async function fetchVehicles(property: string) {
@@ -172,12 +190,14 @@ export default function ManagerPortal() {
 
   async function approveVehicle(id: string) {
     await supabase.from('vehicles').update({ is_active: true, status: 'active', manager_note: pendingNotes[id] || null }).eq('id', id)
+    await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'active', property: manager.name } })
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
     fetchVehicles(manager.name)
   }
 
   async function declineVehicle(id: string) {
     await supabase.from('vehicles').update({ is_active: false, status: 'declined', manager_note: pendingNotes[id] || null }).eq('id', id)
+    await logAudit({ action: 'DECLINE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'declined', property: manager.name } })
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
     fetchVehicles(manager.name)
   }
@@ -237,6 +257,7 @@ export default function ManagerPortal() {
     }])
     if (error) { alert('Error: ' + error.message) }
     else {
+      await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: newVehicle.plate.toUpperCase().trim(), make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name } })
       alert('Vehicle added!')
       setShowAddVehicle(false)
       setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', unit:'', space:'', permit_expiry:'' })
@@ -247,6 +268,7 @@ export default function ManagerPortal() {
   async function removeVehicle(id: string) {
     if (!confirm('Remove this vehicle?')) return
     await supabase.from('vehicles').update({ is_active: false }).eq('id', id)
+    await logAudit({ action: 'REMOVE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { is_active: false, property: manager.name } })
     fetchVehicles(manager.name)
   }
 
@@ -255,6 +277,7 @@ export default function ManagerPortal() {
     const { error } = await supabase.from('residents').insert([{ ...newResident, property: manager.name, is_active: true }])
     if (error) { alert('Error: ' + error.message) }
     else {
+      await logAudit({ action: 'ADD_RESIDENT', table_name: 'residents', new_values: { name: newResident.name, email: newResident.email, unit: newResident.unit, property: manager.name } })
       alert('Resident added!')
       setShowAddResident(false)
       setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'' })
@@ -272,13 +295,35 @@ export default function ManagerPortal() {
       lease_end: editingResident.lease_end,
     }).eq('id', editingResident.id)
     if (error) { alert('Error: ' + error.message) }
-    else { alert('Resident updated!'); setEditingResident(null); fetchResidents(manager.name) }
+    else {
+      await logAudit({ action: 'EDIT_RESIDENT', table_name: 'residents', record_id: editingResident.id, new_values: { name: editingResident.name, email: editingResident.email, unit: editingResident.unit, property: manager.name } })
+      alert('Resident updated!'); setEditingResident(null); fetchResidents(manager.name)
+    }
   }
 
   async function deactivateResident(id: string) {
     if (!confirm('Deactivate this resident?')) return
     await supabase.from('residents').update({ is_active: false }).eq('id', id)
+    await logAudit({ action: 'DEACTIVATE_RESIDENT', table_name: 'residents', record_id: id, new_values: { is_active: false, property: manager.name } })
     fetchResidents(manager.name)
+  }
+
+  async function fetchActivityLogs() {
+    if (!manager) return
+    setAuditLoaded(false)
+    const { data } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200)
+    const propName = manager.name.toLowerCase()
+    const filtered = (data || []).filter(log =>
+      JSON.stringify(log.new_values || {}).toLowerCase().includes(propName) ||
+      JSON.stringify(log.old_values || {}).toLowerCase().includes(propName) ||
+      (log.notes || '').toLowerCase().includes(propName)
+    )
+    setAuditLogs(filtered)
+    setAuditLoaded(true)
   }
 
   function filteredVehicles() {
@@ -401,12 +446,15 @@ export default function ManagerPortal() {
 
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
           <button style={tabStyle('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
-          <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>Vehicles</button>
+          <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>
+            Vehicles{pendingVehicles.length > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingVehicles.length}</span>}
+          </button>
           <button style={tabStyle('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
           <button style={tabStyle('residents')} onClick={() => setActiveTab('residents')}>Residents</button>
           <button style={tabStyle('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
           <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
+          <button style={tabStyle('activity')} onClick={() => setActiveTab('activity')}>Activity</button>
         </div>
 
         {/* OVERVIEW */}
@@ -913,6 +961,69 @@ export default function ManagerPortal() {
             </div>
           </div>
         )}
+
+        {/* ACTIVITY LOG */}
+        {activeTab === 'activity' && (() => {
+          const actionColor: Record<string, { bg: string; color: string }> = {
+            ADD_VEHICLE:        { bg:'#1a3a1a', color:'#4caf50' },
+            REMOVE_VEHICLE:     { bg:'#3a1a1a', color:'#f44336' },
+            APPROVE_VEHICLE:    { bg:'#1a3a1a', color:'#4caf50' },
+            DECLINE_VEHICLE:    { bg:'#3a1a1a', color:'#f44336' },
+            ADD_RESIDENT:       { bg:'#1a2a3a', color:'#2196f3' },
+            EDIT_RESIDENT:      { bg:'#1e2535', color:'#aaa' },
+            DEACTIVATE_RESIDENT:{ bg:'#3a1a1a', color:'#f44336' },
+            EDIT_SPACE:         { bg:'#1e1800', color:'#C9A227' },
+            SET_PASS_LIMIT:     { bg:'#1e1800', color:'#C9A227' },
+            ADD_EXEMPT_PLATE:   { bg:'#1a3a1a', color:'#4caf50' },
+            REMOVE_EXEMPT_PLATE:{ bg:'#3a1a1a', color:'#f44336' },
+            ADD_VIOLATION:      { bg:'#3a1a1a', color:'#f44336' },
+          }
+          const today = new Date(); today.setHours(0,0,0,0)
+          const week = new Date(); week.setDate(week.getDate()-7)
+          const filtered = auditLogs.filter(log => {
+            const d = new Date(log.created_at)
+            const inPeriod = auditDateFilter === 'today' ? d >= today : auditDateFilter === 'week' ? d >= week : true
+            if (!inPeriod) return false
+            if (!auditSearch) return true
+            const q = auditSearch.toLowerCase()
+            return (log.user_email || '').toLowerCase().includes(q) ||
+              (log.action || '').toLowerCase().includes(q) ||
+              JSON.stringify(log.new_values || {}).toLowerCase().includes(q)
+          })
+          return (
+            <div>
+              <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'10px' }}>
+                {[{k:'today',l:'Today'},{k:'week',l:'This Week'},{k:'all',l:'All'}].map(f => (
+                  <button key={f.k} onClick={() => setAuditDateFilter(f.k)}
+                    style={{ flex:1, padding:'7px', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', background: auditDateFilter === f.k ? '#C9A227' : 'transparent', color: auditDateFilter === f.k ? '#0f1117' : '#888', fontFamily:'Arial' }}>
+                    {f.l}
+                  </button>
+                ))}
+              </div>
+              <input value={auditSearch} onChange={e => setAuditSearch(e.target.value)} placeholder="Search email, action..." style={{ ...inputStyle, marginBottom:'10px' }} />
+              {!auditLoaded ? (
+                <p style={{ color:'#555', fontSize:'13px', textAlign:'center', margin:'32px 0' }}>Loading...</p>
+              ) : filtered.length === 0 ? (
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
+                  <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No activity for this period</p>
+                </div>
+              ) : filtered.map((log, i) => {
+                const badge = actionColor[log.action] || { bg:'#1e2535', color:'#aaa' }
+                const vals = log.new_values ? Object.entries(log.new_values).filter(([k]) => k !== 'property').map(([k,v]) => `${k}: ${v}`).join(' · ') : ''
+                return (
+                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'8px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
+                      <span style={{ background:badge.bg, color:badge.color, padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
+                      <span style={{ color:'#555', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
+                    </div>
+                    <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>{log.user_email}</p>
+                    {vals && <p style={{ color:'#555', fontSize:'11px', margin:'0', fontFamily:'Courier New' }}>{vals}</p>}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
 
         {/* VISITORS */}
         {activeTab === 'visitors' && (
