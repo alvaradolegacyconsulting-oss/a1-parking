@@ -146,19 +146,30 @@ export default function AdminPortal() {
     if (!newUser.email || !newUser.password) { setUserMsg('Email and password are required'); return }
     setUserMsg('Creating account...')
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
+    console.log('Functions URL env:', fnBase)
     const { data: { session } } = await supabase.auth.getSession()
+    const url = (fnBase ?? '') + '/swift-handler'
+    const reqBody = JSON.stringify({ action: 'create_user', email: newUser.email, password: newUser.password })
+    console.log('Edge function URL:', url)
+    console.log('Request body:', reqBody)
     try {
-      const res = await fetch(fnBase + '/swift-handler', {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ action: 'create_user', email: newUser.email, password: newUser.password })
+        body: reqBody
       })
-      const err = await res.json().catch(() => ({}))
+      console.log('Response status:', res.status)
+      const text = await res.text()
+      console.log('Response text:', text)
+      const err = (() => { try { return JSON.parse(text) } catch { return {} } })()
       if (!res.ok) { setUserMsg('Auth error: ' + (err.error || err.message || res.statusText)); return }
-    } catch (e: any) { setUserMsg('Error: ' + e.message); return }
+    } catch (e: any) { console.log('Fetch threw:', e); setUserMsg('Error: ' + e.message); return }
+    const propertyArray = newUser.property
+      ? newUser.property.split('|').map(p => p.trim()).filter(Boolean)
+      : []
     const { error: roleError } = await supabase.from('user_roles').insert([{
       email: newUser.email, role: newUser.role,
-      company: newUser.company || null, property: newUser.property || null
+      company: newUser.company || null, property: propertyArray
     }])
     if (roleError) { setUserMsg('Auth created but role insert failed: ' + roleError.message); return }
     await auditLog(adminEmail, 'ADD_USER', 'user_roles', newUser.email, { email: newUser.email, role: newUser.role })
@@ -187,7 +198,10 @@ export default function AdminPortal() {
       const err = await res.json().catch(() => ({}))
       if (!res.ok) { setDriverMsg('Auth error: ' + (err.error || err.message || res.statusText)); return }
     } catch (e: any) { setDriverMsg('Error: ' + e.message); return }
-    const { data, error } = await supabase.from('drivers').insert([{ ...newDriver }]).select().single()
+    const assignedPropsArray = typeof newDriver.assigned_properties === 'string'
+      ? newDriver.assigned_properties.split('|').map(p => p.trim()).filter(Boolean)
+      : newDriver.assigned_properties || []
+    const { data, error } = await supabase.from('drivers').insert([{ ...newDriver, assigned_properties: assignedPropsArray }]).select().single()
     if (error) { setDriverMsg('Error: ' + error.message); return }
     await supabase.from('user_roles').insert([{ email: newDriver.email, role: 'driver', company: newDriver.company || null }])
     await auditLog(adminEmail, 'ADD_DRIVER', 'drivers', data.id, newDriver)
@@ -200,7 +214,10 @@ export default function AdminPortal() {
   async function saveDriver() {
     const { error } = await supabase.from('drivers').update({
       name: editingDriver.name, phone: editingDriver.phone, company: editingDriver.company,
-      operator_license: editingDriver.operator_license, assigned_properties: editingDriver.assigned_properties,
+      operator_license: editingDriver.operator_license,
+      assigned_properties: typeof editingDriver.assigned_properties === 'string'
+        ? editingDriver.assigned_properties.split('|').map((p: string) => p.trim()).filter(Boolean)
+        : editingDriver.assigned_properties || [],
       is_active: editingDriver.is_active
     }).eq('id', editingDriver.id)
     if (error) { alert('Error: ' + error.message); return }
