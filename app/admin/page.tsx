@@ -147,16 +147,15 @@ export default function AdminPortal() {
     setUserMsg('Creating account...')
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
     const { data: { session } } = await supabase.auth.getSession()
-    const res = await fetch(fnBase + '/swift-handler', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-      body: JSON.stringify({ action: 'create_user', email: newUser.email, password: newUser.password })
-    })
-    if (!res.ok) {
+    try {
+      const res = await fetch(fnBase + '/swift-handler', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ action: 'create_user', email: newUser.email, password: newUser.password })
+      })
       const err = await res.json().catch(() => ({}))
-      setUserMsg('Auth error: ' + (err.message || res.statusText))
-      return
-    }
+      if (!res.ok) { setUserMsg('Auth error: ' + (err.error || err.message || res.statusText)); return }
+    } catch (e: any) { setUserMsg('Error: ' + e.message); return }
     const { error: roleError } = await supabase.from('user_roles').insert([{
       email: newUser.email, role: newUser.role,
       company: newUser.company || null, property: newUser.property || null
@@ -179,11 +178,15 @@ export default function AdminPortal() {
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
     const { data: { session } } = await supabase.auth.getSession()
     const tempPass = Math.random().toString(36).slice(-8) + 'A1!'
-    await fetch(fnBase + '/swift-handler', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-      body: JSON.stringify({ action: 'create_user', email: newDriver.email, password: tempPass })
-    })
+    try {
+      const res = await fetch(fnBase + '/swift-handler', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ action: 'create_user', email: newDriver.email, password: tempPass })
+      })
+      const err = await res.json().catch(() => ({}))
+      if (!res.ok) { setDriverMsg('Auth error: ' + (err.error || err.message || res.statusText)); return }
+    } catch (e: any) { setDriverMsg('Error: ' + e.message); return }
     const { data, error } = await supabase.from('drivers').insert([{ ...newDriver }]).select().single()
     if (error) { setDriverMsg('Error: ' + error.message); return }
     await supabase.from('user_roles').insert([{ email: newDriver.email, role: 'driver', company: newDriver.company || null }])
