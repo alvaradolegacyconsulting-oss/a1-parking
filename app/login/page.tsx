@@ -7,6 +7,7 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [logoFailed, setLogoFailed] = useState(false)
 
   async function handleLogin() {
     setLoading(true)
@@ -71,7 +72,10 @@ export default function Login() {
       <div style={{ maxWidth:'380px', width:'100%' }}>
 
         <div style={{ marginBottom:'32px', textAlign:'center' }}>
-          <img src="/logo.jpeg" alt="A1 Wrecker" style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px' }} />
+          {logoFailed
+            ? <div style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', background:'#1e2535', color:'#C9A227', fontSize:'28px', fontWeight:'bold', display:'flex', alignItems:'center', justifyContent:'center' }}>A1</div>
+            : <img src="/logo.jpeg" alt="A1 Wrecker" style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px' }} onError={() => setLogoFailed(true)} />
+          }
           <h1 style={{ color:'#C9A227', fontSize:'26px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Parking Management · Sign In</p>
         </div>

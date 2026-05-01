@@ -822,6 +822,17 @@ export default function CompanyAdminPortal() {
                   <label style={lbl}>Notes</label>
                   <textarea value={violation.notes} onChange={e => setViolation({ ...violation, notes: e.target.value })}
                     placeholder="Additional details..." style={{ ...inp, minHeight:'60px', resize:'vertical' as const }} />
+                  <label style={lbl}>Photos</label>
+                  <input type="file" accept="image/*" multiple onChange={e => setPhotos(Array.from(e.target.files || []))}
+                    style={{ display:'block', width:'100%', marginBottom:'8px', color:'#aaa', fontSize:'12px' }} />
+                  {photos.length > 0 && (
+                    <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'10px' }}>
+                      {photos.map((f, i) => (
+                        <img key={i} src={URL.createObjectURL(f)} alt={f.name}
+                          style={{ width:'60px', height:'60px', objectFit:'cover', borderRadius:'6px', border:'1px solid #3a4055' }} />
+                      ))}
+                    </div>
+                  )}
                   <div style={{ display:'flex', gap:'8px' }}>
                     <button onClick={submitViolation} disabled={submitting}
                       style={{ flex:1, padding:'11px', background:submitting ? '#555' : '#991b1b', color:'white', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:submitting ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>

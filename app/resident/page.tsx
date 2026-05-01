@@ -354,10 +354,12 @@ export default function ResidentPortal() {
                               Mark as Read
                             </button>
                           )}
-                          <button onClick={() => { setEditingVehicleId(isEditing ? null : v.id); setEditingVehicle({...v}) }}
-                            style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
-                            {isEditing ? 'Cancel Edit' : 'Edit'}
-                          </button>
+                          {!v.status && (
+                            <button onClick={() => { setEditingVehicleId(isEditing ? null : v.id); setEditingVehicle({...v}) }}
+                              style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                              {isEditing ? 'Cancel Edit' : 'Edit'}
+                            </button>
+                          )}
                         </div>
 
                         {isEditing && (
