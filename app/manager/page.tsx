@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
+import { QRCodeCanvas } from 'qrcode.react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 
@@ -39,6 +40,9 @@ export default function ManagerPortal() {
   const [auditDateFilter, setAuditDateFilter] = useState('week')
   const [auditSearch, setAuditSearch] = useState('')
   const [auditLoaded, setAuditLoaded] = useState(false)
+  const [pendingResidents, setPendingResidents] = useState<any[]>([])
+  const [residentNotes, setResidentNotes] = useState<Record<string, string>>({})
+  const [managerCompany, setManagerCompany] = useState('')
   const [plateQuery, setPlateQuery] = useState('')
   const [plateSuggestions, setPlateSuggestions] = useState<any[]>([])
   const [plateMsg, setPlateMsg] = useState<{ text: string; type: 'error' | 'warning' } | null>(null)
@@ -89,6 +93,7 @@ export default function ManagerPortal() {
       setLoading(false)
     } else if (roleData.role === 'manager' || roleData.role === 'leasing_agent') {
       if (roleData.role === 'leasing_agent') setIsReadOnly(true)
+      setManagerCompany(roleData.company || '')
       const { data, error } = await supabase
         .from('properties')
         .select('*')
@@ -293,7 +298,27 @@ export default function ManagerPortal() {
 
   async function fetchResidents(property: string) {
     const { data } = await supabase.from('residents').select('*').ilike('property', property).order('unit')
-    setResidents(data || [])
+    const all = data || []
+    setPendingResidents(all.filter(r => r.status === 'pending'))
+    setResidents(all.filter(r => r.status !== 'pending'))
+  }
+
+  async function approveResident(r: any) {
+    const note = residentNotes[r.id] || null
+    await supabase.from('residents').update({ is_active: true, status: 'active', manager_note: note }).eq('id', r.id)
+    await supabase.from('vehicles').update({ is_active: true, status: 'active' }).ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
+    await logAudit({ action: 'APPROVE_RESIDENT', table_name: 'residents', record_id: r.id, new_values: { name: r.name, unit: r.unit, property: manager.name } })
+    setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
+    fetchResidents(manager.name)
+  }
+
+  async function declineResident(r: any) {
+    const note = residentNotes[r.id] || null
+    await supabase.from('residents').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', r.id)
+    await supabase.from('vehicles').update({ is_active: false, status: 'declined' }).ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
+    await logAudit({ action: 'DECLINE_RESIDENT', table_name: 'residents', record_id: r.id, new_values: { name: r.name, unit: r.unit, property: manager.name } })
+    setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
+    fetchResidents(manager.name)
   }
 
   async function addVehicle(unit?: string) {
@@ -501,7 +526,9 @@ export default function ManagerPortal() {
             Vehicles{pendingVehicles.length > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingVehicles.length}</span>}
           </button>
           <button style={tabStyle('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
-          <button style={tabStyle('residents')} onClick={() => setActiveTab('residents')}>Residents</button>
+          <button style={tabStyle('residents')} onClick={() => setActiveTab('residents')}>
+            Residents{pendingResidents.length > 0 && <span style={{ background:'#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingResidents.length}</span>}
+          </button>
           <button style={tabStyle('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
           <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
@@ -792,6 +819,58 @@ export default function ManagerPortal() {
         {/* RESIDENTS */}
         {activeTab === 'residents' && (
           <div>
+            {pendingResidents.length > 0 && (
+              <div style={{ background:'#1a1400', border:'1px solid #a16207', borderRadius:'10px', padding:'14px', marginBottom:'16px' }}>
+                <p style={{ color:'#fbbf24', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px' }}>
+                  Pending Resident Registrations ({pendingResidents.length})
+                </p>
+                {pendingResidents.map(r => (
+                  <div key={r.id} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'10px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
+                      <div>
+                        <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{r.name}</p>
+                        <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{r.unit} · {r.email}</p>
+                        {r.phone && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{r.phone}</p>}
+                      </div>
+                      <span style={{ background:'#2a1e00', color:'#fbbf24', border:'1px solid #a16207', padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', whiteSpace:'nowrap' }}>Pending</span>
+                    </div>
+                    {(() => {
+                      const unitVehicles = vehicles.filter(v => v.unit?.toLowerCase() === r.unit?.toLowerCase() && v.status === 'pending')
+                      return unitVehicles.length > 0 ? (
+                        <div style={{ marginBottom:'10px' }}>
+                          <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 6px' }}>Pending Vehicles</p>
+                          {unitVehicles.map((v, i) => (
+                            <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 8px', background:'#0f1117', borderRadius:'6px', marginBottom:'4px' }}>
+                              <span style={{ color:'white', fontFamily:'Courier New', fontSize:'13px', fontWeight:'bold' }}>{v.plate}</span>
+                              <span style={{ color:'#888', fontSize:'11px' }}>{[v.color, v.make, v.model].filter(Boolean).join(' ')}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null
+                    })()}
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Note (optional)</label>
+                    <input
+                      value={residentNotes[r.id] || ''}
+                      onChange={e => setResidentNotes(n => ({...n, [r.id]: e.target.value}))}
+                      placeholder="e.g. Welcome! or Missing documentation."
+                      style={{ ...inputStyle, marginTop:'4px', marginBottom:'10px' }}
+                    />
+                    {!isReadOnly && (
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => approveResident(r)}
+                          style={{ flex:1, padding:'8px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                          Approve
+                        </button>
+                        <button onClick={() => declineResident(r)}
+                          style={{ flex:1, padding:'8px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                          Decline
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             <input value={residentSearch} onChange={e => setResidentSearch(e.target.value)} placeholder="Search name, email, unit, phone..." style={{ ...inputStyle, marginBottom:'12px' }} />
             {!isReadOnly && (
               <button onClick={() => setShowAddResident(!showAddResident)}
@@ -986,7 +1065,35 @@ export default function ManagerPortal() {
               )}
             </div>
 
-            {/* Section B — Exempt Plates */}
+            {/* Section B — Registration QR */}
+            {manager && (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'14px' }}>
+                <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>New Resident Registration Link</p>
+                <p style={{ color:'#555', fontSize:'12px', margin:'0 0 16px', lineHeight:'1.5' }}>Share this QR code or link with new residents to allow them to self-register. Their account will require your approval before they can log in.</p>
+                {(() => {
+                  const regUrl = `https://a1-parking.vercel.app/register?property=${encodeURIComponent(manager.name)}${managerCompany ? `&company=${encodeURIComponent(managerCompany)}` : ''}`
+                  return (
+                    <>
+                      <div id="qr-registration" style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
+                        <QRCodeCanvas value={regUrl} size={160} level="H" />
+                      </div>
+                      <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New', textAlign:'center' }}>{regUrl}</p>
+                      <button onClick={() => {
+                        const canvas = document.querySelector('#qr-registration canvas') as HTMLCanvasElement
+                        if (!canvas) return
+                        const tw = window.open('', '_blank')!
+                        tw.document.write(`<html><head><title>Registration QR - ${manager.name}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#fff;font-family:Arial,sans-serif;padding:40px}img{width:220px;height:220px}h2{color:#1A1F2E;font-size:22px;margin:16px 0 8px}p{color:#555;font-size:13px;text-align:center;max-width:320px;margin:4px 0}a{color:#C9A227;font-size:11px;word-break:break-all}</style></head><body><img src="${canvas.toDataURL()}" /><h2>${manager.name}</h2><p>Scan to register as a new resident</p><p>Your account requires manager approval before login</p><a>${regUrl}</a><script>window.print();window.close();</script></body></html>`)
+                        tw.document.close()
+                      }} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                        Print QR Code
+                      </button>
+                    </>
+                  )
+                })()}
+              </div>
+            )}
+
+            {/* Section C — Exempt Plates */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px' }}>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Exempt Plates</p>
               <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>These plates bypass the annual visitor pass limit entirely.</p>

@@ -983,6 +983,34 @@ export default function CompanyAdminPortal() {
                 </div>
               )
             })()}
+
+            {/* Registration QR Codes */}
+            <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'20px 0 4px' }}>Resident Registration QR Codes</p>
+            <p style={{ color:'#888', fontSize:'12px', margin:'0 0 12px', lineHeight:'1.5' }}>Share these with new residents so they can self-register. Their account requires manager approval before login.</p>
+
+            {properties.map((prop, i) => {
+              const regUrl = `${BASE_URL}/register?property=${encodeURIComponent(prop.name)}&company=${encodeURIComponent(role?.company || '')}`
+              const canvasId = `qr-reg-${i}`
+              return (
+                <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'20px', marginBottom:'12px', textAlign:'center' }}>
+                  <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0 0 4px' }}>{prop.name}</p>
+                  <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>New Resident Registration</p>
+                  <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
+                    <QRCodeCanvas value={regUrl} size={160} level="H" includeMargin={true} />
+                  </div>
+                  <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New' }}>{regUrl}</p>
+                  <button onClick={() => {
+                    const canvas = document.querySelector(`#${canvasId} canvas`) as HTMLCanvasElement
+                    if (!canvas) return
+                    const tw = window.open('', '_blank')!
+                    tw.document.write(`<html><head><title>Registration QR - ${prop.name}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#fff;font-family:Arial,sans-serif;padding:40px}img{width:220px;height:220px}h2{color:#1A1F2E;font-size:22px;margin:16px 0 8px}p{color:#555;font-size:13px;text-align:center;max-width:320px;margin:4px 0}a{color:#C9A227;font-size:11px;word-break:break-all}</style></head><body><img src="${canvas.toDataURL()}" /><h2>${prop.name}</h2><p>Scan to register as a new resident</p><p>Your account requires manager approval before login</p><a>${regUrl}</a><script>window.print();window.close();</script></body></html>`)
+                    tw.document.close()
+                  }} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>
+                    Print This Sign
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )}
 

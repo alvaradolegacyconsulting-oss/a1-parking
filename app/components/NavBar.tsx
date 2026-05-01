@@ -40,7 +40,7 @@ export default function NavBar() {
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
 
-  const hidden = pathname === '/login' || pathname === '/visitor' || pathname === '/visitor-select'
+  const hidden = pathname === '/login' || pathname === '/visitor' || pathname === '/visitor-select' || pathname.startsWith('/register')
 
   useEffect(() => {
     if (hidden) return

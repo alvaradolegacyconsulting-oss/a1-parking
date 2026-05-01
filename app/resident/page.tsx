@@ -187,6 +187,59 @@ export default function ResidentPortal() {
     </main>
   )
 
+  if (resident.status === 'pending') return (
+    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+      <div style={{ maxWidth:'420px', width:'100%' }}>
+        <div style={{ background:'#1a1400', border:'1px solid #a16207', borderRadius:'16px', padding:'32px', textAlign:'center' }}>
+          <div style={{ fontSize:'40px', marginBottom:'16px' }}>⏳</div>
+          <p style={{ color:'#fbbf24', fontWeight:'bold', fontSize:'18px', margin:'0 0 12px' }}>Registration Pending</p>
+          <p style={{ color:'#aaa', fontSize:'14px', lineHeight:'1.7', margin:'0 0 20px' }}>
+            Your registration is pending approval from your property manager.
+            You will be notified once your account is approved.
+          </p>
+          <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', textAlign:'left' }}>
+            <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>Submitted Info</p>
+            {[['Name', resident.name], ['Email', resident.email], ['Unit', resident.unit], ['Property', resident.property]].filter(([,v]) => v).map(([k,v]) => (
+              <div key={k} style={{ display:'flex', justifyContent:'space-between', padding:'4px 0', borderBottom:'1px solid #1e2535' }}>
+                <span style={{ color:'#555', fontSize:'12px' }}>{k}</span>
+                <span style={{ color:'#aaa', fontSize:'12px' }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}
+          style={{ width:'100%', marginTop:'16px', padding:'12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontSize:'13px', fontFamily:'Arial' }}>
+          Sign Out
+        </button>
+      </div>
+    </main>
+  )
+
+  if (resident.status === 'declined') return (
+    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+      <div style={{ maxWidth:'420px', width:'100%' }}>
+        <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'16px', padding:'32px', textAlign:'center' }}>
+          <div style={{ fontSize:'40px', marginBottom:'16px' }}>✕</div>
+          <p style={{ color:'#f44336', fontWeight:'bold', fontSize:'18px', margin:'0 0 12px' }}>Registration Not Approved</p>
+          <p style={{ color:'#aaa', fontSize:'14px', lineHeight:'1.7', margin:'0 0 12px' }}>
+            Your registration was not approved. Please contact your property manager for more information.
+          </p>
+          {resident.manager_note && (
+            <div style={{ background:'#0f1117', border:'1px solid #3a4055', borderRadius:'8px', padding:'12px', marginBottom:'12px', textAlign:'left' }}>
+              <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', margin:'0 0 6px' }}>Manager Note</p>
+              <p style={{ color:'#f44336', fontSize:'13px', margin:'0' }}>{resident.manager_note}</p>
+            </div>
+          )}
+          {resident.property && <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Property: {resident.property}</p>}
+        </div>
+        <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}
+          style={{ width:'100%', marginTop:'16px', padding:'12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontSize:'13px', fontFamily:'Arial' }}>
+          Sign Out
+        </button>
+      </div>
+    </main>
+  )
+
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       <div style={{ maxWidth:'500px', margin:'0 auto' }}>
