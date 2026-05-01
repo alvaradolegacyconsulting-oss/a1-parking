@@ -27,7 +27,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Always public — no login needed
-  const publicPaths = ['/login', '/visitor']
+  const publicPaths = ['/login', '/visitor', '/visitor-select']
   const isPublic = publicPaths.some(path => pathname.startsWith(path))
 
   // Not logged in — redirect to login

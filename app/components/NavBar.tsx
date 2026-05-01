@@ -38,7 +38,7 @@ export default function NavBar() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
-  const hidden = pathname === '/login' || pathname === '/visitor'
+  const hidden = pathname === '/login' || pathname === '/visitor' || pathname === '/visitor-select'
 
   useEffect(() => {
     if (hidden) return

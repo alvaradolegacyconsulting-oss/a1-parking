@@ -1,6 +1,9 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { QRCodeCanvas } from 'qrcode.react'
+
+const BASE_URL = 'https://a1-parking.vercel.app'
 
 export default function CompanyAdminPortal() {
   const [user, setUser] = useState<any>(null)
@@ -500,6 +503,39 @@ export default function CompanyAdminPortal() {
     )
   }
 
+  function printQRSign(canvasId: string, title: string, subtitle: string) {
+    const container = document.getElementById(canvasId)
+    const canvas = container?.querySelector('canvas') as HTMLCanvasElement | null
+    const dataUrl = canvas?.toDataURL('image/png') || ''
+    const tw = window.open('', '_blank')
+    if (!tw) return
+    tw.document.write(`<!DOCTYPE html><html><head><title>Visitor Parking Sign</title><style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:Arial,sans-serif;background:white;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+      .card{max-width:380px;width:100%;text-align:center;border:3px solid #C9A227;border-radius:16px;padding:32px;margin:0 auto}
+      .hdr{background:#0f1117;border-radius:8px;padding:12px;margin-bottom:20px}
+      .note{background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px;margin-top:14px}
+      .warn{background:#f8d7da;border:1px solid #f5c6cb;border-radius:6px;padding:10px;margin-top:10px}
+      @media print{body{min-height:auto}}
+    </style></head><body>
+      <div class="card">
+        <div class="hdr">
+          <p style="color:#C9A227;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:.1em">A1 WRECKER, LLC</p>
+          <p style="color:white;font-size:10px;margin-top:2px">Houston's #1 Towing &amp; Recovery</p>
+        </div>
+        <p style="font-size:22px;font-weight:bold;color:#111;margin-bottom:4px">Visitor Parking</p>
+        <p style="font-size:14px;color:#333;margin-bottom:20px">Scan to get your parking pass</p>
+        <img src="${dataUrl}" style="width:200px;height:200px;display:block;margin:0 auto 16px" />
+        <p style="font-size:15px;font-weight:bold;color:#111;margin-bottom:4px">${title}</p>
+        <p style="font-size:11px;color:#555;margin-bottom:0">${subtitle}</p>
+        <div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">Required before parking</p><p style="color:#856404;font-size:11px">Valid up to 24 hours · No app download needed</p></div>
+        <div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner's expense</p></div>
+      </div>
+      <script>window.onload=function(){window.print()}</script>
+    </body></html>`)
+    tw.document.close()
+  }
+
   const tab = (t: string): React.CSSProperties => ({
     flex:1, padding:'8px', border:'none', borderRadius:'6px',
     cursor:'pointer', fontWeight:'bold', fontSize:'11px',
@@ -602,6 +638,7 @@ export default function CompanyAdminPortal() {
           <button style={tab('lookup')} onClick={() => setActiveTab('lookup')}>Plate Lookup</button>
           <button style={tab('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tab('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
+          <button style={tab('qrcodes')} onClick={() => setActiveTab('qrcodes')}>QR Codes</button>
           <button style={tab('manage')} onClick={() => { setActiveTab('manage'); if (!manageLoaded) loadManageData() }}>Manage</button>
         </div>
 
@@ -836,6 +873,58 @@ export default function CompanyAdminPortal() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ── QR CODES ── */}
+        {activeTab === 'qrcodes' && (
+          <div>
+            <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Individual Property QR Codes</p>
+
+            {properties.map((prop, i) => {
+              const url = `${BASE_URL}/visitor?property=${encodeURIComponent(prop.name)}`
+              const canvasId = `qr-prop-${i}`
+              return (
+                <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'20px', marginBottom:'12px', textAlign:'center' }}>
+                  <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0 0 16px' }}>{prop.name}</p>
+                  <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
+                    <QRCodeCanvas value={url} size={160} level="H" includeMargin={true} />
+                  </div>
+                  <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New' }}>{url}</p>
+                  <button onClick={() => printQRSign(canvasId, prop.name, prop.address || '')}
+                    style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>
+                    Print This Sign
+                  </button>
+                </div>
+              )
+            })}
+
+            {properties.length === 0 && (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center', marginBottom:'12px' }}>
+                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No properties assigned</p>
+              </div>
+            )}
+
+            <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'20px 0 4px' }}>Multi-Property QR Code</p>
+            <p style={{ color:'#888', fontSize:'12px', margin:'0 0 12px', lineHeight:'1.5' }}>Use this QR code when visitors need to choose which property they are visiting.</p>
+
+            {(() => {
+              const companyUrl = `${BASE_URL}/visitor-select?company=${encodeURIComponent(role?.company || '')}`
+              return (
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'20px', marginBottom:'12px', textAlign:'center' }}>
+                  <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0 0 4px' }}>Company Visitor Pass — Visitor Selects Property</p>
+                  <p style={{ color:'#888', fontSize:'12px', margin:'0 0 16px', lineHeight:'1.5' }}>Visitors scan this once and then pick which property they are visiting.</p>
+                  <div id="qr-company" style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
+                    <QRCodeCanvas value={companyUrl} size={160} level="H" includeMargin={true} />
+                  </div>
+                  <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New' }}>{companyUrl}</p>
+                  <button onClick={() => printQRSign('qr-company', role?.company || '', 'Select your property after scanning')}
+                    style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>
+                    Print This Sign
+                  </button>
+                </div>
+              )
+            })()}
           </div>
         )}
 
