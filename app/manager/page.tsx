@@ -189,7 +189,7 @@ export default function ManagerPortal() {
   }
 
   async function approveVehicle(id: string) {
-    await supabase.from('vehicles').update({ is_active: true, status: 'active', manager_note: pendingNotes[id] || null }).eq('id', id)
+    await supabase.from('vehicles').update({ is_active: true, status: 'active', manager_note: pendingNotes[id] || null, resident_read: true }).eq('id', id)
     await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'active', property: manager.name } })
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
     fetchVehicles(manager.name)

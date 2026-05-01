@@ -124,6 +124,11 @@ export default function ResidentPortal() {
     }
   }
 
+  async function markDeclinedRead(id: string) {
+    await supabase.from('vehicles').update({ resident_read: true }).eq('id', id)
+    fetchVehicles(resident.unit, resident.property)
+  }
+
   async function issueVisitorPass() {
     if (!visitorForm.plate || !resident) return
     const expires = new Date()
@@ -200,11 +205,13 @@ export default function ResidentPortal() {
           <button style={tabStyle('info')} onClick={() => setActiveTab('info')}>My Info</button>
           <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>
             Vehicles{(() => {
-              const hasDeclined = vehicles.some(v => v.status === 'declined')
+              const hasUnreadDeclined = vehicles.some(v => v.status === 'declined' && !v.resident_read)
               const hasPending = vehicles.some(v => v.status === 'pending')
-              if (!hasDeclined && !hasPending) return null
-              const count = vehicles.filter(v => v.status === 'pending' || v.status === 'declined').length
-              return <span style={{ background: hasDeclined ? '#B71C1C' : '#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{count}</span>
+              if (!hasUnreadDeclined && !hasPending) return null
+              const count = hasUnreadDeclined
+                ? vehicles.filter(v => v.status === 'declined' && !v.resident_read).length
+                : vehicles.filter(v => v.status === 'pending').length
+              return <span style={{ background: hasUnreadDeclined ? '#B71C1C' : '#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{count}</span>
             })()}
           </button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
@@ -340,6 +347,12 @@ export default function ResidentPortal() {
                               <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 3px' }}>Manager Note</p>
                               <p style={{ color: v.status === 'declined' ? '#f44336' : '#aaa', fontSize:'12px', margin:'0' }}>{v.manager_note}</p>
                             </div>
+                          )}
+                          {v.status === 'declined' && !v.resident_read && (
+                            <button onClick={() => markDeclinedRead(v.id)}
+                              style={{ width:'100%', padding:'7px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial', marginBottom:'8px' }}>
+                              Mark as Read
+                            </button>
                           )}
                           <button onClick={() => { setEditingVehicleId(isEditing ? null : v.id); setEditingVehicle({...v}) }}
                             style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
