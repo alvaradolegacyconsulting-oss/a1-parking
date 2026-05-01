@@ -1,5 +1,5 @@
 'use client'
-import { useState, Suspense } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 
@@ -7,6 +7,15 @@ function VisitorForm() {
   const searchParams = useSearchParams()
   const propertyName = searchParams.get('property') || 'A1 Wrecker Managed Property'
   const [step, setStep] = useState<'form' | 'success'>('form')
+  const [supportPhone, setSupportPhone] = useState('346-428-7864')
+  const [supportEmail, setSupportEmail] = useState('a1wrecker2023@gmail.com')
+  const [supportWebsite, setSupportWebsite] = useState('a1wreckerllc.net')
+
+  useEffect(() => {
+    setSupportPhone(localStorage.getItem('company_support_phone') || '346-428-7864')
+    setSupportEmail(localStorage.getItem('company_support_email') || 'a1wrecker2023@gmail.com')
+    setSupportWebsite(localStorage.getItem('company_support_website') || 'a1wreckerllc.net')
+  }, [])
   const [loading, setLoading] = useState(false)
   const [plateError, setPlateError] = useState('')
   const [form, setForm] = useState({
@@ -243,7 +252,9 @@ function VisitorForm() {
           </p>
         </div>
 
-        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'16px' }}>A1 Wrecker, LLC · Houston's #1 Towing & Recovery · a1wreckerllc.net</p>
+        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'16px' }}>
+          {supportPhone} · {supportEmail} · {supportWebsite}
+        </p>
       </div>
     </main>
   )

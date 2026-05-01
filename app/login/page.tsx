@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 
 export default function Login() {
@@ -8,6 +8,13 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [logoFailed, setLogoFailed] = useState(false)
+  const [companyLogo, setCompanyLogo] = useState<string | null>(null)
+  const [companyName, setCompanyName] = useState<string | null>(null)
+
+  useEffect(() => {
+    setCompanyLogo(localStorage.getItem('company_logo'))
+    setCompanyName(localStorage.getItem('company_name'))
+  }, [])
 
   async function handleLogin() {
     setLoading(true)
@@ -36,7 +43,7 @@ export default function Login() {
     if (roleData.role !== 'admin' && roleData.company) {
       const { data: companyData } = await supabase
         .from('companies')
-        .select('is_active')
+        .select('is_active, logo_url, display_name, support_phone, support_email, support_website')
         .ilike('name', roleData.company)
         .single()
 
@@ -46,6 +53,23 @@ export default function Login() {
         await supabase.auth.signOut()
         return
       }
+
+      if (companyData?.logo_url) localStorage.setItem('company_logo', companyData.logo_url)
+      else localStorage.removeItem('company_logo')
+      if (companyData?.display_name) localStorage.setItem('company_name', companyData.display_name)
+      else localStorage.removeItem('company_name')
+      if (companyData?.support_phone) localStorage.setItem('company_support_phone', companyData.support_phone)
+      else localStorage.removeItem('company_support_phone')
+      if (companyData?.support_email) localStorage.setItem('company_support_email', companyData.support_email)
+      else localStorage.removeItem('company_support_email')
+      if (companyData?.support_website) localStorage.setItem('company_support_website', companyData.support_website)
+      else localStorage.removeItem('company_support_website')
+    } else {
+      localStorage.removeItem('company_logo')
+      localStorage.removeItem('company_name')
+      localStorage.removeItem('company_support_phone')
+      localStorage.removeItem('company_support_email')
+      localStorage.removeItem('company_support_website')
     }
 
     setLoading(false)
@@ -74,9 +98,9 @@ export default function Login() {
         <div style={{ marginBottom:'32px', textAlign:'center' }}>
           {logoFailed
             ? <div style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', background:'#1e2535', color:'#C9A227', fontSize:'28px', fontWeight:'bold', display:'flex', alignItems:'center', justifyContent:'center' }}>A1</div>
-            : <img src="/logo.jpeg" alt="A1 Wrecker" style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px' }} onError={() => setLogoFailed(true)} />
+            : <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'A1 Wrecker'} style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px' }} onError={() => setLogoFailed(true)} />
           }
-          <h1 style={{ color:'#C9A227', fontSize:'26px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
+          <h1 style={{ color:'#C9A227', fontSize:'26px', fontWeight:'bold', margin:'0' }}>{companyName || 'A1 Wrecker, LLC'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Parking Management · Sign In</p>
         </div>
 

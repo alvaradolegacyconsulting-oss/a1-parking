@@ -37,6 +37,8 @@ export default function NavBar() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
+  const [companyLogo, setCompanyLogo] = useState<string | null>(null)
+  const [companyName, setCompanyName] = useState<string | null>(null)
 
   const hidden = pathname === '/login' || pathname === '/visitor' || pathname === '/visitor-select'
 
@@ -44,6 +46,8 @@ export default function NavBar() {
     if (hidden) return
     setLoaded(false)
     async function load() {
+      setCompanyLogo(localStorage.getItem('company_logo'))
+      setCompanyName(localStorage.getItem('company_name'))
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { setLoaded(true); return }
       const { data } = await supabase
@@ -84,8 +88,8 @@ export default function NavBar() {
 
           {/* Logo + brand */}
           <a href={links[0]?.href ?? '/'} style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
-            <img src="/logo.jpeg" alt="A1 Wrecker" style={{ width: '30px', height: '30px', borderRadius: '6px', border: '1px solid #C9A227' }} />
-            <span style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '13px', letterSpacing: '0.02em' }}>A1 Wrecker</span>
+            <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'A1 Wrecker'} style={{ width: '30px', height: '30px', borderRadius: '6px', border: '1px solid #C9A227' }} />
+            <span style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '13px', letterSpacing: '0.02em' }}>{companyName || 'A1 Wrecker'}</span>
           </a>
 
           {/* Desktop nav links */}

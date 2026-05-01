@@ -19,8 +19,16 @@ export default function ResidentPortal() {
   const [showRequestForm, setShowRequestForm] = useState(false)
   const [newVehicle, setNewVehicle] = useState({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
   const [requestMsg, setRequestMsg] = useState('')
+  const [supportPhone, setSupportPhone] = useState('346-428-7864')
+  const [supportEmail, setSupportEmail] = useState('a1wrecker2023@gmail.com')
+  const [supportWebsite, setSupportWebsite] = useState('a1wreckerllc.net')
 
   useEffect(() => { loadResident() }, [])
+  useEffect(() => {
+    setSupportPhone(localStorage.getItem('company_support_phone') || '346-428-7864')
+    setSupportEmail(localStorage.getItem('company_support_email') || 'a1wrecker2023@gmail.com')
+    setSupportWebsite(localStorage.getItem('company_support_website') || 'a1wreckerllc.net')
+  }, [])
 
   async function loadResident() {
     setLoading(true)
@@ -476,7 +484,9 @@ export default function ResidentPortal() {
           </div>
         )}
 
-
+      <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'24px' }}>
+        {supportPhone} · {supportEmail} · {supportWebsite}
+      </p>
       </div>
     </main>
   )

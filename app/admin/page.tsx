@@ -11,7 +11,7 @@ export default function AdminPortal() {
   const [companySearch, setCompanySearch] = useState('')
   const [showAddCompany, setShowAddCompany] = useState(false)
   const [editingCompany, setEditingCompany] = useState<any>(null)
-  const [newCompany, setNewCompany] = useState({ name:'', address:'', phone:'', email:'', is_active:true })
+  const [newCompany, setNewCompany] = useState({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'' })
 
   const [properties, setProperties] = useState<any[]>([])
   const [propertySearch, setPropertySearch] = useState('')
@@ -91,14 +91,17 @@ export default function AdminPortal() {
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'ADD_COMPANY', 'companies', data.id, newCompany)
     setShowAddCompany(false)
-    setNewCompany({ name:'', address:'', phone:'', email:'', is_active:true })
+    setNewCompany({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'' })
     fetchCompanies()
   }
 
   async function saveCompany() {
     const { error } = await supabase.from('companies').update({
       name: editingCompany.name, address: editingCompany.address,
-      phone: editingCompany.phone, email: editingCompany.email, is_active: editingCompany.is_active
+      phone: editingCompany.phone, email: editingCompany.email, is_active: editingCompany.is_active,
+      display_name: editingCompany.display_name || null, logo_url: editingCompany.logo_url || null,
+      support_phone: editingCompany.support_phone || null, support_email: editingCompany.support_email || null,
+      support_website: editingCompany.support_website || null
     }).eq('id', editingCompany.id)
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'EDIT_COMPANY', 'companies', editingCompany.id, editingCompany)
@@ -352,11 +355,16 @@ export default function AdminPortal() {
               <div style={addCard}>
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Company</p>
                 <label style={lbl}>Name *</label><input value={newCompany.name} onChange={e => setNewCompany({...newCompany, name: e.target.value})} style={inp} />
+                <label style={lbl}>Display Name</label><input value={newCompany.display_name} onChange={e => setNewCompany({...newCompany, display_name: e.target.value})} placeholder="Shown to users in app" style={inp} />
+                <label style={lbl}>Logo URL</label><input value={newCompany.logo_url} onChange={e => setNewCompany({...newCompany, logo_url: e.target.value})} placeholder="https://..." style={inp} />
                 <label style={lbl}>Address</label><input value={newCompany.address} onChange={e => setNewCompany({...newCompany, address: e.target.value})} style={inp} />
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                   <div><label style={lbl}>Phone</label><input value={newCompany.phone} onChange={e => setNewCompany({...newCompany, phone: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>Email</label><input value={newCompany.email} onChange={e => setNewCompany({...newCompany, email: e.target.value})} style={inp} /></div>
                 </div>
+                <label style={lbl}>Support Phone</label><input value={newCompany.support_phone} onChange={e => setNewCompany({...newCompany, support_phone: e.target.value})} placeholder="346-428-7864" style={inp} />
+                <label style={lbl}>Support Email</label><input value={newCompany.support_email} onChange={e => setNewCompany({...newCompany, support_email: e.target.value})} placeholder="support@company.com" style={inp} />
+                <label style={lbl}>Support Website</label><input value={newCompany.support_website} onChange={e => setNewCompany({...newCompany, support_website: e.target.value})} placeholder="company.com" style={inp} />
                 <label style={lbl}>Active</label>
                 <select value={newCompany.is_active ? 'true' : 'false'} onChange={e => setNewCompany({...newCompany, is_active: e.target.value === 'true'})} style={inp}>
                   <option value="true">Yes</option><option value="false">No</option>
@@ -372,11 +380,16 @@ export default function AdminPortal() {
               <div style={editCard}>
                 <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Editing — {editingCompany.name}</p>
                 <label style={lbl}>Name *</label><input value={editingCompany.name} onChange={e => setEditingCompany({...editingCompany, name: e.target.value})} style={inp} />
+                <label style={lbl}>Display Name</label><input value={editingCompany.display_name || ''} onChange={e => setEditingCompany({...editingCompany, display_name: e.target.value})} placeholder="Shown to users in app" style={inp} />
+                <label style={lbl}>Logo URL</label><input value={editingCompany.logo_url || ''} onChange={e => setEditingCompany({...editingCompany, logo_url: e.target.value})} placeholder="https://..." style={inp} />
                 <label style={lbl}>Address</label><input value={editingCompany.address || ''} onChange={e => setEditingCompany({...editingCompany, address: e.target.value})} style={inp} />
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                   <div><label style={lbl}>Phone</label><input value={editingCompany.phone || ''} onChange={e => setEditingCompany({...editingCompany, phone: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>Email</label><input value={editingCompany.email || ''} onChange={e => setEditingCompany({...editingCompany, email: e.target.value})} style={inp} /></div>
                 </div>
+                <label style={lbl}>Support Phone</label><input value={editingCompany.support_phone || ''} onChange={e => setEditingCompany({...editingCompany, support_phone: e.target.value})} placeholder="346-428-7864" style={inp} />
+                <label style={lbl}>Support Email</label><input value={editingCompany.support_email || ''} onChange={e => setEditingCompany({...editingCompany, support_email: e.target.value})} placeholder="support@company.com" style={inp} />
+                <label style={lbl}>Support Website</label><input value={editingCompany.support_website || ''} onChange={e => setEditingCompany({...editingCompany, support_website: e.target.value})} placeholder="company.com" style={inp} />
                 <label style={lbl}>Active</label>
                 <select value={editingCompany.is_active ? 'true' : 'false'} onChange={e => setEditingCompany({...editingCompany, is_active: e.target.value === 'true'})} style={inp}>
                   <option value="true">Yes</option><option value="false">No</option>

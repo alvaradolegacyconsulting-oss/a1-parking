@@ -39,9 +39,21 @@ export default function ManagerPortal() {
   const [auditDateFilter, setAuditDateFilter] = useState('week')
   const [auditSearch, setAuditSearch] = useState('')
   const [auditLoaded, setAuditLoaded] = useState(false)
+  const [plateQuery, setPlateQuery] = useState('')
+  const [plateSuggestions, setPlateSuggestions] = useState<any[]>([])
+  const [plateMsg, setPlateMsg] = useState<{ text: string; type: 'error' | 'warning' } | null>(null)
 
   useEffect(() => { loadManager() }, [])
   useEffect(() => { if (activeTab === 'activity' && manager) fetchActivityLogs() }, [activeTab, manager])
+  useEffect(() => {
+    if (editingSpace) {
+      setPlateQuery(editingSpace.assigned_to_plate || '')
+    } else {
+      setPlateQuery('')
+    }
+    setPlateSuggestions([])
+    setPlateMsg(null)
+  }, [editingSpace?.id])
   useEffect(() => {
     if (manager) {
       setPassLimit(manager.visitor_pass_limit != null ? String(manager.visitor_pass_limit) : '')
@@ -142,6 +154,45 @@ export default function ManagerPortal() {
   async function fetchSpaces(property: string) {
     const { data } = await supabase.from('spaces').select('*').ilike('property', property).order('space_number')
     setSpaces(data || [])
+  }
+
+  async function handlePlateSearch(query: string) {
+    setPlateQuery(query)
+    setEditingSpace({ ...editingSpace, assigned_to_plate: query })
+    setPlateMsg(null)
+    setPlateSuggestions([])
+    if (query.length < 2) return
+    const { data } = await supabase
+      .from('vehicles')
+      .select('*')
+      .ilike('property', manager.name)
+      .ilike('plate', `%${query}%`)
+      .in('status', ['active', 'pending'])
+      .limit(8)
+    const results = data || []
+    setPlateSuggestions(results)
+    if (results.length === 0 && query.length >= 3) {
+      setPlateMsg({ text: 'This plate is not registered. Please add the vehicle first before assigning a space.', type: 'warning' })
+    }
+  }
+
+  function selectPlate(plate: string) {
+    const conflict = spaces.find(s =>
+      s.id !== editingSpace.id &&
+      s.status === 'occupied' &&
+      s.assigned_to_plate?.toLowerCase() === plate.toLowerCase()
+    )
+    if (conflict) {
+      setPlateMsg({ text: `This plate is already assigned to Space ${conflict.space_number}. Release that space first or choose a different plate.`, type: 'error' })
+      setPlateSuggestions([])
+      setPlateQuery(plate)
+      setEditingSpace({ ...editingSpace, assigned_to_plate: plate })
+      return
+    }
+    setEditingSpace({ ...editingSpace, assigned_to_plate: plate })
+    setPlateQuery(plate)
+    setPlateSuggestions([])
+    setPlateMsg(null)
   }
 
   async function saveSpace() {
@@ -683,15 +734,30 @@ export default function ManagerPortal() {
                                 style={inputStyle} />
 
                               <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Assigned Plate</label>
-                              <select
-                                value={editingSpace.assigned_to_plate || ''}
-                                onChange={e => setEditingSpace({ ...editingSpace, assigned_to_plate: e.target.value })}
-                                style={inputStyle}>
-                                <option value=''>Select plate...</option>
-                                {vehicles.filter(v => v.is_active).map((v, i) => (
-                                  <option key={i} value={v.plate}>{v.plate} — {v.unit} ({v.color} {v.make})</option>
-                                ))}
-                              </select>
+                              <div style={{ position:'relative' }}>
+                                <input
+                                  value={plateQuery}
+                                  onChange={e => handlePlateSearch(e.target.value.toUpperCase())}
+                                  placeholder="Type plate to search..."
+                                  style={{ ...inputStyle, fontFamily:'Courier New', fontWeight:'bold' }}
+                                />
+                                {plateSuggestions.length > 0 && (
+                                  <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', zIndex:10, maxHeight:'160px', overflowY:'auto', boxShadow:'0 4px 12px rgba(0,0,0,0.4)' }}>
+                                    {plateSuggestions.map((v, i) => (
+                                      <div key={i} onClick={() => selectPlate(v.plate)}
+                                        style={{ padding:'8px 12px', cursor:'pointer', borderBottom:'1px solid #2a2f3d', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                                        <span style={{ fontFamily:'Courier New', fontWeight:'bold', fontSize:'13px', color:'#C9A227' }}>{v.plate}</span>
+                                        <span style={{ color:'#888', fontSize:'11px' }}>{v.unit} · {v.color} {v.make}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              {plateMsg && (
+                                <div style={{ background: plateMsg.type === 'error' ? '#3a1a1a' : '#1a1a0a', border:`1px solid ${plateMsg.type === 'error' ? '#b71c1c' : '#a16207'}`, borderRadius:'6px', padding:'7px 10px', marginTop:'4px' }}>
+                                  <p style={{ color: plateMsg.type === 'error' ? '#f44336' : '#fbbf24', fontSize:'11px', margin:'0' }}>{plateMsg.text}</p>
+                                </div>
+                              )}
                             </>
                           )}
 
