@@ -147,7 +147,7 @@ export default function Login() {
         </div>
 
         <div style={{ marginTop:'16px', textAlign:'center' }}>
-          <a href="/visitor" style={{ color:'#C9A227', fontSize:'12px', textDecoration:'none' }}>
+          <a href="/visitor-select" style={{ color:'#C9A227', fontSize:'12px', textDecoration:'none' }}>
             Visitor? Get a parking pass here →
           </a>
         </div>

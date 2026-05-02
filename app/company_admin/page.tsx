@@ -192,7 +192,7 @@ export default function CompanyAdminPortal() {
   }
 
   async function fetchAllFacilitiesManage() {
-    const { data } = await supabase.from('storage_facilities').select('*').order('name')
+    const { data } = await supabase.from('storage_facilities').select('*').eq('is_active', true).order('name')
     setAllFacilities(data || [])
   }
 

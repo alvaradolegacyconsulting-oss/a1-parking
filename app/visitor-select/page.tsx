@@ -12,13 +12,9 @@ function VisitorSelectForm() {
 
   useEffect(() => {
     async function load() {
-      if (!company) { setLoading(false); return }
-      const { data } = await supabase
-        .from('properties')
-        .select('name')
-        .ilike('company', company)
-        .eq('is_active', true)
-        .order('name')
+      let query = supabase.from('properties').select('name').eq('is_active', true).order('name')
+      if (company) query = query.ilike('company', company)
+      const { data } = await query
       setProperties(data || [])
       if (data && data.length > 0) setSelected(data[0].name)
       setLoading(false)
@@ -32,10 +28,10 @@ function VisitorSelectForm() {
     </main>
   )
 
-  if (!company || properties.length === 0) return (
+  if (properties.length === 0) return (
     <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       <div style={{ textAlign:'center' }}>
-        <p style={{ color:'#f44336', fontSize:'14px', marginBottom:'12px' }}>No properties found for this company.</p>
+        <p style={{ color:'#f44336', fontSize:'14px', marginBottom:'12px' }}>No properties found. Please contact the property manager for a direct visitor pass link.</p>
         <a href="/visitor" style={{ color:'#C9A227', fontSize:'13px' }}>← Go to Visitor Pass</a>
       </div>
     </main>
@@ -51,7 +47,7 @@ function VisitorSelectForm() {
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
           />
           <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
-          <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass · {company}</p>
+          <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass{company ? ` · ${company}` : ''}</p>
           <p style={{ color:'#555', fontSize:'11px', margin:'4px 0 0' }}>No app download required</p>
         </div>
 

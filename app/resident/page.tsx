@@ -19,6 +19,7 @@ export default function ResidentPortal() {
   const [showRequestForm, setShowRequestForm] = useState(false)
   const [newVehicle, setNewVehicle] = useState({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
   const [requestMsg, setRequestMsg] = useState('')
+  const [passError, setPassError] = useState('')
   const [supportPhone, setSupportPhone] = useState('346-428-7864')
   const [supportEmail, setSupportEmail] = useState('a1wrecker2023@gmail.com')
   const [supportWebsite, setSupportWebsite] = useState('a1wreckerllc.net')
@@ -139,12 +140,48 @@ export default function ResidentPortal() {
 
   async function issueVisitorPass() {
     if (!visitorForm.plate || !resident) return
+    setPassError('')
+    const plate = visitorForm.plate.toUpperCase().trim()
+
+    if (resident.property) {
+      const { data: propData } = await supabase
+        .from('properties')
+        .select('visitor_pass_limit, exempt_plates')
+        .ilike('name', resident.property)
+        .single()
+
+      if (propData && propData.visitor_pass_limit && propData.visitor_pass_limit > 0) {
+        const exemptPlates: string[] = propData.exempt_plates || []
+        const isExempt = exemptPlates.some((ep: string) => ep.toUpperCase() === plate)
+        if (!isExempt) {
+          const { data: units } = await supabase
+            .from('residents')
+            .select('unit')
+            .ilike('property', resident.property)
+          const unitList = (units || []).map((r: any) => r.unit)
+          if (unitList.length > 0) {
+            const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString()
+            const { count } = await supabase
+              .from('visitor_passes')
+              .select('id', { count: 'exact', head: true })
+              .ilike('plate', plate)
+              .in('visiting_unit', unitList)
+              .gte('created_at', yearStart)
+            if ((count ?? 0) >= propData.visitor_pass_limit) {
+              setPassError('This vehicle has reached the maximum number of visitor passes allowed per year for this property.')
+              return
+            }
+          }
+        }
+      }
+    }
+
     const expires = new Date()
     expires.setHours(expires.getHours() + parseInt(visitorForm.duration))
     const { error } = await supabase
       .from('visitor_passes')
       .insert([{
-        plate: visitorForm.plate.toUpperCase().trim(),
+        plate,
         visitor_name: visitorForm.name,
         visiting_unit: resident.unit,
         vehicle_desc: visitorForm.vehicle_desc,
@@ -156,7 +193,7 @@ export default function ResidentPortal() {
     if (error) {
       alert('Error: ' + error.message)
     } else {
-      await logAudit({ action: 'ISSUE_VISITOR_PASS', table_name: 'visitor_passes', new_values: { plate: visitorForm.plate.toUpperCase().trim(), visiting_unit: resident.unit, duration_hours: parseInt(visitorForm.duration) } })
+      await logAudit({ action: 'ISSUE_VISITOR_PASS', table_name: 'visitor_passes', new_values: { plate, visiting_unit: resident.unit, duration_hours: parseInt(visitorForm.duration) } })
       alert('Visitor pass issued!')
       setShowVisitorForm(false)
       setVisitorForm({ plate: '', name: '', vehicle_desc: '', duration: '4' })
@@ -502,12 +539,17 @@ export default function ResidentPortal() {
                   <option value='12'>12 hours</option>
                   <option value='24'>24 hours (maximum)</option>
                 </select>
+                {passError && (
+                  <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 12px', marginBottom:'10px' }}>
+                    <p style={{ color:'#f44336', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>{passError}</p>
+                  </div>
+                )}
                 <div style={{ display:'flex', gap:'8px' }}>
                   <button onClick={issueVisitorPass}
                     style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>
                     Issue Pass
                   </button>
-                  <button onClick={() => setShowVisitorForm(false)}
+                  <button onClick={() => { setShowVisitorForm(false); setPassError('') }}
                     style={{ padding:'11px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                     Cancel
                   </button>
