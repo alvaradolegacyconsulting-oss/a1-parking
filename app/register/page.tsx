@@ -52,6 +52,17 @@ function RegisterForm() {
     setSubmitting(true)
     setError('')
     try {
+      const { data: existing } = await supabase
+        .from('residents')
+        .select('id')
+        .ilike('email', account.email.trim())
+        .single()
+      if (existing) {
+        setError('An account with this email already exists. Please log in instead.')
+        setSubmitting(false)
+        return
+      }
+
       const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
       const res = await fetch(fnBase + '/swift-handler', {
         method: 'POST',
