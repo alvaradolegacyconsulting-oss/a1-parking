@@ -21,6 +21,7 @@ function RegisterForm() {
   const [companyName, setCompanyName] = useState<string | null>(null)
   const [logoFailed, setLogoFailed] = useState(false)
 
+  const [tosChecked, setTosChecked] = useState(false)
   const [account, setAccount] = useState({ email: '', password: '', confirm: '', name: '', phone: '', unit: '' })
   const [vehicles, setVehicles] = useState<any[]>([])
 
@@ -118,6 +119,7 @@ function RegisterForm() {
         }])
       }
 
+      await supabase.from('audit_logs').insert([{ action: 'REGISTRATION_TOS_ACCEPTED', table_name: 'residents', new_values: { email: account.email.trim(), property: property || null } }])
       setDone(true)
     } catch (e: any) {
       setError(e.message || 'An unexpected error occurred. Please try again.')
@@ -309,17 +311,24 @@ function RegisterForm() {
                 </div>
               )}
 
-              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 16px', lineHeight:'1.6' }}>
-                By submitting, you agree your registration will be reviewed by your property manager before activation.
-              </p>
+              <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', marginBottom:'14px', cursor:'pointer' }}>
+                <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
+                  style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer' }} />
+                <span style={{ color:'#aaa', fontSize:'12px', lineHeight:'1.6' }}>
+                  I agree to the{' '}
+                  <a href="/terms" target="_blank" style={{ color:'#C9A227', textDecoration:'none' }}>Terms of Service</a>
+                  {' '}and{' '}
+                  <a href="/privacy" target="_blank" style={{ color:'#C9A227', textDecoration:'none' }}>Privacy Policy</a>
+                </span>
+              </label>
 
               <div style={{ display:'flex', gap:'8px' }}>
                 <button onClick={() => { setError(''); setStep(2) }}
                   style={{ flex:1, padding:'12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontSize:'13px', fontFamily:'Arial' }}>
                   ← Back
                 </button>
-                <button onClick={submit} disabled={submitting}
-                  style={{ flex:2, padding:'12px', background: submitting ? '#555' : '#C9A227', color: submitting ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: submitting ? 'not-allowed' : 'pointer' }}>
+                <button onClick={submit} disabled={submitting || !tosChecked}
+                  style={{ flex:2, padding:'12px', background: (submitting || !tosChecked) ? '#555' : '#C9A227', color: (submitting || !tosChecked) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: (submitting || !tosChecked) ? 'not-allowed' : 'pointer' }}>
                   {submitting ? 'Submitting...' : 'Submit Registration'}
                 </button>
               </div>

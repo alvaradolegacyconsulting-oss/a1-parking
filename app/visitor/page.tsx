@@ -18,6 +18,7 @@ function VisitorForm() {
   }, [])
   const [loading, setLoading] = useState(false)
   const [plateError, setPlateError] = useState('')
+  const [tosChecked, setTosChecked] = useState(false)
   const [form, setForm] = useState({
     plate: '',
     name: '',
@@ -109,6 +110,7 @@ function VisitorForm() {
     if (error) {
       alert('Error: ' + error.message)
     } else {
+      await supabase.from('audit_logs').insert([{ action: 'VISITOR_TOS_ACCEPTED', table_name: 'visitor_passes', new_values: { plate, property: propertyName } }])
       setStep('success')
     }
   }
@@ -239,17 +241,23 @@ function VisitorForm() {
             </div>
           )}
 
+          <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', marginBottom:'16px', cursor:'pointer' }}>
+            <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
+              style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer' }} />
+            <span style={{ color:'#aaa', fontSize:'12px', lineHeight:'1.6' }}>
+              I agree to the{' '}
+              <a href="/terms" target="_blank" style={{ color:'#C9A227', textDecoration:'none' }}>Terms of Service</a>
+              {' '}and acknowledge that my vehicle information will be shared with the property manager.
+            </span>
+          </label>
+
           <button
             onClick={submitPass}
-            disabled={loading || !form.plate || !form.unit}
-            style={{ width:'100%', padding:'14px', background: (!form.plate || !form.unit) ? '#555' : '#C9A227', color: (!form.plate || !form.unit) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!form.plate || !form.unit) ? 'not-allowed' : 'pointer' }}
+            disabled={loading || !form.plate || !form.unit || !tosChecked}
+            style={{ width:'100%', padding:'14px', background: (!form.plate || !form.unit || !tosChecked) ? '#555' : '#C9A227', color: (!form.plate || !form.unit || !tosChecked) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!form.plate || !form.unit || !tosChecked) ? 'not-allowed' : 'pointer' }}
           >
             {loading ? 'Activating Pass...' : 'Get Visitor Pass'}
           </button>
-
-          <p style={{ color:'#444', fontSize:'11px', textAlign:'center', marginTop:'12px', lineHeight:'1.6' }}>
-            By submitting you agree that A1 Wrecker, LLC and the property manager will be notified of your visit.
-          </p>
         </div>
 
         <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'16px' }}>

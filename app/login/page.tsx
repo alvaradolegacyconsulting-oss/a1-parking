@@ -10,11 +10,36 @@ export default function Login() {
   const [logoFailed, setLogoFailed] = useState(false)
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
+  const [showTosModal, setShowTosModal] = useState(false)
+  const [tosScrolled, setTosScrolled] = useState(false)
+  const [tosChecked, setTosChecked] = useState(false)
+  const [tosLoading, setTosLoading] = useState(false)
+  const [pendingRole, setPendingRole] = useState('')
+  const [pendingEmail, setPendingEmail] = useState('')
+  const [pendingForcePwReset, setPendingForcePwReset] = useState(false)
 
   useEffect(() => {
     setCompanyLogo(localStorage.getItem('company_logo'))
     setCompanyName(localStorage.getItem('company_name'))
   }, [])
+
+  function redirectByRole(role: string, forcePwReset: boolean) {
+    if (forcePwReset) { window.location.href = '/change-password'; return }
+    if (role === 'admin') window.location.href = '/'
+    else if (role === 'company_admin') window.location.href = '/company_admin'
+    else if (role === 'manager' || role === 'leasing_agent') window.location.href = '/manager'
+    else if (role === 'driver') window.location.href = '/driver'
+    else if (role === 'resident') window.location.href = '/resident'
+    else window.location.href = '/'
+  }
+
+  async function acceptTos() {
+    setTosLoading(true)
+    const now = new Date().toISOString()
+    await supabase.from('user_roles').update({ tos_accepted_at: now }).ilike('email', pendingEmail)
+    await supabase.from('audit_logs').insert([{ action: 'TOS_ACCEPTED', table_name: 'user_roles', new_values: { email: pendingEmail, accepted_at: now } }])
+    redirectByRole(pendingRole, pendingForcePwReset)
+  }
 
   async function handleLogin() {
     setLoading(true)
@@ -75,26 +100,17 @@ export default function Login() {
     setLoading(false)
 
     const { data: { user: freshUser } } = await supabase.auth.getUser()
-    if (freshUser?.user_metadata?.force_password_reset === true) {
-      window.location.href = '/change-password'
+    const forcePwReset = freshUser?.user_metadata?.force_password_reset === true
+
+    if (!roleData.tos_accepted_at) {
+      setPendingRole(roleData.role)
+      setPendingEmail(email.trim())
+      setPendingForcePwReset(forcePwReset)
+      setShowTosModal(true)
       return
     }
 
-   if (roleData.role === 'admin') {
-      window.location.href = '/'
-    } else if (roleData.role === 'company_admin') {
-      window.location.href = '/company_admin'
-    } else if (roleData.role === 'manager') {
-      window.location.href = '/manager'
-    } else if (roleData.role === 'leasing_agent') {
-      window.location.href = '/manager'
-    } else if (roleData.role === 'driver') {
-      window.location.href = '/driver'
-    } else if (roleData.role === 'resident') {
-      window.location.href = '/resident'
-    } else {
-      window.location.href = '/'
-    }
+    redirectByRole(roleData.role, forcePwReset)
   }
 
   return (
@@ -160,6 +176,35 @@ export default function Login() {
 
         <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'12px' }}>A1 Wrecker, LLC · Parking Management Platform</p>
       </div>
+
+      {showTosModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+          <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'16px', padding:'28px', maxWidth:'480px', width:'100%', display:'flex', flexDirection:'column' }}>
+            <h2 style={{ color:'#C9A227', fontSize:'20px', fontWeight:'bold', margin:'0 0 16px', textAlign:'center' }}>Terms of Service</h2>
+            <div
+              onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop <= el.clientHeight + 10) setTosScrolled(true) }}
+              style={{ overflowY:'scroll', maxHeight:'300px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'16px', marginBottom:'16px', fontSize:'13px', lineHeight:'1.7', color:'#aaa' }}
+            >
+              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>1. Platform Use</strong><br />This platform is a parking management tool provided by A1 Wrecker LLC for authorized users only. Unauthorized access or use is strictly prohibited.</p>
+              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>2. User Responsibilities</strong><br />Users are responsible for the accuracy of all data entered. Towing decisions are made by licensed operators, not the platform. You must not enter false or misleading information.</p>
+              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>3. Data Collection</strong><br />We collect email, vehicle, and activity data to provide the service. All data is stored securely and used solely for parking management purposes.</p>
+              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>4. Limitation of Liability</strong><br />A1 Wrecker LLC is not liable for towing decisions, wrongful tow claims, or errors resulting from inaccurate data entry. The platform is provided as a management aid only.</p>
+              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>5. Governing Law</strong><br />These terms are governed by the laws of the State of Texas. Any disputes shall be resolved in a court of competent jurisdiction in Texas.</p>
+              <p style={{ margin:'0' }}><strong style={{ color:'#C9A227' }}>6. Contact</strong><br />Questions? Contact A1 Wrecker LLC at 346-428-7864 or visit a1wreckerllc.net.</p>
+            </div>
+            {!tosScrolled && <p style={{ color:'#555', fontSize:'11px', textAlign:'center', margin:'0 0 12px' }}>↓ Scroll to the bottom to enable the checkbox</p>}
+            <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', cursor: tosScrolled ? 'pointer' : 'default', marginBottom:'16px' }}>
+              <input type="checkbox" checked={tosChecked} disabled={!tosScrolled} onChange={e => setTosChecked(e.target.checked)}
+                style={{ marginTop:'2px', accentColor:'#C9A227', cursor: tosScrolled ? 'pointer' : 'not-allowed' }} />
+              <span style={{ color: tosScrolled ? '#aaa' : '#555', fontSize:'13px', lineHeight:'1.5' }}>I have read and agree to the Terms of Service</span>
+            </label>
+            <button onClick={acceptTos} disabled={!tosChecked || tosLoading}
+              style={{ width:'100%', padding:'13px', background: !tosChecked ? '#555' : '#C9A227', color: !tosChecked ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: !tosChecked ? 'not-allowed' : 'pointer' }}>
+              {tosLoading ? 'Please wait...' : 'Continue'}
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
