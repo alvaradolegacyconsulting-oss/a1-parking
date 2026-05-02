@@ -43,6 +43,9 @@ export default function ManagerPortal() {
   const [pendingResidents, setPendingResidents] = useState<any[]>([])
   const [residentNotes, setResidentNotes] = useState<Record<string, string>>({})
   const [managerCompany, setManagerCompany] = useState('')
+  const [resetPwTarget, setResetPwTarget] = useState<string | null>(null)
+  const [resetPwForm, setResetPwForm] = useState({ newPw: '', confirmPw: '' })
+  const [resetPwMsg, setResetPwMsg] = useState('')
   const [plateQuery, setPlateQuery] = useState('')
   const [plateSuggestions, setPlateSuggestions] = useState<any[]>([])
   const [plateMsg, setPlateMsg] = useState<{ text: string; type: 'error' | 'warning' } | null>(null)
@@ -301,6 +304,23 @@ export default function ManagerPortal() {
     const all = data || []
     setPendingResidents(all.filter(r => r.status === 'pending'))
     setResidents(all.filter(r => r.status !== 'pending'))
+  }
+
+  async function resetResidentPassword() {
+    if (!resetPwTarget) return
+    if (resetPwForm.newPw.length < 8) { setResetPwMsg('Password must be at least 8 characters.'); return }
+    if (resetPwForm.newPw !== resetPwForm.confirmPw) { setResetPwMsg('Passwords do not match.'); return }
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
+    const { data: { session } } = await supabase.auth.getSession()
+    const res = await fetch(fnBase + '/swift-handler', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ action: 'reset_password', email: resetPwTarget, new_password: resetPwForm.newPw }),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) { setResetPwMsg(json.error || json.message || 'Failed to reset password.'); return }
+    setResetPwMsg('Password reset successfully.')
+    setTimeout(() => { setResetPwTarget(null); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }, 2000)
   }
 
   async function approveResident(r: any) {
@@ -977,12 +997,33 @@ export default function ManagerPortal() {
                   <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{r.space || '—'}</span></div>
                   <div><span style={{ color:'#555' }}>Lease End</span><br/><span style={{ color:'#aaa' }}>{r.lease_end ? new Date(r.lease_end).toLocaleDateString() : '—'}</span></div>
                 </div>
-                {!isReadOnly && (
-                  <div style={{ display:'flex', gap:'6px' }}>
-                    <button onClick={() => { setEditingResident(r); setShowAddVehicle(false) }}
-                      style={{ flex:1, padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>Edit</button>
-                    {r.is_active && <button onClick={() => deactivateResident(r.id)}
-                      style={{ padding:'7px 12px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Deactivate</button>}
+                <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' }}>
+                  {!isReadOnly && (
+                    <>
+                      <button onClick={() => { setEditingResident(r); setShowAddVehicle(false) }}
+                        style={{ flex:1, padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>Edit</button>
+                      {r.is_active && <button onClick={() => deactivateResident(r.id)}
+                        style={{ padding:'7px 12px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Deactivate</button>}
+                    </>
+                  )}
+                  <button onClick={() => { setResetPwTarget(resetPwTarget === r.email ? null : r.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
+                    style={{ padding:'7px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                    {resetPwTarget === r.email ? 'Cancel' : 'Reset Password'}
+                  </button>
+                </div>
+                {resetPwTarget === r.email && (
+                  <div style={{ marginTop:'10px', borderTop:'1px solid #2a2f3d', paddingTop:'10px' }}>
+                    <input type="password" value={resetPwForm.newPw} onChange={e => setResetPwForm(f => ({...f, newPw: e.target.value}))}
+                      placeholder="New password (min 8 chars)" style={{ ...inputStyle, marginBottom:'8px' }} />
+                    <input type="password" value={resetPwForm.confirmPw} onChange={e => setResetPwForm(f => ({...f, confirmPw: e.target.value}))}
+                      placeholder="Confirm new password" style={{ ...inputStyle, marginBottom:'8px' }} />
+                    {resetPwMsg && (
+                      <p style={{ color: resetPwMsg.includes('success') ? '#4caf50' : '#f44336', fontSize:'12px', margin:'0 0 8px' }}>{resetPwMsg}</p>
+                    )}
+                    <button onClick={resetResidentPassword}
+                      style={{ width:'100%', padding:'8px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
+                      Save New Password
+                    </button>
                   </div>
                 )}
               </div>

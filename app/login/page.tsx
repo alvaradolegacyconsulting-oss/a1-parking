@@ -74,6 +74,12 @@ export default function Login() {
 
     setLoading(false)
 
+    const { data: { user: freshUser } } = await supabase.auth.getUser()
+    if (freshUser?.user_metadata?.force_password_reset === true) {
+      window.location.href = '/change-password'
+      return
+    }
+
    if (roleData.role === 'admin') {
       window.location.href = '/'
     } else if (roleData.role === 'company_admin') {

@@ -46,6 +46,9 @@ export default function CompanyAdminPortal() {
   const [propMsg, setPropMsg] = useState('')
 
   const [companyUsers, setCompanyUsers] = useState<any[]>([])
+  const [resetPwTarget, setResetPwTarget] = useState<string | null>(null)
+  const [resetPwForm, setResetPwForm] = useState({ newPw: '', confirmPw: '' })
+  const [resetPwMsg, setResetPwMsg] = useState('')
   const [showAddUser, setShowAddUser] = useState(false)
   const [newUser, setNewUser] = useState({ email: '', password: '', role: 'manager', property: '' })
   const [userMsg, setUserMsg] = useState('')
@@ -344,6 +347,24 @@ export default function CompanyAdminPortal() {
     fetchAllFacilitiesManage()
     fetchStorageFacilities()
   }
+
+  async function resetUserPassword() {
+    if (!resetPwTarget) return
+    if (resetPwForm.newPw.length < 8) { setResetPwMsg('Password must be at least 8 characters.'); return }
+    if (resetPwForm.newPw !== resetPwForm.confirmPw) { setResetPwMsg('Passwords do not match.'); return }
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
+    const { data: { session } } = await supabase.auth.getSession()
+    const res = await fetch(fnBase + '/swift-handler', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ action: 'reset_password', email: resetPwTarget, new_password: resetPwForm.newPw }),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) { setResetPwMsg(json.error || json.message || 'Failed to reset password.'); return }
+    setResetPwMsg('Password reset successfully.')
+    setTimeout(() => { setResetPwTarget(null); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }, 2000)
+  }
+
 
   async function searchPlate() {
     if (!plate || searching) return
@@ -1147,14 +1168,35 @@ export default function CompanyAdminPortal() {
                 )}
 
                 {companyUsers.map((u, i) => (
-                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                    <div>
-                      <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.email}</p>
-                      {u.property && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{u.property}</p>}
+                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+                      <div>
+                        <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.email}</p>
+                        {u.property && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{u.property}</p>}
+                      </div>
+                      <span style={{ background:'#1e2535', color:'#C9A227', padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', textTransform:'capitalize' as const }}>
+                        {u.role.replace('_', ' ')}
+                      </span>
                     </div>
-                    <span style={{ background:'#1e2535', color:'#C9A227', padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', textTransform:'capitalize' as const }}>
-                      {u.role.replace('_', ' ')}
-                    </span>
+                    <button onClick={() => { setResetPwTarget(resetPwTarget === u.email ? null : u.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
+                      style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                      {resetPwTarget === u.email ? 'Cancel' : 'Reset Password'}
+                    </button>
+                    {resetPwTarget === u.email && (
+                      <div style={{ marginTop:'10px', borderTop:'1px solid #2a2f3d', paddingTop:'10px' }}>
+                        <input type="password" value={resetPwForm.newPw} onChange={e => setResetPwForm(f => ({...f, newPw: e.target.value}))}
+                          placeholder="New password (min 8 chars)" style={{ ...inp, marginBottom:'8px' }} />
+                        <input type="password" value={resetPwForm.confirmPw} onChange={e => setResetPwForm(f => ({...f, confirmPw: e.target.value}))}
+                          placeholder="Confirm new password" style={{ ...inp, marginBottom:'8px' }} />
+                        {resetPwMsg && (
+                          <p style={{ color: resetPwMsg.includes('success') ? '#4caf50' : '#f44336', fontSize:'12px', margin:'0 0 8px' }}>{resetPwMsg}</p>
+                        )}
+                        <button onClick={resetUserPassword}
+                          style={{ width:'100%', padding:'8px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
+                          Save New Password
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {companyUsers.length === 0 && <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No users found</p></div>}

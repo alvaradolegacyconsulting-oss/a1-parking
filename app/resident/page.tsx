@@ -23,6 +23,9 @@ export default function ResidentPortal() {
   const [supportPhone, setSupportPhone] = useState('346-428-7864')
   const [supportEmail, setSupportEmail] = useState('a1wrecker2023@gmail.com')
   const [supportWebsite, setSupportWebsite] = useState('a1wreckerllc.net')
+  const [changePwForm, setChangePwForm] = useState({ current: '', newPw: '', confirmPw: '' })
+  const [changePwMsg, setChangePwMsg] = useState('')
+  const [changePwLoading, setChangePwLoading] = useState(false)
 
   useEffect(() => { loadResident() }, [])
   useEffect(() => {
@@ -71,6 +74,21 @@ export default function ResidentPortal() {
       .gte('expires_at', now)
       .order('created_at', { ascending: false })
     setPasses(data || [])
+  }
+
+  async function changePassword() {
+    setChangePwMsg('')
+    if (changePwForm.newPw.length < 8) { setChangePwMsg('New password must be at least 8 characters.'); return }
+    if (changePwForm.newPw !== changePwForm.confirmPw) { setChangePwMsg('Passwords do not match.'); return }
+    setChangePwLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error: reAuthErr } = await supabase.auth.signInWithPassword({ email: user?.email || '', password: changePwForm.current })
+    if (reAuthErr) { setChangePwMsg('Current password is incorrect.'); setChangePwLoading(false); return }
+    const { error: updateErr } = await supabase.auth.updateUser({ password: changePwForm.newPw })
+    setChangePwLoading(false)
+    if (updateErr) { setChangePwMsg(updateErr.message); return }
+    setChangePwMsg('Password changed successfully.')
+    setChangePwForm({ current: '', newPw: '', confirmPw: '' })
   }
 
   async function saveResident() {
@@ -317,6 +335,7 @@ export default function ResidentPortal() {
 
         {/* MY INFO TAB */}
         {activeTab === 'info' && (
+          <>
           <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'14px' }}>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0' }}>Personal Information</p>
@@ -363,6 +382,30 @@ export default function ResidentPortal() {
               </>
             )}
           </div>
+
+          <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginTop:'12px' }}>
+            <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0 0 14px' }}>Change My Password</p>
+            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Current Password</label>
+            <input type="password" value={changePwForm.current} onChange={e => setChangePwForm(f => ({...f, current: e.target.value}))}
+              placeholder="••••••••"
+              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'10px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }} />
+            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>New Password (min 8 characters)</label>
+            <input type="password" value={changePwForm.newPw} onChange={e => setChangePwForm(f => ({...f, newPw: e.target.value}))}
+              placeholder="••••••••"
+              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'10px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }} />
+            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Confirm New Password</label>
+            <input type="password" value={changePwForm.confirmPw} onChange={e => setChangePwForm(f => ({...f, confirmPw: e.target.value}))}
+              placeholder="••••••••"
+              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }} />
+            {changePwMsg && (
+              <p style={{ color: changePwMsg.includes('success') ? '#4caf50' : '#f44336', fontSize:'12px', margin:'0 0 10px' }}>{changePwMsg}</p>
+            )}
+            <button onClick={changePassword} disabled={changePwLoading || !changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw}
+              style={{ width:'100%', padding:'11px', background:(!changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw) ? '#555' : '#C9A227', color:(!changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:(!changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw) ? 'not-allowed' : 'pointer' }}>
+              {changePwLoading ? 'Saving...' : 'Update Password'}
+            </button>
+          </div>
+          </>
         )}
 
         {/* VEHICLES TAB */}
