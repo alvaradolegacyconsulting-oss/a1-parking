@@ -127,40 +127,65 @@ function VisitorForm() {
   if (step === 'success') {
     return (
       <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-        <div style={{ maxWidth:'420px', width:'100%', textAlign:'center' }}>
-          
-          <div style={{ background:'linear-gradient(135deg, #1a1200, #2a1d00)', border:'2px solid #C9A227', borderRadius:'16px', padding:'28px', marginBottom:'16px' }}>
-            <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.15em', margin:'0 0 6px' }}>A1 Wrecker, LLC · Visitor Pass</p>
-            <p style={{ color:'white', fontFamily:'Courier New', fontSize:'32px', fontWeight:'bold', letterSpacing:'0.12em', margin:'0 0 4px' }}>{form.plate.toUpperCase()}</p>
-            {form.vehicle_desc && <p style={{ color:'#C9A227', fontSize:'12px', margin:'0 0 16px' }}>{form.vehicle_desc}</p>}
-            
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'16px', textAlign:'left' }}>
+        <div style={{ maxWidth:'420px', width:'100%' }}>
+
+          {/* Pass card */}
+          <div style={{ background:'linear-gradient(135deg, #1a1200, #2a1d00)', border:'2px solid #C9A227', borderRadius:'16px', padding:'24px', marginBottom:'12px' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'16px' }}>
               <div>
-                <p style={{ color:'rgba(201,162,39,0.7)', fontSize:'11px', margin:'0' }}>Visiting</p>
-                <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'4px 0 0' }}>{form.unit}</p>
+                <p style={{ color:'#C9A227', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.15em', margin:'0 0 2px' }}>Visitor Pass · Active</p>
+                <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', margin:'0' }}>{companyName}</p>
               </div>
-              <div>
-                <p style={{ color:'rgba(201,162,39,0.7)', fontSize:'11px', margin:'0' }}>Duration</p>
-                <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'4px 0 0' }}>{form.duration} hours</p>
+              <span style={{ background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'20px', padding:'3px 10px', fontSize:'11px', fontWeight:'bold' }}>✓ Active</span>
+            </div>
+
+            <p style={{ color:'white', fontFamily:'Courier New', fontSize:'36px', fontWeight:'bold', letterSpacing:'0.14em', margin:'0 0 4px', textAlign:'center' }}>{form.plate.toUpperCase()}</p>
+            {form.vehicle_desc && <p style={{ color:'#C9A227', fontSize:'12px', margin:'0 0 16px', textAlign:'center' }}>{form.vehicle_desc}</p>}
+            {!form.vehicle_desc && <div style={{ marginBottom:'16px' }} />}
+
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', fontSize:'12px' }}>
+              <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px' }}>
+                <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 3px' }}>Property</p>
+                <p style={{ color:'white', fontWeight:'bold', margin:'0', lineHeight:'1.4' }}>{propertyName}</p>
               </div>
-              <div style={{ gridColumn:'span 2' }}>
-                <p style={{ color:'rgba(201,162,39,0.7)', fontSize:'11px', margin:'0' }}>Expires</p>
-                <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'4px 0 0' }}>{formatExpiry(form.duration)}</p>
+              <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px' }}>
+                <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 3px' }}>Visiting Unit</p>
+                <p style={{ color:'white', fontWeight:'bold', margin:'0' }}>{form.unit}</p>
+              </div>
+              <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px' }}>
+                <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 3px' }}>Duration</p>
+                <p style={{ color:'white', fontWeight:'bold', margin:'0' }}>{form.duration} hours</p>
+              </div>
+              <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px' }}>
+                <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 3px' }}>Valid Until</p>
+                <p style={{ color:'white', fontWeight:'bold', margin:'0', fontSize:'11px' }}>{formatExpiry(form.duration)}</p>
               </div>
             </div>
 
-            <div style={{ height:'4px', background:'rgba(255,255,255,0.1)', borderRadius:'2px' }}>
-              <div style={{ width:'100%', height:'100%', background:'#C9A227', borderRadius:'2px' }}></div>
+            <div style={{ height:'3px', background:'rgba(255,255,255,0.08)', borderRadius:'2px', marginTop:'16px' }}>
+              <div style={{ width:'100%', height:'100%', background:'#C9A227', borderRadius:'2px' }} />
             </div>
           </div>
 
-          <div style={{ background:'#1a3a1a', border:'1px solid #2e7d32', borderRadius:'10px', padding:'14px', marginBottom:'16px' }}>
-            <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'14px', margin:'0 0 4px' }}>✓ Pass Activated</p>
-            <p style={{ color:'#aaa', fontSize:'12px', margin:'0', lineHeight:'1.6' }}>Your vehicle is authorized to park. A1 Wrecker and the property manager have been notified. Do not remain after your pass expires.</p>
+          {/* Warning */}
+          <div style={{ background:'#1a1200', border:'1px solid #a16207', borderRadius:'10px', padding:'14px', marginBottom:'12px' }}>
+            <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 6px' }}>⚠ Verify Your Information</p>
+            <p style={{ color:'#d97706', fontSize:'12px', margin:'0', lineHeight:'1.7' }}>
+              Please verify your information is correct. If any details are wrong, your vehicle may be subject to towing. Contact your host or the property manager to make corrections.
+            </p>
+          </div>
+
+          {/* Support */}
+          <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px', marginBottom:'12px', textAlign:'center' }}>
+            <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Questions or corrections?</p>
+            <p style={{ color:'#aaa', fontSize:'12px', margin:'0', lineHeight:'1.8' }}>
+              {supportPhone && <><a href={`tel:${supportPhone}`} style={{ color:'#C9A227', textDecoration:'none' }}>{supportPhone}</a><br /></>}
+              {supportWebsite && <a href={`https://${supportWebsite}`} target="_blank" rel="noreferrer" style={{ color:'#C9A227', textDecoration:'none' }}>{supportWebsite}</a>}
+            </p>
           </div>
 
           <button
-            onClick={() => { setStep('form'); setForm({ plate:'', name:'', unit:'', duration:'4', vehicle_desc:'' }) }}
+            onClick={() => { setStep('form'); setForm({ plate:'', name:'', unit:'', duration:'4', vehicle_desc:'' }); setTosChecked(false) }}
             style={{ width:'100%', padding:'12px', background:'#161b26', color:'#aaa', fontSize:'13px', border:'1px solid #2a2f3d', borderRadius:'8px', cursor:'pointer' }}
           >
             Register Another Vehicle
