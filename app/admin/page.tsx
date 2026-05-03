@@ -1,6 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import Papa from 'papaparse'
+import * as XLSX from 'xlsx'
 
 export default function AdminPortal() {
   const [adminEmail, setAdminEmail] = useState('')
@@ -24,6 +26,11 @@ export default function AdminPortal() {
   const [showAddUser, setShowAddUser] = useState(false)
   const [newUser, setNewUser] = useState({ email:'', password:'', role:'manager', company:'', property:'' })
   const [userMsg, setUserMsg] = useState('')
+  const [showBulkUpload, setShowBulkUpload] = useState(false)
+  const [bulkRows, setBulkRows] = useState<any[]>([])
+  const [bulkResults, setBulkResults] = useState<{email:string,role:string,status:string,error?:string}[]>([])
+  const [bulkProcessing, setBulkProcessing] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState({ current:0, total:0 })
 
   const [drivers, setDrivers] = useState<any[]>([])
   const [driverSearch, setDriverSearch] = useState('')
@@ -205,6 +212,110 @@ export default function AdminPortal() {
     setUserMsg('User created successfully!')
     setNewUser({ email:'', password:'', role:'manager', company:'', property:'' })
     fetchUsers()
+  }
+
+  function downloadTemplate() {
+    const csv = [
+      'email,role,company,property,name',
+      'example@email.com,manager,A1 Wrecker LLC,Miramar,John Smith',
+      'example2@email.com,driver,A1 Wrecker LLC,Villa Barcelona,Jane Doe',
+    ].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'bulk_user_template.csv'; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function handleBulkFile(file: File) {
+    setBulkRows([]); setBulkResults([])
+    if (file.name.match(/\.xlsx?$/i)) {
+      const buffer = await file.arrayBuffer()
+      const wb = XLSX.read(buffer, { type: 'array' })
+      const csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]])
+      const result = Papa.parse<any>(csv, { header: true, skipEmptyLines: true })
+      setBulkRows(result.data)
+    } else {
+      Papa.parse<any>(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (result) => setBulkRows(result.data),
+      })
+    }
+  }
+
+  async function processBulkUsers() {
+    setBulkProcessing(true); setBulkResults([])
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
+    const { data: { session } } = await supabase.auth.getSession()
+
+    for (let i = 0; i < bulkRows.length; i++) {
+      const row = bulkRows[i]
+      const email   = (row.email    || '').trim().toLowerCase()
+      const role    = (row.role     || 'manager').trim().toLowerCase()
+      const company = (row.company  || '').trim()
+      const property = (row.property || '').trim()
+      const name    = (row.name     || email).trim()
+
+      setBulkProgress({ current: i + 1, total: bulkRows.length })
+
+      if (!email) {
+        setBulkResults(prev => [...prev, { email:'(blank)', role, status:'error', error:'Missing email' }])
+        continue
+      }
+
+      const tempPassword = email.split('@')[0] + '!A1'
+
+      try {
+        const res = await fetch(fnBase + '/swift-handler', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ action: 'create_user', email, password: tempPassword }),
+        })
+        const json = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          setBulkResults(prev => [...prev, { email, role, status:'error', error: json.error || json.message || res.statusText }])
+          continue
+        }
+
+        const propertyArray = property ? [property] : []
+        const { error: roleErr } = await supabase.rpc('insert_user_role', {
+          p_email: email, p_role: role, p_company: company || null, p_property: propertyArray,
+        })
+        if (roleErr) {
+          setBulkResults(prev => [...prev, { email, role, status:'error', error: 'Role insert failed: ' + roleErr.message }])
+          continue
+        }
+
+        if (role === 'resident') {
+          await supabase.from('residents').insert([{ email, name, property: property || null, company: company || null, unit: '', is_active: true }])
+        }
+        if (role === 'driver') {
+          await supabase.from('drivers').insert([{ email, name, company: company || null, assigned_properties: propertyArray, is_active: true }])
+        }
+
+        await auditLog(adminEmail, 'BULK_ADD_USER', 'user_roles', email, { email, role, company, property })
+        setBulkResults(prev => [...prev, { email, role, status:'success' }])
+      } catch (e: any) {
+        setBulkResults(prev => [...prev, { email, role, status:'error', error: e.message }])
+      }
+    }
+
+    setBulkProcessing(false)
+    fetchUsers()
+  }
+
+  function downloadResults() {
+    const csv = Papa.unparse(bulkResults.map(r => ({
+      email: r.email, role: r.role, status: r.status,
+      temp_password: r.status === 'success' ? r.email.split('@')[0] + '!A1' : '',
+      error: r.error || '',
+    })))
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'bulk_upload_results.csv'; a.click()
+    URL.revokeObjectURL(url)
   }
 
   async function resetUserPassword() {
@@ -558,6 +669,135 @@ export default function AdminPortal() {
                   <button onClick={addUser} style={{ ...bGold, flex:1 }}>Create User</button>
                   <button onClick={() => { setShowAddUser(false); setUserMsg('') }} style={bGray}>Cancel</button>
                 </div>
+              </div>
+            )}
+
+            {/* ── BULK UPLOAD ── */}
+            <button
+              onClick={() => { setShowBulkUpload(!showBulkUpload); setBulkRows([]); setBulkResults([]) }}
+              style={{ ...bGray, width:'100%', marginBottom:'12px', color:'#C9A227', border:'1px solid #C9A227' }}
+            >
+              {showBulkUpload ? '▲ Hide Bulk Upload' : '↑ Bulk Upload Users'}
+            </button>
+
+            {showBulkUpload && (
+              <div style={{ ...addCard, marginBottom:'16px' }}>
+                <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Bulk Upload Users</p>
+                <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px', lineHeight:'1.6' }}>
+                  Download the template, fill it in, then upload to create multiple users at once.
+                </p>
+
+                <button onClick={downloadTemplate} style={{ ...bGray, fontSize:'12px', marginBottom:'14px' }}>↓ Download Template</button>
+
+                <label style={lbl}>Upload CSV or Excel (.xlsx)</label>
+                <input
+                  type="file" accept=".csv,.xlsx,.xls"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleBulkFile(f) }}
+                  style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', color:'#aaa', fontSize:'12px', boxSizing:'border-box' }}
+                />
+
+                {/* Preview table */}
+                {bulkRows.length > 0 && !bulkProcessing && bulkResults.length === 0 && (
+                  <>
+                    <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 8px' }}>
+                      {bulkRows.length} row{bulkRows.length !== 1 ? 's' : ''} found — preview:
+                    </p>
+                    <div style={{ overflowX:'auto', marginBottom:'12px', background:'#0f1117', borderRadius:'6px', border:'1px solid #2a2f3d' }}>
+                      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px' }}>
+                        <thead>
+                          <tr style={{ borderBottom:'1px solid #2a2f3d' }}>
+                            {['email','role','company','property','name'].map(h => (
+                              <th key={h} style={{ color:'#C9A227', textAlign:'left', padding:'6px 8px', textTransform:'uppercase', fontSize:'10px', whiteSpace:'nowrap' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bulkRows.slice(0, 10).map((row, i) => (
+                            <tr key={i} style={{ borderBottom:'1px solid #1e2535' }}>
+                              {['email','role','company','property','name'].map(h => (
+                                <td key={h} style={{ color:'#aaa', padding:'5px 8px', maxWidth:'140px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{row[h] || '—'}</td>
+                              ))}
+                            </tr>
+                          ))}
+                          {bulkRows.length > 10 && (
+                            <tr>
+                              <td colSpan={5} style={{ color:'#555', padding:'5px 8px', fontSize:'10px' }}>
+                                …and {bulkRows.length - 10} more
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <button onClick={processBulkUsers} style={{ ...bGold, width:'100%' }}>
+                      Create All {bulkRows.length} Users
+                    </button>
+                  </>
+                )}
+
+                {/* Progress bar */}
+                {bulkProcessing && (
+                  <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'16px', textAlign:'center' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 10px' }}>
+                      Processing {bulkProgress.current} of {bulkProgress.total}…
+                    </p>
+                    <div style={{ background:'#1e2535', borderRadius:'4px', height:'6px', overflow:'hidden' }}>
+                      <div style={{
+                        width: `${Math.round((bulkProgress.current / bulkProgress.total) * 100)}%`,
+                        height:'100%', background:'#C9A227', borderRadius:'4px', transition:'width 0.2s'
+                      }} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Results */}
+                {bulkResults.length > 0 && !bulkProcessing && (
+                  <>
+                    <div style={{ display:'flex', gap:'8px', marginBottom:'10px' }}>
+                      <div style={{ flex:1, background:'#1a3a1a', border:'1px solid #2e7d32', borderRadius:'8px', padding:'10px', textAlign:'center' }}>
+                        <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'18px', margin:'0' }}>{bulkResults.filter(r => r.status === 'success').length}</p>
+                        <p style={{ color:'#4caf50', fontSize:'11px', margin:'2px 0 0' }}>Created</p>
+                      </div>
+                      <div style={{ flex:1, background: bulkResults.some(r => r.status === 'error') ? '#3a1a1a' : '#1e2535', border:`1px solid ${bulkResults.some(r => r.status === 'error') ? '#b71c1c' : '#2a2f3d'}`, borderRadius:'8px', padding:'10px', textAlign:'center' }}>
+                        <p style={{ color: bulkResults.some(r => r.status === 'error') ? '#f44336' : '#555', fontWeight:'bold', fontSize:'18px', margin:'0' }}>{bulkResults.filter(r => r.status === 'error').length}</p>
+                        <p style={{ color: bulkResults.some(r => r.status === 'error') ? '#f44336' : '#555', fontSize:'11px', margin:'2px 0 0' }}>Failed</p>
+                      </div>
+                    </div>
+
+                    <div style={{ overflowX:'auto', marginBottom:'10px', background:'#0f1117', borderRadius:'6px', border:'1px solid #2a2f3d', maxHeight:'260px', overflowY:'auto' }}>
+                      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px' }}>
+                        <thead>
+                          <tr style={{ borderBottom:'1px solid #2a2f3d' }}>
+                            {['Email','Role','Status','Note'].map(h => (
+                              <th key={h} style={{ color:'#C9A227', textAlign:'left', padding:'6px 8px', textTransform:'uppercase', fontSize:'10px', whiteSpace:'nowrap', position:'sticky', top:0, background:'#0f1117' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bulkResults.map((r, i) => (
+                            <tr key={i} style={{ borderBottom:'1px solid #1e2535' }}>
+                              <td style={{ color:'#aaa', padding:'5px 8px', maxWidth:'180px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{r.email}</td>
+                              <td style={{ color:'#aaa', padding:'5px 8px', whiteSpace:'nowrap' }}>{r.role}</td>
+                              <td style={{ padding:'5px 8px', whiteSpace:'nowrap' }}>
+                                <span style={{ color: r.status === 'success' ? '#4caf50' : '#f44336', fontWeight:'bold' }}>
+                                  {r.status === 'success' ? '✓' : '✗'} {r.status}
+                                </span>
+                              </td>
+                              <td style={{ color:'#555', padding:'5px 8px', fontSize:'10px' }}>
+                                {r.error || (r.status === 'success' ? `Temp pw: ${r.email.split('@')[0]}!A1` : '')}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div style={{ display:'flex', gap:'8px' }}>
+                      <button onClick={downloadResults} style={{ ...bGray, flex:1, fontSize:'12px' }}>↓ Download Results</button>
+                      <button onClick={() => { setBulkRows([]); setBulkResults([]); setBulkProgress({ current:0, total:0 }) }} style={{ ...bGray, flex:1, fontSize:'12px' }}>Start Over</button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
