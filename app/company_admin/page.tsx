@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { QRCodeCanvas } from 'qrcode.react'
 
@@ -18,6 +18,13 @@ export default function CompanyAdminPortal() {
   const [plate, setPlate] = useState('')
   const [result, setResult] = useState<any>(null)
   const [searching, setSearching] = useState(false)
+
+  // Camera scan
+  const [showCamera, setShowCamera] = useState(false)
+  const [scanStatus, setScanStatus] = useState('Point camera at license plate')
+  const [scanning, setScanning] = useState(false)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
   const [showViolation, setShowViolation] = useState(false)
   const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '' })
   const [photos, setPhotos] = useState<File[]>([])
@@ -68,6 +75,13 @@ export default function CompanyAdminPortal() {
   const [auditLoaded, setAuditLoaded] = useState(false)
 
   useEffect(() => { loadUser() }, [])
+
+  useEffect(() => {
+    if (showCamera && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current
+      videoRef.current.play().catch(() => {})
+    }
+  }, [showCamera])
 
   async function loadUser() {
     setLoading(true)
@@ -366,10 +380,66 @@ export default function CompanyAdminPortal() {
   }
 
 
-  async function searchPlate() {
-    if (!plate || searching) return
+  async function openCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      streamRef.current = stream
+      setScanStatus('Point camera at license plate')
+      setScanning(false)
+      setShowCamera(true)
+    } catch (e: any) {
+      const msg = e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError'
+        ? 'Camera access denied. Please type the plate manually.'
+        : 'Camera not available. Please type the plate manually.'
+      alert(msg)
+    }
+  }
+
+  function closeCamera() {
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+    setShowCamera(false)
+    setScanning(false)
+    setScanStatus('Point camera at license plate')
+  }
+
+  async function captureAndScan() {
+    if (!videoRef.current || scanning) return
+    setScanning(true)
+    setScanStatus('Reading plate...')
+    const canvas = document.createElement('canvas')
+    const video = videoRef.current
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) { setScanStatus('Could not read plate. Please type manually.'); setScanning(false); return }
+    ctx.drawImage(video, 0, 0)
+    try {
+      const { createWorker } = await import('tesseract.js')
+      const worker = await createWorker('eng')
+      await worker.setParameters({ tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' } as any)
+      const { data: { text } } = await worker.recognize(canvas)
+      await worker.terminate()
+      const cleaned = text.replace(/[^A-Z0-9]/g, '').substring(0, 10)
+      if (cleaned.length >= 2) {
+        setPlate(cleaned)
+        closeCamera()
+        setTimeout(() => searchPlate(cleaned), 50)
+      } else {
+        setScanStatus('Could not read plate. Please type manually.')
+        setScanning(false)
+      }
+    } catch {
+      setScanStatus('Could not read plate. Please type manually.')
+      setScanning(false)
+    }
+  }
+
+  async function searchPlate(plateVal?: string) {
+    const val = plateVal ?? plate
+    if (!val || searching) return
     setSearching(true); setResult(null); setShowViolation(false); setTicketTarget(null)
-    const clean = plate.toUpperCase().trim()
+    const clean = val.toUpperCase().trim()
     const { data: activeVeh } = await supabase.from('vehicles').select('*').ilike('plate', clean).eq('is_active', true).single()
     if (activeVeh) {
       if (selectedProperty && activeVeh.property?.toLowerCase() !== selectedProperty.name?.toLowerCase()) {
@@ -747,11 +817,17 @@ export default function CompanyAdminPortal() {
           <div>
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'22px', marginBottom:'14px' }}>
               <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.1em' }}>License Plate</label>
-              <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null) }}
-                onKeyDown={e => e.key === 'Enter' && searchPlate()} placeholder="ABC1234" maxLength={10}
-                style={{ display:'block', width:'100%', marginTop:'8px', padding:'16px', fontSize:'28px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.12em', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box', textTransform:'uppercase' }}
-              />
-              <button onClick={searchPlate} disabled={searching || !plate}
+              <div style={{ display:'flex', gap:'8px', marginTop:'8px', alignItems:'stretch' }}>
+                <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null) }}
+                  onKeyDown={e => e.key === 'Enter' && searchPlate()} placeholder="ABC1234" maxLength={10}
+                  style={{ flex:1, padding:'16px', fontSize:'28px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.12em', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box', textTransform:'uppercase' }}
+                />
+                <button onClick={openCamera} title="Scan plate with camera"
+                  style={{ flexShrink:0, width:'62px', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', cursor:'pointer', fontSize:'26px', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  📷
+                </button>
+              </div>
+              <button onClick={() => searchPlate()} disabled={searching || !plate}
                 style={{ marginTop:'12px', width:'100%', padding:'14px', background:!plate ? '#2a2f3d' : '#C9A227', color:!plate ? '#555' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor:!plate ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
                 {searching ? 'Searching...' : 'Search Plate'}
               </button>
@@ -1382,6 +1458,62 @@ export default function CompanyAdminPortal() {
         </div>
 
       </div>
+
+      {/* ── CAMERA MODAL ── */}
+      {showCamera && (
+        <div style={{ position:'fixed', inset:0, background:'#000', zIndex:9999, display:'flex', flexDirection:'column' }}>
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+
+          <div style={{ position:'relative', flex:1, overflow:'hidden' }}>
+            <video ref={videoRef} autoPlay playsInline muted
+              style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+
+            <div style={{
+              position:'absolute', top:'50%', left:'50%',
+              transform:'translate(-50%, -50%)',
+              width:'82%', maxWidth:'340px', height:'90px',
+              border:'2px solid #C9A227', borderRadius:'8px',
+              boxShadow:'0 0 0 9999px rgba(0,0,0,0.52)',
+            }}>
+              {[{top:'-2px',left:'-2px'},{top:'-2px',right:'-2px'},{bottom:'-2px',left:'-2px'},{bottom:'-2px',right:'-2px'}].map((pos,i) => (
+                <div key={i} style={{ position:'absolute', width:'14px', height:'14px', border:'3px solid #C9A227', ...pos,
+                  borderTop: pos.bottom !== undefined ? 'none' : '3px solid #C9A227',
+                  borderBottom: pos.top !== undefined ? 'none' : '3px solid #C9A227',
+                  borderLeft: pos.right !== undefined ? 'none' : '3px solid #C9A227',
+                  borderRight: pos.left !== undefined ? 'none' : '3px solid #C9A227',
+                }} />
+              ))}
+            </div>
+          </div>
+
+          <div style={{ padding:'20px 20px 32px', background:'#0f1117' }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:'10px', marginBottom:'6px', minHeight:'28px' }}>
+              {scanning && (
+                <div style={{ width:'18px', height:'18px', border:'2px solid #2a2f3d', borderTop:'2px solid #C9A227', borderRadius:'50%', animation:'spin 0.8s linear infinite', flexShrink:0 }} />
+              )}
+              <p style={{ color: scanning ? '#C9A227' : '#aaa', fontSize:'13px', margin:0, fontWeight: scanning ? 'bold' : 'normal' }}>
+                {scanStatus}
+              </p>
+            </div>
+            {!scanning && (
+              <p style={{ color:'#444', fontSize:'11px', textAlign:'center', margin:'0 0 16px', lineHeight:'1.6' }}>
+                For best results: good lighting, hold steady, plate fills the targeting box
+              </p>
+            )}
+            {scanning && <div style={{ height:'28px' }} />}
+            <div style={{ display:'flex', gap:'10px' }}>
+              <button onClick={closeCamera} disabled={scanning}
+                style={{ flex:1, padding:'14px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'10px', cursor: scanning ? 'not-allowed' : 'pointer', fontSize:'14px', fontFamily:'Arial' }}>
+                Cancel
+              </button>
+              <button onClick={captureAndScan} disabled={scanning}
+                style={{ flex:2, padding:'14px', background: scanning ? '#555' : '#C9A227', color: scanning ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'10px', cursor: scanning ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
+                {scanning ? 'Reading...' : '📷 Capture'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

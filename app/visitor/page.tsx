@@ -10,11 +10,13 @@ function VisitorForm() {
   const [supportPhone, setSupportPhone] = useState('346-428-7864')
   const [supportEmail, setSupportEmail] = useState('a1wrecker2023@gmail.com')
   const [supportWebsite, setSupportWebsite] = useState('a1wreckerllc.net')
+  const [companyName, setCompanyName] = useState('A1 Wrecker LLC')
 
   useEffect(() => {
     setSupportPhone(localStorage.getItem('company_support_phone') || '346-428-7864')
     setSupportEmail(localStorage.getItem('company_support_email') || 'a1wrecker2023@gmail.com')
     setSupportWebsite(localStorage.getItem('company_support_website') || 'a1wreckerllc.net')
+    setCompanyName(localStorage.getItem('company_name') || 'A1 Wrecker LLC')
   }, [])
   const [loading, setLoading] = useState(false)
   const [plateError, setPlateError] = useState('')
