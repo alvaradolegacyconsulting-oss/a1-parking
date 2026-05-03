@@ -409,7 +409,7 @@ export default function CompanyAdminPortal() {
     setScanStatus('Reading plate...')
     const video = videoRef.current
 
-    // Step 1: Crop to center targeting region (60% wide, 40% tall) at 2x scale
+    // Crop to center targeting region (60% wide, 40% tall) at 2x scale
     const srcX = Math.floor(video.videoWidth * 0.20)
     const srcY = Math.floor(video.videoHeight * 0.30)
     const srcW = Math.floor(video.videoWidth * 0.60)
@@ -421,33 +421,21 @@ export default function CompanyAdminPortal() {
     if (!ctx) { setScanStatus('Could not read plate. Please type manually.'); setScanning(false); return }
     ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height)
 
-    // Step 2: Grayscale + threshold for black-and-white contrast
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-    const d = imageData.data
-    for (let i = 0; i < d.length; i += 4) {
-      const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
-      const bw = gray > 128 ? 255 : 0
-      d[i] = d[i + 1] = d[i + 2] = bw
-    }
-    ctx.putImageData(imageData, 0, 0)
+    const base64 = canvas.toDataURL('image/jpeg', 0.92).split(',')[1]
 
     try {
-      const { createWorker } = await import('tesseract.js')
-      const worker = await createWorker('eng')
-      await worker.setParameters({
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-        tessedit_pageseg_mode: '7',
-        preserve_interword_spaces: '0',
-      } as any)
-      const { data: { text } } = await worker.recognize(canvas)
-      await worker.terminate()
-
-      // Step 3: Smart filtering
-      let cleaned = text.replace(/\s+/g, '').replace(/[^A-Z0-9]/g, '').substring(0, 8)
-      // Fix common OCR swaps: O↔0 and I↔1
-      cleaned = cleaned.replace(/(\p{L})0(\p{L})/gu, '$1O$2')
-      cleaned = cleaned.replace(/(\d)I(\d)/g, '$11$2')
-
+      const res = await fetch('/api/scan-plate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64 }),
+      })
+      const json = await res.json()
+      if (!res.ok || json.error) {
+        setScanStatus(json.error === 'Plate scanning not configured' ? 'Plate scanning not configured. Please type manually.' : 'Could not read plate. Please type manually.')
+        setScanning(false)
+        return
+      }
+      const cleaned = (json.plate || '').replace(/[^A-Z0-9]/g, '').toUpperCase().slice(0, 8)
       if (cleaned.length >= 4) {
         setPlate(cleaned)
         closeCamera()
@@ -844,16 +832,14 @@ export default function CompanyAdminPortal() {
           <div>
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'22px', marginBottom:'14px' }}>
               <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.1em' }}>License Plate</label>
-              <div style={{ display:'flex', gap:'8px', marginTop:'8px', alignItems:'stretch' }}>
-                <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null) }}
-                  onKeyDown={e => e.key === 'Enter' && searchPlate()} placeholder="ABC1234" maxLength={10}
-                  style={{ flex:1, padding:'16px', fontSize:'28px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.12em', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box', textTransform:'uppercase' }}
-                />
-                <button onClick={openCamera} title="Scan plate with camera"
-                  style={{ flexShrink:0, width:'62px', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', cursor:'pointer', fontSize:'26px', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                  📷
-                </button>
-              </div>
+              <button onClick={openCamera}
+                style={{ width:'100%', padding:'12px', background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', cursor:'pointer', fontSize:'14px', fontWeight:'bold', marginTop:'8px', marginBottom:'8px', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px', fontFamily:'Arial' }}>
+                📷 Scan License Plate
+              </button>
+              <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null) }}
+                onKeyDown={e => e.key === 'Enter' && searchPlate()} placeholder="ABC1234" maxLength={10}
+                style={{ display:'block', width:'100%', padding:'16px', fontSize:'28px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.12em', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box', textTransform:'uppercase' }}
+              />
               <button onClick={() => searchPlate()} disabled={searching || !plate}
                 style={{ marginTop:'12px', width:'100%', padding:'14px', background:!plate ? '#2a2f3d' : '#C9A227', color:!plate ? '#555' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor:!plate ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
                 {searching ? 'Searching...' : 'Search Plate'}
