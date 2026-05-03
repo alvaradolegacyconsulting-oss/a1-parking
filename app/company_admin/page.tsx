@@ -407,26 +407,53 @@ export default function CompanyAdminPortal() {
     if (!videoRef.current || scanning) return
     setScanning(true)
     setScanStatus('Reading plate...')
-    const canvas = document.createElement('canvas')
     const video = videoRef.current
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+
+    // Step 1: Crop to center targeting region (60% wide, 40% tall) at 2x scale
+    const srcX = Math.floor(video.videoWidth * 0.20)
+    const srcY = Math.floor(video.videoHeight * 0.30)
+    const srcW = Math.floor(video.videoWidth * 0.60)
+    const srcH = Math.floor(video.videoHeight * 0.40)
+    const canvas = document.createElement('canvas')
+    canvas.width = srcW * 2
+    canvas.height = srcH * 2
     const ctx = canvas.getContext('2d')
     if (!ctx) { setScanStatus('Could not read plate. Please type manually.'); setScanning(false); return }
-    ctx.drawImage(video, 0, 0)
+    ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height)
+
+    // Step 2: Grayscale + threshold for black-and-white contrast
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const d = imageData.data
+    for (let i = 0; i < d.length; i += 4) {
+      const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+      const bw = gray > 128 ? 255 : 0
+      d[i] = d[i + 1] = d[i + 2] = bw
+    }
+    ctx.putImageData(imageData, 0, 0)
+
     try {
       const { createWorker } = await import('tesseract.js')
       const worker = await createWorker('eng')
-      await worker.setParameters({ tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' } as any)
+      await worker.setParameters({
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+        tessedit_pageseg_mode: '7',
+        preserve_interword_spaces: '0',
+      } as any)
       const { data: { text } } = await worker.recognize(canvas)
       await worker.terminate()
-      const cleaned = text.replace(/[^A-Z0-9]/g, '').substring(0, 10)
-      if (cleaned.length >= 2) {
+
+      // Step 3: Smart filtering
+      let cleaned = text.replace(/\s+/g, '').replace(/[^A-Z0-9]/g, '').substring(0, 8)
+      // Fix common OCR swaps: O↔0 and I↔1
+      cleaned = cleaned.replace(/(\p{L})0(\p{L})/gu, '$1O$2')
+      cleaned = cleaned.replace(/(\d)I(\d)/g, '$11$2')
+
+      if (cleaned.length >= 4) {
         setPlate(cleaned)
         closeCamera()
         setTimeout(() => searchPlate(cleaned), 50)
       } else {
-        setScanStatus('Could not read plate. Please type manually.')
+        setScanStatus('Could not read plate clearly. Please try again or type manually.')
         setScanning(false)
       }
     } catch {
