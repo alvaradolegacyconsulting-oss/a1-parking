@@ -13,7 +13,7 @@ export default function AdminPortal() {
   const [companySearch, setCompanySearch] = useState('')
   const [showAddCompany, setShowAddCompany] = useState(false)
   const [editingCompany, setEditingCompany] = useState<any>(null)
-  const [newCompany, setNewCompany] = useState({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy' })
+  const [newCompany, setNewCompany] = useState({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy', theme:'gold' })
 
   const [properties, setProperties] = useState<any[]>([])
   const [propertySearch, setPropertySearch] = useState('')
@@ -108,7 +108,7 @@ export default function AdminPortal() {
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'ADD_COMPANY', 'companies', data.id, newCompany)
     setShowAddCompany(false)
-    setNewCompany({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy' })
+    setNewCompany({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy', theme:'gold' })
     fetchCompanies()
   }
 
@@ -119,7 +119,8 @@ export default function AdminPortal() {
       display_name: editingCompany.display_name || null, logo_url: editingCompany.logo_url || null,
       support_phone: editingCompany.support_phone || null, support_email: editingCompany.support_email || null,
       support_website: editingCompany.support_website || null,
-      tier_type: editingCompany.tier_type || 'enforcement', tier: editingCompany.tier || 'legacy'
+      tier_type: editingCompany.tier_type || 'enforcement', tier: editingCompany.tier || 'legacy',
+      theme: editingCompany.theme || 'gold'
     }).eq('id', editingCompany.id)
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'EDIT_COMPANY', 'companies', editingCompany.id, editingCompany)
@@ -611,6 +612,19 @@ export default function AdminPortal() {
                     </select>
                   </div>
                 </div>
+                <div>
+                  <label style={{ ...lbl, display:'flex', alignItems:'center', gap:'8px' }}>
+                    Color Theme
+                    <span style={{ width:'14px', height:'14px', borderRadius:'50%', background:({'gold':'#C9A227','blue':'#1565C0','green':'#2E7D32','grey':'#546E7A','red':'#B71C1C'} as Record<string,string>)[newCompany.theme] || '#C9A227', display:'inline-block', border:'1px solid rgba(255,255,255,0.2)', flexShrink:0 }} />
+                  </label>
+                  <select value={newCompany.theme} onChange={e => setNewCompany({...newCompany, theme: e.target.value})} style={inp}>
+                    <option value="gold">Gold (Default)</option>
+                    <option value="blue">Ocean Blue</option>
+                    <option value="green">Forest Green</option>
+                    <option value="grey">Steel Grey</option>
+                    <option value="red">Crimson</option>
+                  </select>
+                </div>
                 <label style={lbl}>Active</label>
                 <select value={newCompany.is_active ? 'true' : 'false'} onChange={e => setNewCompany({...newCompany, is_active: e.target.value === 'true'})} style={inp}>
                   <option value="true">Yes</option><option value="false">No</option>
@@ -653,6 +667,19 @@ export default function AdminPortal() {
                       }
                     </select>
                   </div>
+                </div>
+                <div>
+                  <label style={{ ...lbl, display:'flex', alignItems:'center', gap:'8px' }}>
+                    Color Theme
+                    <span style={{ width:'14px', height:'14px', borderRadius:'50%', background:({'gold':'#C9A227','blue':'#1565C0','green':'#2E7D32','grey':'#546E7A','red':'#B71C1C'} as Record<string,string>)[editingCompany.theme || 'gold'] || '#C9A227', display:'inline-block', border:'1px solid rgba(255,255,255,0.2)', flexShrink:0 }} />
+                  </label>
+                  <select value={editingCompany.theme || 'gold'} onChange={e => setEditingCompany({...editingCompany, theme: e.target.value})} style={inp}>
+                    <option value="gold">Gold (Default)</option>
+                    <option value="blue">Ocean Blue</option>
+                    <option value="green">Forest Green</option>
+                    <option value="grey">Steel Grey</option>
+                    <option value="red">Crimson</option>
+                  </select>
                 </div>
                 <label style={lbl}>Active</label>
                 <select value={editingCompany.is_active ? 'true' : 'false'} onChange={e => setEditingCompany({...editingCompany, is_active: e.target.value === 'true'})} style={inp}>

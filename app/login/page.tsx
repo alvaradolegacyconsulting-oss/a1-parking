@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { applyTheme } from '../lib/theme'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -69,7 +70,7 @@ export default function Login() {
     if (roleData.role !== 'admin' && roleData.company) {
       const { data: companyData } = await supabase
         .from('companies')
-        .select('is_active, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type')
+        .select('is_active, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type, theme')
         .ilike('name', roleData.company)
         .single()
 
@@ -121,6 +122,8 @@ export default function Login() {
       else localStorage.removeItem('company_tier')
       if (companyData?.tier_type) localStorage.setItem('company_tier_type', companyData.tier_type)
       else localStorage.removeItem('company_tier_type')
+      localStorage.setItem('company_theme', companyData?.theme || 'gold')
+      applyTheme()
     } else {
       localStorage.removeItem('company_logo')
       localStorage.removeItem('company_name')
@@ -129,6 +132,7 @@ export default function Login() {
       localStorage.removeItem('company_support_website')
       localStorage.removeItem('company_tier')
       localStorage.removeItem('company_tier_type')
+      localStorage.removeItem('company_theme')
     }
 
     setLoading(false)

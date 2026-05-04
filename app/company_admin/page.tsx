@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
+import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
 
 const BASE_URL = 'https://a1-parking.vercel.app'
@@ -905,10 +906,14 @@ export default function CompanyAdminPortal() {
               const tierType = typeof window !== 'undefined' ? localStorage.getItem('company_tier_type') : null
               const tier = typeof window !== 'undefined' ? localStorage.getItem('company_tier') : null
               if (!tierType && !tier) return null
+              const showTheme = (tierType === 'enforcement' && (tier === 'growth' || tier === 'legacy')) ||
+                                (tierType === 'property_management' && (tier === 'professional' || tier === 'enterprise'))
+              const themeColor = showTheme ? getThemeColor() : null
               return (
-                <div style={{ display:'flex', gap:'4px', marginTop:'5px', flexWrap:'wrap' as const }}>
+                <div style={{ display:'flex', gap:'4px', marginTop:'5px', flexWrap:'wrap' as const, alignItems:'center' }}>
                   {tierType && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'10px', background: tierType === 'enforcement' ? '#1a1230' : '#0e1a2a', color: tierType === 'enforcement' ? '#b39ddb' : '#4fc3f7', border:`1px solid ${tierType === 'enforcement' ? '#7c4dff' : '#0288d1'}`, textTransform:'uppercase' as const, letterSpacing:'0.05em', fontWeight:'bold' }}>{tierType === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</span>}
                   {tier && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'10px', background:'#1a1f0e', color:'#C9A227', border:'1px solid #C9A227', textTransform:'uppercase' as const, letterSpacing:'0.05em', fontWeight:'bold' }}>{tier}</span>}
+                  {themeColor && <span title="Theme color" style={{ width:'12px', height:'12px', borderRadius:'50%', background:themeColor, display:'inline-block', border:'1px solid rgba(255,255,255,0.25)', flexShrink:0 }} />}
                 </div>
               )
             })()}

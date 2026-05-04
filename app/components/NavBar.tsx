@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import { supabase } from '../supabase'
+import { applyTheme, getThemeColor } from '../lib/theme'
 
 const NAV_LINKS: Record<string, { label: string; href: string }[]> = {
   admin: [
@@ -46,6 +47,7 @@ export default function NavBar() {
     if (hidden) return
     setLoaded(false)
     async function load() {
+      applyTheme()
       setCompanyLogo(localStorage.getItem('company_logo'))
       setCompanyName(localStorage.getItem('company_name'))
       const { data: { user } } = await supabase.auth.getUser()
@@ -78,6 +80,7 @@ export default function NavBar() {
   }
 
   const isActive = (href: string) => pathname === href
+  const themeColor = getThemeColor()
 
   return (
     <nav style={{ background: '#1A1F2E', borderBottom: '1px solid #2a2f3d', fontFamily: 'Arial, sans-serif', position: 'sticky', top: 0, zIndex: 50 }}>
@@ -88,8 +91,8 @@ export default function NavBar() {
 
           {/* Logo + brand */}
           <a href={links[0]?.href ?? '/'} style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
-            <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'A1 Wrecker'} style={{ width: '30px', height: '30px', borderRadius: '6px', border: '1px solid #C9A227' }} />
-            <span style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '13px', letterSpacing: '0.02em' }}>{companyName || 'A1 Wrecker'}</span>
+            <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'A1 Wrecker'} style={{ width: '30px', height: '30px', borderRadius: '6px', border: `1px solid ${themeColor}` }} />
+            <span style={{ color: themeColor, fontWeight: 'bold', fontSize: '13px', letterSpacing: '0.02em' }}>{companyName || 'A1 Wrecker'}</span>
           </a>
 
           {/* Desktop nav links */}
@@ -97,12 +100,12 @@ export default function NavBar() {
             {links.map(l => (
               <a key={l.href} href={l.href} style={{
                 padding: '6px 10px',
-                color: isActive(l.href) ? '#C9A227' : '#888',
+                color: isActive(l.href) ? themeColor : '#888',
                 fontSize: '12px',
                 fontWeight: isActive(l.href) ? 'bold' : 'normal',
                 textDecoration: 'none',
                 borderRadius: '6px',
-                background: isActive(l.href) ? 'rgba(201,162,39,0.12)' : 'transparent',
+                background: isActive(l.href) ? `${themeColor}1f` : 'transparent',
                 transition: 'color 0.15s',
                 display: 'flex',
                 alignItems: 'center',
@@ -131,7 +134,7 @@ export default function NavBar() {
           {/* Mobile hamburger */}
           <button onClick={() => setMenuOpen(o => !o)} className="md:hidden" style={{
             background: 'none', border: 'none', cursor: 'pointer',
-            color: '#C9A227', fontSize: '20px', lineHeight: 1, padding: '4px 8px',
+            color: themeColor, fontSize: '20px', lineHeight: 1, padding: '4px 8px',
           }}>
             {menuOpen ? '✕' : '☰'}
           </button>
@@ -143,7 +146,7 @@ export default function NavBar() {
             {links.map(l => (
               <a key={l.href} href={l.href} onClick={() => setMenuOpen(false)} style={{
                 display: 'flex', alignItems: 'center', gap: '6px', padding: '11px 8px',
-                color: isActive(l.href) ? '#C9A227' : '#aaa',
+                color: isActive(l.href) ? themeColor : '#aaa',
                 fontWeight: isActive(l.href) ? 'bold' : 'normal',
                 fontSize: '13px', textDecoration: 'none',
                 borderBottom: '1px solid #1e2535',
