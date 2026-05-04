@@ -13,7 +13,7 @@ export default function AdminPortal() {
   const [companySearch, setCompanySearch] = useState('')
   const [showAddCompany, setShowAddCompany] = useState(false)
   const [editingCompany, setEditingCompany] = useState<any>(null)
-  const [newCompany, setNewCompany] = useState({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'' })
+  const [newCompany, setNewCompany] = useState({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy' })
 
   const [properties, setProperties] = useState<any[]>([])
   const [propertySearch, setPropertySearch] = useState('')
@@ -107,7 +107,7 @@ export default function AdminPortal() {
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'ADD_COMPANY', 'companies', data.id, newCompany)
     setShowAddCompany(false)
-    setNewCompany({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'' })
+    setNewCompany({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy' })
     fetchCompanies()
   }
 
@@ -117,7 +117,8 @@ export default function AdminPortal() {
       phone: editingCompany.phone, email: editingCompany.email, is_active: editingCompany.is_active,
       display_name: editingCompany.display_name || null, logo_url: editingCompany.logo_url || null,
       support_phone: editingCompany.support_phone || null, support_email: editingCompany.support_email || null,
-      support_website: editingCompany.support_website || null
+      support_website: editingCompany.support_website || null,
+      tier_type: editingCompany.tier_type || 'enforcement', tier: editingCompany.tier || 'legacy'
     }).eq('id', editingCompany.id)
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'EDIT_COMPANY', 'companies', editingCompany.id, editingCompany)
@@ -588,6 +589,24 @@ export default function AdminPortal() {
                 <label style={lbl}>Support Phone</label><input value={newCompany.support_phone} onChange={e => setNewCompany({...newCompany, support_phone: e.target.value})} placeholder="346-428-7864" style={inp} />
                 <label style={lbl}>Support Email</label><input value={newCompany.support_email} onChange={e => setNewCompany({...newCompany, support_email: e.target.value})} placeholder="support@company.com" style={inp} />
                 <label style={lbl}>Support Website</label><input value={newCompany.support_website} onChange={e => setNewCompany({...newCompany, support_website: e.target.value})} placeholder="company.com" style={inp} />
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                  <div>
+                    <label style={lbl}>Account Type</label>
+                    <select value={newCompany.tier_type} onChange={e => setNewCompany({...newCompany, tier_type: e.target.value, tier: e.target.value === 'enforcement' ? 'legacy' : 'essential'})} style={inp}>
+                      <option value="enforcement">Enforcement</option>
+                      <option value="property_management">Property Management</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={lbl}>Service Tier</label>
+                    <select value={newCompany.tier} onChange={e => setNewCompany({...newCompany, tier: e.target.value})} style={inp}>
+                      {newCompany.tier_type === 'enforcement'
+                        ? <><option value="starter">Starter</option><option value="growth">Growth</option><option value="legacy">Legacy</option></>
+                        : <><option value="essential">Essential</option><option value="professional">Professional</option><option value="enterprise">Enterprise</option></>
+                      }
+                    </select>
+                  </div>
+                </div>
                 <label style={lbl}>Active</label>
                 <select value={newCompany.is_active ? 'true' : 'false'} onChange={e => setNewCompany({...newCompany, is_active: e.target.value === 'true'})} style={inp}>
                   <option value="true">Yes</option><option value="false">No</option>
@@ -613,6 +632,24 @@ export default function AdminPortal() {
                 <label style={lbl}>Support Phone</label><input value={editingCompany.support_phone || ''} onChange={e => setEditingCompany({...editingCompany, support_phone: e.target.value})} placeholder="346-428-7864" style={inp} />
                 <label style={lbl}>Support Email</label><input value={editingCompany.support_email || ''} onChange={e => setEditingCompany({...editingCompany, support_email: e.target.value})} placeholder="support@company.com" style={inp} />
                 <label style={lbl}>Support Website</label><input value={editingCompany.support_website || ''} onChange={e => setEditingCompany({...editingCompany, support_website: e.target.value})} placeholder="company.com" style={inp} />
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                  <div>
+                    <label style={lbl}>Account Type</label>
+                    <select value={editingCompany.tier_type || 'enforcement'} onChange={e => setEditingCompany({...editingCompany, tier_type: e.target.value, tier: e.target.value === 'enforcement' ? 'legacy' : 'essential'})} style={inp}>
+                      <option value="enforcement">Enforcement</option>
+                      <option value="property_management">Property Management</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={lbl}>Service Tier</label>
+                    <select value={editingCompany.tier || 'legacy'} onChange={e => setEditingCompany({...editingCompany, tier: e.target.value})} style={inp}>
+                      {(editingCompany.tier_type || 'enforcement') === 'enforcement'
+                        ? <><option value="starter">Starter</option><option value="growth">Growth</option><option value="legacy">Legacy</option></>
+                        : <><option value="essential">Essential</option><option value="professional">Professional</option><option value="enterprise">Enterprise</option></>
+                      }
+                    </select>
+                  </div>
+                </div>
                 <label style={lbl}>Active</label>
                 <select value={editingCompany.is_active ? 'true' : 'false'} onChange={e => setEditingCompany({...editingCompany, is_active: e.target.value === 'true'})} style={inp}>
                   <option value="true">Yes</option><option value="false">No</option>
@@ -630,6 +667,12 @@ export default function AdminPortal() {
                   <div>
                     <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{c.name}</p>
                     <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{[c.email, c.phone].filter(Boolean).join(' · ') || '—'}</p>
+                    {(c.tier || c.tier_type) && (
+                      <div style={{ display:'flex', gap:'4px', marginTop:'4px', flexWrap:'wrap' as const }}>
+                        {c.tier_type && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'10px', background: c.tier_type === 'enforcement' ? '#1a1230' : '#0e1a2a', color: c.tier_type === 'enforcement' ? '#b39ddb' : '#4fc3f7', border:`1px solid ${c.tier_type === 'enforcement' ? '#7c4dff' : '#0288d1'}`, textTransform:'uppercase' as const, letterSpacing:'0.05em', fontWeight:'bold' }}>{c.tier_type === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</span>}
+                        {c.tier && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'10px', background:'#1a1f0e', color:'#C9A227', border:'1px solid #C9A227', textTransform:'uppercase' as const, letterSpacing:'0.05em', fontWeight:'bold' }}>{c.tier}</span>}
+                      </div>
+                    )}
                   </div>
                   <span style={badge(c.is_active)}>{c.is_active ? 'Active' : 'Inactive'}</span>
                 </div>

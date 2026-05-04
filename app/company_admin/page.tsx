@@ -897,6 +897,17 @@ export default function CompanyAdminPortal() {
           <div>
             <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>{role?.company || 'Company Admin'}</p>
             <p style={{ color:'#aaa', fontSize:'11px', margin:'2px 0 0' }}>{user?.email}</p>
+            {(() => {
+              const tierType = typeof window !== 'undefined' ? localStorage.getItem('company_tier_type') : null
+              const tier = typeof window !== 'undefined' ? localStorage.getItem('company_tier') : null
+              if (!tierType && !tier) return null
+              return (
+                <div style={{ display:'flex', gap:'4px', marginTop:'5px', flexWrap:'wrap' as const }}>
+                  {tierType && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'10px', background: tierType === 'enforcement' ? '#1a1230' : '#0e1a2a', color: tierType === 'enforcement' ? '#b39ddb' : '#4fc3f7', border:`1px solid ${tierType === 'enforcement' ? '#7c4dff' : '#0288d1'}`, textTransform:'uppercase' as const, letterSpacing:'0.05em', fontWeight:'bold' }}>{tierType === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</span>}
+                  {tier && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'10px', background:'#1a1f0e', color:'#C9A227', border:'1px solid #C9A227', textTransform:'uppercase' as const, letterSpacing:'0.05em', fontWeight:'bold' }}>{tier}</span>}
+                </div>
+              )
+            })()}
           </div>
           <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}
             style={{ padding:'6px 12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>

@@ -69,7 +69,7 @@ export default function Login() {
     if (roleData.role !== 'admin' && roleData.company) {
       const { data: companyData } = await supabase
         .from('companies')
-        .select('is_active, logo_url, display_name, support_phone, support_email, support_website')
+        .select('is_active, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type')
         .ilike('name', roleData.company)
         .single()
 
@@ -117,12 +117,18 @@ export default function Login() {
       else localStorage.removeItem('company_support_email')
       if (companyData?.support_website) localStorage.setItem('company_support_website', companyData.support_website)
       else localStorage.removeItem('company_support_website')
+      if (companyData?.tier) localStorage.setItem('company_tier', companyData.tier)
+      else localStorage.removeItem('company_tier')
+      if (companyData?.tier_type) localStorage.setItem('company_tier_type', companyData.tier_type)
+      else localStorage.removeItem('company_tier_type')
     } else {
       localStorage.removeItem('company_logo')
       localStorage.removeItem('company_name')
       localStorage.removeItem('company_support_phone')
       localStorage.removeItem('company_support_email')
       localStorage.removeItem('company_support_website')
+      localStorage.removeItem('company_tier')
+      localStorage.removeItem('company_tier_type')
     }
 
     setLoading(false)
