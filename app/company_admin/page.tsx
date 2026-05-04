@@ -63,6 +63,7 @@ export default function CompanyAdminPortal() {
 
   const [companyDrivers, setCompanyDrivers] = useState<any[]>([])
   const [showAddDriver, setShowAddDriver] = useState(false)
+  const [editingDriver, setEditingDriver] = useState<any>(null)
   const [newDriver, setNewDriver] = useState({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] as string[] })
   const [driverMsg, setDriverMsg] = useState('')
 
@@ -337,6 +338,22 @@ export default function CompanyAdminPortal() {
     setDriverMsg(`Driver created! Temp password: ${tempPass}`)
     setNewDriver({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] })
     setShowAddDriver(false)
+    fetchCompanyDrivers()
+  }
+
+  async function updateDriver() {
+    if (!editingDriver) return
+    setDriverMsg('Saving...')
+    const { error } = await supabase.from('drivers').update({
+      name: editingDriver.name,
+      phone: editingDriver.phone || null,
+      operator_license: editingDriver.operator_license || null,
+      assigned_properties: editingDriver.assigned_properties || [],
+    }).eq('id', editingDriver.id)
+    if (error) { setDriverMsg('Error: ' + error.message); return }
+    await auditLog('update_driver', 'drivers', editingDriver.id, { name: editingDriver.name, company: role?.company })
+    setDriverMsg('Driver updated!')
+    setEditingDriver(null)
     fetchCompanyDrivers()
   }
 
@@ -1333,15 +1350,24 @@ export default function CompanyAdminPortal() {
                     <label style={lbl}>Operator License</label>
                     <input value={newDriver.operator_license} onChange={e => setNewDriver({ ...newDriver, operator_license: e.target.value })} placeholder="License number" style={inp} />
                     <label style={lbl}>Assigned Properties</label>
-                    <div style={{ marginBottom:'10px' }}>
+                    <div style={{ marginTop:'6px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px' }}>
+                      <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
+                        <input type="checkbox"
+                          checked={newDriver.assigned_properties.length === properties.length && properties.length > 0}
+                          onChange={e => setNewDriver({ ...newDriver, assigned_properties: e.target.checked ? properties.map(p => p.name) : [] })}
+                          style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                        />
+                        <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
+                      </label>
                       {properties.map((p, i) => (
-                        <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'5px 0', cursor:'pointer' }}>
+                        <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
                           <input type="checkbox"
                             checked={newDriver.assigned_properties.includes(p.name)}
                             onChange={e => {
                               if (e.target.checked) setNewDriver({ ...newDriver, assigned_properties: [...newDriver.assigned_properties, p.name] })
                               else setNewDriver({ ...newDriver, assigned_properties: newDriver.assigned_properties.filter(n => n !== p.name) })
                             }}
+                            style={{ accentColor:'#C9A227', cursor:'pointer' }}
                           />
                           <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
                         </label>
@@ -1354,6 +1380,47 @@ export default function CompanyAdminPortal() {
                   </div>
                 )}
 
+                {editingDriver && (
+                  <div style={{ background:'#0d1520', border:'2px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Edit Driver — {editingDriver.name}</p>
+                    <label style={lbl}>Full Name</label>
+                    <input value={editingDriver.name || ''} onChange={e => setEditingDriver({ ...editingDriver, name: e.target.value })} style={inp} />
+                    <label style={lbl}>Phone</label>
+                    <input value={editingDriver.phone || ''} onChange={e => setEditingDriver({ ...editingDriver, phone: e.target.value })} style={inp} />
+                    <label style={lbl}>Operator License</label>
+                    <input value={editingDriver.operator_license || ''} onChange={e => setEditingDriver({ ...editingDriver, operator_license: e.target.value })} style={inp} />
+                    <label style={lbl}>Assigned Properties</label>
+                    <div style={{ marginTop:'6px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px' }}>
+                      <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
+                        <input type="checkbox"
+                          checked={(editingDriver.assigned_properties || []).length === properties.length && properties.length > 0}
+                          onChange={e => setEditingDriver({ ...editingDriver, assigned_properties: e.target.checked ? properties.map(p => p.name) : [] })}
+                          style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                        />
+                        <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
+                      </label>
+                      {properties.map((p, i) => (
+                        <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
+                          <input type="checkbox"
+                            checked={(editingDriver.assigned_properties || []).includes(p.name)}
+                            onChange={e => {
+                              const cur: string[] = editingDriver.assigned_properties || []
+                              if (e.target.checked) setEditingDriver({ ...editingDriver, assigned_properties: [...cur, p.name] })
+                              else setEditingDriver({ ...editingDriver, assigned_properties: cur.filter((n: string) => n !== p.name) })
+                            }}
+                            style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                          />
+                          <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display:'flex', gap:'8px' }}>
+                      <button onClick={updateDriver} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Save Changes</button>
+                      <button onClick={() => { setEditingDriver(null); setDriverMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
                 {companyDrivers.map((d, i) => (
                   <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' }}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
@@ -1362,16 +1429,23 @@ export default function CompanyAdminPortal() {
                         <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{d.email}</p>
                         {d.phone && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{d.phone}</p>}
                         {d.operator_license && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>Lic: {d.operator_license}</p>}
+                        {d.assigned_properties?.length > 0 && <p style={{ color:'#C9A227', fontSize:'11px', margin:'4px 0 0' }}>{Array.isArray(d.assigned_properties) ? d.assigned_properties.join(', ') : d.assigned_properties}</p>}
                       </div>
                       <span style={{ background: d.is_active ? '#1a3a1a' : '#2a1a1a', color: d.is_active ? '#4caf50' : '#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
                         {d.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </div>
                     {isCA && (
-                      <button onClick={() => toggleDriverActive(d)}
-                        style={{ marginTop:'8px', width:'100%', padding:'7px', background: d.is_active ? '#3a1a1a' : '#1a3a1a', color: d.is_active ? '#f44336' : '#4caf50', border:`1px solid ${d.is_active ? '#b71c1c' : '#2e7d32'}`, borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
-                        {d.is_active ? 'Deactivate' : 'Activate'}
-                      </button>
+                      <div style={{ display:'flex', gap:'6px', marginTop:'8px' }}>
+                        <button onClick={() => { setEditingDriver({...d, assigned_properties: Array.isArray(d.assigned_properties) ? d.assigned_properties : []}); setShowAddDriver(false); setDriverMsg('') }}
+                          style={{ flex:1, padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                          Edit
+                        </button>
+                        <button onClick={() => toggleDriverActive(d)}
+                          style={{ flex:1, padding:'7px', background: d.is_active ? '#3a1a1a' : '#1a3a1a', color: d.is_active ? '#f44336' : '#4caf50', border:`1px solid ${d.is_active ? '#b71c1c' : '#2e7d32'}`, borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                          {d.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}

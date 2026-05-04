@@ -39,7 +39,7 @@ function RegisterForm() {
   }
 
   function addVehicle() {
-    if (vehicles.length >= 3) return
+    if (vehicles.length >= 2) return
     setVehicles([...vehicles, { plate: '', state: 'TX', make: '', model: '', year: '', color: '' }])
   }
 
@@ -222,7 +222,7 @@ function RegisterForm() {
           {step === 2 && (
             <div>
               <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'14px', margin:'0 0 4px' }}>Step 2 of 3 — Add Vehicles</p>
-              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 16px' }}>Optional. Add up to 3 vehicles to register with your unit.</p>
+              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 16px' }}>Optional. Add up to 2 vehicles to register with your unit.</p>
 
               {vehicles.map((v, i) => (
                 <div key={i} style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'12px' }}>
@@ -263,7 +263,7 @@ function RegisterForm() {
                 </div>
               ))}
 
-              {vehicles.length < 3 && (
+              {vehicles.length < 2 && (
                 <button onClick={addVehicle}
                   style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', cursor:'pointer', fontSize:'13px', fontWeight:'bold', marginBottom:'12px' }}>
                   + Add Vehicle
