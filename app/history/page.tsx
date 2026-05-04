@@ -125,7 +125,12 @@ export default function History() {
           <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'10px' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
               <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
-              <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{formatDate(v.created_at)}</p>
+              <div style={{ textAlign:'right' }}>
+                <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{formatDate(v.created_at)}</p>
+                {v.tow_ticket_generated && (
+                  <span style={{ display:'inline-block', marginTop:'4px', background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'9px', fontWeight:'bold', padding:'2px 6px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>
+                )}
+              </div>
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
               <div>

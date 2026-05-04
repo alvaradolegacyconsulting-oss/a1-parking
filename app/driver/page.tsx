@@ -276,7 +276,7 @@ export default function DriverPortal() {
     setMileage('')
   }
 
-  function generateTicket() {
+  async function generateTicket() {
     if (!ticketTarget) return
     const storage = storageFacilities.find(s => String(s.id) === selectedStorage)
     const tw = window.open('', '_blank')
@@ -413,6 +413,20 @@ export default function DriverPortal() {
       </div>
     </body></html>`)
     tw.document.close()
+    if (ticketTarget?.id && storage) {
+      const now = new Date().toISOString()
+      await supabase.from('violations').update({
+        tow_ticket_generated: true,
+        tow_storage_name: storage.name || null,
+        tow_storage_address: storage.address || null,
+        tow_storage_phone: storage.phone || null,
+        tow_fee: towFee || null,
+        tow_ticket_generated_at: now,
+      }).eq('id', ticketTarget.id)
+      const patch = { tow_ticket_generated: true, tow_storage_name: storage.name, tow_storage_address: storage.address, tow_storage_phone: storage.phone, tow_fee: towFee, tow_ticket_generated_at: now }
+      setViolations((prev: any[]) => prev.map((v: any) => v.id === ticketTarget.id ? { ...v, ...patch } : v))
+      setTicketTarget((prev: any) => prev ? { ...prev, ...patch } : null)
+    }
   }
 
   const tab = (t: string): React.CSSProperties => ({
