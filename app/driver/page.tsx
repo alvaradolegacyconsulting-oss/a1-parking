@@ -591,9 +591,9 @@ export default function DriverPortal() {
               </button>
 
               {result && searchTimestamp && (
-                <div style={{ marginTop:'16px', background:'#111827', border:'1px solid #1e2535', borderRadius:'6px', padding:'8px 12px', marginBottom:'8px', fontFamily:'Courier New', fontSize:'10px', color:'#666' }}>
-                  <div>🕐 Search recorded: {new Intl.DateTimeFormat('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', second:'2-digit', hour12:true }).format(searchTimestamp)}</div>
-                  <div>Driver: {driver?.name || driver?.email}{driver?.company ? ` · ${driver.company}` : ''}</div>
+                <div style={{ marginTop:'16px', background:'#0f1117', border:'1px solid #C9A227', borderRadius:'8px', padding:'10px 14px', marginBottom:'10px', fontFamily:'Courier New' }}>
+                  <div style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold' }}>🕐 Search recorded: {new Intl.DateTimeFormat('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', second:'2-digit', hour12:true }).format(searchTimestamp)}</div>
+                  <div style={{ color:'#aaa', fontSize:'11px' }}>Driver: {driver?.name || driver?.email}{driver?.company ? ` · ${driver.company}` : ''}</div>
                 </div>
               )}
 

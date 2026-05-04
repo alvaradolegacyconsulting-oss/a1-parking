@@ -427,7 +427,8 @@ export default function ResidentPortal() {
               function statusBadge(v: any) {
                 if (v.status === 'pending') return { bg:'#2a1e00', color:'#C9A227', border:'#C9A227', text:'Pending Approval' }
                 if (v.status === 'declined') return { bg:'#3a1a1a', color:'#f44336', border:'#b71c1c', text:'Declined' }
-                return { bg:'#1a3a1a', color:'#4caf50', border:'#2e7d32', text:'Active' }
+                if (v.is_active === true) return { bg:'#1a3a1a', color:'#4caf50', border:'#2e7d32', text:'Active' }
+                return { bg:'#1e2535', color:'#555', border:'#3a4055', text:'Inactive' }
               }
 
               return (
