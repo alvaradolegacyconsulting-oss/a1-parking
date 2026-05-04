@@ -17,6 +17,7 @@ export default function DriverPortal() {
   const [showCamera, setShowCamera] = useState(false)
   const [scanStatus, setScanStatus] = useState('Point camera at license plate')
   const [scanning, setScanning] = useState(false)
+  const [scanMsg, setScanMsg] = useState('')
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [showViolation, setShowViolation] = useState(false)
@@ -158,6 +159,7 @@ export default function DriverPortal() {
       const cleaned = (json.plate || '').replace(/[^A-Z0-9]/g, '').toUpperCase().slice(0, 8)
       if (cleaned.length >= 4) {
         setPlate(cleaned)
+        setScanMsg('📋 Plate scanned — please verify before searching.')
         closeCamera()
         setTimeout(() => searchPlate(cleaned), 50)
       } else {
@@ -174,6 +176,7 @@ export default function DriverPortal() {
     const val = plateVal ?? plate
     if (!val || searching) return
     setSearching(true)
+    setScanMsg('')
     setResult(null)
     setShowViolation(false)
     setTicketTarget(null)
@@ -541,7 +544,7 @@ export default function DriverPortal() {
               </button>
               <input
                 value={plate}
-                onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null) }}
+                onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null); setScanMsg('') }}
                 onKeyDown={e => e.key === 'Enter' && searchPlate()}
                 placeholder="ABC1234"
                 maxLength={10}
@@ -553,6 +556,9 @@ export default function DriverPortal() {
                   textTransform: 'uppercase'
                 }}
               />
+              {scanMsg && (
+                <p style={{ color:'#C9A227', fontSize:'12px', margin:'4px 0 0', fontStyle:'italic' }}>{scanMsg}</p>
+              )}
               <button onClick={() => searchPlate()} disabled={searching || !plate}
                 style={{
                   marginTop: '12px', width: '100%', padding: '14px',

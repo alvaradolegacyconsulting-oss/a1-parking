@@ -23,6 +23,7 @@ export default function CompanyAdminPortal() {
   const [showCamera, setShowCamera] = useState(false)
   const [scanStatus, setScanStatus] = useState('Point camera at license plate')
   const [scanning, setScanning] = useState(false)
+  const [scanMsg, setScanMsg] = useState('')
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [showViolation, setShowViolation] = useState(false)
@@ -438,6 +439,7 @@ export default function CompanyAdminPortal() {
       const cleaned = (json.plate || '').replace(/[^A-Z0-9]/g, '').toUpperCase().slice(0, 8)
       if (cleaned.length >= 4) {
         setPlate(cleaned)
+        setScanMsg('📋 Plate scanned — please verify before searching.')
         closeCamera()
         setTimeout(() => searchPlate(cleaned), 50)
       } else {
@@ -453,7 +455,7 @@ export default function CompanyAdminPortal() {
   async function searchPlate(plateVal?: string) {
     const val = plateVal ?? plate
     if (!val || searching) return
-    setSearching(true); setResult(null); setShowViolation(false); setTicketTarget(null)
+    setSearching(true); setScanMsg(''); setResult(null); setShowViolation(false); setTicketTarget(null)
     const clean = val.toUpperCase().trim()
     const { data: activeVeh } = await supabase.from('vehicles').select('*').ilike('plate', clean).eq('is_active', true).single()
     if (activeVeh) {
@@ -836,10 +838,13 @@ export default function CompanyAdminPortal() {
                 style={{ width:'100%', padding:'12px', background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', cursor:'pointer', fontSize:'14px', fontWeight:'bold', marginTop:'8px', marginBottom:'8px', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px', fontFamily:'Arial' }}>
                 📷 Scan License Plate
               </button>
-              <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null) }}
+              <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null); setScanMsg('') }}
                 onKeyDown={e => e.key === 'Enter' && searchPlate()} placeholder="ABC1234" maxLength={10}
                 style={{ display:'block', width:'100%', padding:'16px', fontSize:'28px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.12em', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box', textTransform:'uppercase' }}
               />
+              {scanMsg && (
+                <p style={{ color:'#C9A227', fontSize:'12px', margin:'4px 0 0', fontStyle:'italic' }}>{scanMsg}</p>
+              )}
               <button onClick={() => searchPlate()} disabled={searching || !plate}
                 style={{ marginTop:'12px', width:'100%', padding:'14px', background:!plate ? '#2a2f3d' : '#C9A227', color:!plate ? '#555' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor:!plate ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
                 {searching ? 'Searching...' : 'Search Plate'}
