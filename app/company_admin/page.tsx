@@ -27,7 +27,7 @@ export default function CompanyAdminPortal() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [showViolation, setShowViolation] = useState(false)
-  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '' })
+  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
   const [photos, setPhotos] = useState<File[]>([])
   const [submitting, setSubmitting] = useState(false)
 
@@ -546,12 +546,15 @@ export default function CompanyAdminPortal() {
       plate: plate.toUpperCase().trim(), violation_type: violation.type,
       location: violation.location, notes: violation.notes,
       property: violation.property, driver_name: role?.email, photos: photoUrls,
+      vehicle_color: violation.vehicle_color || null,
+      vehicle_make: violation.vehicle_make || null,
+      vehicle_model: violation.vehicle_model || null,
     }]).select().single()
     setSubmitting(false)
     if (insErr) { alert('Error: ' + insErr.message); return }
     await auditLog('ADD_VIOLATION', 'violations', newV?.id, { plate: plate.toUpperCase().trim(), property: violation.property, violation_type: violation.type })
     setShowViolation(false)
-    setViolation({ type: '', location: '', notes: '', property: '' })
+    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
     setPhotos([])
     if (selectedProperty) fetchViolations(selectedProperty.name)
     if (newV) { setTicketTarget(newV); setSelectedStorage(''); setTowFee(''); setMileage('') }
@@ -639,6 +642,7 @@ export default function CompanyAdminPortal() {
         <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
         <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
         <div class="f"><label>VIN</label><span>${vin || v.vin || '—'}</span></div>
+        ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f" style="grid-column:span 2"><label>Color / Make / Model (at scene)</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
       </div></div>
       <div class="sec"><div class="sh">Violation</div><div class="g2">
         <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
@@ -994,6 +998,12 @@ export default function CompanyAdminPortal() {
                   <label style={lbl}>Notes</label>
                   <textarea value={violation.notes} onChange={e => setViolation({ ...violation, notes: e.target.value })}
                     placeholder="Additional details..." style={{ ...inp, minHeight:'60px', resize:'vertical' as const }} />
+                  <label style={lbl}>Vehicle Color (optional)</label>
+                  <input value={violation.vehicle_color} onChange={e => setViolation({ ...violation, vehicle_color: e.target.value })} placeholder="e.g. White, Black, Red" style={inp} />
+                  <label style={lbl}>Vehicle Make (optional)</label>
+                  <input value={violation.vehicle_make} onChange={e => setViolation({ ...violation, vehicle_make: e.target.value })} placeholder="e.g. Toyota, Honda" style={inp} />
+                  <label style={lbl}>Vehicle Model (optional)</label>
+                  <input value={violation.vehicle_model} onChange={e => setViolation({ ...violation, vehicle_model: e.target.value })} placeholder="e.g. Camry, Civic" style={inp} />
                   <label style={lbl}>Photos</label>
                   <input type="file" accept="image/*" multiple onChange={e => setPhotos(Array.from(e.target.files || []))}
                     style={{ display:'block', width:'100%', marginBottom:'8px', color:'#aaa', fontSize:'12px' }} />
@@ -1059,6 +1069,9 @@ export default function CompanyAdminPortal() {
                   {v.driver_name && <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Issued By</span><br /><span style={{ color:'#aaa' }}>{v.driver_name}</span></div>}
                   {v.notes && <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Notes</span><br /><span style={{ color:'#aaa' }}>{v.notes}</span></div>}
                 </div>
+                {(v.vehicle_color || v.vehicle_make || v.vehicle_model) && (
+                  <p style={{ color:'#555', fontSize:'11px', margin:'0 0 10px' }}>🚗 {[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join(' ')}</p>
+                )}
                 {v.photos && v.photos.length > 0 && (
                   <div style={{ marginBottom:'10px' }}>
                     <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', margin:'0 0 6px' }}>Evidence Photos</p>

@@ -22,7 +22,7 @@ export default function DriverPortal() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [showViolation, setShowViolation] = useState(false)
-  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '' })
+  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
   const [photos, setPhotos] = useState<File[]>([])
   const [submitting, setSubmitting] = useState(false)
 
@@ -227,12 +227,15 @@ export default function DriverPortal() {
       driver_name: driver?.name,
       driver_license: driver?.operator_license,
       photos: photoUrls,
+      vehicle_color: violation.vehicle_color || null,
+      vehicle_make: violation.vehicle_make || null,
+      vehicle_model: violation.vehicle_model || null,
     }]).select().single()
     setSubmitting(false)
     if (insErr) { alert('Error: ' + insErr.message); return }
     await logAudit({ action: 'ADD_VIOLATION', table_name: 'violations', record_id: newV?.id, new_values: { plate: plate.toUpperCase().trim(), property: violation.property, violation_type: violation.type, driver_name: driver?.name } })
     setShowViolation(false)
-    setViolation({ type: '', location: '', notes: '', property: '' })
+    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
     setPhotos([])
     fetchViolations(driver?.assigned_properties || ['All'])
     if (newV) { setTicketTarget(newV); setSelectedStorage(''); setTowFee(''); setMileage('') }
@@ -355,6 +358,7 @@ export default function DriverPortal() {
           <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
           <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
           <div class="f"><label>VIN</label><span>${vin || v.vin || '—'}</span></div>
+          ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f" style="grid-column:span 2"><label>Color / Make / Model (at scene)</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
         </div>
       </div>
       <div class="sec">
@@ -696,6 +700,15 @@ export default function DriverPortal() {
                   <textarea value={violation.notes} onChange={e => setViolation({ ...violation, notes: e.target.value })}
                     placeholder="Reason for violation, additional details..."
                     style={{ ...inp, minHeight: '64px', resize: 'vertical' as const }} />
+
+                  <label style={lbl}>Vehicle Color (optional)</label>
+                  <input value={violation.vehicle_color} onChange={e => setViolation({ ...violation, vehicle_color: e.target.value })} placeholder="e.g. White, Black, Red" style={inp} />
+
+                  <label style={lbl}>Vehicle Make (optional)</label>
+                  <input value={violation.vehicle_make} onChange={e => setViolation({ ...violation, vehicle_make: e.target.value })} placeholder="e.g. Toyota, Honda" style={inp} />
+
+                  <label style={lbl}>Vehicle Model (optional)</label>
+                  <input value={violation.vehicle_model} onChange={e => setViolation({ ...violation, vehicle_model: e.target.value })} placeholder="e.g. Camry, Civic" style={inp} />
 
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button onClick={submitViolation} disabled={submitting}

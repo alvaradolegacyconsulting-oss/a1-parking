@@ -1072,6 +1072,9 @@ export default function ManagerPortal() {
                     <div><span style={{ color:'#555' }}>Location</span><br/><span style={{ color:'#aaa' }}>{v.location || '—'}</span></div>
                     {v.notes && <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Notes</span><br/><span style={{ color:'#aaa' }}>{v.notes}</span></div>}
                   </div>
+                  {(v.vehicle_color || v.vehicle_make || v.vehicle_model) && (
+                    <p style={{ color:'#555', fontSize:'11px', margin:'8px 0 0' }}>🚗 {[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join(' ')}</p>
+                  )}
                   {v.photos && v.photos.length > 0 && (
                     <div style={{ marginTop:'8px' }}>
                       <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', margin:'0 0 6px' }}>Photos</p>
