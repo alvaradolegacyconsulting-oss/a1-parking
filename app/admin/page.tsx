@@ -53,6 +53,9 @@ export default function AdminPortal() {
   const [auditSearch, setAuditSearch] = useState('')
   const [auditLoaded, setAuditLoaded] = useState(false)
 
+  const [platformSettings, setPlatformSettings] = useState<any>({})
+  const [platformMsg, setPlatformMsg] = useState('')
+
   const [showActiveCompanies, setShowActiveCompanies] = useState(true)
   const [showActiveProperties, setShowActiveProperties] = useState(true)
   const [showActiveUsers, setShowActiveUsers] = useState(true)
@@ -71,7 +74,7 @@ export default function AdminPortal() {
     if (!roleData || roleData.role !== 'admin') { window.location.href = '/login'; return }
 
     setAdminEmail(user.email!)
-    await Promise.all([fetchCompanies(), fetchProperties(), fetchUsers(), fetchDrivers(), fetchFacilities()])
+    await Promise.all([fetchCompanies(), fetchProperties(), fetchUsers(), fetchDrivers(), fetchFacilities(), fetchPlatformSettings()])
     setLoading(false)
   }
 
@@ -95,6 +98,19 @@ export default function AdminPortal() {
       .limit(100)
     setAllAuditLogs(data || [])
     setAuditLoaded(true)
+  }
+
+  async function fetchPlatformSettings() {
+    const { data } = await supabase.from('platform_settings').select('*').eq('id', 1).single()
+    if (data) setPlatformSettings(data)
+  }
+
+  async function savePlatformSettings() {
+    const { error } = await supabase.from('platform_settings').upsert({ id: 1, ...platformSettings, updated_at: new Date().toISOString() })
+    if (error) { setPlatformMsg('Error saving settings'); return }
+    await auditLog(adminEmail, 'UPDATE_PLATFORM_SETTINGS', 'platform_settings', '1', platformSettings)
+    setPlatformMsg('Platform settings saved!')
+    setTimeout(() => setPlatformMsg(''), 3000)
   }
 
   async function fetchCompanies() {
@@ -566,7 +582,7 @@ export default function AdminPortal() {
         </div>
 
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'16px' }}>
-          {[['companies','Companies'],['properties','Properties'],['users','Users & Roles'],['drivers','Drivers'],['facilities','Facilities'],['auditlog','Audit Log']].map(([k,l]) => (
+          {[['companies','Companies'],['properties','Properties'],['users','Users & Roles'],['drivers','Drivers'],['facilities','Facilities'],['auditlog','Audit Log'],['platform','Platform']].map(([k,l]) => (
             <button key={k} style={tabSt(k)} onClick={() => setActiveTab(k)}>{l}</button>
           ))}
         </div>
@@ -1312,6 +1328,70 @@ export default function AdminPortal() {
             </div>
           )
         })()}
+
+        {/* ── PLATFORM SETTINGS ── */}
+        {activeTab === 'platform' && (
+          <div>
+            <p style={{ color:'#555', fontSize:'11px', margin:'0 0 16px', lineHeight:'1.6' }}>
+              Global defaults applied to all companies unless overridden per company.
+            </p>
+
+            {platformMsg && (
+              <div style={{ background: platformMsg.includes('Error') ? '#3a1a1a' : '#1a3a1a', border:`1px solid ${platformMsg.includes('Error') ? '#b71c1c' : '#2e7d32'}`, borderRadius:'8px', padding:'10px 14px', marginBottom:'14px' }}>
+                <p style={{ color: platformMsg.includes('Error') ? '#f44336' : '#4caf50', fontSize:'12px', margin:'0' }}>{platformMsg}</p>
+              </div>
+            )}
+
+            {/* Section A — Default Branding */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+              <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>Default Branding</p>
+              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>These defaults apply to all new companies unless overridden per company.</p>
+
+              <label style={lbl}>Default Display Name</label>
+              <input value={platformSettings.default_display_name || ''} onChange={e => setPlatformSettings({...platformSettings, default_display_name: e.target.value})} placeholder="A1 Wrecker, LLC" style={inp} />
+
+              <label style={lbl}>Default Logo URL</label>
+              <input value={platformSettings.default_logo_url || ''} onChange={e => setPlatformSettings({...platformSettings, default_logo_url: e.target.value})} placeholder="https://..." style={inp} />
+
+              <div>
+                <label style={{ ...lbl, display:'flex', alignItems:'center', gap:'8px' }}>
+                  Default Color Theme
+                  <span style={{ width:'14px', height:'14px', borderRadius:'50%', background:({'gold':'#C9A227','blue':'#1565C0','green':'#2E7D32','grey':'#546E7A','red':'#B71C1C'} as Record<string,string>)[platformSettings.default_theme || 'gold'] || '#C9A227', display:'inline-block', border:'1px solid rgba(255,255,255,0.2)', flexShrink:0 }} />
+                </label>
+                <select value={platformSettings.default_theme || 'gold'} onChange={e => setPlatformSettings({...platformSettings, default_theme: e.target.value})} style={inp}>
+                  <option value="gold">Gold (Default)</option>
+                  <option value="blue">Ocean Blue</option>
+                  <option value="green">Forest Green</option>
+                  <option value="grey">Steel Grey</option>
+                  <option value="red">Crimson</option>
+                </select>
+              </div>
+
+              <button onClick={savePlatformSettings} style={{ ...bGold, width:'100%', marginTop:'4px' }}>Save Branding Defaults</button>
+            </div>
+
+            {/* Section B — Default Support Info */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+              <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>Default Support Info</p>
+              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Shown to residents and visitors when contacting support.</p>
+
+              <label style={lbl}>Default Support Phone</label>
+              <input value={platformSettings.default_support_phone || ''} onChange={e => setPlatformSettings({...platformSettings, default_support_phone: e.target.value})} placeholder="346-428-7864" style={inp} />
+
+              <label style={lbl}>Default Support Email</label>
+              <input value={platformSettings.default_support_email || ''} onChange={e => setPlatformSettings({...platformSettings, default_support_email: e.target.value})} placeholder="support@a1wreckerllc.net" style={inp} />
+
+              <label style={lbl}>Default Support Website</label>
+              <input value={platformSettings.default_support_website || ''} onChange={e => setPlatformSettings({...platformSettings, default_support_website: e.target.value})} placeholder="a1wreckerllc.net" style={inp} />
+
+              <button onClick={savePlatformSettings} style={{ ...bGold, width:'100%', marginTop:'4px' }}>Save Support Defaults</button>
+            </div>
+
+            {platformSettings.updated_at && (
+              <p style={{ color:'#555', fontSize:'10px', textAlign:'center', margin:'8px 0 0' }}>Last updated: {new Date(platformSettings.updated_at).toLocaleString()}</p>
+            )}
+          </div>
+        )}
 
       </div>
     </main>

@@ -108,21 +108,33 @@ export default function Login() {
         }
       }
 
-      if (companyData?.logo_url) localStorage.setItem('company_logo', companyData.logo_url)
+      let platformData: any = null
+      if (!companyData?.logo_url || !companyData?.display_name || !companyData?.support_phone || !companyData?.support_email || !companyData?.support_website || !companyData?.theme) {
+        const { data: pd } = await supabase.from('platform_settings').select('*').eq('id', 1).single()
+        platformData = pd
+      }
+      const logo = companyData?.logo_url || platformData?.default_logo_url
+      const displayName = companyData?.display_name || platformData?.default_display_name
+      const theme = companyData?.theme || platformData?.default_theme || 'gold'
+      const phone = companyData?.support_phone || platformData?.default_support_phone
+      const email2 = companyData?.support_email || platformData?.default_support_email
+      const website = companyData?.support_website || platformData?.default_support_website
+
+      if (logo) localStorage.setItem('company_logo', logo)
       else localStorage.removeItem('company_logo')
-      if (companyData?.display_name) localStorage.setItem('company_name', companyData.display_name)
+      if (displayName) localStorage.setItem('company_name', displayName)
       else localStorage.removeItem('company_name')
-      if (companyData?.support_phone) localStorage.setItem('company_support_phone', companyData.support_phone)
+      if (phone) localStorage.setItem('company_support_phone', phone)
       else localStorage.removeItem('company_support_phone')
-      if (companyData?.support_email) localStorage.setItem('company_support_email', companyData.support_email)
+      if (email2) localStorage.setItem('company_support_email', email2)
       else localStorage.removeItem('company_support_email')
-      if (companyData?.support_website) localStorage.setItem('company_support_website', companyData.support_website)
+      if (website) localStorage.setItem('company_support_website', website)
       else localStorage.removeItem('company_support_website')
       if (companyData?.tier) localStorage.setItem('company_tier', companyData.tier)
       else localStorage.removeItem('company_tier')
       if (companyData?.tier_type) localStorage.setItem('company_tier_type', companyData.tier_type)
       else localStorage.removeItem('company_tier_type')
-      localStorage.setItem('company_theme', companyData?.theme || 'gold')
+      localStorage.setItem('company_theme', theme)
       applyTheme()
     } else {
       localStorage.removeItem('company_logo')
