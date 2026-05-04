@@ -78,6 +78,10 @@ export default function CompanyAdminPortal() {
   const [auditLoaded, setAuditLoaded] = useState(false)
   const [showActiveProps, setShowActiveProps] = useState(true)
   const [showActiveCompanyUsers, setShowActiveCompanyUsers] = useState(true)
+  const [collapsedCAGroups, setCollapsedCAGroups] = useState<Set<string>>(new Set())
+  function toggleCAGroup(role: string) {
+    setCollapsedCAGroups(prev => { const next = new Set(prev); if (next.has(role)) next.delete(role); else next.add(role); return next })
+  }
   const [showActiveCompanyDrivers, setShowActiveCompanyDrivers] = useState(true)
 
   useEffect(() => { loadUser() }, [])
@@ -1442,60 +1446,79 @@ export default function CompanyAdminPortal() {
                 <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'8px' }}>
                   <button onClick={() => setShowActiveCompanyUsers(s => !s)} style={{ padding:'4px 10px', background: showActiveCompanyUsers ? '#1a1f2e' : '#111', color: showActiveCompanyUsers ? '#C9A227' : '#555', border:`1px solid ${showActiveCompanyUsers ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial' }}>{showActiveCompanyUsers ? '● Active Only' : '○ Show All'}</button>
                 </div>
-                {(showActiveCompanyUsers ? companyUsers.filter(u => u.is_active !== false) : companyUsers).map((u, i) => (
-                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px', opacity: !showActiveCompanyUsers && u.is_active === false ? 0.5 : 1 }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
-                      <div>
-                        <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.email}</p>
-                        {u.property && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{u.property}</p>}
+                {([
+                  ['manager', 'Property Managers'],
+                  ['leasing_agent', 'Leasing Agents'],
+                  ['driver', 'Drivers'],
+                  ['resident', 'Residents'],
+                ] as [string, string][]).map(([role, label]) => {
+                  const baseList = showActiveCompanyUsers ? companyUsers.filter(u => u.is_active !== false) : companyUsers
+                  const groupUsers = baseList.filter(u => u.role === role)
+                  if (groupUsers.length === 0) return null
+                  const collapsed = collapsedCAGroups.has(role)
+                  return (
+                    <div key={role} style={{ marginBottom:'8px' }}>
+                      <div onClick={() => toggleCAGroup(role)} style={{ background:'#1a1f2e', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 14px', marginBottom:'6px', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                          <span style={{ color:'#aaa', fontSize:'12px' }}>{collapsed ? '▶' : '▼'}</span>
+                          <span style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px' }}>{label}</span>
+                        </div>
+                        <span style={{ background:'#C9A227', color:'#0f1117', borderRadius:'10px', fontSize:'10px', padding:'2px 8px', fontWeight:'bold' }}>{groupUsers.length}</span>
                       </div>
-                      <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
-                        {(u.role === 'manager' || u.role === 'leasing_agent') && (
-                          <span style={{ background: u.is_active !== false ? '#1a3a1a' : '#3a1a1a', color: u.is_active !== false ? '#4caf50' : '#f44336', padding:'2px 6px', borderRadius:'8px', fontSize:'9px', fontWeight:'bold' }}>
-                            {u.is_active !== false ? 'Active' : 'Inactive'}
-                          </span>
-                        )}
-                        <span style={{ background:'#1e2535', color:'#C9A227', padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', textTransform:'capitalize' as const }}>
-                          {u.role.replace('_', ' ')}
-                        </span>
-                      </div>
+                      {!collapsed && groupUsers.map((u, i) => (
+                        <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'6px', opacity: !showActiveCompanyUsers && u.is_active === false ? 0.5 : 1 }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+                            <div>
+                              <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.email}</p>
+                              {u.property && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{u.property}</p>}
+                            </div>
+                            <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
+                              {(u.role === 'manager' || u.role === 'leasing_agent') && (
+                                <span style={{ background: u.is_active !== false ? '#1a3a1a' : '#3a1a1a', color: u.is_active !== false ? '#4caf50' : '#f44336', padding:'2px 6px', borderRadius:'8px', fontSize:'9px', fontWeight:'bold' }}>
+                                  {u.is_active !== false ? 'Active' : 'Inactive'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' as const }}>
+                            <button onClick={() => { setResetPwTarget(resetPwTarget === u.email ? null : u.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
+                              style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                              {resetPwTarget === u.email ? 'Cancel' : 'Reset Password'}
+                            </button>
+                            {(u.role === 'manager' || u.role === 'leasing_agent') && (
+                              u.is_active !== false ? (
+                                <button onClick={() => toggleUserActive(u.email, false)} disabled={togglingUser === u.email}
+                                  style={{ padding:'4px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                                  {togglingUser === u.email ? '...' : 'Deactivate'}
+                                </button>
+                              ) : (
+                                <button onClick={() => toggleUserActive(u.email, true)} disabled={togglingUser === u.email}
+                                  style={{ padding:'4px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                                  {togglingUser === u.email ? '...' : 'Activate'}
+                                </button>
+                              )
+                            )}
+                          </div>
+                          {resetPwTarget === u.email && (
+                            <div style={{ marginTop:'10px', borderTop:'1px solid #2a2f3d', paddingTop:'10px' }}>
+                              <input type="password" value={resetPwForm.newPw} onChange={e => setResetPwForm(f => ({...f, newPw: e.target.value}))}
+                                placeholder="New password (min 8 chars)" style={{ ...inp, marginBottom:'8px' }} />
+                              <input type="password" value={resetPwForm.confirmPw} onChange={e => setResetPwForm(f => ({...f, confirmPw: e.target.value}))}
+                                placeholder="Confirm new password" style={{ ...inp, marginBottom:'8px' }} />
+                              {resetPwMsg && (
+                                <p style={{ color: resetPwMsg.includes('success') ? '#4caf50' : '#f44336', fontSize:'12px', margin:'0 0 8px' }}>{resetPwMsg}</p>
+                              )}
+                              <button onClick={resetUserPassword}
+                                style={{ width:'100%', padding:'8px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
+                                Save New Password
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' as const }}>
-                      <button onClick={() => { setResetPwTarget(resetPwTarget === u.email ? null : u.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
-                        style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
-                        {resetPwTarget === u.email ? 'Cancel' : 'Reset Password'}
-                      </button>
-                      {(u.role === 'manager' || u.role === 'leasing_agent') && (
-                        u.is_active !== false ? (
-                          <button onClick={() => toggleUserActive(u.email, false)} disabled={togglingUser === u.email}
-                            style={{ padding:'4px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
-                            {togglingUser === u.email ? '...' : 'Deactivate'}
-                          </button>
-                        ) : (
-                          <button onClick={() => toggleUserActive(u.email, true)} disabled={togglingUser === u.email}
-                            style={{ padding:'4px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
-                            {togglingUser === u.email ? '...' : 'Activate'}
-                          </button>
-                        )
-                      )}
-                    </div>
-                    {resetPwTarget === u.email && (
-                      <div style={{ marginTop:'10px', borderTop:'1px solid #2a2f3d', paddingTop:'10px' }}>
-                        <input type="password" value={resetPwForm.newPw} onChange={e => setResetPwForm(f => ({...f, newPw: e.target.value}))}
-                          placeholder="New password (min 8 chars)" style={{ ...inp, marginBottom:'8px' }} />
-                        <input type="password" value={resetPwForm.confirmPw} onChange={e => setResetPwForm(f => ({...f, confirmPw: e.target.value}))}
-                          placeholder="Confirm new password" style={{ ...inp, marginBottom:'8px' }} />
-                        {resetPwMsg && (
-                          <p style={{ color: resetPwMsg.includes('success') ? '#4caf50' : '#f44336', fontSize:'12px', margin:'0 0 8px' }}>{resetPwMsg}</p>
-                        )}
-                        <button onClick={resetUserPassword}
-                          style={{ width:'100%', padding:'8px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
-                          Save New Password
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  )
+                })}
                 {companyUsers.length === 0 && <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No users found</p></div>}
               </div>
             )}

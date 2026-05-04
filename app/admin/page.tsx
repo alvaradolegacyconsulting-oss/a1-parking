@@ -58,6 +58,7 @@ export default function AdminPortal() {
   const [showActiveUsers, setShowActiveUsers] = useState(true)
   const [showActiveDrivers, setShowActiveDrivers] = useState(true)
   const [showActiveFacilities, setShowActiveFacilities] = useState(true)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
   useEffect(() => { loadAdmin() }, [])
   useEffect(() => { if (activeTab === 'auditlog') fetchAuditLogs() }, [activeTab])
@@ -514,6 +515,9 @@ export default function AdminPortal() {
   const fC = () => { const q = companySearch.toLowerCase(); let l = companySearch ? companies.filter(c => c.name?.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q)) : companies; return showActiveCompanies ? l.filter(c => c.is_active) : l }
   const fP = () => { const q = propertySearch.toLowerCase(); let l = propertySearch ? properties.filter(p => p.name?.toLowerCase().includes(q) || p.company?.toLowerCase().includes(q) || p.city?.toLowerCase().includes(q)) : properties; return showActiveProperties ? l.filter(p => p.is_active) : l }
   const fU = () => { const q = userSearch.toLowerCase(); let l = userSearch ? users.filter(u => u.email?.toLowerCase().includes(q) || u.role?.toLowerCase().includes(q) || u.company?.toLowerCase().includes(q)) : users; return showActiveUsers ? l.filter(u => u.is_active !== false) : l }
+  function toggleGroup(role: string) {
+    setCollapsedGroups(prev => { const next = new Set(prev); if (next.has(role)) next.delete(role); else next.add(role); return next })
+  }
   const fD = () => { const q = driverSearch.toLowerCase(); let l = driverSearch ? drivers.filter(d => d.name?.toLowerCase().includes(q) || d.email?.toLowerCase().includes(q) || d.company?.toLowerCase().includes(q)) : drivers; return showActiveDrivers ? l.filter(d => d.is_active) : l }
   const fF = () => { const q = facilitySearch.toLowerCase(); let l = facilitySearch ? facilities.filter(f => f.name?.toLowerCase().includes(q) || f.address?.toLowerCase().includes(q)) : facilities; return showActiveFacilities ? l.filter(f => f.is_active) : l }
 
@@ -947,39 +951,62 @@ export default function AdminPortal() {
               </div>
             )}
 
-            {fU().map((u, i) => (
-              <div key={i} style={card}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
-                  <div>
-                    <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.email}</p>
-                    <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{u.company || 'No company'}</p>
+            {([
+              ['admin', 'Admins'],
+              ['company_admin', 'Company Admins'],
+              ['manager', 'Property Managers'],
+              ['leasing_agent', 'Leasing Agents'],
+              ['driver', 'Drivers'],
+              ['resident', 'Residents'],
+            ] as [string, string][]).map(([role, label]) => {
+              const groupUsers = fU().filter(u => u.role === role)
+              if (groupUsers.length === 0) return null
+              const collapsed = collapsedGroups.has(role)
+              return (
+                <div key={role} style={{ marginBottom:'8px' }}>
+                  <div onClick={() => toggleGroup(role)} style={{ background:'#1a1f2e', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 14px', marginBottom:'6px', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                      <span style={{ color:'#aaa', fontSize:'12px' }}>{collapsed ? '▶' : '▼'}</span>
+                      <span style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px' }}>{label}</span>
+                    </div>
+                    <span style={{ background:'#C9A227', color:'#0f1117', borderRadius:'10px', fontSize:'10px', padding:'2px 8px', fontWeight:'bold' }}>{groupUsers.length}</span>
                   </div>
-                  <span style={{ background:'#1e2535', color:'#C9A227', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold', border:'1px solid #C9A227' }}>{u.role}</span>
+                  {!collapsed && groupUsers.map((u, i) => (
+                    <div key={i} style={{ ...card, marginBottom:'6px' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                        <div>
+                          <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.email}</p>
+                          <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{u.company || 'No company'}</p>
+                        </div>
+                        <span style={{ background:'#1e2535', color:'#C9A227', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold', border:'1px solid #C9A227' }}>{u.role}</span>
+                      </div>
+                      {u.property && <p style={{ color:'#555', fontSize:'11px', margin:'6px 0 0' }}>Properties: {u.property}</p>}
+                      <div style={{ marginTop:'8px' }}>
+                        <button onClick={() => { setResetPwTarget(resetPwTarget === u.email ? null : u.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
+                          style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                          {resetPwTarget === u.email ? 'Cancel' : 'Reset Password'}
+                        </button>
+                      </div>
+                      {resetPwTarget === u.email && (
+                        <div style={{ marginTop:'10px', borderTop:'1px solid #2a2f3d', paddingTop:'10px' }}>
+                          <input type="password" value={resetPwForm.newPw} onChange={e => setResetPwForm(f => ({...f, newPw: e.target.value}))}
+                            placeholder="New password (min 8 chars)" style={{ ...inp, marginBottom:'8px' }} />
+                          <input type="password" value={resetPwForm.confirmPw} onChange={e => setResetPwForm(f => ({...f, confirmPw: e.target.value}))}
+                            placeholder="Confirm new password" style={{ ...inp, marginBottom:'8px' }} />
+                          {resetPwMsg && (
+                            <p style={{ color: resetPwMsg.includes('success') ? '#4caf50' : '#f44336', fontSize:'12px', margin:'0 0 8px' }}>{resetPwMsg}</p>
+                          )}
+                          <button onClick={resetUserPassword}
+                            style={{ width:'100%', padding:'8px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
+                            Save New Password
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                {u.property && <p style={{ color:'#555', fontSize:'11px', margin:'6px 0 0' }}>Properties: {u.property}</p>}
-                <div style={{ marginTop:'8px' }}>
-                  <button onClick={() => { setResetPwTarget(resetPwTarget === u.email ? null : u.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
-                    style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
-                    {resetPwTarget === u.email ? 'Cancel' : 'Reset Password'}
-                  </button>
-                </div>
-                {resetPwTarget === u.email && (
-                  <div style={{ marginTop:'10px', borderTop:'1px solid #2a2f3d', paddingTop:'10px' }}>
-                    <input type="password" value={resetPwForm.newPw} onChange={e => setResetPwForm(f => ({...f, newPw: e.target.value}))}
-                      placeholder="New password (min 8 chars)" style={{ ...inp, marginBottom:'8px' }} />
-                    <input type="password" value={resetPwForm.confirmPw} onChange={e => setResetPwForm(f => ({...f, confirmPw: e.target.value}))}
-                      placeholder="Confirm new password" style={{ ...inp, marginBottom:'8px' }} />
-                    {resetPwMsg && (
-                      <p style={{ color: resetPwMsg.includes('success') ? '#4caf50' : '#f44336', fontSize:'12px', margin:'0 0 8px' }}>{resetPwMsg}</p>
-                    )}
-                    <button onClick={resetUserPassword}
-                      style={{ width:'100%', padding:'8px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
-                      Save New Password
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
