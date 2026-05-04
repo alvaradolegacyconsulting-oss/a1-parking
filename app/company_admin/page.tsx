@@ -44,6 +44,7 @@ export default function CompanyAdminPortal() {
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null)
 
   const [violations, setViolations] = useState<any[]>([])
+  const [violationDisputes, setViolationDisputes] = useState<any[]>([])
   const [violationFilter, setViolationFilter] = useState('today')
   const [violationSearch, setViolationSearch] = useState('')
   const [passes, setPasses] = useState<any[]>([])
@@ -166,6 +167,8 @@ export default function CompanyAdminPortal() {
       .ilike('property', property).gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
     setViolations(data || [])
+    const { data: ddata } = await supabase.from('dispute_requests').select('*').ilike('property', property)
+    setViolationDisputes(ddata || [])
   }
 
   async function fetchPasses(property: string) {
@@ -641,7 +644,7 @@ export default function CompanyAdminPortal() {
         <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
         <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
         <div class="f"><label>VIN</label><span>${v.vin || '—'}</span></div>
-        ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f" style="grid-column:span 2"><label>Color / Make / Model (at scene)</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
+        ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f"><label>Vehicle Description</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
       </div></div>
       <div class="sec"><div class="sh">Violation</div><div class="g2">
         <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
@@ -735,7 +738,7 @@ export default function CompanyAdminPortal() {
         <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
         <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
         <div class="f"><label>VIN</label><span>${vin || v.vin || '—'}</span></div>
-        ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f" style="grid-column:span 2"><label>Color / Make / Model (at scene)</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
+        ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f"><label>Vehicle Description</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
       </div></div>
       <div class="sec"><div class="sh">Violation</div><div class="g2">
         <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
@@ -1251,6 +1254,21 @@ export default function CompanyAdminPortal() {
                     </button>
                   </div>
                 )}
+                {(() => {
+                  const d = violationDisputes.find(d => d.violation_id === v.id)
+                  if (!d) return null
+                  const badge = d.status === 'pending'
+                    ? { text:'⚖ Dispute Pending', bg:'#1a1200', color:'#f59e0b' }
+                    : d.status === 'upheld'
+                      ? { text:'⚖ Tow Upheld', bg:'#3a1a1a', color:'#f44336' }
+                      : { text:'⚖ Resolved in Resident\'s Favor', bg:'#1a3a1a', color:'#4caf50' }
+                  return (
+                    <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'10px', padding:'7px 10px', background:badge.bg, borderRadius:'6px', border:`1px solid ${badge.color}44` }}>
+                      <span style={{ color:badge.color, fontSize:'11px', fontWeight:'bold' }}>{badge.text}</span>
+                      <span style={{ color:'#555', fontSize:'10px', marginLeft:'auto' }}>{d.resident_email}</span>
+                    </div>
+                  )
+                })()}
                 <button onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
                   style={{ width:'100%', padding:'9px', background:expandedTicketId === v.id ? '#1a1200' : '#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
                   {expandedTicketId === v.id ? '▲ Close Ticket' : 'Generate Tow Ticket'}

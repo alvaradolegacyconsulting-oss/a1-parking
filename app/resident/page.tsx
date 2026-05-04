@@ -26,8 +26,18 @@ export default function ResidentPortal() {
   const [changePwForm, setChangePwForm] = useState({ current: '', newPw: '', confirmPw: '' })
   const [changePwMsg, setChangePwMsg] = useState('')
   const [changePwLoading, setChangePwLoading] = useState(false)
+  const [myViolations, setMyViolations] = useState<any[]>([])
+  const [myDisputes, setMyDisputes] = useState<any[]>([])
+  const [disputingId, setDisputingId] = useState<string | null>(null)
+  const [disputeForm, setDisputeForm] = useState({ reason: '', details: '' })
+  const [disputeEvidence, setDisputeEvidence] = useState<File | null>(null)
+  const [submittingDispute, setSubmittingDispute] = useState(false)
+  const [disputeMsg, setDisputeMsg] = useState('')
 
   useEffect(() => { loadResident() }, [])
+  useEffect(() => {
+    if (activeTab === 'myviol' && resident) { fetchMyViolations(); fetchMyDisputes() }
+  }, [activeTab, resident])
   useEffect(() => {
     setSupportPhone(localStorage.getItem('company_support_phone') || '346-428-7864')
     setSupportEmail(localStorage.getItem('company_support_email') || 'a1wrecker2023@gmail.com')
@@ -74,6 +84,47 @@ export default function ResidentPortal() {
       .gte('expires_at', now)
       .order('created_at', { ascending: false })
     setPasses(data || [])
+  }
+
+  async function fetchMyViolations() {
+    const plates = vehicles.map((v: any) => v.plate?.toUpperCase().trim()).filter(Boolean)
+    if (plates.length === 0) { setMyViolations([]); return }
+    const { data } = await supabase.from('violations').select('*').in('plate', plates).order('created_at', { ascending: false })
+    setMyViolations(data || [])
+  }
+
+  async function fetchMyDisputes() {
+    if (!resident) return
+    const { data } = await supabase.from('dispute_requests').select('*').ilike('resident_email', resident.email)
+    setMyDisputes(data || [])
+  }
+
+  async function submitDispute(violationId: string, property: string) {
+    if (!disputeForm.reason) { alert('Please select a reason'); return }
+    if (disputeForm.reason.startsWith('Other') && !disputeForm.details) { alert('Please describe the issue in the details field'); return }
+    setSubmittingDispute(true)
+    let evidenceUrl: string | null = null
+    if (disputeEvidence) {
+      const fileName = `dispute-${Date.now()}-${disputeEvidence.name}`
+      const { error: upErr } = await supabase.storage.from('violation-photos').upload(fileName, disputeEvidence)
+      if (!upErr) {
+        const { data: urlData } = supabase.storage.from('violation-photos').getPublicUrl(fileName)
+        evidenceUrl = urlData.publicUrl
+      }
+    }
+    const { error } = await supabase.from('dispute_requests').insert([{
+      violation_id: violationId, resident_email: resident.email,
+      property, reason: disputeForm.reason, details: disputeForm.details || null,
+      evidence_url: evidenceUrl, status: 'pending',
+    }])
+    setSubmittingDispute(false)
+    if (error) { alert('Error: ' + error.message); return }
+    await logAudit({ action: 'DISPUTE_SUBMITTED', table_name: 'dispute_requests', new_values: { violation_id: violationId, property, reason: disputeForm.reason } })
+    setDisputingId(null)
+    setDisputeForm({ reason: '', details: '' })
+    setDisputeEvidence(null)
+    setDisputeMsg('Dispute submitted. Your property manager will review and respond within 5 business days.')
+    fetchMyDisputes()
   }
 
   async function changePassword() {
@@ -338,6 +389,9 @@ export default function ResidentPortal() {
               return <span style={{ background: hasUnreadDeclined ? '#B71C1C' : '#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{count}</span>
             })()}
           </button>
+          <button style={tabStyle('myviol')} onClick={() => setActiveTab('myviol')}>
+            Violations{myDisputes.some(d => d.status === 'pending') && <span style={{ background:'#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{myDisputes.filter(d => d.status === 'pending').length}</span>}
+          </button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
         </div>
 
@@ -549,6 +603,123 @@ export default function ResidentPortal() {
                 </>
               )
             })()}
+          </div>
+        )}
+
+        {/* MY VIOLATIONS TAB */}
+        {activeTab === 'myviol' && (
+          <div>
+            {disputeMsg && (
+              <div style={{ background:'#1a3a1a', border:'1px solid #2e7d32', borderRadius:'8px', padding:'12px 14px', marginBottom:'14px' }}>
+                <p style={{ color:'#4caf50', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>{disputeMsg}</p>
+              </div>
+            )}
+            {myViolations.length === 0 ? (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}>
+                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No violations found for your registered vehicles</p>
+              </div>
+            ) : myViolations.map((v, i) => {
+              const dispute = myDisputes.find(d => d.violation_id === v.id)
+              const daysSince = (Date.now() - new Date(v.created_at).getTime()) / (1000 * 60 * 60 * 24)
+              const canDispute = daysSince <= 30
+              const dispBadge = !dispute
+                ? { text:'No Dispute Filed', bg:'#1e2535', color:'#555' }
+                : dispute.status === 'pending'
+                  ? { text:'Dispute Pending', bg:'#1a1200', color:'#f59e0b' }
+                  : dispute.status === 'upheld'
+                    ? { text:'Tow Upheld', bg:'#3a1a1a', color:'#f44336' }
+                    : { text:'Resolved in Your Favor', bg:'#1a3a1a', color:'#4caf50' }
+              return (
+                <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'10px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
+                    <div>
+                      <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
+                      <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{v.violation_type || '—'}</p>
+                    </div>
+                    <div style={{ textAlign:'right' }}>
+                      <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
+                      {v.tow_ticket_generated && (
+                        <span style={{ display:'inline-block', marginTop:'4px', background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'9px', fontWeight:'bold', padding:'2px 6px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px', marginBottom:'10px' }}>
+                    <div><span style={{ color:'#555' }}>Property</span><br/><span style={{ color:'#aaa' }}>{v.property || '—'}</span></div>
+                    <div><span style={{ color:'#555' }}>Location</span><br/><span style={{ color:'#aaa' }}>{v.location || '—'}</span></div>
+                  </div>
+                  {v.photos && v.photos.length > 0 && (
+                    <div style={{ display:'flex', gap:'6px', marginBottom:'10px' }}>
+                      {v.photos.slice(0,3).map((url: string, pi: number) => (
+                        <a key={pi} href={url} target="_blank" rel="noopener noreferrer">
+                          <img src={url} alt="" style={{ width:'56px', height:'56px', objectFit:'cover', borderRadius:'5px', border:'1px solid #2a2f3d' }} />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: (!dispute && canDispute) ? '10px' : '0' }}>
+                    <span style={{ background:dispBadge.bg, color:dispBadge.color, padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', border:`1px solid ${dispBadge.color}33` }}>{dispBadge.text}</span>
+                    {dispute?.resolved_at && <span style={{ color:'#555', fontSize:'10px' }}>Resolved {new Date(dispute.resolved_at).toLocaleDateString()}</span>}
+                  </div>
+
+                  {!dispute && canDispute && disputingId !== v.id && (
+                    <button onClick={() => { setDisputingId(v.id); setDisputeForm({ reason:'', details:'' }); setDisputeEvidence(null) }}
+                      style={{ width:'100%', padding:'9px', background:'#1a1200', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', marginTop:'10px' }}>
+                      ⚖ Dispute This Tow
+                    </button>
+                  )}
+                  {!dispute && !canDispute && (
+                    <p style={{ color:'#555', fontSize:'11px', margin:'10px 0 0', fontStyle:'italic' }}>Dispute window closed (30 days from violation date)</p>
+                  )}
+
+                  {disputingId === v.id && (
+                    <div style={{ marginTop:'12px', borderTop:'1px solid #2a2f3d', paddingTop:'12px' }}>
+                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', margin:'0 0 10px' }}>⚖ File a Dispute</p>
+                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.07em', display:'block', marginBottom:'4px' }}>Reason *</label>
+                      <select value={disputeForm.reason} onChange={e => setDisputeForm({...disputeForm, reason: e.target.value})}
+                        style={{ display:'block', width:'100%', padding:'9px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', marginBottom:'10px', boxSizing:'border-box' as const }}>
+                        <option value=''>Select a reason…</option>
+                        <option>Vehicle was already moved before tow</option>
+                        <option>Valid permit not recognized by system</option>
+                        <option>Incorrect vehicle towed</option>
+                        <option>Signage was unclear or missing</option>
+                        <option>Guest had valid visitor pass</option>
+                        <option>Other — explain below</option>
+                      </select>
+                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.07em', display:'block', marginBottom:'4px' }}>Details {disputeForm.reason.startsWith('Other') ? '*' : '(optional)'}</label>
+                      <textarea value={disputeForm.details} onChange={e => setDisputeForm({...disputeForm, details: e.target.value})}
+                        placeholder="Provide any additional context or explanation..."
+                        style={{ display:'block', width:'100%', padding:'9px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'12px', marginBottom:'10px', minHeight:'72px', resize:'vertical' as const, boxSizing:'border-box' as const }} />
+                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.07em', display:'block', marginBottom:'4px' }}>Evidence Photo (optional)</label>
+                      <input type="file" accept="image/*" onChange={e => setDisputeEvidence(e.target.files?.[0] || null)}
+                        style={{ display:'block', width:'100%', color:'#aaa', fontSize:'12px', marginBottom:'10px' }} />
+                      <div style={{ background:'#111827', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 12px', marginBottom:'12px' }}>
+                        <p style={{ color:'#666', fontSize:'11px', margin:'0', lineHeight:'1.6' }}>
+                          ⚖ Official Dispute Record: This dispute will be permanently recorded in the system and reviewed by your property manager. Please provide accurate and professional information. False or misleading disputes may result in account review. All submissions are logged with your name, email, and timestamp for audit purposes.
+                        </p>
+                      </div>
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => submitDispute(v.id, v.property)} disabled={submittingDispute}
+                          style={{ flex:1, padding:'10px', background: submittingDispute ? '#555' : '#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor: submittingDispute ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
+                          {submittingDispute ? 'Submitting…' : 'Submit Dispute'}
+                        </button>
+                        <button onClick={() => setDisputingId(null)}
+                          style={{ padding:'10px 12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontFamily:'Arial' }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {dispute && (
+                    <div style={{ marginTop:'10px', borderTop:'1px solid #2a2f3d', paddingTop:'10px' }}>
+                      <p style={{ color:'#555', fontSize:'11px', margin:'0 0 2px' }}>Reason: <span style={{ color:'#aaa' }}>{dispute.reason}</span></p>
+                      {dispute.details && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0' }}>Details: <span style={{ color:'#aaa' }}>{dispute.details}</span></p>}
+                      {dispute.pm_note && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0' }}>Manager note: <span style={{ color:'#aaa' }}>{dispute.pm_note}</span></p>}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
 

@@ -38,6 +38,7 @@ export default function NavBar() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
+  const [pendingDisputeCount, setPendingDisputeCount] = useState(0)
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
 
@@ -58,12 +59,12 @@ export default function NavBar() {
       setRole(userRole)
       setEmail(user.email!)
       if ((userRole === 'manager' || userRole === 'leasing_agent') && data?.property) {
-        const { count } = await supabase
-          .from('vehicles')
-          .select('id', { count: 'exact', head: true })
-          .ilike('property', data.property)
-          .eq('status', 'pending')
-        setPendingCount(count ?? 0)
+        const [{ count: vCount }, { count: dCount }] = await Promise.all([
+          supabase.from('vehicles').select('id', { count: 'exact', head: true }).ilike('property', data.property).eq('status', 'pending'),
+          supabase.from('dispute_requests').select('id', { count: 'exact', head: true }).ilike('property', data.property).eq('status', 'pending'),
+        ])
+        setPendingCount(vCount ?? 0)
+        setPendingDisputeCount(dCount ?? 0)
       }
       setLoaded(true)
     }
@@ -115,6 +116,9 @@ export default function NavBar() {
                 {l.href === '/manager' && pendingCount > 0 && (
                   <span style={{ background: '#B71C1C', color: 'white', borderRadius: '10px', fontSize: '9px', padding: '1px 6px', fontWeight: 'bold', lineHeight: '1.4' }}>{pendingCount}</span>
                 )}
+                {l.href === '/manager' && pendingDisputeCount > 0 && (
+                  <span style={{ background: '#a16207', color: 'white', borderRadius: '10px', fontSize: '9px', padding: '1px 6px', fontWeight: 'bold', lineHeight: '1.4' }}>⚖{pendingDisputeCount}</span>
+                )}
               </a>
             ))}
           </div>
@@ -154,6 +158,9 @@ export default function NavBar() {
                 {l.label}
                 {l.href === '/manager' && pendingCount > 0 && (
                   <span style={{ background: '#B71C1C', color: 'white', borderRadius: '10px', fontSize: '10px', padding: '1px 7px', fontWeight: 'bold', lineHeight: '1.4' }}>{pendingCount}</span>
+                )}
+                {l.href === '/manager' && pendingDisputeCount > 0 && (
+                  <span style={{ background: '#a16207', color: 'white', borderRadius: '10px', fontSize: '10px', padding: '1px 7px', fontWeight: 'bold', lineHeight: '1.4' }}>⚖{pendingDisputeCount}</span>
                 )}
               </a>
             ))}

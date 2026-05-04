@@ -378,7 +378,7 @@ export default function DriverPortal() {
           <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
           <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
           <div class="f"><label>VIN</label><span>${vin || v.vin || '—'}</span></div>
-          ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f" style="grid-column:span 2"><label>Color / Make / Model (at scene)</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
+          ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f"><label>Vehicle Description</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
         </div>
       </div>
       <div class="sec">

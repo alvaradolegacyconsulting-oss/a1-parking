@@ -52,9 +52,13 @@ export default function ManagerPortal() {
   const [plateMsg, setPlateMsg] = useState<{ text: string; type: 'error' | 'warning' } | null>(null)
   const [showActiveResidents, setShowActiveResidents] = useState(true)
   const [showActiveVehicles, setShowActiveVehicles] = useState(true)
+  const [disputes, setDisputes] = useState<any[]>([])
+  const [pendingDisputeCount, setPendingDisputeCount] = useState(0)
+  const [disputeNotes, setDisputeNotes] = useState<Record<string, string>>({})
 
   useEffect(() => { loadManager() }, [])
   useEffect(() => { if (activeTab === 'activity' && manager) fetchActivityLogs() }, [activeTab, manager])
+  useEffect(() => { if (activeTab === 'disputes' && manager) fetchDisputes(manager.name) }, [activeTab, manager])
   useEffect(() => {
     if (editingSpace) {
       setPlateQuery(editingSpace.assigned_to_plate || '')
@@ -128,6 +132,25 @@ export default function ManagerPortal() {
     fetchPasses(property)
     fetchResidents(property)
     fetchSpaces(property)
+    fetchDisputes(property)
+  }
+
+  async function fetchDisputes(property: string) {
+    const { data } = await supabase.from('dispute_requests').select('*').ilike('property', property).order('created_at', { ascending: false })
+    setDisputes(data || [])
+    setPendingDisputeCount((data || []).filter((d: any) => d.status === 'pending').length)
+  }
+
+  async function upholdDispute(d: any) {
+    await supabase.from('dispute_requests').update({ status: 'upheld', pm_decision: 'upheld', pm_note: disputeNotes[d.id] || null, resolved_at: new Date().toISOString() }).eq('id', d.id)
+    await logAudit({ action: 'DISPUTE_UPHELD', table_name: 'dispute_requests', record_id: d.id, new_values: { status: 'upheld', pm_note: disputeNotes[d.id] } })
+    fetchDisputes(manager.name)
+  }
+
+  async function resolveDispute(d: any) {
+    await supabase.from('dispute_requests').update({ status: 'resolved', pm_decision: 'resolved', pm_note: disputeNotes[d.id] || null, resolved_at: new Date().toISOString() }).eq('id', d.id)
+    await logAudit({ action: 'DISPUTE_RESOLVED', table_name: 'dispute_requests', record_id: d.id, new_values: { status: 'resolved', pm_note: disputeNotes[d.id] } })
+    fetchDisputes(manager.name)
   }
 
   async function savePassLimit() {
@@ -653,6 +676,9 @@ export default function ManagerPortal() {
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
           <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
           <button style={tabStyle('activity')} onClick={() => setActiveTab('activity')}>Activity</button>
+          <button style={tabStyle('disputes')} onClick={() => setActiveTab('disputes')}>
+            Disputes{pendingDisputeCount > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingDisputeCount}</span>}
+          </button>
         </div>
 
         {/* OVERVIEW */}
@@ -1431,6 +1457,75 @@ export default function ManagerPortal() {
           </div>
         )}
 
+
+        {/* DISPUTES */}
+        {activeTab === 'disputes' && (
+          <div>
+            {disputes.length === 0 ? (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}>
+                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No disputes filed for this property</p>
+              </div>
+            ) : disputes.map((d, i) => {
+              const statusBadge = d.status === 'pending'
+                ? { text:'Pending', bg:'#1a1200', color:'#f59e0b' }
+                : d.status === 'upheld'
+                  ? { text:'Tow Upheld', bg:'#3a1a1a', color:'#f44336' }
+                  : { text:'Resolved in Resident\'s Favor', bg:'#1a3a1a', color:'#4caf50' }
+              return (
+                <div key={i} style={{ background:'#161b26', border:`1px solid ${d.status === 'pending' ? '#f59e0b44' : '#2a2f3d'}`, borderRadius:'10px', padding:'14px', marginBottom:'10px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
+                    <div>
+                      <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{d.resident_email}</p>
+                      <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>Filed {new Date(d.created_at).toLocaleDateString()} at {new Date(d.created_at).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}</p>
+                    </div>
+                    <span style={{ background:statusBadge.bg, color:statusBadge.color, padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', border:`1px solid ${statusBadge.color}44` }}>{statusBadge.text}</span>
+                  </div>
+                  <div style={{ background:'#0f1117', borderRadius:'7px', padding:'10px 12px', marginBottom:'10px', fontSize:'12px' }}>
+                    <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 6px' }}>Violation</p>
+                    <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', margin:'0 0 4px' }}>{violations.find(v => v.id === d.violation_id)?.plate || '—'}</p>
+                    <p style={{ color:'#aaa', fontSize:'11px', margin:'0' }}>{violations.find(v => v.id === d.violation_id)?.violation_type || '—'} · {violations.find(v => v.id === d.violation_id)?.created_at ? new Date(violations.find(v => v.id === d.violation_id).created_at).toLocaleDateString() : ''}</p>
+                  </div>
+                  <div style={{ marginBottom:'10px' }}>
+                    <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>Reason</p>
+                    <p style={{ color:'#aaa', fontSize:'12px', margin:'0' }}>{d.reason}</p>
+                    {d.details && <p style={{ color:'#777', fontSize:'11px', margin:'6px 0 0', lineHeight:'1.5' }}>{d.details}</p>}
+                  </div>
+                  {d.evidence_url && (
+                    <div style={{ marginBottom:'10px' }}>
+                      <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>Evidence</p>
+                      <a href={d.evidence_url} target="_blank" rel="noopener noreferrer">
+                        <img src={d.evidence_url} alt="Evidence" style={{ width:'80px', height:'80px', objectFit:'cover', borderRadius:'6px', border:'1px solid #2a2f3d', cursor:'pointer' }} />
+                      </a>
+                    </div>
+                  )}
+                  {d.status === 'pending' && !isReadOnly && (
+                    <div>
+                      <textarea value={disputeNotes[d.id] || ''} onChange={e => setDisputeNotes(prev => ({...prev, [d.id]: e.target.value}))}
+                        placeholder="Optional note to resident about this decision..."
+                        style={{ display:'block', width:'100%', padding:'8px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'12px', marginBottom:'8px', minHeight:'56px', resize:'vertical' as const, boxSizing:'border-box' as const }} />
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => upholdDispute(d)}
+                          style={{ flex:1, padding:'9px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                          Uphold Tow
+                        </button>
+                        <button onClick={() => resolveDispute(d)}
+                          style={{ flex:1, padding:'9px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                          Resolve in Resident's Favor
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {d.status !== 'pending' && (
+                    <div style={{ borderTop:'1px solid #2a2f3d', paddingTop:'8px', marginTop:'8px' }}>
+                      {d.pm_note && <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>Manager note: {d.pm_note}</p>}
+                      {d.resolved_at && <p style={{ color:'#555', fontSize:'10px', margin:'0' }}>Decided {new Date(d.resolved_at).toLocaleDateString()}</p>}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
 
       </div>
     </main>
