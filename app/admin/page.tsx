@@ -189,6 +189,61 @@ export default function AdminPortal() {
     fetchProperties()
   }
 
+  async function toggleProperty(p: any, active: boolean) {
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
+    const { data: { session } } = await supabase.auth.getSession()
+    const propertyName: string = p.name
+
+    // Fetch managers / leasing_agents assigned to this property
+    const { data: propertyUsers } = await supabase
+      .from('user_roles')
+      .select('email, role, property')
+      .contains('property', [propertyName])
+      .in('role', ['manager', 'leasing_agent'])
+
+    if (!active) {
+      // DEACTIVATING — only ban users with no other active properties
+      if (propertyUsers && propertyUsers.length > 0) {
+        const toDeactivate = propertyUsers.filter((u: any) =>
+          ((u.property as string[]) || []).filter((prop: string) => prop.toLowerCase() !== propertyName.toLowerCase()).length === 0
+        )
+        if (toDeactivate.length > 0) {
+          await Promise.all(toDeactivate.map((u: any) =>
+            fetch(fnBase + '/swift-handler', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+              body: JSON.stringify({ action: 'deactivate_user', email: u.email }),
+            })
+          ))
+        }
+      }
+      await supabase.from('residents').update({ is_active: false }).ilike('property', propertyName)
+      await supabase.from('vehicles').update({ is_active: false }).ilike('property', propertyName)
+      await supabase.from('properties').update({ is_active: false }).eq('id', p.id)
+      await auditLog(adminEmail, 'DEACTIVATE_PROPERTY_CASCADE', 'properties', p.id, {
+        property: propertyName, users_affected: propertyUsers?.length || 0,
+      })
+    } else {
+      // REACTIVATING — unban all assigned managers / leasing_agents
+      if (propertyUsers && propertyUsers.length > 0) {
+        await Promise.all(propertyUsers.map((u: any) =>
+          fetch(fnBase + '/swift-handler', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+            body: JSON.stringify({ action: 'activate_user', email: u.email }),
+          })
+        ))
+      }
+      await supabase.from('residents').update({ is_active: true }).ilike('property', propertyName)
+      await supabase.from('vehicles').update({ is_active: true }).ilike('property', propertyName)
+      await supabase.from('properties').update({ is_active: true }).eq('id', p.id)
+      await auditLog(adminEmail, 'ACTIVATE_PROPERTY_CASCADE', 'properties', p.id, {
+        property: propertyName, users_affected: propertyUsers?.length || 0,
+      })
+    }
+    fetchProperties()
+  }
+
   async function fetchUsers() {
     const { data } = await supabase.from('user_roles').select('*').order('email')
     setUsers(data || [])
@@ -670,7 +725,12 @@ export default function AdminPortal() {
                   <div><span style={{ color:'#555' }}>Spaces</span><br/><span style={{ color:'#aaa' }}>{p.total_spaces || '—'}</span></div>
                   <div><span style={{ color:'#555' }}>PM</span><br/><span style={{ color:'#aaa' }}>{p.pm_name || '—'}</span></div>
                 </div>
-                <button onClick={() => { setEditingProperty({...p}); setShowAddProperty(false) }} style={{ ...editBtn, width:'100%' }}>Edit</button>
+                <div style={{ display:'flex', gap:'6px' }}>
+                  {p.is_active
+                    ? <button onClick={() => toggleProperty(p, false)} style={{ ...bRed, flex:1 }}>Deactivate</button>
+                    : <button onClick={() => toggleProperty(p, true)} style={{ ...bGrn, flex:1 }}>Activate</button>}
+                  <button onClick={() => { setEditingProperty({...p}); setShowAddProperty(false) }} style={{ ...editBtn, flex:1 }}>Edit</button>
+                </div>
               </div>
             ))}
           </div>

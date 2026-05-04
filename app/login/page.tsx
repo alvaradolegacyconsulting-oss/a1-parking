@@ -17,7 +17,7 @@ export default function Login() {
   const [pendingRole, setPendingRole] = useState('')
   const [pendingEmail, setPendingEmail] = useState('')
   const [pendingForcePwReset, setPendingForcePwReset] = useState(false)
-  const [suspendedCompany, setSuspendedCompany] = useState<{ display_name: string; support_phone: string | null; support_email: string | null; support_website: string | null } | null>(null)
+  const [suspendedCompany, setSuspendedCompany] = useState<{ display_name: string; support_phone: string | null; support_email: string | null; support_website: string | null; message?: string } | null>(null)
 
   useEffect(() => {
     setCompanyLogo(localStorage.getItem('company_logo'))
@@ -83,6 +83,28 @@ export default function Login() {
           support_website: companyData.support_website || null,
         })
         return
+      }
+
+      if ((roleData.role === 'manager' || roleData.role === 'leasing_agent') && roleData.property?.length) {
+        const propNames: string[] = Array.isArray(roleData.property) ? roleData.property : [roleData.property]
+        const { data: propRows } = await supabase
+          .from('properties')
+          .select('is_active, pm_phone, pm_email, name')
+          .in('name', propNames)
+        const hasActive = (propRows || []).some((r: any) => r.is_active)
+        if (!hasActive && (propRows || []).length > 0) {
+          const anyProp = propRows![0]
+          setLoading(false)
+          await supabase.auth.signOut()
+          setSuspendedCompany({
+            display_name: anyProp.name,
+            support_phone: anyProp.pm_phone || null,
+            support_email: anyProp.pm_email || null,
+            support_website: null,
+            message: 'Your property access has been suspended. Please contact your property manager.',
+          })
+          return
+        }
       }
 
       if (companyData?.logo_url) localStorage.setItem('company_logo', companyData.logo_url)
@@ -189,8 +211,9 @@ export default function Login() {
             <div style={{ width:'72px', height:'72px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #C9A227', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 24px', fontSize:'32px' }}>⚠️</div>
             <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0 0 8px' }}>Account Suspended</h1>
             <p style={{ color:'#888', fontSize:'13px', margin:'0 0 28px', lineHeight:'1.6' }}>
-              <strong style={{ color:'#ccc' }}>{suspendedCompany.display_name}</strong> has been deactivated.<br />
-              Please contact your property management company to resolve this.
+              {suspendedCompany.message
+                ? suspendedCompany.message
+                : <><strong style={{ color:'#ccc' }}>{suspendedCompany.display_name}</strong> has been deactivated.<br />Please contact your property management company to resolve this.</>}
             </p>
 
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'20px', marginBottom:'24px', textAlign:'left' }}>
