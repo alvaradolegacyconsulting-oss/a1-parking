@@ -199,7 +199,7 @@ export default function CompanyAdminPortal() {
 
   async function fetchCompanyUsers() {
     if (!role?.company) return
-    const { data } = await supabase.from('user_roles').select('*').ilike('company', role.company).order('email')
+    const { data } = await supabase.from('user_roles').select('*').ilike('company', role.company).neq('role', 'admin').order('email')
     setCompanyUsers(data || [])
   }
 
@@ -457,17 +457,35 @@ export default function CompanyAdminPortal() {
     if (!val || searching) return
     setSearching(true); setScanMsg(''); setResult(null); setShowViolation(false); setTicketTarget(null)
     const clean = val.toUpperCase().trim()
+    const companyPropNames = properties.map(p => (p.name || '').toLowerCase())
+
     const { data: activeVeh } = await supabase.from('vehicles').select('*').ilike('plate', clean).eq('is_active', true).single()
     if (activeVeh) {
-      if (selectedProperty && activeVeh.property?.toLowerCase() !== selectedProperty.name?.toLowerCase()) {
-        setSearching(false); setResult({ status: 'otherproperty', data: activeVeh }); return
+      const inCompany = companyPropNames.includes((activeVeh.property || '').toLowerCase())
+      if (inCompany) {
+        if (selectedProperty && activeVeh.property?.toLowerCase() !== selectedProperty.name?.toLowerCase()) {
+          setSearching(false); setResult({ status: 'otherproperty', data: activeVeh }); return
+        }
+        setSearching(false); setResult({ status: 'authorized', data: activeVeh }); return
       }
-      setSearching(false); setResult({ status: 'authorized', data: activeVeh }); return
     }
+
     const { data: expiredVeh } = await supabase.from('vehicles').select('*').ilike('plate', clean).eq('is_active', false).single()
-    if (expiredVeh) { setSearching(false); setResult({ status: 'expired', data: expiredVeh }); return }
-    const { data: pass } = await supabase.from('visitor_passes').select('*')
-      .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString()).single()
+    if (expiredVeh) {
+      const inCompany = companyPropNames.includes((expiredVeh.property || '').toLowerCase())
+      if (inCompany) { setSearching(false); setResult({ status: 'expired', data: expiredVeh }); return }
+    }
+
+    const { data: companyResidents } = await supabase.from('residents').select('unit').in('property', properties.map(p => p.name))
+    const companyUnits = [...new Set((companyResidents || []).map((r: any) => r.unit).filter(Boolean))]
+    let pass = null
+    if (companyUnits.length > 0) {
+      const { data: passData } = await supabase.from('visitor_passes').select('*')
+        .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString())
+        .in('visiting_unit', companyUnits).single()
+      pass = passData
+    }
+
     setSearching(false)
     if (pass) setResult({ status: 'visitor', data: pass })
     else setResult({ status: 'notfound' })
