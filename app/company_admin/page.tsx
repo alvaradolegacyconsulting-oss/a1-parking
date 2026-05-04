@@ -60,6 +60,7 @@ export default function CompanyAdminPortal() {
   const [showAddUser, setShowAddUser] = useState(false)
   const [newUser, setNewUser] = useState({ email: '', password: '', role: 'manager', property: '' })
   const [userMsg, setUserMsg] = useState('')
+  const [togglingUser, setTogglingUser] = useState<string | null>(null)
 
   const [companyDrivers, setCompanyDrivers] = useState<any[]>([])
   const [showAddDriver, setShowAddDriver] = useState(false)
@@ -75,6 +76,9 @@ export default function CompanyAdminPortal() {
   const [auditDateFilter, setAuditDateFilter] = useState('week')
   const [auditSearch, setAuditSearch] = useState('')
   const [auditLoaded, setAuditLoaded] = useState(false)
+  const [showActiveProps, setShowActiveProps] = useState(true)
+  const [showActiveCompanyUsers, setShowActiveCompanyUsers] = useState(true)
+  const [showActiveCompanyDrivers, setShowActiveCompanyDrivers] = useState(true)
 
   useEffect(() => { loadUser() }, [])
 
@@ -380,6 +384,24 @@ export default function CompanyAdminPortal() {
     fetchStorageFacilities()
   }
 
+  async function toggleUserActive(email: string, activate: boolean) {
+    setTogglingUser(email)
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
+    const { data: { session } } = await supabase.auth.getSession()
+    const res = await fetch(fnBase + '/swift-handler', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ action: activate ? 'activate_user' : 'deactivate_user', email }),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setUserMsg(json.error || json.message || 'Failed to update user status.')
+    } else {
+      setCompanyUsers(prev => prev.map(u => u.email === email ? { ...u, is_active: activate } : u))
+    }
+    setTogglingUser(null)
+  }
+
   async function resetUserPassword() {
     if (!resetPwTarget) return
     if (resetPwForm.newPw.length < 8) { setResetPwMsg('Password must be at least 8 characters.'); return }
@@ -473,7 +495,7 @@ export default function CompanyAdminPortal() {
     const val = plateVal ?? plate
     if (!val || searching) return
     setSearching(true); setScanMsg(''); setResult(null); setShowViolation(false); setTicketTarget(null)
-    const clean = val.toUpperCase().trim()
+    const clean = val.toUpperCase().replace(/\s/g, '').trim()
     const companyPropNames = properties.map(p => (p.name || '').toLowerCase())
 
     const { data: activeVeh } = await supabase.from('vehicles').select('*').ilike('plate', clean).eq('is_active', true).single()
@@ -873,7 +895,7 @@ export default function CompanyAdminPortal() {
                 style={{ width:'100%', padding:'12px', background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', cursor:'pointer', fontSize:'14px', fontWeight:'bold', marginTop:'8px', marginBottom:'8px', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px', fontFamily:'Arial' }}>
                 📷 Scan License Plate
               </button>
-              <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null); setScanMsg('') }}
+              <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase().replace(/\s/g, '')); setResult(null); setTicketTarget(null); setScanMsg('') }}
                 onKeyDown={e => e.key === 'Enter' && searchPlate()} placeholder="ABC1234" maxLength={10}
                 style={{ display:'block', width:'100%', padding:'16px', fontSize:'28px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.12em', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box', textTransform:'uppercase' }}
               />
@@ -1215,8 +1237,11 @@ export default function CompanyAdminPortal() {
                   </div>
                 )}
 
-                {properties.map((prop, i) => (
-                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'8px' }}>
+                  <button onClick={() => setShowActiveProps(s => !s)} style={{ padding:'4px 10px', background: showActiveProps ? '#1a1f2e' : '#111', color: showActiveProps ? '#C9A227' : '#555', border:`1px solid ${showActiveProps ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial' }}>{showActiveProps ? '● Active Only' : '○ Show All'}</button>
+                </div>
+                {(showActiveProps ? properties.filter(p => p.is_active) : properties).map((prop, i) => (
+                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px', opacity: !showActiveProps && !prop.is_active ? 0.5 : 1 }}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'4px' }}>
                       <div style={{ flex:1 }}>
                         <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>{prop.name}</p>
@@ -1296,21 +1321,46 @@ export default function CompanyAdminPortal() {
                   </div>
                 )}
 
-                {companyUsers.map((u, i) => (
-                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' }}>
+                <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'8px' }}>
+                  <button onClick={() => setShowActiveCompanyUsers(s => !s)} style={{ padding:'4px 10px', background: showActiveCompanyUsers ? '#1a1f2e' : '#111', color: showActiveCompanyUsers ? '#C9A227' : '#555', border:`1px solid ${showActiveCompanyUsers ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial' }}>{showActiveCompanyUsers ? '● Active Only' : '○ Show All'}</button>
+                </div>
+                {(showActiveCompanyUsers ? companyUsers.filter(u => u.is_active !== false) : companyUsers).map((u, i) => (
+                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px', opacity: !showActiveCompanyUsers && u.is_active === false ? 0.5 : 1 }}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
                       <div>
                         <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.email}</p>
                         {u.property && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{u.property}</p>}
                       </div>
-                      <span style={{ background:'#1e2535', color:'#C9A227', padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', textTransform:'capitalize' as const }}>
-                        {u.role.replace('_', ' ')}
-                      </span>
+                      <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
+                        {(u.role === 'manager' || u.role === 'leasing_agent') && (
+                          <span style={{ background: u.is_active !== false ? '#1a3a1a' : '#3a1a1a', color: u.is_active !== false ? '#4caf50' : '#f44336', padding:'2px 6px', borderRadius:'8px', fontSize:'9px', fontWeight:'bold' }}>
+                            {u.is_active !== false ? 'Active' : 'Inactive'}
+                          </span>
+                        )}
+                        <span style={{ background:'#1e2535', color:'#C9A227', padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', textTransform:'capitalize' as const }}>
+                          {u.role.replace('_', ' ')}
+                        </span>
+                      </div>
                     </div>
-                    <button onClick={() => { setResetPwTarget(resetPwTarget === u.email ? null : u.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
-                      style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
-                      {resetPwTarget === u.email ? 'Cancel' : 'Reset Password'}
-                    </button>
+                    <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' as const }}>
+                      <button onClick={() => { setResetPwTarget(resetPwTarget === u.email ? null : u.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
+                        style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                        {resetPwTarget === u.email ? 'Cancel' : 'Reset Password'}
+                      </button>
+                      {(u.role === 'manager' || u.role === 'leasing_agent') && (
+                        u.is_active !== false ? (
+                          <button onClick={() => toggleUserActive(u.email, false)} disabled={togglingUser === u.email}
+                            style={{ padding:'4px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                            {togglingUser === u.email ? '...' : 'Deactivate'}
+                          </button>
+                        ) : (
+                          <button onClick={() => toggleUserActive(u.email, true)} disabled={togglingUser === u.email}
+                            style={{ padding:'4px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                            {togglingUser === u.email ? '...' : 'Activate'}
+                          </button>
+                        )
+                      )}
+                    </div>
                     {resetPwTarget === u.email && (
                       <div style={{ marginTop:'10px', borderTop:'1px solid #2a2f3d', paddingTop:'10px' }}>
                         <input type="password" value={resetPwForm.newPw} onChange={e => setResetPwForm(f => ({...f, newPw: e.target.value}))}
@@ -1421,8 +1471,11 @@ export default function CompanyAdminPortal() {
                   </div>
                 )}
 
-                {companyDrivers.map((d, i) => (
-                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' }}>
+                <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'8px' }}>
+                  <button onClick={() => setShowActiveCompanyDrivers(s => !s)} style={{ padding:'4px 10px', background: showActiveCompanyDrivers ? '#1a1f2e' : '#111', color: showActiveCompanyDrivers ? '#C9A227' : '#555', border:`1px solid ${showActiveCompanyDrivers ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial' }}>{showActiveCompanyDrivers ? '● Active Only' : '○ Show All'}</button>
+                </div>
+                {(showActiveCompanyDrivers ? companyDrivers.filter(d => d.is_active) : companyDrivers).map((d, i) => (
+                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px', opacity: !showActiveCompanyDrivers && !d.is_active ? 0.5 : 1 }}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
                       <div>
                         <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{d.name}</p>

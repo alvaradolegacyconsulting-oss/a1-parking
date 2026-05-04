@@ -53,6 +53,12 @@ export default function AdminPortal() {
   const [auditSearch, setAuditSearch] = useState('')
   const [auditLoaded, setAuditLoaded] = useState(false)
 
+  const [showActiveCompanies, setShowActiveCompanies] = useState(true)
+  const [showActiveProperties, setShowActiveProperties] = useState(true)
+  const [showActiveUsers, setShowActiveUsers] = useState(true)
+  const [showActiveDrivers, setShowActiveDrivers] = useState(true)
+  const [showActiveFacilities, setShowActiveFacilities] = useState(true)
+
   useEffect(() => { loadAdmin() }, [])
   useEffect(() => { if (activeTab === 'auditlog') fetchAuditLogs() }, [activeTab])
 
@@ -120,8 +126,41 @@ export default function AdminPortal() {
   }
 
   async function toggleCompany(c: any, active: boolean) {
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
+    const { data: { session } } = await supabase.auth.getSession()
+
+    // 1. Fetch all non-admin users for this company
+    const { data: companyUsers } = await supabase
+      .from('user_roles')
+      .select('email')
+      .ilike('company', c.name)
+      .neq('role', 'admin')
+
+    // 2. Ban or unban all users in parallel via swift-handler
+    if (companyUsers && companyUsers.length > 0) {
+      await Promise.all(companyUsers.map(u =>
+        fetch(fnBase + '/swift-handler', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ action: active ? 'activate_user' : 'deactivate_user', email: u.email }),
+        })
+      ))
+    }
+
+    // 3. Update drivers (facilities excluded — global)
+    await supabase.from('drivers').update({ is_active: active }).ilike('company', c.name)
+
+    // 4. Update properties
+    await supabase.from('properties').update({ is_active: active }).ilike('company', c.name)
+
+    // 5. Update company record
     await supabase.from('companies').update({ is_active: active }).eq('id', c.id)
-    await auditLog(adminEmail, active ? 'ACTIVATE_COMPANY' : 'DEACTIVATE_COMPANY', 'companies', c.id, { is_active: active })
+
+    // 6. Audit log the cascade
+    await auditLog(adminEmail, active ? 'ACTIVATE_COMPANY_CASCADE' : 'DEACTIVATE_COMPANY_CASCADE', 'companies', c.id, {
+      is_active: active,
+      users_affected: companyUsers?.length || 0,
+    })
     fetchCompanies()
   }
 
@@ -416,11 +455,11 @@ export default function AdminPortal() {
     fetchFacilities()
   }
 
-  const fC = () => { const q = companySearch.toLowerCase(); return companySearch ? companies.filter(c => c.name?.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q)) : companies }
-  const fP = () => { const q = propertySearch.toLowerCase(); return propertySearch ? properties.filter(p => p.name?.toLowerCase().includes(q) || p.company?.toLowerCase().includes(q) || p.city?.toLowerCase().includes(q)) : properties }
-  const fU = () => { const q = userSearch.toLowerCase(); return userSearch ? users.filter(u => u.email?.toLowerCase().includes(q) || u.role?.toLowerCase().includes(q) || u.company?.toLowerCase().includes(q)) : users }
-  const fD = () => { const q = driverSearch.toLowerCase(); return driverSearch ? drivers.filter(d => d.name?.toLowerCase().includes(q) || d.email?.toLowerCase().includes(q) || d.company?.toLowerCase().includes(q)) : drivers }
-  const fF = () => { const q = facilitySearch.toLowerCase(); return facilitySearch ? facilities.filter(f => f.name?.toLowerCase().includes(q) || f.address?.toLowerCase().includes(q)) : facilities }
+  const fC = () => { const q = companySearch.toLowerCase(); let l = companySearch ? companies.filter(c => c.name?.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q)) : companies; return showActiveCompanies ? l.filter(c => c.is_active) : l }
+  const fP = () => { const q = propertySearch.toLowerCase(); let l = propertySearch ? properties.filter(p => p.name?.toLowerCase().includes(q) || p.company?.toLowerCase().includes(q) || p.city?.toLowerCase().includes(q)) : properties; return showActiveProperties ? l.filter(p => p.is_active) : l }
+  const fU = () => { const q = userSearch.toLowerCase(); let l = userSearch ? users.filter(u => u.email?.toLowerCase().includes(q) || u.role?.toLowerCase().includes(q) || u.company?.toLowerCase().includes(q)) : users; return showActiveUsers ? l.filter(u => u.is_active !== false) : l }
+  const fD = () => { const q = driverSearch.toLowerCase(); let l = driverSearch ? drivers.filter(d => d.name?.toLowerCase().includes(q) || d.email?.toLowerCase().includes(q) || d.company?.toLowerCase().includes(q)) : drivers; return showActiveDrivers ? l.filter(d => d.is_active) : l }
+  const fF = () => { const q = facilitySearch.toLowerCase(); let l = facilitySearch ? facilities.filter(f => f.name?.toLowerCase().includes(q) || f.address?.toLowerCase().includes(q)) : facilities; return showActiveFacilities ? l.filter(f => f.is_active) : l }
 
   const tabSt = (t: string): React.CSSProperties => ({
     flex:1, padding:'8px 2px', border:'none', borderRadius:'6px',
@@ -474,7 +513,10 @@ export default function AdminPortal() {
         {/* ── COMPANIES ── */}
         {activeTab === 'companies' && (
           <div>
-            <input value={companySearch} onChange={e => setCompanySearch(e.target.value)} placeholder="Search companies..." style={{ ...inp, marginBottom:'12px' }} />
+            <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center' }}>
+              <input value={companySearch} onChange={e => setCompanySearch(e.target.value)} placeholder="Search companies..." style={{ ...inp, flex:1, marginTop:0, marginBottom:0 }} />
+              <button onClick={() => setShowActiveCompanies(s => !s)} style={{ padding:'4px 10px', background: showActiveCompanies ? '#1a1f2e' : '#111', color: showActiveCompanies ? '#C9A227' : '#555', border:`1px solid ${showActiveCompanies ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveCompanies ? '● Active Only' : '○ Show All'}</button>
+            </div>
             <button onClick={() => { setShowAddCompany(!showAddCompany); setEditingCompany(null) }} style={{ ...bGold, width:'100%', marginBottom:'12px' }}>+ Add Company</button>
 
             {showAddCompany && !editingCompany && (
@@ -528,7 +570,7 @@ export default function AdminPortal() {
             )}
 
             {fC().map((c, i) => (
-              <div key={i} style={card}>
+              <div key={i} style={{...card, opacity: !showActiveCompanies && !c.is_active ? 0.5 : 1}}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
                   <div>
                     <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{c.name}</p>
@@ -550,7 +592,10 @@ export default function AdminPortal() {
         {/* ── PROPERTIES ── */}
         {activeTab === 'properties' && (
           <div>
-            <input value={propertySearch} onChange={e => setPropertySearch(e.target.value)} placeholder="Search properties..." style={{ ...inp, marginBottom:'12px' }} />
+            <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center' }}>
+              <input value={propertySearch} onChange={e => setPropertySearch(e.target.value)} placeholder="Search properties..." style={{ ...inp, flex:1, marginTop:0, marginBottom:0 }} />
+              <button onClick={() => setShowActiveProperties(s => !s)} style={{ padding:'4px 10px', background: showActiveProperties ? '#1a1f2e' : '#111', color: showActiveProperties ? '#C9A227' : '#555', border:`1px solid ${showActiveProperties ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveProperties ? '● Active Only' : '○ Show All'}</button>
+            </div>
             <button onClick={() => { setShowAddProperty(!showAddProperty); setEditingProperty(null) }} style={{ ...bGold, width:'100%', marginBottom:'12px' }}>+ Add Property</button>
 
             {showAddProperty && !editingProperty && (
@@ -612,7 +657,7 @@ export default function AdminPortal() {
             )}
 
             {fP().map((p, i) => (
-              <div key={i} style={card}>
+              <div key={i} style={{...card, opacity: !showActiveProperties && !p.is_active ? 0.5 : 1}}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
                   <div>
                     <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{p.name}</p>
@@ -634,7 +679,10 @@ export default function AdminPortal() {
         {/* ── USERS & ROLES ── */}
         {activeTab === 'users' && (
           <div>
-            <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search email, role, company..." style={{ ...inp, marginBottom:'12px' }} />
+            <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center' }}>
+              <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search email, role, company..." style={{ ...inp, flex:1, marginTop:0, marginBottom:0 }} />
+              <button onClick={() => setShowActiveUsers(s => !s)} style={{ padding:'4px 10px', background: showActiveUsers ? '#1a1f2e' : '#111', color: showActiveUsers ? '#C9A227' : '#555', border:`1px solid ${showActiveUsers ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveUsers ? '● Active Only' : '○ Show All'}</button>
+            </div>
             <button onClick={() => { setShowAddUser(!showAddUser); setUserMsg('') }} style={{ ...bGold, width:'100%', marginBottom:'12px' }}>+ Add User</button>
 
             {showAddUser && (
@@ -835,7 +883,10 @@ export default function AdminPortal() {
         {/* ── DRIVERS ── */}
         {activeTab === 'drivers' && (
           <div>
-            <input value={driverSearch} onChange={e => setDriverSearch(e.target.value)} placeholder="Search name, email, company..." style={{ ...inp, marginBottom:'12px' }} />
+            <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center' }}>
+              <input value={driverSearch} onChange={e => setDriverSearch(e.target.value)} placeholder="Search name, email, company..." style={{ ...inp, flex:1, marginTop:0, marginBottom:0 }} />
+              <button onClick={() => setShowActiveDrivers(s => !s)} style={{ padding:'4px 10px', background: showActiveDrivers ? '#1a1f2e' : '#111', color: showActiveDrivers ? '#C9A227' : '#555', border:`1px solid ${showActiveDrivers ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveDrivers ? '● Active Only' : '○ Show All'}</button>
+            </div>
             <button onClick={() => { setShowAddDriver(!showAddDriver); setEditingDriver(null); setDriverMsg('') }} style={{ ...bGold, width:'100%', marginBottom:'12px' }}>+ Add Driver</button>
 
             {showAddDriver && !editingDriver && (
@@ -943,7 +994,7 @@ export default function AdminPortal() {
             )}
 
             {fD().map((d, i) => (
-              <div key={i} style={card}>
+              <div key={i} style={{...card, opacity: !showActiveDrivers && !d.is_active ? 0.5 : 1}}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
                   <div>
                     <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{d.name}</p>
@@ -969,7 +1020,10 @@ export default function AdminPortal() {
         {/* ── STORAGE FACILITIES ── */}
         {activeTab === 'facilities' && (
           <div>
-            <input value={facilitySearch} onChange={e => setFacilitySearch(e.target.value)} placeholder="Search facilities..." style={{ ...inp, marginBottom:'12px' }} />
+            <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center' }}>
+              <input value={facilitySearch} onChange={e => setFacilitySearch(e.target.value)} placeholder="Search facilities..." style={{ ...inp, flex:1, marginTop:0, marginBottom:0 }} />
+              <button onClick={() => setShowActiveFacilities(s => !s)} style={{ padding:'4px 10px', background: showActiveFacilities ? '#1a1f2e' : '#111', color: showActiveFacilities ? '#C9A227' : '#555', border:`1px solid ${showActiveFacilities ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveFacilities ? '● Active Only' : '○ Show All'}</button>
+            </div>
             <button onClick={() => { setShowAddFacility(!showAddFacility); setEditingFacility(null) }} style={{ ...bGold, width:'100%', marginBottom:'12px' }}>+ Add Storage Facility</button>
 
             {showAddFacility && !editingFacility && (
@@ -1013,7 +1067,7 @@ export default function AdminPortal() {
             )}
 
             {fF().map((f, i) => (
-              <div key={i} style={card}>
+              <div key={i} style={{...card, opacity: !showActiveFacilities && !f.is_active ? 0.5 : 1}}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
                   <div>
                     <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{f.name}</p>

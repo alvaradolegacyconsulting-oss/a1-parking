@@ -17,6 +17,7 @@ export default function Login() {
   const [pendingRole, setPendingRole] = useState('')
   const [pendingEmail, setPendingEmail] = useState('')
   const [pendingForcePwReset, setPendingForcePwReset] = useState(false)
+  const [suspendedCompany, setSuspendedCompany] = useState<{ display_name: string; support_phone: string | null; support_email: string | null; support_website: string | null } | null>(null)
 
   useEffect(() => {
     setCompanyLogo(localStorage.getItem('company_logo'))
@@ -74,8 +75,13 @@ export default function Login() {
 
       if (companyData && companyData.is_active === false) {
         setLoading(false)
-        setError('Your account has been deactivated. Contact A1 Wrecker, LLC at a1wreckerllc.net')
         await supabase.auth.signOut()
+        setSuspendedCompany({
+          display_name: companyData.display_name || 'Your Company',
+          support_phone: companyData.support_phone || null,
+          support_email: companyData.support_email || null,
+          support_website: companyData.support_website || null,
+        })
         return
       }
 
@@ -176,6 +182,51 @@ export default function Login() {
 
         <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'12px' }}>A1 Wrecker, LLC · Parking Management Platform</p>
       </div>
+
+      {suspendedCompany && (
+        <div style={{ position:'fixed', inset:0, background:'#0f1117', zIndex:9999, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'24px', fontFamily:'Arial, sans-serif' }}>
+          <div style={{ maxWidth:'420px', width:'100%', textAlign:'center' }}>
+            <div style={{ width:'72px', height:'72px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #C9A227', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 24px', fontSize:'32px' }}>⚠️</div>
+            <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0 0 8px' }}>Account Suspended</h1>
+            <p style={{ color:'#888', fontSize:'13px', margin:'0 0 28px', lineHeight:'1.6' }}>
+              <strong style={{ color:'#ccc' }}>{suspendedCompany.display_name}</strong> has been deactivated.<br />
+              Please contact your property management company to resolve this.
+            </p>
+
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'20px', marginBottom:'24px', textAlign:'left' }}>
+              <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 14px', fontWeight:'bold' }}>Contact Information</p>
+              {suspendedCompany.support_phone && (
+                <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'10px' }}>
+                  <span style={{ color:'#C9A227', fontSize:'16px' }}>📞</span>
+                  <a href={`tel:${suspendedCompany.support_phone}`} style={{ color:'#ccc', fontSize:'14px', textDecoration:'none' }}>{suspendedCompany.support_phone}</a>
+                </div>
+              )}
+              {suspendedCompany.support_email && (
+                <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'10px' }}>
+                  <span style={{ color:'#C9A227', fontSize:'16px' }}>✉️</span>
+                  <a href={`mailto:${suspendedCompany.support_email}`} style={{ color:'#ccc', fontSize:'14px', textDecoration:'none' }}>{suspendedCompany.support_email}</a>
+                </div>
+              )}
+              {suspendedCompany.support_website && (
+                <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                  <span style={{ color:'#C9A227', fontSize:'16px' }}>🌐</span>
+                  <a href={suspendedCompany.support_website.startsWith('http') ? suspendedCompany.support_website : 'https://' + suspendedCompany.support_website} target="_blank" rel="noopener noreferrer" style={{ color:'#ccc', fontSize:'14px', textDecoration:'none' }}>{suspendedCompany.support_website}</a>
+                </div>
+              )}
+              {!suspendedCompany.support_phone && !suspendedCompany.support_email && !suspendedCompany.support_website && (
+                <p style={{ color:'#666', fontSize:'13px', margin:'0' }}>No contact info on file. Please reach out directly to your property manager.</p>
+              )}
+            </div>
+
+            <button
+              onClick={() => setSuspendedCompany(null)}
+              style={{ width:'100%', padding:'13px', background:'#1e2535', color:'#aaa', fontWeight:'bold', fontSize:'14px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer' }}
+            >
+              ← Back to Sign In
+            </button>
+          </div>
+        </div>
+      )}
 
       {showTosModal && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>

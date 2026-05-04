@@ -18,6 +18,7 @@ export default function DriverPortal() {
   const [scanStatus, setScanStatus] = useState('Point camera at license plate')
   const [scanning, setScanning] = useState(false)
   const [scanMsg, setScanMsg] = useState('')
+  const [searchTimestamp, setSearchTimestamp] = useState<Date | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [showViolation, setShowViolation] = useState(false)
@@ -175,12 +176,13 @@ export default function DriverPortal() {
   async function searchPlate(plateVal?: string) {
     const val = plateVal ?? plate
     if (!val || searching) return
+    setSearchTimestamp(new Date())
     setSearching(true)
     setScanMsg('')
     setResult(null)
     setShowViolation(false)
     setTicketTarget(null)
-    const clean = val.toUpperCase().trim()
+    const clean = val.toUpperCase().replace(/\s/g, '').trim()
 
     const { data: activeVeh } = await supabase
       .from('vehicles').select('*').ilike('plate', clean).eq('is_active', true).single()
@@ -544,7 +546,7 @@ export default function DriverPortal() {
               </button>
               <input
                 value={plate}
-                onChange={e => { setPlate(e.target.value.toUpperCase()); setResult(null); setTicketTarget(null); setScanMsg('') }}
+                onChange={e => { setPlate(e.target.value.toUpperCase().replace(/\s/g, '')); setResult(null); setTicketTarget(null); setScanMsg(''); setSearchTimestamp(null) }}
                 onKeyDown={e => e.key === 'Enter' && searchPlate()}
                 placeholder="ABC1234"
                 maxLength={10}
@@ -570,9 +572,16 @@ export default function DriverPortal() {
                 {searching ? 'Searching...' : 'Search Plate'}
               </button>
 
+              {result && searchTimestamp && (
+                <div style={{ marginTop:'16px', background:'#111827', border:'1px solid #1e2535', borderRadius:'6px', padding:'8px 12px', marginBottom:'8px', fontFamily:'Courier New', fontSize:'10px', color:'#666' }}>
+                  <div>🕐 Search recorded: {new Intl.DateTimeFormat('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', second:'2-digit', hour12:true }).format(searchTimestamp)}</div>
+                  <div>Driver: {driver?.name || driver?.email}{driver?.company ? ` · ${driver.company}` : ''}</div>
+                </div>
+              )}
+
               {result && (
                 <div style={{
-                  marginTop: '16px', padding: '16px', borderRadius: '10px',
+                  marginTop: '0', padding: '16px', borderRadius: '10px',
                   background: result.status === 'authorized' ? '#061406' : result.status === 'visitor' ? '#150f00' : '#140404',
                   border: `1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'visitor' ? '#a16207' : '#991b1b'}`
                 }}>

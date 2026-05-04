@@ -49,6 +49,8 @@ export default function ManagerPortal() {
   const [plateQuery, setPlateQuery] = useState('')
   const [plateSuggestions, setPlateSuggestions] = useState<any[]>([])
   const [plateMsg, setPlateMsg] = useState<{ text: string; type: 'error' | 'warning' } | null>(null)
+  const [showActiveResidents, setShowActiveResidents] = useState(true)
+  const [showActiveVehicles, setShowActiveVehicles] = useState(true)
 
   useEffect(() => { loadManager() }, [])
   useEffect(() => { if (activeTab === 'activity' && manager) fetchActivityLogs() }, [activeTab, manager])
@@ -423,9 +425,11 @@ export default function ManagerPortal() {
   }
 
   function filteredVehicles() {
-    if (!vehicleSearch) return vehicles
+    let list = vehicles
+    if (showActiveVehicles) list = list.filter(v => v.is_active)
+    if (!vehicleSearch) return list
     const q = vehicleSearch.toLowerCase()
-    return vehicles.filter(v =>
+    return list.filter(v =>
       v.plate?.toLowerCase().includes(q) ||
       v.unit?.toLowerCase().includes(q) ||
       v.make?.toLowerCase().includes(q) ||
@@ -435,9 +439,11 @@ export default function ManagerPortal() {
   }
 
   function filteredResidents() {
-    if (!residentSearch) return residents
+    let list = residents
+    if (showActiveResidents) list = list.filter(r => r.is_active)
+    if (!residentSearch) return list
     const q = residentSearch.toLowerCase()
-    return residents.filter(r =>
+    return list.filter(r =>
       r.name?.toLowerCase().includes(q) ||
       r.email?.toLowerCase().includes(q) ||
       r.unit?.toLowerCase().includes(q) ||
@@ -628,7 +634,10 @@ export default function ManagerPortal() {
                 ))}
               </div>
             )}
-            <input value={vehicleSearch} onChange={e => setVehicleSearch(e.target.value)} placeholder="Search plate, unit, make, model, color..." style={{ ...inputStyle, marginBottom:'12px' }} />
+            <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center' }}>
+              <input value={vehicleSearch} onChange={e => setVehicleSearch(e.target.value)} placeholder="Search plate, unit, make, model, color..." style={{ ...inputStyle, flex:1, marginTop:0, marginBottom:0 }} />
+              <button onClick={() => setShowActiveVehicles(s => !s)} style={{ padding:'4px 10px', background: showActiveVehicles ? '#1a1f2e' : '#111', color: showActiveVehicles ? '#C9A227' : '#555', border:`1px solid ${showActiveVehicles ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveVehicles ? '● Active Only' : '○ Show All'}</button>
+            </div>
             {!isReadOnly && (
               <button onClick={() => setShowAddVehicle(!showAddVehicle)}
                 style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
@@ -891,7 +900,10 @@ export default function ManagerPortal() {
                 ))}
               </div>
             )}
-            <input value={residentSearch} onChange={e => setResidentSearch(e.target.value)} placeholder="Search name, email, unit, phone..." style={{ ...inputStyle, marginBottom:'12px' }} />
+            <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center' }}>
+              <input value={residentSearch} onChange={e => setResidentSearch(e.target.value)} placeholder="Search name, email, unit, phone..." style={{ ...inputStyle, flex:1, marginTop:0, marginBottom:0 }} />
+              <button onClick={() => setShowActiveResidents(s => !s)} style={{ padding:'4px 10px', background: showActiveResidents ? '#1a1f2e' : '#111', color: showActiveResidents ? '#C9A227' : '#555', border:`1px solid ${showActiveResidents ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveResidents ? '● Active Only' : '○ Show All'}</button>
+            </div>
             {!isReadOnly && (
               <button onClick={() => setShowAddResident(!showAddResident)}
                 style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
