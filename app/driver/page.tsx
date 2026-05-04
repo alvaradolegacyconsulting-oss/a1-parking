@@ -12,6 +12,7 @@ export default function DriverPortal() {
   const [plate, setPlate] = useState('')
   const [result, setResult] = useState<any>(null)
   const [searching, setSearching] = useState(false)
+  const [selectedProperty, setSelectedProperty] = useState('')
 
   // Camera scan
   const [showCamera, setShowCamera] = useState(false)
@@ -74,6 +75,8 @@ export default function DriverPortal() {
       assigned_properties: ['All'], operator_license: 'N/A', company: 'A1 Wrecker, LLC'
     }
     setDriver(d)
+    const assignableProps = (d.assigned_properties || []).filter((p: string) => p !== 'All')
+    if (assignableProps.length === 1) setSelectedProperty(assignableProps[0])
     setLoading(false)
     fetchViolations(d.assigned_properties || ['All'])
     fetchStorageFacilities()
@@ -174,6 +177,7 @@ export default function DriverPortal() {
   }
 
   async function searchPlate(plateVal?: string) {
+    if (!selectedProperty) { setScanStatus('Please select a property before searching'); return }
     const val = plateVal ?? plate
     if (!val || searching) return
     setSearchTimestamp(new Date())
@@ -185,22 +189,21 @@ export default function DriverPortal() {
     const clean = val.toUpperCase().replace(/\s/g, '').trim()
 
     const { data: activeVeh } = await supabase
-      .from('vehicles').select('*').ilike('plate', clean).eq('is_active', true).single()
+      .from('vehicles').select('*').ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', true).single()
     if (activeVeh) {
-      const props = driver?.assigned_properties || []
-      if (!props.includes('All') && !props.includes(activeVeh.property)) {
-        setSearching(false); setResult({ status: 'notassigned' }); return
-      }
       setSearching(false); setResult({ status: 'authorized', data: activeVeh }); return
     }
 
     const { data: expiredVeh } = await supabase
-      .from('vehicles').select('*').ilike('plate', clean).eq('is_active', false).single()
+      .from('vehicles').select('*').ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', false).single()
     if (expiredVeh) { setSearching(false); setResult({ status: 'expired', data: expiredVeh }); return }
 
-    const { data: pass } = await supabase
-      .from('visitor_passes').select('*')
-      .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString()).single()
+    const { data: propResidents } = await supabase.from('residents').select('unit').ilike('property', selectedProperty)
+    const unitList = (propResidents || []).map((r: any) => r.unit).filter(Boolean)
+    const { data: pass } = await supabase.from('visitor_passes').select('*')
+      .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString())
+      .in('visiting_unit', unitList.length > 0 ? unitList : ['__none__'])
+      .single()
     setSearching(false)
     if (pass) setResult({ status: 'visitor', data: pass })
     else setResult({ status: 'notfound' })
@@ -556,10 +559,31 @@ export default function DriverPortal() {
         {/* ── PLATE LOOKUP ── */}
         {activeTab === 'lookup' && (
           <div>
+            {(() => {
+              const props = (driver?.assigned_properties || []).filter((p: string) => p !== 'All')
+              if (props.length === 0) return null
+              return (
+                <div style={{ background:'#161b26', border:`1px solid ${selectedProperty ? '#C9A227' : '#a16207'}`, borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Currently Working At</label>
+                  {props.length === 1 ? (
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'14px', margin:'6px 0 0' }}>{selectedProperty}</p>
+                  ) : (
+                    <>
+                      {!selectedProperty && <p style={{ color:'#fbbf24', fontSize:'11px', margin:'4px 0 6px' }}>⚠ Please select a property first</p>}
+                      <select value={selectedProperty} onChange={e => setSelectedProperty(e.target.value)}
+                        style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px 12px', background:'#1e2535', border:`1px solid ${selectedProperty ? '#C9A227' : '#a16207'}`, borderRadius:'8px', color: selectedProperty ? 'white' : '#fbbf24', fontSize:'13px', boxSizing:'border-box' as const, outline:'none' }}>
+                        <option value=''>-- Select Property --</option>
+                        {props.map((p: string) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </>
+                  )}
+                </div>
+              )
+            })()}
             <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: '12px', padding: '22px', marginBottom: '14px' }}>
               <label style={{ color: '#aaa', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>License Plate</label>
-              <button onClick={openCamera}
-                style={{ width: '100%', padding: '12px', background: '#1a1f2e', color: '#C9A227', border: '1px solid #C9A227', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold', marginTop: '8px', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontFamily: 'Arial' }}>
+              <button onClick={openCamera} disabled={!selectedProperty}
+                style={{ width: '100%', padding: '12px', background: '#1a1f2e', color: selectedProperty ? '#C9A227' : '#555', border: `1px solid ${selectedProperty ? '#C9A227' : '#3a4055'}`, borderRadius: '8px', cursor: selectedProperty ? 'pointer' : 'not-allowed', fontSize: '14px', fontWeight: 'bold', marginTop: '8px', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontFamily: 'Arial' }}>
                 📷 Scan License Plate
               </button>
               <input
@@ -579,13 +603,13 @@ export default function DriverPortal() {
               {scanMsg && (
                 <p style={{ color:'#C9A227', fontSize:'12px', margin:'4px 0 0', fontStyle:'italic' }}>{scanMsg}</p>
               )}
-              <button onClick={() => searchPlate()} disabled={searching || !plate}
+              <button onClick={() => searchPlate()} disabled={searching || !plate || !selectedProperty}
                 style={{
                   marginTop: '12px', width: '100%', padding: '14px',
-                  background: !plate ? '#2a2f3d' : '#C9A227',
-                  color: !plate ? '#555' : '#0f1117',
+                  background: (!plate || !selectedProperty) ? '#2a2f3d' : '#C9A227',
+                  color: (!plate || !selectedProperty) ? '#555' : '#0f1117',
                   fontWeight: 'bold', fontSize: '15px', border: 'none', borderRadius: '8px',
-                  cursor: !plate ? 'not-allowed' : 'pointer', fontFamily: 'Arial'
+                  cursor: (!plate || !selectedProperty) ? 'not-allowed' : 'pointer', fontFamily: 'Arial'
                 }}>
                 {searching ? 'Searching...' : 'Search Plate'}
               </button>
@@ -593,7 +617,7 @@ export default function DriverPortal() {
               {result && searchTimestamp && (
                 <div style={{ marginTop:'16px', background:'#0f1117', border:'1px solid #C9A227', borderRadius:'8px', padding:'10px 14px', marginBottom:'10px', fontFamily:'Courier New' }}>
                   <div style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold' }}>🕐 Search recorded: {new Intl.DateTimeFormat('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', second:'2-digit', hour12:true }).format(searchTimestamp)}</div>
-                  <div style={{ color:'#aaa', fontSize:'11px' }}>Driver: {driver?.name || driver?.email}{driver?.company ? ` · ${driver.company}` : ''}</div>
+                  <div style={{ color:'#aaa', fontSize:'11px' }}>Property: {selectedProperty} · Driver: {driver?.name || driver?.email}{driver?.company ? ` · ${driver.company}` : ''}</div>
                 </div>
               )}
 
@@ -623,7 +647,7 @@ export default function DriverPortal() {
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.space || '—'}</span></div>
                         <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
                       </div>
-                      <button onClick={() => setShowViolation(true)}
+                      <button onClick={() => { setViolation(v => ({ ...v, property: selectedProperty })); setShowViolation(true) }}
                         style={{ width: '100%', padding: '11px', background: '#991b1b', color: 'white', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation
                       </button>
@@ -653,7 +677,7 @@ export default function DriverPortal() {
                     <>
                       <p style={{ color: '#f44336', fontWeight: 'bold', fontSize: '16px', margin: '0 0 6px' }}>✗ NO PERMIT FOUND</p>
                       <p style={{ color: '#aaa', fontSize: '13px', margin: '0 0 12px' }}>Plate is not registered. Vehicle may be towed.</p>
-                      <button onClick={() => setShowViolation(true)}
+                      <button onClick={() => { setViolation(v => ({ ...v, property: selectedProperty })); setShowViolation(true) }}
                         style={{ width: '100%', padding: '11px', background: '#991b1b', color: 'white', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation
                       </button>
@@ -669,13 +693,8 @@ export default function DriverPortal() {
                     Issue Violation — <span style={{ fontFamily: 'Courier New' }}>{plate}</span>
                   </p>
 
-                  <label style={lbl}>Property *</label>
-                  <select value={violation.property} onChange={e => setViolation({ ...violation, property: e.target.value })} style={inp}>
-                    <option value=''>Select property...</option>
-                    {(driver?.assigned_properties || []).filter((p: string) => p !== 'All').map((p: string, i: number) => (
-                      <option key={i} value={p}>{p}</option>
-                    ))}
-                  </select>
+                  <label style={lbl}>Property</label>
+                  <div style={{ ...inp, color: '#C9A227', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>{violation.property}</div>
 
                   <label style={lbl}>Violation Type *</label>
                   <select value={violation.type} onChange={e => setViolation({ ...violation, type: e.target.value })} style={inp}>
