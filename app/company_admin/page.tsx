@@ -30,6 +30,9 @@ export default function CompanyAdminPortal() {
   const [showViolation, setShowViolation] = useState(false)
   const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
   const [photos, setPhotos] = useState<File[]>([])
+  const [violationVideo, setViolationVideo] = useState<File|null>(null)
+  const [videoDuration, setVideoDuration] = useState<number|null>(null)
+  const [uploadingVideo, setUploadingVideo] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   const [storageFacilities, setStorageFacilities] = useState<any[]>([])
@@ -547,10 +550,22 @@ export default function CompanyAdminPortal() {
         photoUrls.push(urlData.publicUrl)
       }
     }
+    let videoUrl: string | null = null
+    if (violationVideo) {
+      setUploadingVideo(true)
+      const fileName = `${Date.now()}-${violationVideo.name}`
+      const { error: vidErr } = await supabase.storage.from('violation-videos').upload(fileName, violationVideo)
+      if (!vidErr) {
+        const { data: vidUrlData } = supabase.storage.from('violation-videos').getPublicUrl(fileName)
+        videoUrl = vidUrlData.publicUrl
+      }
+      setUploadingVideo(false)
+    }
     const { data: newV, error: insErr } = await supabase.from('violations').insert([{
       plate: plate.toUpperCase().trim(), violation_type: violation.type,
       location: violation.location, notes: violation.notes,
       property: violation.property, driver_name: role?.email, photos: photoUrls,
+      video_url: videoUrl,
       vehicle_color: violation.vehicle_color || null,
       vehicle_make: violation.vehicle_make || null,
       vehicle_model: violation.vehicle_model || null,
@@ -561,6 +576,8 @@ export default function CompanyAdminPortal() {
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
     setPhotos([])
+    setViolationVideo(null)
+    setVideoDuration(null)
     if (selectedProperty) fetchViolations(selectedProperty.name)
     if (newV) { setTicketTarget(newV); setSelectedStorage(''); setTowFee(''); setMileage('') }
   }
@@ -1109,8 +1126,15 @@ export default function CompanyAdminPortal() {
                   <input value={violation.vehicle_make} onChange={e => setViolation({ ...violation, vehicle_make: e.target.value })} placeholder="e.g. Toyota, Honda" style={inp} />
                   <label style={lbl}>Vehicle Model (optional)</label>
                   <input value={violation.vehicle_model} onChange={e => setViolation({ ...violation, vehicle_model: e.target.value })} placeholder="e.g. Camry, Civic" style={inp} />
-                  <label style={lbl}>Photos</label>
-                  <input type="file" accept="image/*" multiple onChange={e => setPhotos(Array.from(e.target.files || []))}
+                  <label style={lbl}>Photos (optional) — max 10MB each</label>
+                  <input type="file" accept="image/*" multiple
+                    onChange={e => {
+                      const files = Array.from(e.target.files || [])
+                      for (const f of files) {
+                        if (f.size > 10 * 1024 * 1024) { alert(`Photo "${f.name}" exceeds 10MB limit. Please use standard camera mode.`); e.target.value = ''; return }
+                      }
+                      setPhotos(files)
+                    }}
                     style={{ display:'block', width:'100%', marginBottom:'8px', color:'#aaa', fontSize:'12px' }} />
                   {photos.length > 0 && (
                     <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'10px' }}>
@@ -1120,10 +1144,33 @@ export default function CompanyAdminPortal() {
                       ))}
                     </div>
                   )}
+                  <label style={lbl}>Video (optional) — max 60 sec, 150MB</label>
+                  <input type="file" accept="video/*"
+                    onChange={e => {
+                      const file = e.target.files?.[0]
+                      if (!file) { setViolationVideo(null); setVideoDuration(null); return }
+                      if (file.size > 150 * 1024 * 1024) { alert('Video exceeds 150MB limit. Please use standard camera mode or reduce video quality in camera settings.'); setViolationVideo(null); e.target.value = ''; return }
+                      const url = URL.createObjectURL(file)
+                      const vid = document.createElement('video')
+                      vid.src = url
+                      vid.onloadedmetadata = () => {
+                        URL.revokeObjectURL(url)
+                        if (vid.duration > 60) { alert('Video must be 60 seconds or less'); setViolationVideo(null); setVideoDuration(null); e.target.value = ''; return }
+                        setViolationVideo(file)
+                        setVideoDuration(Math.round(vid.duration))
+                      }
+                    }}
+                    style={{ display:'block', width:'100%', marginBottom:'8px', color:'#aaa', fontSize:'12px' }} />
+                  {violationVideo && (
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'5px', padding:'6px 10px', marginBottom:'10px' }}>
+                      <span style={{ color:'#aaa', fontSize:'11px' }}>🎥 {violationVideo.name.length > 22 ? violationVideo.name.substring(0, 22) + '…' : violationVideo.name}{videoDuration !== null ? ` (${videoDuration}s)` : ''}</span>
+                      <button onClick={() => setViolationVideo(null)} style={{ background:'none', border:'none', color:'#f44336', cursor:'pointer', fontSize:'12px', padding:'0 2px' }}>✕</button>
+                    </div>
+                  )}
                   <div style={{ display:'flex', gap:'8px' }}>
                     <button onClick={submitViolation} disabled={submitting}
                       style={{ flex:1, padding:'11px', background:submitting ? '#555' : '#991b1b', color:'white', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:submitting ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
-                      {submitting ? 'Submitting...' : 'Submit Violation'}
+                      {submitting ? (uploadingVideo ? 'Uploading video...' : 'Submitting...') : 'Submit Violation'}
                     </button>
                     <button onClick={() => setShowViolation(false)}
                       style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
@@ -1188,6 +1235,12 @@ export default function CompanyAdminPortal() {
                       ))}
                     </div>
                   </div>
+                )}
+                {v.video_url && (
+                  <button onClick={() => window.open(v.video_url, '_blank')}
+                    style={{ width:'100%', padding:'7px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', marginBottom:'10px' }}>
+                    ▶ Play Video
+                  </button>
                 )}
                 {v.tow_ticket_generated && (
                   <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'10px', paddingBottom:'10px', borderBottom:'1px solid #2a2f3d' }}>

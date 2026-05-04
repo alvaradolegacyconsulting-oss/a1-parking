@@ -1225,6 +1225,12 @@ export default function ManagerPortal() {
                       </div>
                     </div>
                   )}
+                  {v.video_url && (
+                    <button onClick={() => window.open(v.video_url, '_blank')}
+                      style={{ width:'100%', padding:'7px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', marginTop:'8px' }}>
+                      ▶ Play Video
+                    </button>
+                  )}
                   {v.tow_ticket_generated && (
                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:'10px', paddingTop:'10px', borderTop:'1px solid #2a2f3d' }}>
                       <span style={{ background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'10px', fontWeight:'bold', padding:'3px 8px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>

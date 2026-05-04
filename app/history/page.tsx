@@ -167,6 +167,14 @@ export default function History() {
                   </div>
                 </div>
               )}
+              {v.video_url && (
+                <div style={{ gridColumn:'span 2', marginTop:'8px' }}>
+                  <button onClick={() => window.open(v.video_url, '_blank')}
+                    style={{ width:'100%', padding:'7px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                    ▶ Play Video
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ))}
