@@ -166,7 +166,7 @@ export default function DriverPortal() {
       const cleaned = (json.plate || '').replace(/[^A-Z0-9]/g, '').toUpperCase().slice(0, 8)
       if (cleaned.length >= 4) {
         setPlate(cleaned)
-        setScanMsg('📋 Plate scanned — please verify before searching.')
+        setScanMsg('📋 AI Scan Result — please visually verify this plate before taking any enforcement action. AI results may contain errors.')
         closeCamera()
         setTimeout(() => searchPlate(cleaned), 50)
       } else {
