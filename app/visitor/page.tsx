@@ -184,6 +184,14 @@ function VisitorForm() {
             </p>
           </div>
 
+          <div style={{ textAlign:'center', padding:'12px 0' }}>
+            <p style={{ color:'#444', fontSize:'11px', margin:'0 0 4px' }}>If your vehicle has been towed you can locate it at:</p>
+            <a href="https://www.findmytowedcar.org" target="_blank" rel="noopener noreferrer"
+              style={{ color:'#C9A227', fontSize:'12px', textDecoration:'underline', cursor:'pointer' }}>
+              🔍 FindMyTowedCar.org →
+            </a>
+          </div>
+
           <button
             onClick={() => { setStep('form'); setForm({ plate:'', name:'', unit:'', duration:'4', vehicle_desc:'' }); setTosChecked(false) }}
             style={{ width:'100%', padding:'12px', background:'#161b26', color:'#aaa', fontSize:'13px', border:'1px solid #2a2f3d', borderRadius:'8px', cursor:'pointer' }}

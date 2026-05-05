@@ -1379,11 +1379,17 @@ export default function CompanyAdminPortal() {
                   </button>
                 )}
                 {v.tow_ticket_generated && (
-                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'10px', paddingBottom:'10px', borderBottom:'1px solid #2a2f3d' }}>
-                    <span style={{ background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'10px', fontWeight:'bold', padding:'3px 8px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>
-                    <button onClick={() => reprintTicket(v)}
-                      style={{ padding:'6px 12px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
-                      Reprint Ticket
+                  <div style={{ marginBottom:'10px' }}>
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingBottom:'8px', borderBottom:'1px solid #2a2f3d', marginBottom:'6px' }}>
+                      <span style={{ background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'10px', fontWeight:'bold', padding:'3px 8px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>
+                      <button onClick={() => reprintTicket(v)}
+                        style={{ padding:'6px 12px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                        Reprint Ticket
+                      </button>
+                    </div>
+                    <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
+                      style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'2px 0', display:'block' }}>
+                      🔍 Find this vehicle at FindMyTowedCar.org
                     </button>
                   </div>
                 )}
