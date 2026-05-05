@@ -194,12 +194,26 @@ export default function DriverPortal() {
     const { data: activeVeh } = await supabase
       .from('vehicles').select('*').ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', true).single()
     if (activeVeh) {
-      setSearching(false); setResult({ status: 'authorized', data: activeVeh }); return
+      let spaceNotes = null
+      if (activeVeh.space) {
+        const { data: sd } = await supabase.from('spaces').select('location_notes')
+          .ilike('space_number', activeVeh.space).ilike('property', selectedProperty).single()
+        spaceNotes = sd?.location_notes || null
+      }
+      setSearching(false); setResult({ status: 'authorized', data: { ...activeVeh, _space_notes: spaceNotes } }); return
     }
 
     const { data: expiredVeh } = await supabase
       .from('vehicles').select('*').ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', false).single()
-    if (expiredVeh) { setSearching(false); setResult({ status: 'expired', data: expiredVeh }); return }
+    if (expiredVeh) {
+      let spaceNotes = null
+      if (expiredVeh.space) {
+        const { data: sd } = await supabase.from('spaces').select('location_notes')
+          .ilike('space_number', expiredVeh.space).ilike('property', selectedProperty).single()
+        spaceNotes = sd?.location_notes || null
+      }
+      setSearching(false); setResult({ status: 'expired', data: { ...expiredVeh, _space_notes: spaceNotes } }); return
+    }
 
     const { data: propResidents } = await supabase.from('residents').select('unit').ilike('property', selectedProperty)
     const unitList = (propResidents || []).map((r: any) => r.unit).filter(Boolean)
@@ -649,7 +663,7 @@ export default function DriverPortal() {
                       <p style={{ color: '#4caf50', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>✓ AUTHORIZED</p>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Unit</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.unit}</span></div>
-                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.space || '—'}</span></div>
+                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.space || '—'}</span>{result.data._space_notes && <p style={{ color: '#888', fontSize: '11px', fontStyle: 'italic', margin: '2px 0 0' }}>{result.data._space_notes}</p>}</div>
                         <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
                         <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Property</span><br /><span style={{ color: '#4caf50', fontSize: '13px' }}>{result.data.property}</span></div>
                       </div>
@@ -661,7 +675,7 @@ export default function DriverPortal() {
                       <p style={{ color: '#ff9800', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>⚠ PERMIT EXPIRED</p>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Unit</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.unit}</span></div>
-                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.space || '—'}</span></div>
+                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.space || '—'}</span>{result.data._space_notes && <p style={{ color: '#888', fontSize: '11px', fontStyle: 'italic', margin: '2px 0 0' }}>{result.data._space_notes}</p>}</div>
                         <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
                       </div>
                       <button onClick={() => { setViolation(v => ({ ...v, property: selectedProperty })); setShowViolation(true) }}

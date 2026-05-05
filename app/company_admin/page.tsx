@@ -88,6 +88,7 @@ export default function CompanyAdminPortal() {
     setCollapsedCAGroups(prev => { const next = new Set(prev); if (next.has(role)) next.delete(role); else next.add(role); return next })
   }
   const [showActiveCompanyDrivers, setShowActiveCompanyDrivers] = useState(true)
+  const [exportMsg, setExportMsg] = useState('')
 
   useEffect(() => { loadUser() }, [])
 
@@ -597,6 +598,42 @@ export default function CompanyAdminPortal() {
       const q = violationSearch.toLowerCase()
       return v.plate?.toLowerCase().includes(q) || v.violation_type?.toLowerCase().includes(q) || v.location?.toLowerCase().includes(q)
     })
+  }
+
+  function escapeCsv(val: any): string {
+    const s = (val == null ? '' : String(val)).replace(/"/g, '""')
+    return `"${s}"`
+  }
+
+  function exportTowbook() {
+    const towRecords = filteredViolations().filter((v: any) => v.tow_ticket_generated)
+    if (towRecords.length === 0) {
+      setExportMsg('No tow ticket records found in current filter. Apply a date filter and try again.')
+      return
+    }
+    setExportMsg(`Exporting ${towRecords.length} tow record${towRecords.length !== 1 ? 's' : ''}...`)
+    setTimeout(() => setExportMsg(''), 4000)
+    const headers = ['Date','Time','Plate','State','Color','Make','Model','Violation Type','Location','Property','Storage Facility','Storage Address','Storage Phone','Tow Fee','Driver Name','Driver License','Notes']
+    const rows = towRecords.map((v: any) => {
+      const d = new Date(v.created_at)
+      const date = d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' })
+      const time = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12: true })
+      return [
+        date, time, v.plate, v.state || '', v.vehicle_color || '', v.vehicle_make || '', v.vehicle_model || '',
+        v.violation_type || '', v.location || '', v.property || '',
+        v.tow_storage_name || '', v.tow_storage_address || '', v.tow_storage_phone || '',
+        v.tow_fee || '', v.driver_name || '', v.driver_license || '', v.notes || '',
+      ].map(escapeCsv).join(',')
+    })
+    const csv = [headers.map(escapeCsv).join(','), ...rows].join('\n')
+    const today = new Date().toISOString().slice(0, 10)
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `towbook_export_${today}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   function openTicketFor(v: any) {
@@ -1202,7 +1239,17 @@ export default function CompanyAdminPortal() {
                 </button>
               ))}
             </div>
-            <p style={{ color:'#444', fontSize:'11px', margin:'0 0 10px', textAlign:'right' }}>{fvs.length} result{fvs.length !== 1 ? 's' : ''}</p>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
+              <p style={{ color:'#444', fontSize:'11px', margin:'0' }}>{fvs.length} result{fvs.length !== 1 ? 's' : ''}</p>
+              <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'4px' }}>
+                <button onClick={exportTowbook} style={{ background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', padding:'8px 14px', fontSize:'12px', cursor:'pointer', fontFamily:'Arial' }}>
+                  ↓ Export for Towbook
+                </button>
+                {exportMsg && (
+                  <p style={{ color: exportMsg.startsWith('No') ? '#f44336' : '#C9A227', fontSize:'11px', margin:'0' }}>{exportMsg}</p>
+                )}
+              </div>
+            </div>
             {fvs.length === 0 ? (
               <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}>
                 <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No violations found for this period</p>

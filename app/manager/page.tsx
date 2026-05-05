@@ -251,6 +251,7 @@ export default function ManagerPortal() {
     const updates: any = {
       status: editingSpace.status,
       notes: editingSpace.notes ?? '',
+      location_notes: editingSpace.location_notes || null,
       assigned_to_unit: isReleasing ? null : editingSpace.assigned_to_unit,
       assigned_to_plate: isReleasing ? null : editingSpace.assigned_to_plate,
     }
@@ -881,6 +882,9 @@ export default function ManagerPortal() {
                           onClick={() => setHoveredSpaceId(isHovered ? null : s.id)}
                           style={{ background:bgColor, border:`2px solid ${borderColor}`, borderRadius:'6px', padding:'6px 4px', textAlign:'center', cursor:'pointer', position:'relative', userSelect:'none' }}>
                           <span style={{ color:'white', fontSize:'10px', fontWeight:'bold', display:'block', lineHeight:'1.2' }}>{s.space_number}</span>
+                          {s.location_notes && (
+                            <p style={{ color:'#666', fontSize:'10px', margin:'2px 0 0', fontStyle:'italic', lineHeight:'1.3' }}>{s.location_notes}</p>
+                          )}
                           {isHovered && (isOccupied || isReserved) && (
                             <div style={{ position:'absolute', top:'calc(100% + 4px)', left:'50%', transform:'translateX(-50%)', background:'#0f1117', border:'1px solid #3a4055', borderRadius:'6px', padding:'6px 8px', zIndex:20, minWidth:'110px', pointerEvents:'none' }}>
                               <p style={{ color:'#aaa', fontSize:'10px', margin:'0', whiteSpace:'nowrap' }}>
@@ -987,6 +991,14 @@ export default function ManagerPortal() {
                             onChange={e => setEditingSpace({ ...editingSpace, notes: e.target.value })}
                             placeholder="Optional notes"
                             style={inputStyle} />
+
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Location Notes (optional)</label>
+                          <textarea
+                            rows={2}
+                            value={editingSpace.location_notes || ''}
+                            onChange={e => setEditingSpace({ ...editingSpace, location_notes: e.target.value })}
+                            placeholder="e.g. Building A near elevator, Lot B row 3, Covered parking level 2"
+                            style={{ ...inputStyle, resize:'vertical', fontFamily:'Arial' }} />
 
                           <div style={{ display:'flex', gap:'8px', marginTop:'4px' }}>
                             <button onClick={saveSpace} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'7px', cursor:'pointer' }}>Save</button>

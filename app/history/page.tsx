@@ -7,6 +7,7 @@ export default function History() {
   const [filter, setFilter] = useState('today')
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [exportMsg, setExportMsg] = useState('')
 
   function filteredViolations() {
     if (!search) return violations
@@ -46,6 +47,42 @@ export default function History() {
     if (!error) setViolations(data || [])
   }
 
+  function escapeCsv(val: any): string {
+    const s = (val == null ? '' : String(val)).replace(/"/g, '""')
+    return `"${s}"`
+  }
+
+  function exportTowbook() {
+    const towRecords = filteredViolations().filter(v => v.tow_ticket_generated)
+    if (towRecords.length === 0) {
+      setExportMsg('No tow ticket records found in current filter. Apply a date filter and try again.')
+      return
+    }
+    setExportMsg(`Exporting ${towRecords.length} tow record${towRecords.length !== 1 ? 's' : ''}...`)
+    setTimeout(() => setExportMsg(''), 4000)
+    const headers = ['Date','Time','Plate','State','Color','Make','Model','Violation Type','Location','Property','Storage Facility','Storage Address','Storage Phone','Tow Fee','Driver Name','Driver License','Notes']
+    const rows = towRecords.map(v => {
+      const d = new Date(v.created_at)
+      const date = d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' })
+      const time = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12: true })
+      return [
+        date, time, v.plate, v.state || '', v.vehicle_color || '', v.vehicle_make || '', v.vehicle_model || '',
+        v.violation_type || '', v.location || '', v.property || '',
+        v.tow_storage_name || '', v.tow_storage_address || '', v.tow_storage_phone || '',
+        v.tow_fee || '', v.driver_name || '', v.driver_license || '', v.notes || '',
+      ].map(escapeCsv).join(',')
+    })
+    const csv = [headers.map(escapeCsv).join(','), ...rows].join('\n')
+    const today = new Date().toISOString().slice(0, 10)
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `towbook_export_${today}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   function formatDate(dateStr: string) {
     const d = new Date(dateStr)
     return d.toLocaleDateString('en-US', {
@@ -74,7 +111,7 @@ export default function History() {
           style={{ display:'block', width:'100%', padding:'10px 12px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', fontSize:'13px', boxSizing:'border-box', outline:'none' }}
         />
 
-        <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'20px' }}>
+        <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'10px' }}>
           {[
             { key:'today', label:'Today' },
             { key:'week', label:'Past Week' },
@@ -97,6 +134,15 @@ export default function History() {
             </button>
           ))}
         </div>
+
+        <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'16px' }}>
+          <button onClick={exportTowbook} style={{ background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', padding:'8px 14px', fontSize:'12px', cursor:'pointer', fontFamily:'Arial' }}>
+            ↓ Export for Towbook
+          </button>
+        </div>
+        {exportMsg && (
+          <p style={{ color: exportMsg.startsWith('No') ? '#f44336' : '#C9A227', fontSize:'12px', textAlign:'right', margin:'-10px 0 12px' }}>{exportMsg}</p>
+        )}
 
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div>

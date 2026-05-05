@@ -72,7 +72,18 @@ export default function ResidentPortal() {
       .select('*')
       .ilike('unit', unit)
       .ilike('property', property)
-    setVehicles(data || [])
+    const vehs = data || []
+    const spaceNumbers = vehs.map((v: any) => v.space).filter(Boolean)
+    if (spaceNumbers.length > 0) {
+      const { data: spaceData } = await supabase
+        .from('spaces').select('space_number, location_notes')
+        .ilike('property', property).in('space_number', spaceNumbers)
+      const notesMap: Record<string, string> = {}
+      ;(spaceData || []).forEach((s: any) => { if (s.location_notes) notesMap[s.space_number] = s.location_notes })
+      setVehicles(vehs.map((v: any) => ({ ...v, _space_notes: notesMap[v.space] || null })))
+    } else {
+      setVehicles(vehs)
+    }
   }
 
   async function fetchPasses(unit: string) {
@@ -550,7 +561,7 @@ export default function ResidentPortal() {
                           </div>
                           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', fontSize:'12px', marginBottom:'10px' }}>
                             <div><span style={{ color:'#555' }}>Vehicle</span><br/><span style={{ color:'#aaa' }}>{[v.color, v.make, v.model, v.year].filter(Boolean).join(' ') || '—'}</span></div>
-                            <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
+                            <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span>{v._space_notes && <span style={{ color:'#555', fontSize:'10px' }}> · {v._space_notes}</span>}</div>
                             <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state || '—'}</span></div>
                             <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
                           </div>
