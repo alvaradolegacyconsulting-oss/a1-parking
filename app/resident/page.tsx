@@ -588,7 +588,7 @@ export default function ResidentPortal() {
                         <div style={{ paddingBottom:'4px' }}>
                           <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
                             style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'4px 0' }}>
-                            🔍 Find My Towed Vehicle
+                            🔍 Find My Towed Vehicle (Houston & Harris County)
                           </button>
                         </div>
 
@@ -668,7 +668,7 @@ export default function ResidentPortal() {
                   {v.tow_ticket_generated && (
                     <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
                       style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'4px 0', display:'block', marginBottom:'8px' }}>
-                      🔍 Search for your vehicle at FindMyTowedCar.org
+                      🔍 Search FindMyTowedCar.org — Houston & Harris County area
                     </button>
                   )}
                   {v.photos && v.photos.length > 0 && (

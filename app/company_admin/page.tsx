@@ -1379,20 +1379,18 @@ export default function CompanyAdminPortal() {
                   </button>
                 )}
                 {v.tow_ticket_generated && (
-                  <div style={{ marginBottom:'10px' }}>
-                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingBottom:'8px', borderBottom:'1px solid #2a2f3d', marginBottom:'6px' }}>
-                      <span style={{ background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'10px', fontWeight:'bold', padding:'3px 8px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>
-                      <button onClick={() => reprintTicket(v)}
-                        style={{ padding:'6px 12px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
-                        Reprint Ticket
-                      </button>
-                    </div>
-                    <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
-                      style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'2px 0', display:'block' }}>
-                      🔍 Find this vehicle at FindMyTowedCar.org
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingBottom:'8px', borderBottom:'1px solid #2a2f3d', marginBottom:'6px' }}>
+                    <span style={{ background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'10px', fontWeight:'bold', padding:'3px 8px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>
+                    <button onClick={() => reprintTicket(v)}
+                      style={{ padding:'6px 12px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                      Reprint Ticket
                     </button>
                   </div>
                 )}
+                <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
+                  style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'2px 0', display:'block', marginBottom:'8px' }}>
+                  🔍 Find this vehicle — FindMyTowedCar.org (Houston & Harris County)
+                </button>
                 {(() => {
                   const d = violationDisputes.find(d => d.violation_id === v.id)
                   if (!d) return null
@@ -1910,18 +1908,6 @@ export default function CompanyAdminPortal() {
 
             {/* SECTION 5 — Audit Log */}
             {manageSection === 'auditlog' && (() => {
-              const actionColor: Record<string, { bg: string; color: string }> = {
-                ADD_VIOLATION:        { bg:'#3a1a1a', color:'#f44336' },
-                create_property:      { bg:'#1a2a3a', color:'#2196f3' },
-                update_property:      { bg:'#1e2535', color:'#aaa' },
-                activate_property:    { bg:'#1a3a1a', color:'#4caf50' },
-                deactivate_property:  { bg:'#3a1a1a', color:'#f44336' },
-                create_user:          { bg:'#1a2a3a', color:'#2196f3' },
-                create_driver:        { bg:'#1a2a3a', color:'#2196f3' },
-                activate_driver:      { bg:'#1a3a1a', color:'#4caf50' },
-                deactivate_driver:    { bg:'#3a1a1a', color:'#f44336' },
-                create_facility:      { bg:'#1a2a3a', color:'#2196f3' },
-              }
               const today = new Date(); today.setHours(0,0,0,0)
               const week = new Date(); week.setDate(week.getDate()-7)
               const month = new Date(); month.setMonth(month.getMonth()-1)
@@ -1953,16 +1939,15 @@ export default function CompanyAdminPortal() {
                       <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No activity for this period</p>
                     </div>
                   ) : filtered.map((log, i) => {
-                    const badge2 = actionColor[log.action] || { bg:'#1e2535', color:'#aaa' }
                     const vals = log.new_values ? Object.entries(log.new_values as Record<string,unknown>).map(([k,v]) => `${k}: ${v}`).join(' · ') : ''
                     return (
                       <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'8px' }}>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
-                          <span style={{ background:badge2.bg, color:badge2.color, padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
-                          <span style={{ color:'#555', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
+                          <span style={{ background:'#1e1800', color:'#C9A227', padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
+                          <span style={{ color:'#888', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
                         </div>
                         <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>{log.user_email}</p>
-                        {vals && <p style={{ color:'#555', fontSize:'11px', margin:'0', fontFamily:'Courier New', wordBreak:'break-all' }}>{vals}</p>}
+                        {vals && <p style={{ color:'#888', fontSize:'11px', margin:'0', fontFamily:'Courier New', wordBreak:'break-all' }}>{vals}</p>}
                       </div>
                     )
                   })}

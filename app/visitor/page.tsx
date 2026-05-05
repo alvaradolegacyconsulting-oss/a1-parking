@@ -185,11 +185,7 @@ function VisitorForm() {
           </div>
 
           <div style={{ textAlign:'center', padding:'12px 0' }}>
-            <p style={{ color:'#444', fontSize:'11px', margin:'0 0 4px' }}>If your vehicle has been towed you can locate it at:</p>
-            <a href="https://www.findmytowedcar.org" target="_blank" rel="noopener noreferrer"
-              style={{ color:'#C9A227', fontSize:'12px', textDecoration:'underline', cursor:'pointer' }}>
-              🔍 FindMyTowedCar.org →
-            </a>
+            <p style={{ color:'#555', fontSize:'11px', margin:'0 0 6px' }}>If your vehicle has been towed, search for it at <a href="https://www.findmytowedcar.org" target="_blank" rel="noopener noreferrer" style={{ color:'#C9A227', textDecoration:'underline' }}>FindMyTowedCar.org</a> — available for Houston & Harris County area.</p>
           </div>
 
           <button

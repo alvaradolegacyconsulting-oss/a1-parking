@@ -1223,7 +1223,7 @@ export default function ManagerPortal() {
                         </div>
                         <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
                           style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'6px 0 2px', display:'block' }}>
-                          🔍 Find Towed Vehicle
+                          🔍 Find Towed Vehicle (Houston & Harris County)
                         </button>
                       </div>
                     ))
@@ -1340,7 +1340,7 @@ export default function ManagerPortal() {
                       </div>
                       <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
                         style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'6px 0 2px', display:'block' }}>
-                        🔍 Find this vehicle at FindMyTowedCar.org
+                        🔍 Find this vehicle — FindMyTowedCar.org (Houston & Harris County)
                       </button>
                     </>
                   )}
@@ -1450,20 +1450,6 @@ export default function ManagerPortal() {
 
         {/* ACTIVITY LOG */}
         {activeTab === 'activity' && (() => {
-          const actionColor: Record<string, { bg: string; color: string }> = {
-            ADD_VEHICLE:        { bg:'#1a3a1a', color:'#4caf50' },
-            REMOVE_VEHICLE:     { bg:'#3a1a1a', color:'#f44336' },
-            APPROVE_VEHICLE:    { bg:'#1a3a1a', color:'#4caf50' },
-            DECLINE_VEHICLE:    { bg:'#3a1a1a', color:'#f44336' },
-            ADD_RESIDENT:       { bg:'#1a2a3a', color:'#2196f3' },
-            EDIT_RESIDENT:      { bg:'#1e2535', color:'#aaa' },
-            DEACTIVATE_RESIDENT:{ bg:'#3a1a1a', color:'#f44336' },
-            EDIT_SPACE:         { bg:'#1e1800', color:'#C9A227' },
-            SET_PASS_LIMIT:     { bg:'#1e1800', color:'#C9A227' },
-            ADD_EXEMPT_PLATE:   { bg:'#1a3a1a', color:'#4caf50' },
-            REMOVE_EXEMPT_PLATE:{ bg:'#3a1a1a', color:'#f44336' },
-            ADD_VIOLATION:      { bg:'#3a1a1a', color:'#f44336' },
-          }
           const today = new Date(); today.setHours(0,0,0,0)
           const week = new Date(); week.setDate(week.getDate()-7)
           const filtered = auditLogs.filter(log => {
@@ -1494,16 +1480,15 @@ export default function ManagerPortal() {
                   <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No activity for this period</p>
                 </div>
               ) : filtered.map((log, i) => {
-                const badge = actionColor[log.action] || { bg:'#1e2535', color:'#aaa' }
                 const vals = log.new_values ? Object.entries(log.new_values).filter(([k]) => k !== 'property').map(([k,v]) => `${k}: ${v}`).join(' · ') : ''
                 return (
                   <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'8px' }}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
-                      <span style={{ background:badge.bg, color:badge.color, padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
-                      <span style={{ color:'#555', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
+                      <span style={{ background:'#1e1800', color:'#C9A227', padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
+                      <span style={{ color:'#888', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
                     </div>
                     <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>{log.user_email}</p>
-                    {vals && <p style={{ color:'#555', fontSize:'11px', margin:'0', fontFamily:'Courier New' }}>{vals}</p>}
+                    {vals && <p style={{ color:'#888', fontSize:'11px', margin:'0', fontFamily:'Courier New' }}>{vals}</p>}
                   </div>
                 )
               })}
