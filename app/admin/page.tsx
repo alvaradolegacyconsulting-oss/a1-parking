@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
+import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export default function AdminPortal() {
   const [adminEmail, setAdminEmail] = useState('')
@@ -62,9 +63,12 @@ export default function AdminPortal() {
   const [showActiveDrivers, setShowActiveDrivers] = useState(true)
   const [showActiveFacilities, setShowActiveFacilities] = useState(true)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [adminAnalyticsLoaded, setAdminAnalyticsLoaded] = useState(false)
+  const [adminAnalytics, setAdminAnalytics] = useState<any>(null)
 
   useEffect(() => { loadAdmin() }, [])
   useEffect(() => { if (activeTab === 'auditlog') fetchAuditLogs() }, [activeTab])
+  useEffect(() => { if (activeTab === 'analytics' && companies.length > 0) fetchAdminAnalytics() }, [activeTab, companies])
 
   async function loadAdmin() {
     const { data: { user } } = await supabase.auth.getUser()
@@ -103,6 +107,43 @@ export default function AdminPortal() {
   async function fetchPlatformSettings() {
     const { data } = await supabase.from('platform_settings').select('*').eq('id', 1).single()
     if (data) setPlatformSettings(data)
+  }
+
+  async function fetchAdminAnalytics() {
+    setAdminAnalyticsLoaded(false)
+    const now = new Date()
+    const sixMoAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1)
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const mk = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`
+
+    const { data: vData } = await supabase.from('violations').select('property,created_at').gte('created_at', sixMoAgo.toISOString())
+    const viols = vData || []
+    const thisMonthViolations = viols.filter((v: any) => new Date(v.created_at) >= thisMonthStart).length
+
+    const monthLabels: { label: string; key: string }[] = []
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      monthLabels.push({ label: d.toLocaleString('en-US', { month: 'short' }), key: mk(d) })
+    }
+    const byMonth: Record<string, number> = {}
+    viols.forEach((v: any) => { const k = mk(new Date(v.created_at)); byMonth[k] = (byMonth[k] || 0) + 1 })
+    const monthData = monthLabels.map(m => ({ month: m.label, count: byMonth[m.key] || 0 }))
+
+    const byProp: Record<string, number> = {}
+    viols.forEach((v: any) => { const p = v.property || 'Unknown'; byProp[p] = (byProp[p] || 0) + 1 })
+    const topProperties = Object.entries(byProp).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, count], i) => ({ rank: i + 1, name, count }))
+
+    const tierColors: Record<string, string> = { legacy:'#C9A227', growth:'#1565C0', starter:'#546E7A', essential:'#2E7D32', professional:'#7B1FA2', enterprise:'#E65100' }
+    const tierCounts: Record<string, number> = {}
+    companies.filter((c: any) => c.is_active).forEach((c: any) => { const t = c.tier || 'legacy'; tierCounts[t] = (tierCounts[t] || 0) + 1 })
+    const tierData = Object.entries(tierCounts).map(([name, value]) => ({ name, value, color: tierColors[name] || '#555' }))
+
+    const activeCompanies = companies.filter((c: any) => c.is_active).length
+    const totalProps = properties.length
+    const totalDrivers = drivers.filter((d: any) => d.is_active !== false).length
+
+    setAdminAnalytics({ monthData, topProperties, tierData, activeCompanies, thisMonthViolations, totalProps, totalDrivers })
+    setAdminAnalyticsLoaded(true)
   }
 
   async function savePlatformSettings() {
@@ -582,7 +623,7 @@ export default function AdminPortal() {
         </div>
 
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'16px' }}>
-          {[['companies','Companies'],['properties','Properties'],['users','Users & Roles'],['drivers','Drivers'],['facilities','Facilities'],['auditlog','Audit Log'],['platform','Platform']].map(([k,l]) => (
+          {[['companies','Companies'],['properties','Properties'],['users','Users & Roles'],['drivers','Drivers'],['facilities','Facilities'],['auditlog','Audit Log'],['platform','Platform'],['analytics','Analytics']].map(([k,l]) => (
             <button key={k} style={tabSt(k)} onClick={() => setActiveTab(k)}>{l}</button>
           ))}
         </div>
@@ -1389,6 +1430,102 @@ export default function AdminPortal() {
 
             {platformSettings.updated_at && (
               <p style={{ color:'#555', fontSize:'10px', textAlign:'center', margin:'8px 0 0' }}>Last updated: {new Date(platformSettings.updated_at).toLocaleString()}</p>
+            )}
+          </div>
+        )}
+
+        {/* ── ANALYTICS ── */}
+        {activeTab === 'analytics' && (
+          <div>
+            {!adminAnalyticsLoaded ? (
+              <p style={{ color:'#555', textAlign:'center', padding:'40px' }}>Loading analytics...</p>
+            ) : !adminAnalytics ? null : (
+              <>
+                {/* Metric cards */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+                  {[
+                    { label:'Active Companies', val:adminAnalytics.activeCompanies, sub:'on platform', subColor:'#555' },
+                    { label:'This Month Violations', val:adminAnalytics.thisMonthViolations, sub:'platform-wide', subColor:'#555' },
+                    { label:'Total Properties', val:adminAnalytics.totalProps, sub:'across all companies', subColor:'#555' },
+                    { label:'Total Drivers', val:adminAnalytics.totalDrivers, sub:'active on platform', subColor:'#555' },
+                  ].map((c, i) => (
+                    <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                      <p style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>{c.label}</p>
+                      <p style={{ color:'white', fontSize:'26px', fontWeight:'bold', margin:'0', fontFamily:'Arial' }}>{c.val}</p>
+                      <p style={{ color:c.subColor, fontSize:'11px', margin:'4px 0 0' }}>{c.sub}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Companies by tier donut */}
+                {adminAnalytics.tierData.length > 0 && (
+                  <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Companies by Service Tier</p>
+                    <div style={{ display:'flex', alignItems:'center', gap:'16px' }}>
+                      <ResponsiveContainer width={160} height={160}>
+                        <PieChart>
+                          <Pie data={adminAnalytics.tierData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={45} outerRadius={72} paddingAngle={2}>
+                            {adminAnalytics.tierData.map((entry: any, i: number) => (
+                              <Cell key={i} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip contentStyle={{ background:'#1e2535', border:'1px solid #2a2f3d', borderRadius:'8px', fontSize:'11px' }} itemStyle={{ color:'#aaa' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div style={{ flex:1 }}>
+                        {adminAnalytics.tierData.map((t: any, i: number) => (
+                          <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom:'1px solid #1e2535' }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                              <div style={{ width:'10px', height:'10px', borderRadius:'50%', background:t.color, flexShrink:0 }} />
+                              <span style={{ color:'#aaa', fontSize:'12px', textTransform:'capitalize' }}>{t.name}</span>
+                            </div>
+                            <span style={{ color:'white', fontSize:'13px', fontWeight:'bold' }}>{t.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Platform violations trend */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Platform Violations Trend (6 Months)</p>
+                  <ResponsiveContainer width="100%" height={170}>
+                    <LineChart data={adminAnalytics.monthData} margin={{ top:4, right:4, left:-20, bottom:0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <XAxis dataKey="month" tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip contentStyle={{ background:'#1e2535', border:'1px solid #2a2f3d', borderRadius:'8px', fontSize:'11px' }} labelStyle={{ color:'#aaa' }} itemStyle={{ color:'#C9A227' }} />
+                      <Line type="monotone" dataKey="count" stroke="#C9A227" strokeWidth={2} dot={{ fill:'#C9A227', strokeWidth:0, r:3 }} activeDot={{ r:5 }} name="Violations" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Top 5 properties leaderboard */}
+                {adminAnalytics.topProperties.length > 0 && (
+                  <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Top 5 Most Active Properties</p>
+                    {adminAnalytics.topProperties.map((p: any) => {
+                      const medalColor = p.rank === 1 ? '#C9A227' : p.rank === 2 ? '#9E9E9E' : p.rank === 3 ? '#795548' : '#2a2f3d'
+                      const maxCount = adminAnalytics.topProperties[0]?.count || 1
+                      return (
+                        <div key={p.rank} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
+                          <div style={{ width:'24px', height:'24px', borderRadius:'50%', background:medalColor, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                            <span style={{ color: p.rank <= 3 ? '#0f1117' : '#888', fontSize:'11px', fontWeight:'bold' }}>{p.rank}</span>
+                          </div>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 3px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.name}</p>
+                            <div style={{ height:'4px', background:'#1e2535', borderRadius:'2px' }}>
+                              <div style={{ height:'4px', background: p.rank === 1 ? '#C9A227' : '#546E7A', borderRadius:'2px', width:`${Math.round((p.count / maxCount) * 100)}%` }} />
+                            </div>
+                          </div>
+                          <span style={{ color:'white', fontSize:'13px', fontWeight:'bold', flexShrink:0 }}>{p.count}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

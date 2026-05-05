@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
+import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export default function ManagerPortal() {
   const [manager, setManager] = useState<any>(null)
@@ -55,10 +56,13 @@ export default function ManagerPortal() {
   const [disputes, setDisputes] = useState<any[]>([])
   const [pendingDisputeCount, setPendingDisputeCount] = useState(0)
   const [disputeNotes, setDisputeNotes] = useState<Record<string, string>>({})
+  const [insightsLoaded, setInsightsLoaded] = useState(false)
+  const [mgAnalytics, setMgAnalytics] = useState<any>(null)
 
   useEffect(() => { loadManager() }, [])
   useEffect(() => { if (activeTab === 'activity' && manager) fetchActivityLogs() }, [activeTab, manager])
   useEffect(() => { if (activeTab === 'disputes' && manager) fetchDisputes(manager.name) }, [activeTab, manager])
+  useEffect(() => { if (activeTab === 'insights' && manager) fetchInsights() }, [activeTab, manager])
   useEffect(() => {
     if (editingSpace) {
       setPlateQuery(editingSpace.assigned_to_plate || '')
@@ -583,6 +587,57 @@ export default function ManagerPortal() {
     tw.document.close()
   }
 
+  async function fetchInsights() {
+    if (!manager) return
+    setInsightsLoaded(false)
+    const now = new Date()
+    const sixMoAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1)
+    const mk = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`
+
+    const [{ data: vData }, { data: vehData }, { data: drData }] = await Promise.all([
+      supabase.from('violations').select('created_at,tow_ticket_generated').ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
+      supabase.from('vehicles').select('status,is_active').ilike('property', manager.name),
+      supabase.from('dispute_requests').select('id').ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
+    ])
+    const viols = vData || []
+
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    const byDay = Array(7).fill(0)
+    const byHour = Array(24).fill(0)
+    viols.forEach((v: any) => { const d = new Date(v.created_at); byDay[d.getDay()]++; byHour[d.getHours()]++ })
+
+    const monthLabels: { label: string; key: string }[] = []
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      monthLabels.push({ label: d.toLocaleString('en-US', { month: 'short' }), key: mk(d) })
+    }
+    const byMonth: Record<string, number> = {}
+    viols.forEach((v: any) => { const k = mk(new Date(v.created_at)); byMonth[k] = (byMonth[k] || 0) + 1 })
+
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const thisMonthCount = viols.filter((v: any) => new Date(v.created_at) >= thisMonthStart).length
+    const lastMonthCount = viols.filter((v: any) => { const d = new Date(v.created_at); return d >= lastMonthStart && d < thisMonthStart }).length
+
+    const vehs = vehData || []
+    const complianceRate = vehs.length > 0 ? Math.round((vehs.filter((v: any) => v.is_active).length / vehs.length) * 100) : 100
+    const disputeRate = viols.length > 0 ? Math.round(((drData?.length || 0) / viols.length) * 100) : 0
+
+    const peakDayIdx = byDay.indexOf(Math.max(...byDay))
+    const peakHourIdx = byHour.indexOf(Math.max(...byHour))
+    const fmtH = (h: number) => h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`
+    const insight = viols.length > 0 && byDay[peakDayIdx] > 0
+      ? `Peak enforcement: ${dayNames[peakDayIdx]}s around ${fmtH(peakHourIdx)}. Schedule driver patrols during these hours.`
+      : 'Not enough data yet to identify peak enforcement times.'
+
+    setMgAnalytics({
+      dayChartData: dayNames.map((name, i) => ({ name, count: byDay[i] })),
+      monthData: monthLabels.map(m => ({ month: m.label, count: byMonth[m.key] || 0 })),
+      byHour, thisMonthCount, lastMonthCount, complianceRate, disputeRate, insight,
+    })
+    setInsightsLoaded(true)
+  }
+
   const tabStyle = (tab: string) => ({
     flex:1, padding:'8px', border:'none', borderRadius:'6px',
     cursor:'pointer', fontWeight:'bold' as const, fontSize:'11px',
@@ -680,6 +735,7 @@ export default function ManagerPortal() {
           <button style={tabStyle('disputes')} onClick={() => setActiveTab('disputes')}>
             Disputes{pendingDisputeCount > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingDisputeCount}</span>}
           </button>
+          <button style={tabStyle('insights')} onClick={() => setActiveTab('insights')}>Insights</button>
         </div>
 
         {/* OVERVIEW */}
@@ -1536,6 +1592,93 @@ export default function ManagerPortal() {
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {activeTab === 'insights' && (
+          <div>
+            {!insightsLoaded ? (
+              <p style={{ color:'#555', textAlign:'center', padding:'40px' }}>Loading insights...</p>
+            ) : !mgAnalytics ? null : (
+              <>
+                {/* Metric cards */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+                  {[
+                    { label:'This Month', val:mgAnalytics.thisMonthCount, sub: mgAnalytics.lastMonthCount > 0 ? `${mgAnalytics.thisMonthCount > mgAnalytics.lastMonthCount ? '↑' : '↓'} ${Math.abs(mgAnalytics.thisMonthCount - mgAnalytics.lastMonthCount)} vs last mo` : '—', subColor: mgAnalytics.thisMonthCount > mgAnalytics.lastMonthCount ? '#E24B4A' : '#1D9E75' },
+                    { label:'Last Month', val:mgAnalytics.lastMonthCount, sub:'violations', subColor:'#555' },
+                    { label:'Vehicle Compliance', val:`${mgAnalytics.complianceRate}%`, sub:'of vehicles registered', subColor:'#555', valColor: mgAnalytics.complianceRate >= 80 ? '#1D9E75' : '#E24B4A' },
+                    { label:'Dispute Rate', val:`${mgAnalytics.disputeRate}%`, sub:'of violations disputed', subColor:'#555', valColor: mgAnalytics.disputeRate > 5 ? '#E24B4A' : '#1D9E75' },
+                  ].map((c, i) => (
+                    <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                      <p style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>{c.label}</p>
+                      <p style={{ color:(c as any).valColor || 'white', fontSize:'26px', fontWeight:'bold', margin:'0', fontFamily:'Arial' }}>{c.val}</p>
+                      <p style={{ color:c.subColor, fontSize:'11px', margin:'4px 0 0', fontWeight:c.subColor !== '#555' ? 'bold' : 'normal' }}>{c.sub}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Violations by day of week */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Violations by Day of Week</p>
+                  <ResponsiveContainer width="100%" height={170}>
+                    <BarChart data={mgAnalytics.dayChartData} margin={{ top:4, right:0, left:-20, bottom:0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <XAxis dataKey="name" tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip contentStyle={{ background:'#1e2535', border:'1px solid #2a2f3d', borderRadius:'8px', fontSize:'11px' }} labelStyle={{ color:'#aaa' }} itemStyle={{ color:'#C9A227' }} />
+                      <Bar dataKey="count" name="Violations" radius={[4,4,0,0]}>
+                        {mgAnalytics.dayChartData.map((entry: any, i: number) => (
+                          <Cell key={i} fill={entry.name === 'Fri' || entry.name === 'Sat' ? '#C9A227' : '#546E7A'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Monthly trend */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Monthly Trend (6 Months)</p>
+                  <ResponsiveContainer width="100%" height={170}>
+                    <LineChart data={mgAnalytics.monthData} margin={{ top:4, right:4, left:-20, bottom:0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <XAxis dataKey="month" tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip contentStyle={{ background:'#1e2535', border:'1px solid #2a2f3d', borderRadius:'8px', fontSize:'11px' }} labelStyle={{ color:'#aaa' }} itemStyle={{ color:'#C9A227' }} />
+                      <Line type="monotone" dataKey="count" stroke="#C9A227" strokeWidth={2} dot={{ fill:'#C9A227', strokeWidth:0, r:3 }} activeDot={{ r:5 }} name="Violations" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Hourly heatmap */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Violations by Hour of Day</p>
+                  {(() => {
+                    const maxH = Math.max(...mgAnalytics.byHour, 1)
+                    return (
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(12,1fr)', gap:'3px' }}>
+                        {mgAnalytics.byHour.map((count: number, hour: number) => {
+                          const intensity = count / maxH
+                          const lbl = hour === 0 ? '12a' : hour < 12 ? `${hour}a` : hour === 12 ? '12p' : `${hour - 12}p`
+                          return (
+                            <div key={hour} title={`${lbl}: ${count} violations`}
+                              style={{ background:`rgba(201,162,39,${Math.max(0.07, intensity)})`, borderRadius:'4px', padding:'5px 2px', textAlign:'center' }}>
+                              <span style={{ color: intensity > 0.4 ? 'white' : '#555', fontSize:'8px', display:'block', lineHeight:'1.2' }}>{lbl}</span>
+                              {count > 0 && <span style={{ color:'white', fontSize:'9px', fontWeight:'bold', display:'block' }}>{count}</span>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                {/* Patrol insight */}
+                <div style={{ background:'#1a1f2e', border:'1px solid rgba(201,162,39,0.2)', borderRadius:'10px', padding:'14px' }}>
+                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 8px' }}>📍 Patrol Insight</p>
+                  <p style={{ color:'#aaa', fontSize:'13px', margin:'0', lineHeight:'1.6' }}>{mgAnalytics.insight}</p>
+                </div>
+              </>
+            )}
           </div>
         )}
 

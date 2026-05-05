@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 const BASE_URL = 'https://a1-parking.vercel.app'
 
@@ -89,8 +90,12 @@ export default function CompanyAdminPortal() {
   }
   const [showActiveCompanyDrivers, setShowActiveCompanyDrivers] = useState(true)
   const [exportMsg, setExportMsg] = useState('')
+  const [analyticsRange, setAnalyticsRange] = useState('6mo')
+  const [analyticsLoaded, setAnalyticsLoaded] = useState(false)
+  const [caAnalytics, setCAAnalytics] = useState<any>(null)
 
   useEffect(() => { loadUser() }, [])
+  useEffect(() => { if (activeTab === 'analytics') fetchCAAnalytics() }, [activeTab, analyticsRange])
 
   useEffect(() => {
     if (showCamera && videoRef.current && streamRef.current) {
@@ -636,6 +641,86 @@ export default function CompanyAdminPortal() {
     URL.revokeObjectURL(url)
   }
 
+  async function fetchCAAnalytics() {
+    setAnalyticsLoaded(false)
+    const propNames = properties.map((p: any) => p.name)
+    if (propNames.length === 0) { setCAAnalytics(null); setAnalyticsLoaded(true); return }
+    const now = new Date()
+    const mk = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`
+    const numMonths = analyticsRange === '30d' ? 1 : analyticsRange === '3mo' ? 3 : analyticsRange === '1yr' ? 12 : 6
+    const startDate = new Date(now.getFullYear(), now.getMonth() - numMonths, analyticsRange === '30d' ? now.getDate() - 30 : 1)
+
+    const [{ data: vData }, { data: drData }] = await Promise.all([
+      supabase.from('violations').select('property,created_at,tow_ticket_generated,violation_type,driver_name').in('property', propNames).gte('created_at', startDate.toISOString()),
+      supabase.from('dispute_requests').select('id').in('property', propNames).eq('status', 'pending'),
+    ])
+
+    const { data: resData } = await supabase.from('residents').select('unit').in('property', propNames)
+    const allUnits = [...new Set((resData || []).map((r: any) => r.unit).filter(Boolean))]
+    let passCount = 0
+    const passMonthMap: Record<string, number> = {}
+    if (allUnits.length > 0) {
+      const { data: pData } = await supabase.from('visitor_passes').select('created_at').in('visiting_unit', allUnits).gte('created_at', startDate.toISOString())
+      passCount = pData?.length || 0
+      ;(pData || []).forEach((p: any) => { const k = mk(new Date(p.created_at)); passMonthMap[k] = (passMonthMap[k] || 0) + 1 })
+    }
+
+    const viols = vData || []
+    const byProp: Record<string, { violations: number; tows: number }> = {}
+    const byMonthMap: Record<string, number> = {}
+    const byType: Record<string, number> = {}
+    const byDriver: Record<string, number> = {}
+    viols.forEach((v: any) => {
+      const p = v.property || 'Unknown'
+      byProp[p] = byProp[p] || { violations: 0, tows: 0 }
+      byProp[p].violations++
+      if (v.tow_ticket_generated) byProp[p].tows++
+      const k = mk(new Date(v.created_at)); byMonthMap[k] = (byMonthMap[k] || 0) + 1
+      const t = v.violation_type || 'Unknown'; byType[t] = (byType[t] || 0) + 1
+      const dn = v.driver_name || 'Unknown'; byDriver[dn] = (byDriver[dn] || 0) + 1
+    })
+
+    const monthLabels: { label: string; key: string }[] = []
+    for (let i = numMonths - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      monthLabels.push({ label: d.toLocaleString('en-US', { month: 'short' }), key: mk(d) })
+    }
+
+    const propertyChartData = Object.entries(byProp).map(([name, d]) => ({ name: name.length > 16 ? name.slice(0, 16) + '…' : name, violations: d.violations, tows: d.tows }))
+    const trendData = monthLabels.map(m => ({ month: m.label, violations: byMonthMap[m.key] || 0, passes: passMonthMap[m.key] || 0 }))
+    const typeChartData = Object.entries(byType).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, count]) => ({ name: name.length > 22 ? name.slice(0, 22) + '…' : name, count }))
+    const driverChartData = Object.entries(byDriver).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, count]) => ({ name, count }))
+
+    const totalViolations = viols.length
+    const totalTows = viols.filter((v: any) => v.tow_ticket_generated).length
+    const avgTowRate = totalViolations > 0 ? Math.round((totalTows / totalViolations) * 100) : 0
+    const pendingDisputes = drData?.length || 0
+    const avgPerProp = totalViolations / Math.max(propertyChartData.length, 1)
+
+    const insights: string[] = []
+    propertyChartData.forEach(p => {
+      if (propertyChartData.length > 1 && p.violations >= avgPerProp * 2)
+        insights.push(`⚠ ${p.name} has ${Math.round(p.violations / avgPerProp)}x more violations than average. Consider adding driver coverage.`)
+    })
+    if (trendData.length >= 2) {
+      const last = trendData[trendData.length - 1], prev = trendData[trendData.length - 2]
+      if (prev.passes > 0 && last.passes >= prev.passes * 1.2)
+        insights.push(`📈 Visitor traffic up ${Math.round(((last.passes - prev.passes) / prev.passes) * 100)}% — review pass limits.`)
+      const lastKey = monthLabels[monthLabels.length - 1]?.key, prevKey = monthLabels[monthLabels.length - 2]?.key
+      const lv = viols.filter((v: any) => mk(new Date(v.created_at)) === lastKey)
+      const pv = viols.filter((v: any) => mk(new Date(v.created_at)) === prevKey)
+      const ltr = lv.length > 0 ? lv.filter((v: any) => v.tow_ticket_generated).length / lv.length : null
+      const ptr = pv.length > 0 ? pv.filter((v: any) => v.tow_ticket_generated).length / pv.length : null
+      if (ltr !== null && ptr !== null && ptr > 0 && ltr < ptr * 0.9) insights.push('✅ Tow rate declining — enforcement is working!')
+    }
+    if (pendingDisputes > 0 && totalViolations > 0 && pendingDisputes / totalViolations > 0.05)
+      insights.push('⚖ Dispute rate elevated. Review violation accuracy.')
+    if (insights.length === 0) insights.push('✅ Everything looks normal. No anomalies detected.')
+
+    setCAAnalytics({ propertyChartData, trendData, typeChartData, driverChartData, totalViolations, avgTowRate, passCount, pendingDisputes, insights })
+    setAnalyticsLoaded(true)
+  }
+
   function openTicketFor(v: any) {
     setTicketTarget(v); setExpandedTicketId(v.id)
     setSelectedStorage(''); setTowFee(''); setMileage(''); setVin('')
@@ -1018,6 +1103,7 @@ export default function CompanyAdminPortal() {
           <button style={tab('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
           <button style={tab('qrcodes')} onClick={() => setActiveTab('qrcodes')}>QR Codes</button>
           <button style={tab('manage')} onClick={() => { setActiveTab('manage'); if (!manageLoaded) loadManageData() }}>Manage</button>
+          <button style={tab('analytics')} onClick={() => setActiveTab('analytics')}>Analytics</button>
         </div>
 
         {/* ── OVERVIEW ── */}
@@ -1877,6 +1963,105 @@ export default function CompanyAdminPortal() {
                 </div>
               )
             })()}
+          </div>
+        )}
+
+        {/* ── ANALYTICS ── */}
+        {activeTab === 'analytics' && (
+          <div>
+            {/* Date range filter */}
+            <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'16px' }}>
+              {[{k:'30d',l:'30d'},{k:'3mo',l:'3 mo'},{k:'6mo',l:'6 mo'},{k:'1yr',l:'1 yr'}].map(r => (
+                <button key={r.k} onClick={() => setAnalyticsRange(r.k)}
+                  style={{ flex:1, padding:'8px', border:'none', borderRadius:'6px', cursor:'pointer', fontWeight:'bold', fontSize:'12px', fontFamily:'Arial', background:analyticsRange === r.k ? '#C9A227' : 'transparent', color:analyticsRange === r.k ? '#0f1117' : '#888' }}>
+                  {r.l}
+                </button>
+              ))}
+            </div>
+
+            {!analyticsLoaded ? (
+              <p style={{ color:'#555', textAlign:'center', padding:'40px' }}>Loading analytics...</p>
+            ) : !caAnalytics ? (
+              <p style={{ color:'#555', textAlign:'center', padding:'40px' }}>No data available.</p>
+            ) : (
+              <>
+                {/* Metric cards */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+                  {[
+                    { label:'Total Violations', val:caAnalytics.totalViolations, sub:'in period', subColor:'#555' },
+                    { label:'Avg Tow Rate', val:`${caAnalytics.avgTowRate}%`, sub:'towed per violation', subColor:'#555', valColor: caAnalytics.avgTowRate > 30 ? '#E24B4A' : '#C9A227' },
+                    { label:'Visitor Passes', val:caAnalytics.passCount, sub:'issued in period', subColor:'#555' },
+                    { label:'Pending Disputes', val:caAnalytics.pendingDisputes, sub:'awaiting review', subColor:'#555', valColor: caAnalytics.pendingDisputes > 0 ? '#E24B4A' : '#1D9E75' },
+                  ].map((c, i) => (
+                    <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                      <p style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>{c.label}</p>
+                      <p style={{ color:(c as any).valColor || 'white', fontSize:'26px', fontWeight:'bold', margin:'0', fontFamily:'Arial' }}>{c.val}</p>
+                      <p style={{ color:c.subColor, fontSize:'11px', margin:'4px 0 0' }}>{c.sub}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Violations by property */}
+                {caAnalytics.propertyChartData.length > 0 && (
+                  <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Violations by Property</p>
+                    <ResponsiveContainer width="100%" height={Math.max(120, caAnalytics.propertyChartData.length * 44)}>
+                      <BarChart data={caAnalytics.propertyChartData} layout="vertical" margin={{ top:0, right:8, left:0, bottom:0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                        <XAxis type="number" tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                        <YAxis type="category" dataKey="name" tick={{ fill:'#aaa', fontSize:10 }} axisLine={false} tickLine={false} width={100} />
+                        <Tooltip contentStyle={{ background:'#1e2535', border:'1px solid #2a2f3d', borderRadius:'8px', fontSize:'11px' }} labelStyle={{ color:'#aaa' }} />
+                        <Bar dataKey="violations" name="Violations" fill="#C9A227" radius={[0,4,4,0]} />
+                        <Bar dataKey="tows" name="Tows" fill="#B71C1C" radius={[0,4,4,0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Violations + passes trend */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 6px' }}>Violations &amp; Visitor Passes Trend</p>
+                  <div style={{ display:'flex', gap:'16px', marginBottom:'10px' }}>
+                    <span style={{ color:'#C9A227', fontSize:'10px' }}>— Violations</span>
+                    <span style={{ color:'#1565C0', fontSize:'10px' }}>- - Visitor Passes</span>
+                  </div>
+                  <ResponsiveContainer width="100%" height={170}>
+                    <LineChart data={caAnalytics.trendData} margin={{ top:4, right:4, left:-20, bottom:0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <XAxis dataKey="month" tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip contentStyle={{ background:'#1e2535', border:'1px solid #2a2f3d', borderRadius:'8px', fontSize:'11px' }} labelStyle={{ color:'#aaa' }} />
+                      <Line type="monotone" dataKey="violations" stroke="#C9A227" strokeWidth={2} dot={{ fill:'#C9A227', strokeWidth:0, r:3 }} activeDot={{ r:5 }} name="Violations" />
+                      <Line type="monotone" dataKey="passes" stroke="#1565C0" strokeWidth={2} strokeDasharray="5 3" dot={{ fill:'#1565C0', strokeWidth:0, r:3 }} activeDot={{ r:5 }} name="Visitor Passes" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Top violation types */}
+                {caAnalytics.typeChartData.length > 0 && (
+                  <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Top Violation Types</p>
+                    <ResponsiveContainer width="100%" height={Math.max(100, caAnalytics.typeChartData.length * 40)}>
+                      <BarChart data={caAnalytics.typeChartData} layout="vertical" margin={{ top:0, right:8, left:0, bottom:0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                        <XAxis type="number" tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                        <YAxis type="category" dataKey="name" tick={{ fill:'#aaa', fontSize:10 }} axisLine={false} tickLine={false} width={130} />
+                        <Tooltip contentStyle={{ background:'#1e2535', border:'1px solid #2a2f3d', borderRadius:'8px', fontSize:'11px' }} labelStyle={{ color:'#aaa' }} itemStyle={{ color:'#C9A227' }} />
+                        <Bar dataKey="count" name="Count" fill="#C9A227" radius={[0,4,4,0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Insights panel */}
+                <div style={{ background:'#1a1f2e', border:'1px solid rgba(201,162,39,0.2)', borderRadius:'10px', padding:'14px' }}>
+                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 10px' }}>Actionable Insights</p>
+                  {caAnalytics.insights.map((insight: string, i: number) => (
+                    <p key={i} style={{ color:'#aaa', fontSize:'13px', margin:'0 0 8px', lineHeight:'1.6', paddingBottom: i < caAnalytics.insights.length - 1 ? '8px' : '0', borderBottom: i < caAnalytics.insights.length - 1 ? '1px solid #2a2f3d' : 'none' }}>{insight}</p>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 
