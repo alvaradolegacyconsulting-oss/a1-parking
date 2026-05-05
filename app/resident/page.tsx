@@ -665,12 +665,10 @@ export default function ResidentPortal() {
                     <div><span style={{ color:'#555' }}>Property</span><br/><span style={{ color:'#aaa' }}>{v.property || '—'}</span></div>
                     <div><span style={{ color:'#555' }}>Location</span><br/><span style={{ color:'#aaa' }}>{v.location || '—'}</span></div>
                   </div>
-                  {v.tow_ticket_generated && (
-                    <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
-                      style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'4px 0', display:'block', marginBottom:'8px' }}>
-                      🔍 Search FindMyTowedCar.org — Houston & Harris County area
-                    </button>
-                  )}
+                  <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
+                    style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'4px 0', display:'block', marginBottom:'8px' }}>
+                    🔍 Search FindMyTowedCar.org — Houston & Harris County area
+                  </button>
                   {v.photos && v.photos.length > 0 && (
                     <div style={{ display:'flex', gap:'6px', marginBottom:'10px' }}>
                       {v.photos.slice(0,3).map((url: string, pi: number) => (
