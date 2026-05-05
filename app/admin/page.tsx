@@ -56,6 +56,7 @@ export default function AdminPortal() {
 
   const [platformSettings, setPlatformSettings] = useState<any>({})
   const [platformMsg, setPlatformMsg] = useState('')
+  const [pricingMsg, setPricingMsg] = useState('')
 
   const [showActiveCompanies, setShowActiveCompanies] = useState(true)
   const [showActiveProperties, setShowActiveProperties] = useState(true)
@@ -152,6 +153,47 @@ export default function AdminPortal() {
     await auditLog(adminEmail, 'UPDATE_PLATFORM_SETTINGS', 'platform_settings', '1', platformSettings)
     setPlatformMsg('Platform settings saved!')
     setTimeout(() => setPlatformMsg(''), 3000)
+  }
+
+  async function savePricing() {
+    const priceFields = {
+      price_enforcement_starter: platformSettings.price_enforcement_starter ?? 49,
+      price_enforcement_growth: platformSettings.price_enforcement_growth ?? 99,
+      price_enforcement_legacy: platformSettings.price_enforcement_legacy ?? 149,
+      price_pm_essential: platformSettings.price_pm_essential ?? 29,
+      price_pm_professional: platformSettings.price_pm_professional ?? 59,
+      price_pm_enterprise: platformSettings.price_pm_enterprise ?? 99,
+      addon_enforcement_starter_live_support: platformSettings.addon_enforcement_starter_live_support ?? 100,
+      addon_enforcement_growth_live_support: platformSettings.addon_enforcement_growth_live_support ?? 50,
+      addon_enforcement_starter_analytics: platformSettings.addon_enforcement_starter_analytics ?? 25,
+      addon_enforcement_growth_analytics: platformSettings.addon_enforcement_growth_analytics ?? 15,
+      addon_enforcement_starter_camera_scan: platformSettings.addon_enforcement_starter_camera_scan ?? 20,
+      addon_enforcement_starter_video_upload: platformSettings.addon_enforcement_starter_video_upload ?? 15,
+      addon_enforcement_growth_video_upload: platformSettings.addon_enforcement_growth_video_upload ?? 10,
+      addon_enforcement_starter_white_label: platformSettings.addon_enforcement_starter_white_label ?? 30,
+      addon_enforcement_starter_extra_property: platformSettings.addon_enforcement_starter_extra_property ?? 10,
+      addon_enforcement_growth_extra_property: platformSettings.addon_enforcement_growth_extra_property ?? 8,
+      addon_enforcement_legacy_extra_property: platformSettings.addon_enforcement_legacy_extra_property ?? 5,
+      addon_enforcement_starter_extra_driver: platformSettings.addon_enforcement_starter_extra_driver ?? 8,
+      addon_enforcement_growth_extra_driver: platformSettings.addon_enforcement_growth_extra_driver ?? 5,
+      addon_enforcement_legacy_extra_driver: platformSettings.addon_enforcement_legacy_extra_driver ?? 3,
+      addon_pm_essential_live_support: platformSettings.addon_pm_essential_live_support ?? 100,
+      addon_pm_professional_live_support: platformSettings.addon_pm_professional_live_support ?? 50,
+      addon_pm_essential_analytics: platformSettings.addon_pm_essential_analytics ?? 20,
+      addon_pm_professional_analytics: platformSettings.addon_pm_professional_analytics ?? 10,
+      addon_pm_essential_visitor_qr: platformSettings.addon_pm_essential_visitor_qr ?? 15,
+      addon_pm_essential_registration_qr: platformSettings.addon_pm_essential_registration_qr ?? 15,
+      addon_pm_professional_registration_qr: platformSettings.addon_pm_professional_registration_qr ?? 10,
+      addon_pm_essential_extra_property: platformSettings.addon_pm_essential_extra_property ?? 8,
+      addon_pm_professional_extra_property: platformSettings.addon_pm_professional_extra_property ?? 6,
+      addon_pm_enterprise_extra_property: platformSettings.addon_pm_enterprise_extra_property ?? 4,
+    }
+    const { error } = await supabase.from('platform_settings').upsert({ id: 1, ...priceFields, updated_at: new Date().toISOString() })
+    if (error) { setPricingMsg('Error saving pricing'); return }
+    setPlatformSettings((prev: any) => ({ ...prev, ...priceFields }))
+    await auditLog(adminEmail, 'UPDATE_PRICING', 'platform_settings', '1', priceFields)
+    setPricingMsg('Pricing updated successfully!')
+    setTimeout(() => setPricingMsg(''), 3000)
   }
 
   async function fetchCompanies() {
@@ -600,6 +642,32 @@ export default function AdminPortal() {
   const card: React.CSSProperties = { background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }
   const addCard: React.CSSProperties = { background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }
   const editCard: React.CSSProperties = { background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }
+  const pInp: React.CSSProperties = { ...inp, marginTop:0, marginBottom:0, padding:'4px 6px', fontSize:'11px', width:'100%' }
+  const pCell = (field: string, def: number) => (
+    <div style={{ display:'flex', alignItems:'center', gap:'2px' }}>
+      <span style={{ color:'#555', fontSize:'11px' }}>$</span>
+      <input type="number" step="0.01" min="0"
+        value={platformSettings[field] ?? def}
+        onChange={e => setPlatformSettings((p: any) => ({ ...p, [field]: parseFloat(e.target.value) }))}
+        style={pInp} />
+    </div>
+  )
+  const iCell = <span style={{ color:'#555', fontSize:'11px', fontStyle:'italic', display:'block', textAlign:'center' as const }}>Incl.</span>
+  const tierPriceMap: Record<string, string> = {
+    'enforcement:starter': 'price_enforcement_starter',
+    'enforcement:growth': 'price_enforcement_growth',
+    'enforcement:legacy': 'price_enforcement_legacy',
+    'pm:essential': 'price_pm_essential',
+    'pm:professional': 'price_pm_professional',
+    'pm:enterprise': 'price_pm_enterprise',
+  }
+  const getCompanyPrice = (c: any) => {
+    const key = `${c.tier_type || 'enforcement'}:${c.tier || 'legacy'}`
+    const field = tierPriceMap[key]
+    if (!field) return null
+    const val = platformSettings[field]
+    return val != null ? `$${Number(val).toFixed(0)}/mo` : null
+  }
 
   if (loading) return (
     <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial' }}>
@@ -756,9 +824,10 @@ export default function AdminPortal() {
                     <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{c.name}</p>
                     <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{[c.email, c.phone].filter(Boolean).join(' · ') || '—'}</p>
                     {(c.tier || c.tier_type) && (
-                      <div style={{ display:'flex', gap:'4px', marginTop:'4px', flexWrap:'wrap' as const }}>
+                      <div style={{ display:'flex', gap:'4px', marginTop:'4px', flexWrap:'wrap' as const, alignItems:'center' }}>
                         {c.tier_type && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'10px', background: c.tier_type === 'enforcement' ? '#1a1230' : '#0e1a2a', color: c.tier_type === 'enforcement' ? '#b39ddb' : '#4fc3f7', border:`1px solid ${c.tier_type === 'enforcement' ? '#7c4dff' : '#0288d1'}`, textTransform:'uppercase' as const, letterSpacing:'0.05em', fontWeight:'bold' }}>{c.tier_type === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</span>}
                         {c.tier && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'10px', background:'#1a1f0e', color:'#C9A227', border:'1px solid #C9A227', textTransform:'uppercase' as const, letterSpacing:'0.05em', fontWeight:'bold' }}>{c.tier}</span>}
+                        {getCompanyPrice(c) && <span style={{ color:'#555', fontSize:'11px' }}>{getCompanyPrice(c)}</span>}
                       </div>
                     )}
                   </div>
@@ -1426,6 +1495,141 @@ export default function AdminPortal() {
               <input value={platformSettings.default_support_website || ''} onChange={e => setPlatformSettings({...platformSettings, default_support_website: e.target.value})} placeholder="a1wreckerllc.net" style={inp} />
 
               <button onClick={savePlatformSettings} style={{ ...bGold, width:'100%', marginTop:'4px' }}>Save Support Defaults</button>
+            </div>
+
+            {/* Section C — Base Subscription Pricing */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+              <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>Base Subscription Pricing</p>
+              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Changes take effect for new signups only. Existing subscribers keep their current price unless manually updated.</p>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' }}>
+                <div style={{ background:'#1e2535', borderRadius:'8px', padding:'12px' }}>
+                  <p style={{ color:'#b39ddb', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 10px' }}>Enforcement Track</p>
+                  <label style={lbl}>Starter /mo</label>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px', marginBottom:'10px' }}>
+                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
+                    <input type="number" step="0.01" min="0" value={platformSettings.price_enforcement_starter ?? 49} onChange={e => setPlatformSettings((p: any) => ({...p, price_enforcement_starter: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+                  </div>
+                  <label style={lbl}>Growth /mo</label>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px', marginBottom:'10px' }}>
+                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
+                    <input type="number" step="0.01" min="0" value={platformSettings.price_enforcement_growth ?? 99} onChange={e => setPlatformSettings((p: any) => ({...p, price_enforcement_growth: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+                  </div>
+                  <label style={lbl}>Legacy /mo</label>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
+                    <input type="number" step="0.01" min="0" value={platformSettings.price_enforcement_legacy ?? 149} onChange={e => setPlatformSettings((p: any) => ({...p, price_enforcement_legacy: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+                  </div>
+                </div>
+                <div style={{ background:'#1e2535', borderRadius:'8px', padding:'12px' }}>
+                  <p style={{ color:'#4fc3f7', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 10px' }}>Property Mgmt Track</p>
+                  <label style={lbl}>Essential /mo</label>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px', marginBottom:'10px' }}>
+                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
+                    <input type="number" step="0.01" min="0" value={platformSettings.price_pm_essential ?? 29} onChange={e => setPlatformSettings((p: any) => ({...p, price_pm_essential: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+                  </div>
+                  <label style={lbl}>Professional /mo</label>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px', marginBottom:'10px' }}>
+                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
+                    <input type="number" step="0.01" min="0" value={platformSettings.price_pm_professional ?? 59} onChange={e => setPlatformSettings((p: any) => ({...p, price_pm_professional: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+                  </div>
+                  <label style={lbl}>Enterprise /mo</label>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
+                    <input type="number" step="0.01" min="0" value={platformSettings.price_pm_enterprise ?? 99} onChange={e => setPlatformSettings((p: any) => ({...p, price_pm_enterprise: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Section D — À La Carte Add-on Pricing */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+              <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>À La Carte Add-on Pricing</p>
+              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Add-on prices vary by base tier. Features marked Incl. are part of that tier and cannot be purchased separately.</p>
+
+              {/* Enforcement add-ons table */}
+              <p style={{ color:'#b39ddb', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 8px' }}>Enforcement Track Add-ons</p>
+              <div style={{ display:'grid', gridTemplateColumns:'1.6fr 1fr 1fr 1fr', gap:'6px', alignItems:'center', marginBottom:'16px' }}>
+                <div />
+                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Starter</p>
+                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Growth</p>
+                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Legacy</p>
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Live Support</p>
+                {pCell('addon_enforcement_starter_live_support', 100)}
+                {pCell('addon_enforcement_growth_live_support', 50)}
+                {iCell}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Analytics</p>
+                {pCell('addon_enforcement_starter_analytics', 25)}
+                {pCell('addon_enforcement_growth_analytics', 15)}
+                {iCell}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Camera Scan</p>
+                {pCell('addon_enforcement_starter_camera_scan', 20)}
+                {iCell}
+                {iCell}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Video Upload</p>
+                {pCell('addon_enforcement_starter_video_upload', 15)}
+                {pCell('addon_enforcement_growth_video_upload', 10)}
+                {iCell}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>White Label</p>
+                {pCell('addon_enforcement_starter_white_label', 30)}
+                {iCell}
+                {iCell}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Extra Property</p>
+                {pCell('addon_enforcement_starter_extra_property', 10)}
+                {pCell('addon_enforcement_growth_extra_property', 8)}
+                {pCell('addon_enforcement_legacy_extra_property', 5)}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Extra Driver</p>
+                {pCell('addon_enforcement_starter_extra_driver', 8)}
+                {pCell('addon_enforcement_growth_extra_driver', 5)}
+                {pCell('addon_enforcement_legacy_extra_driver', 3)}
+              </div>
+
+              {/* PM add-ons table */}
+              <p style={{ color:'#4fc3f7', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 8px' }}>Property Mgmt Track Add-ons</p>
+              <div style={{ display:'grid', gridTemplateColumns:'1.6fr 1fr 1fr 1fr', gap:'6px', alignItems:'center', marginBottom:'16px' }}>
+                <div />
+                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Essential</p>
+                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Professional</p>
+                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Enterprise</p>
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Live Support</p>
+                {pCell('addon_pm_essential_live_support', 100)}
+                {pCell('addon_pm_professional_live_support', 50)}
+                {iCell}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Analytics</p>
+                {pCell('addon_pm_essential_analytics', 20)}
+                {pCell('addon_pm_professional_analytics', 10)}
+                {iCell}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Visitor QR</p>
+                {pCell('addon_pm_essential_visitor_qr', 15)}
+                {iCell}
+                {iCell}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Registration QR</p>
+                {pCell('addon_pm_essential_registration_qr', 15)}
+                {pCell('addon_pm_professional_registration_qr', 10)}
+                {iCell}
+
+                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Extra Property</p>
+                {pCell('addon_pm_essential_extra_property', 8)}
+                {pCell('addon_pm_professional_extra_property', 6)}
+                {pCell('addon_pm_enterprise_extra_property', 4)}
+              </div>
+
+              {pricingMsg && (
+                <div style={{ background: pricingMsg.includes('Error') ? '#3a1a1a' : '#1a3a1a', border:`1px solid ${pricingMsg.includes('Error') ? '#b71c1c' : '#2e7d32'}`, borderRadius:'8px', padding:'10px 14px', marginBottom:'10px' }}>
+                  <p style={{ color: pricingMsg.includes('Error') ? '#f44336' : '#4caf50', fontSize:'12px', margin:'0' }}>{pricingMsg}</p>
+                </div>
+              )}
+              <button onClick={savePricing} style={{ ...bGold, width:'100%' }}>Save All Pricing</button>
             </div>
 
             {platformSettings.updated_at && (
