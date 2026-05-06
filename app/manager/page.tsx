@@ -636,11 +636,11 @@ export default function ManagerPortal() {
   }
 
   const tabStyle = (tab: string) => ({
-    flex:1, padding:'8px', border:'none', borderRadius:'6px',
+    padding:'8px 10px', border:'none', borderRadius:'6px',
     cursor:'pointer', fontWeight:'bold' as const, fontSize:'11px',
     background: activeTab === tab ? '#C9A227' : '#1e2535',
     color: activeTab === tab ? '#0f1117' : '#888',
-    fontFamily:'Arial, sans-serif'
+    fontFamily:'Arial, sans-serif', whiteSpace:'nowrap' as const
   })
 
   const inputStyle: React.CSSProperties = {
@@ -716,7 +716,7 @@ export default function ManagerPortal() {
           ))}
         </div>
 
-        <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', background:'#1e2535', borderRadius:'8px', padding:'6px', marginBottom:'16px' }}>
           <button style={tabStyle('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
           <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>
             Vehicles{pendingVehicles.length > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingVehicles.length}</span>}
