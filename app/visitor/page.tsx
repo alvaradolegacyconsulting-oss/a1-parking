@@ -118,10 +118,16 @@ function VisitorForm() {
     }
   }
 
+  function formatTimestamp(d: Date) {
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true
+    }).format(d)
+  }
   function formatExpiry(hours: string) {
     const d = new Date()
     d.setHours(d.getHours() + parseInt(hours))
-    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) + 
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) +
            ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
 
@@ -144,24 +150,25 @@ function VisitorForm() {
             {form.vehicle_desc && <p style={{ color:'#C9A227', fontSize:'12px', margin:'0 0 16px', textAlign:'center' }}>{form.vehicle_desc}</p>}
             {!form.vehicle_desc && <div style={{ marginBottom:'16px' }} />}
 
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', fontSize:'12px' }}>
-              <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px' }}>
-                <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 3px' }}>Property</p>
-                <p style={{ color:'white', fontWeight:'bold', margin:'0', lineHeight:'1.4' }}>{propertyName}</p>
-              </div>
-              <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px' }}>
-                <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 3px' }}>Visiting Unit</p>
-                <p style={{ color:'white', fontWeight:'bold', margin:'0' }}>{form.unit}</p>
-              </div>
-              <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px' }}>
-                <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 3px' }}>Duration</p>
-                <p style={{ color:'white', fontWeight:'bold', margin:'0' }}>{form.duration} hours</p>
-              </div>
-              <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px' }}>
-                <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 3px' }}>Valid Until</p>
-                <p style={{ color:'white', fontWeight:'bold', margin:'0', fontSize:'11px' }}>{formatExpiry(form.duration)}</p>
-              </div>
-            </div>
+            {(() => {
+              const issuedAt = new Date()
+              const expiresAt = new Date(issuedAt.getTime() + parseInt(form.duration) * 3600000)
+              const tile = (label: string, value: React.ReactNode, span?: boolean) => (
+                <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px', ...(span ? { gridColumn:'span 2' } : {}) }}>
+                  <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase' as const, letterSpacing:'0.08em', margin:'0 0 3px' }}>{label}</p>
+                  <p style={{ color:'white', fontWeight:'bold', margin:'0', fontSize:'11px', lineHeight:'1.4' }}>{value}</p>
+                </div>
+              )
+              return (
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', fontSize:'12px' }}>
+                  {tile('Property', propertyName)}
+                  {tile('Visiting Unit', form.unit)}
+                  {tile('Duration', `${form.duration} hours`)}
+                  {tile('Issued', formatTimestamp(issuedAt))}
+                  {tile('Valid Until', formatTimestamp(expiresAt), true)}
+                </div>
+              )
+            })()}
 
             <div style={{ height:'3px', background:'rgba(255,255,255,0.08)', borderRadius:'2px', marginTop:'16px' }}>
               <div style={{ width:'100%', height:'100%', background:'#C9A227', borderRadius:'2px' }} />

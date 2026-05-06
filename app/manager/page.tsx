@@ -288,6 +288,14 @@ export default function ManagerPortal() {
   async function declineVehicle(id: string) {
     await supabase.from('vehicles').update({ is_active: false, status: 'declined', manager_note: pendingNotes[id] || null }).eq('id', id)
     await logAudit({ action: 'DECLINE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'declined', property: manager.name } })
+    const { data: veh } = await supabase.from('vehicles').select('unit, property').eq('id', id).single()
+    if (veh) {
+      await supabase.from('residents')
+        .update({ status: 'active', is_active: true })
+        .ilike('unit', veh.unit)
+        .ilike('property', veh.property)
+        .eq('status', 'pending')
+    }
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
     fetchVehicles(manager.name)
   }
@@ -308,6 +316,11 @@ export default function ManagerPortal() {
       supabase.from('vehicles').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', v.id)
         .then(() => logAudit({ action: 'DECLINE_VEHICLE', table_name: 'vehicles', record_id: v.id, new_values: { status: 'declined', property: manager.name } }))
     ))
+    await supabase.from('residents')
+      .update({ status: 'active', is_active: true })
+      .ilike('unit', unit)
+      .ilike('property', manager.name)
+      .eq('status', 'pending')
     setUnitNotes(n => { const c = {...n}; delete c[unit]; return c })
     fetchVehicles(manager.name)
   }

@@ -96,12 +96,21 @@ function RegisterForm() {
         return
       }
 
-      await supabase.rpc('insert_user_role', {
+      const rpcResult = await supabase.rpc('insert_user_role', {
         p_email: account.email.trim().toLowerCase(),
         p_role: 'resident',
         p_company: company || null,
         p_property: property ? [property] : [],
       })
+      if (rpcResult.error) {
+        console.error('insert_user_role failed:', rpcResult.error)
+        await supabase.from('user_roles').insert([{
+          email: account.email.trim().toLowerCase(),
+          role: 'resident',
+          company: company || null,
+          property: property ? [property] : [],
+        }])
+      }
 
       for (const v of vehicles) {
         if (!v.plate.trim()) continue
