@@ -437,7 +437,7 @@ export default function DriverPortal() {
         <div><div class="sig-line">Operator Signature</div></div>
         <div><div class="sig-line">Date</div></div>
       </div>
-      <div class="ftr">A1 Wrecker, LLC &middot; Houston's #1 Towing &amp; Recovery &middot; a1wreckerllc.net<br>Generated ${new Date().toLocaleString()}</div>
+      <div class="ftr">${driver?.company || localStorage.getItem('company_name') || 'A1 Wrecker, LLC'} &middot; ${localStorage.getItem('company_support_website') || localStorage.getItem('company_support_phone') || ''}<br>Generated ${new Date().toLocaleString()}</div>
       <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center">
         <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
         <a href="mailto:?subject=${mailSubject}&body=${mailBody}" style="padding:11px 22px;background:#1e3a5f;color:#fff;font-weight:bold;font-size:13px;border-radius:7px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center">Email Ticket</a>

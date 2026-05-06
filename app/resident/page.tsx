@@ -20,9 +20,9 @@ export default function ResidentPortal() {
   const [newVehicle, setNewVehicle] = useState({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
   const [requestMsg, setRequestMsg] = useState('')
   const [passError, setPassError] = useState('')
-  const [supportPhone, setSupportPhone] = useState('346-428-7864')
-  const [supportEmail, setSupportEmail] = useState('a1wrecker2023@gmail.com')
-  const [supportWebsite, setSupportWebsite] = useState('a1wreckerllc.net')
+  const [supportPhone, setSupportPhone] = useState('')
+  const [supportEmail, setSupportEmail] = useState('')
+  const [supportWebsite, setSupportWebsite] = useState('')
   const [changePwForm, setChangePwForm] = useState({ current: '', newPw: '', confirmPw: '' })
   const [changePwMsg, setChangePwMsg] = useState('')
   const [changePwLoading, setChangePwLoading] = useState(false)
@@ -39,9 +39,9 @@ export default function ResidentPortal() {
     if (activeTab === 'myviol' && resident) { fetchMyViolations(); fetchMyDisputes() }
   }, [activeTab, resident])
   useEffect(() => {
-    setSupportPhone(localStorage.getItem('company_support_phone') || '346-428-7864')
-    setSupportEmail(localStorage.getItem('company_support_email') || 'a1wrecker2023@gmail.com')
-    setSupportWebsite(localStorage.getItem('company_support_website') || 'a1wreckerllc.net')
+    setSupportPhone(localStorage.getItem('company_support_phone') || '')
+    setSupportEmail(localStorage.getItem('company_support_email') || '')
+    setSupportWebsite(localStorage.getItem('company_support_website') || '')
   }, [])
 
   async function loadResident() {
@@ -826,9 +826,11 @@ export default function ResidentPortal() {
           </div>
         )}
 
-      <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'24px' }}>
-        {supportPhone} · {supportEmail} · {supportWebsite}
-      </p>
+      {(supportPhone || supportEmail || supportWebsite) && (
+        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'24px' }}>
+          {[supportPhone, supportEmail, supportWebsite].filter(Boolean).join(' · ')}
+        </p>
+      )}
       </div>
     </main>
   )

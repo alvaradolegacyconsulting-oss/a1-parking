@@ -1,253 +1,280 @@
 'use client'
 import { useState } from 'react'
-import { supabase } from './supabase'
 
-export default function Home() {
-  const [plate, setPlate] = useState('')
-  const [result, setResult] = useState<any>(null)
-  const [loading, setLoading] = useState(false)
-  const [showViolation, setShowViolation] = useState(false)
-  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '' })
-  const [photos, setPhotos] = useState<File[]>([])
+const GOLD = '#C9A227'
+const BG = '#0a0d14'
+const CARD_BG = 'rgba(255,255,255,0.02)'
+const BORDER = 'rgba(255,255,255,0.06)'
+const TEXT = '#e2e8f0'
+const MUTED = '#64748b'
 
-  async function searchPlate() {
-    setLoading(true)
-    setResult(null)
-    const clean = plate.toUpperCase().trim()
+export default function Landing() {
+  const [contact, setContact] = useState({ name: '', email: '', type: 'General inquiry', message: '' })
+  const [activeTrack, setActiveTrack] = useState<'enforcement' | 'pm'>('enforcement')
 
-    const { data: vehicle } = await supabase
-      .from('vehicles')
-      .select('*')
-      .ilike('plate', clean)
-      .single()
-
-    if (vehicle && vehicle.is_active) {
-      setLoading(false)
-      setResult({ status: 'authorized', data: vehicle })
-      return
-    }
-
-    if (vehicle && !vehicle.is_active) {
-      setLoading(false)
-      setResult({ status: 'expired', data: vehicle })
-      return
-    }
-
-    const now = new Date().toISOString()
-    const { data: pass } = await supabase
-      .from('visitor_passes')
-      .select('*')
-      .ilike('plate', clean)
-      .eq('is_active', true)
-      .gte('expires_at', now)
-      .single()
-
-    setLoading(false)
-    if (pass) {
-      setResult({ status: 'visitor', data: pass })
-    } else {
-      setResult({ status: 'notfound' })
-    }
+  function sendContact() {
+    const subject = encodeURIComponent(`[${contact.type}] from ${contact.name}`)
+    const body = encodeURIComponent(`Name: ${contact.name}\nEmail: ${contact.email}\nType: ${contact.type}\n\n${contact.message}`)
+    window.location.href = `mailto:support@shieldmylot.com?subject=${subject}&body=${body}`
   }
 
-  async function submitViolation() {
-    const photoUrls: string[] = []
-
-    for (const photo of photos) {
-      const fileName = `${Date.now()}-${photo.name}`
-      const { error: uploadError } = await supabase.storage
-        .from('violation-photos')
-        .upload(fileName, photo)
-      if (!uploadError) {
-        const { data } = supabase.storage
-          .from('violation-photos')
-          .getPublicUrl(fileName)
-        photoUrls.push(data.publicUrl)
-      }
-    }
-
-    const { error } = await supabase
-      .from('violations')
-      .insert([{
-        plate: plate.toUpperCase().trim(),
-        violation_type: violation.type,
-        location: violation.location,
-        notes: violation.notes,
-        property: violation.property,
-        photos: photoUrls,
-        created_at: new Date().toISOString()
-      }])
-
-    if (error) {
-      alert('Error saving violation: ' + error.message)
-    } else {
-      alert(`Violation logged! ${photoUrls.length} photo(s) uploaded.`)
-      setShowViolation(false)
-      setViolation({ type: '', location: '', notes: '', property: '' })
-      setPhotos([])
-    }
+  const inputStyle: React.CSSProperties = {
+    background: '#0a0d14', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
+    padding: '12px 16px', color: '#fff', width: '100%', fontSize: 14,
+    marginBottom: 12, boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit',
   }
+  const labelStyle: React.CSSProperties = { color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }
+
+  const enfTiers = [
+    {
+      name: 'Starter', base: 99, perProp: 15, perDriver: 10,
+      features: ['Up to 3 properties', 'Unlimited violations', 'QR code registration', 'Resident portal', 'Visitor pass system', 'Driver app access', 'Email support'],
+    },
+    {
+      name: 'Growth', base: 149, perProp: 12, perDriver: 8, popular: true,
+      features: ['Up to 10 properties', 'Everything in Starter', 'Analytics dashboard', 'Bulk CSV upload', 'Camera scan assist', 'Dispute management', 'Priority email support'],
+    },
+    {
+      name: 'Legacy', base: 199, perProp: 10, perDriver: 6,
+      features: ['Unlimited properties', 'Everything in Growth', 'White-label branding', 'Advanced analytics', 'Custom integrations', 'Dedicated account manager', 'Priority email support'],
+    },
+  ]
+
+  const pmTiers = [
+    {
+      name: 'Essential', base: 79, perProp: 20,
+      features: ['Up to 3 properties', 'Resident portal', 'Visitor pass system', 'QR code registration', 'Manager dashboard', 'Email support'],
+    },
+    {
+      name: 'Professional', base: 129, perProp: 15, popular: true,
+      features: ['Up to 10 properties', 'Everything in Essential', 'Analytics dashboard', 'Registration QR codes', 'Dispute management', 'Priority email support'],
+    },
+    {
+      name: 'Enterprise', base: 179, perProp: 10,
+      features: ['Unlimited properties', 'Everything in Professional', 'White-label branding', 'Custom integrations', 'Dedicated account manager', 'Priority email support'],
+    },
+  ]
+
+  const testimonials = [
+    { quote: 'ShieldMyLot eliminated our unauthorized parking problem within the first week. Our residents actually thank us for it now.', name: 'Property Manager', company: 'Houston Area Apartment Community' },
+    { quote: 'The violation tracking and tow ticket system saves us hours of paperwork every month. Worth every penny.', name: 'Operations Director', company: 'Texas Gulf Coast Property Group' },
+    { quote: "We manage 8 communities and the multi-property dashboard is exactly what we needed. Set it up in an afternoon.", name: 'Regional Manager', company: 'Greater Houston Residential Services' },
+  ]
+
+  const features = [
+    { icon: '🚗', title: 'Plate-based enforcement', body: 'Every registered vehicle gets a digital permit tied to their plate. Drivers verify against the live registry in seconds.' },
+    { icon: '📱', title: 'QR code self-registration', body: 'Residents scan a property QR code, register their vehicles in minutes, and get instant manager approval.' },
+    { icon: '🎫', title: 'Visitor pass system', body: 'Residents issue digital visitor passes to guests. Passes auto-expire. No paper, no clipboards, no disputes.' },
+    { icon: '📊', title: 'Analytics & reporting', body: 'Track violations, pass usage, tow events, and occupancy trends across all your properties from one dashboard.' },
+    { icon: '⚖️', title: 'Dispute management', body: 'Built-in dispute workflow lets residents contest violations with evidence. Managers resolve in-app, not over email.' },
+    { icon: '🏗️', title: 'Multi-property management', body: 'Manage your entire portfolio from one login. Each property has its own rules, managers, and resident database.' },
+  ]
 
   return (
-    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-      
-      <div style={{ marginBottom:'32px', textAlign:'center' }}>
-        <img src="/logo.jpeg" alt="A1 Wrecker" style={{ width:'80px', height:'80px', borderRadius:'12px', marginBottom:'12px', border:'2px solid #C9A227' }} />
-        <h1 style={{ color:'#C9A227', fontSize:'28px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
-        <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Houston's #1 Towing & Recovery · Plate Lookup</p>
-      </div>
+    <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'system-ui, Arial, sans-serif' }}>
 
-      <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'32px', width:'100%', maxWidth:'420px' }}>
-        <label style={{ color:'#aaa', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.1em' }}>License Plate</label>
-        <input
-          value={plate}
-          onChange={e => setPlate(e.target.value.toUpperCase())}
-          onKeyDown={e => e.key === 'Enter' && searchPlate()}
-          placeholder="ABC1234"
-          style={{ display:'block', width:'100%', marginTop:'8px', padding:'14px', fontSize:'22px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.1em', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box' }}
-        />
-        <button
-          onClick={searchPlate}
-          disabled={loading || !plate}
-          style={{ marginTop:'12px', width:'100%', padding:'14px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor:'pointer' }}
-        >
-          {loading ? 'Searching...' : 'Search Plate'}
-        </button>
-
-        {result && (
-          <div style={{ marginTop:'20px', padding:'16px', borderRadius:'8px',
-            background: result.status === 'authorized' ? '#1a3a1a' : result.status === 'expired' ? '#3a2a00' : result.status === 'visitor' ? '#2a2000' : '#3a1a1a',
-            border: `1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'expired' ? '#e65100' : result.status === 'visitor' ? '#f59e0b' : '#b71c1c'}`
-          }}>
-            {result.status === 'authorized' && (
-              <>
-                <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'16px', margin:'0 0 10px' }}>✓ AUTHORIZED</p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Unit: <span style={{color:'white'}}>{result.data.unit}</span></p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Vehicle: <span style={{color:'white'}}>{result.data.color} {result.data.make} {result.data.model} {result.data.year}</span></p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Space: <span style={{color:'white'}}>{result.data.space}</span></p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Property: <span style={{color:'white'}}>{result.data.property}</span></p>
-              </>
-            )}
-            {result.status === 'expired' && (
-              <>
-                <p style={{ color:'#ff9800', fontWeight:'bold', fontSize:'16px', margin:'0 0 10px' }}>⚠ PERMIT EXPIRED</p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Unit: <span style={{color:'white'}}>{result.data.unit}</span></p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Vehicle: <span style={{color:'white'}}>{result.data.color} {result.data.make} {result.data.model}</span></p>
-              </>
-            )}
-            {result.status === 'visitor' && (
-              <>
-                <p style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'16px', margin:'0 0 10px' }}>✓ VALID VISITOR PASS</p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Visiting: <span style={{color:'white'}}>{result.data.visiting_unit}</span></p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Vehicle: <span style={{color:'white'}}>{result.data.vehicle_desc || '—'}</span></p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0' }}>Expires: <span style={{color:'white'}}>{new Date(result.data.expires_at).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}</span></p>
-                <p style={{ color:'#f59e0b', fontSize:'12px', margin:'8px 0 0', fontWeight:'bold' }}>Do not tow — active visitor pass</p>
-              </>
-            )}
-            {result.status === 'notfound' && (
-              <>
-                <p style={{ color:'#f44336', fontWeight:'bold', fontSize:'16px', margin:'0 0 6px' }}>✗ NOT FOUND</p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'0 0 12px' }}>This plate is not registered. May be subject to towing.</p>
-                <button
-                  onClick={() => setShowViolation(true)}
-                  style={{ width:'100%', padding:'12px', background:'#b71c1c', color:'white', fontWeight:'bold', fontSize:'14px', border:'none', borderRadius:'8px', cursor:'pointer' }}
-                >
-                  Issue Violation
-                </button>
-              </>
-            )}
+      {/* ── NAV ── */}
+      <nav style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(10,13,20,0.92)', backdropFilter: 'blur(12px)', borderBottom: `1px solid ${BORDER}`, padding: '0 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src="/logo.jpeg" alt="ShieldMyLot" style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${GOLD}` }} onError={e => (e.currentTarget.style.display = 'none')} />
+            <span style={{ color: GOLD, fontWeight: 'bold', fontSize: 18, letterSpacing: '-0.02em' }}>ShieldMyLot</span>
           </div>
-        )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+            <a href="#features" style={{ color: MUTED, fontSize: 14, textDecoration: 'none' }}>Features</a>
+            <a href="#pricing" style={{ color: MUTED, fontSize: 14, textDecoration: 'none' }}>Pricing</a>
+            <a href="#contact" style={{ color: MUTED, fontSize: 14, textDecoration: 'none' }}>Contact</a>
+            <a href="/login" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 13, padding: '8px 18px', borderRadius: 8, textDecoration: 'none' }}>Sign in</a>
+          </div>
+        </div>
+      </nav>
 
-        {showViolation && (
-          <div style={{ marginTop:'20px', background:'#1a0000', border:'1px solid #b71c1c', borderRadius:'8px', padding:'16px' }}>
-            <p style={{ color:'#f44336', fontWeight:'bold', fontSize:'15px', margin:'0 0 14px' }}>Issue Violation — {plate.toUpperCase()}</p>
-            
-            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Property</label>
-            <select
-              value={violation.property}
-              onChange={e => setViolation({...violation, property: e.target.value})}
-              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px' }}
-            >
-              <option value=''>Select property...</option>
-              <option>Oakwood Heights</option>
-              <option>Riverdale Apartments</option>
-              <option>Sunset Plaza</option>
-            </select>
+      {/* ── HERO ── */}
+      <section style={{ maxWidth: 1100, margin: '0 auto', padding: '100px 24px 80px', textAlign: 'center' }}>
+        <div style={{ display: 'inline-block', background: 'rgba(201,162,39,0.1)', border: `1px solid rgba(201,162,39,0.3)`, borderRadius: 20, padding: '6px 16px', fontSize: 12, color: GOLD, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 24 }}>
+          Texas Parking Management Platform
+        </div>
+        <h1 style={{ fontSize: 'clamp(36px, 6vw, 64px)', fontWeight: 800, lineHeight: 1.1, margin: '0 0 24px', letterSpacing: '-0.03em' }}>
+          Stop unauthorized parking.<br />
+          <span style={{ color: GOLD }}>Start enforcing.</span>
+        </h1>
+        <p style={{ fontSize: 18, color: MUTED, maxWidth: 580, margin: '0 auto 40px', lineHeight: 1.7 }}>
+          ShieldMyLot gives property managers and towing companies a complete parking enforcement system — resident registration, visitor passes, violation tracking, and tow ticketing in one platform.
+        </p>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <a href="#contact" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Get started →</a>
+          <a href="#features" style={{ background: CARD_BG, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>See how it works</a>
+        </div>
+        <p style={{ color: MUTED, fontSize: 12, marginTop: 20 }}>Licensed for Texas operations · Harris County jurisdiction</p>
+      </section>
 
-            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Violation Type</label>
-            <select
-              value={violation.type}
-              onChange={e => setViolation({...violation, type: e.target.value})}
-              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px' }}
-            >
-              <option value=''>Select type...</option>
-              <option>No Parking Permit</option>
-              <option>Expired Visitor Pass</option>
-              <option>Wrong Space</option>
-              <option>Fire Lane</option>
-              <option>Handicap Zone</option>
-              <option>Blocking Driveway</option>
-            </select>
-
-            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Space / Location</label>
-            <input
-              value={violation.location}
-              onChange={e => setViolation({...violation, location: e.target.value})}
-              placeholder="e.g. Space A-14"
-              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
-            />
-
-            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Photos</label>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={e => setPhotos(Array.from(e.target.files || []))}
-              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'#aaa', fontSize:'13px', boxSizing:'border-box' }}
-            />
-            {photos.length > 0 && (
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px', marginBottom:'12px' }}>
-                {photos.map((photo, i) => (
-                  <div key={i} style={{ background:'#1e2535', borderRadius:'6px', padding:'6px', fontSize:'10px', color:'#aaa', textAlign:'center', border:'1px solid #3a4055' }}>
-                    📷 {photo.name.substring(0, 12)}...
-                  </div>
-                ))}
+      {/* ── FEATURES ── */}
+      <section id="features" style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '80px 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 56 }}>
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Everything you need</h2>
+            <p style={{ color: MUTED, fontSize: 16, margin: 0 }}>One platform for enforcement companies and property managers alike.</p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+            {features.map((f, i) => (
+              <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 28 }}>
+                <div style={{ fontSize: 28, marginBottom: 14 }}>{f.icon}</div>
+                <h3 style={{ color: TEXT, fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>{f.title}</h3>
+                <p style={{ color: MUTED, fontSize: 14, lineHeight: 1.7, margin: 0 }}>{f.body}</p>
               </div>
-            )}
+            ))}
+          </div>
+        </div>
+      </section>
 
-            <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Notes</label>
-            <textarea
-              value={violation.notes}
-              onChange={e => setViolation({...violation, notes: e.target.value})}
-              placeholder="Additional details..."
-              style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', minHeight:'70px', boxSizing:'border-box' }}
-            />
-
-            <div style={{ display:'flex', gap:'8px' }}>
-              <button
-                onClick={submitViolation}
-                style={{ flex:1, padding:'12px', background:'#b71c1c', color:'white', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}
-              >
-                Submit Violation
+      {/* ── PRICING ── */}
+      <section id="pricing" style={{ padding: '80px 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 40 }}>
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Simple, hybrid pricing</h2>
+            <p style={{ color: MUTED, fontSize: 16, margin: '0 0 28px' }}>Base fee + per-property + per-driver. Pay for what you actually use.</p>
+            <div style={{ display: 'inline-flex', background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 4 }}>
+              <button onClick={() => setActiveTrack('enforcement')}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'enforcement' ? GOLD : 'transparent', color: activeTrack === 'enforcement' ? '#0a0d14' : MUTED }}>
+                Enforcement
               </button>
-              <button
-                onClick={() => setShowViolation(false)}
-                style={{ padding:'12px 16px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer' }}
-              >
-                Cancel
+              <button onClick={() => setActiveTrack('pm')}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'pm' ? GOLD : 'transparent', color: activeTrack === 'pm' ? '#0a0d14' : MUTED }}>
+                Property Management
               </button>
             </div>
           </div>
-        )}
-      </div>
 
-      <div style={{ marginTop:'24px', textAlign:'center' }}>
-        <a href="/history" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none', marginRight:'16px' }}>View Violation History →</a>
-        <a href="/visitor" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none', marginRight:'16px' }}>Visitor Pass →</a>
-        <a href="/qr" style={{ color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>QR Codes →</a>
-        <p style={{ color:'#444', fontSize:'11px', marginTop:'8px' }}>A1 Wrecker, LLC · a1wreckerllc.net</p>
-      </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
+            {(activeTrack === 'enforcement' ? enfTiers : pmTiers).map((tier: any, i) => (
+              <div key={i} style={{ background: tier.popular ? 'rgba(201,162,39,0.06)' : CARD_BG, border: `1px solid ${tier.popular ? 'rgba(201,162,39,0.4)' : BORDER}`, borderRadius: 20, padding: 28, position: 'relative' }}>
+                {tier.popular && (
+                  <div style={{ position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: GOLD, color: '#0a0d14', fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 10, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                    Most popular
+                  </div>
+                )}
+                <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>{activeTrack === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</p>
+                <h3 style={{ color: TEXT, fontSize: 22, fontWeight: 700, margin: '0 0 16px' }}>{tier.name}</h3>
+                <div style={{ marginBottom: 8 }}>
+                  <span style={{ color: GOLD, fontSize: 32, fontWeight: 800 }}>${tier.base}</span>
+                  <span style={{ color: MUTED, fontSize: 14 }}>/mo base</span>
+                </div>
+                <p style={{ color: MUTED, fontSize: 12, margin: '0 0 4px' }}>+ ${tier.perProp}/mo per property</p>
+                {tier.perDriver && <p style={{ color: MUTED, fontSize: 12, margin: '0 0 20px' }}>+ ${tier.perDriver}/mo per driver</p>}
+                {!tier.perDriver && <div style={{ marginBottom: 20 }} />}
+                <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 20, marginBottom: 24 }}>
+                  {tier.features.map((f: string, j: number) => (
+                    <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+                      <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 1 }}>✓</span>
+                      <span style={{ color: '#94a3b8', fontSize: 14 }}>{f}</span>
+                    </div>
+                  ))}
+                </div>
+                <a href="#contact" style={{ display: 'block', textAlign: 'center', background: tier.popular ? GOLD : CARD_BG, color: tier.popular ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${tier.popular ? GOLD : BORDER}` }}>
+                  Get started
+                </a>
+              </div>
+            ))}
+          </div>
+          <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 28 }}>
+            Annual billing available — save 2 months. All plans include a 14-day free trial.
+          </p>
+        </div>
+      </section>
+
+      {/* ── TESTIMONIALS ── */}
+      <section style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '80px 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <h2 style={{ textAlign: 'center', fontSize: 36, fontWeight: 700, margin: '0 0 48px', letterSpacing: '-0.02em' }}>Trusted by Houston property teams</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
+            {testimonials.map((t, i) => (
+              <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 28 }}>
+                <div style={{ color: GOLD, fontSize: 24, marginBottom: 14, letterSpacing: '-0.05em' }}>"</div>
+                <p style={{ color: '#94a3b8', fontSize: 15, lineHeight: 1.7, margin: '0 0 20px' }}>{t.quote}</p>
+                <div>
+                  <p style={{ color: TEXT, fontWeight: 600, fontSize: 14, margin: '0 0 2px' }}>{t.name}</p>
+                  <p style={{ color: MUTED, fontSize: 13, margin: 0 }}>{t.company}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── CONTACT FORM ── */}
+      <section id="contact" style={{ padding: '80px 24px' }}>
+        <div style={{ maxWidth: 600, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 40 }}>
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Get in touch</h2>
+            <p style={{ color: MUTED, fontSize: 16, margin: 0 }}>Questions about ShieldMyLot? We'd love to hear from you.</p>
+          </div>
+          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 40 }}>
+            <label style={labelStyle}>Name</label>
+            <input value={contact.name} onChange={e => setContact({ ...contact, name: e.target.value })} placeholder="Your name" style={inputStyle} />
+
+            <label style={labelStyle}>Email</label>
+            <input type="email" value={contact.email} onChange={e => setContact({ ...contact, email: e.target.value })} placeholder="you@company.com" style={inputStyle} />
+
+            <label style={labelStyle}>Type</label>
+            <select value={contact.type} onChange={e => setContact({ ...contact, type: e.target.value })}
+              style={{ ...inputStyle, appearance: 'none' as const }}>
+              {['General inquiry', 'Sales question', 'Feature request', 'Report an issue'].map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+
+            <label style={labelStyle}>Message</label>
+            <textarea value={contact.message} onChange={e => setContact({ ...contact, message: e.target.value })}
+              placeholder="Tell us how we can help..."
+              style={{ ...inputStyle, minHeight: 120, resize: 'vertical', marginBottom: 24 }} />
+
+            <button onClick={sendContact} disabled={!contact.name || !contact.email || !contact.message}
+              style={{ width: '100%', padding: '14px', background: (!contact.name || !contact.email || !contact.message) ? '#2a2f3d' : GOLD, color: (!contact.name || !contact.email || !contact.message) ? MUTED : '#0a0d14', fontWeight: 'bold', fontSize: 15, border: 'none', borderRadius: 10, cursor: (!contact.name || !contact.email || !contact.message) ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
+              Send message
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FOOTER ── */}
+      <footer style={{ borderTop: `1px solid ${BORDER}`, padding: '40px 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 32, justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <img src="/logo.jpeg" alt="ShieldMyLot" style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${GOLD}` }} onError={e => (e.currentTarget.style.display = 'none')} />
+              <span style={{ color: GOLD, fontWeight: 'bold', fontSize: 15 }}>ShieldMyLot</span>
+            </div>
+            <p style={{ color: MUTED, fontSize: 13, margin: 0, maxWidth: 220, lineHeight: 1.6 }}>
+              Parking enforcement & management platform. Texas only.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
+            <div>
+              <p style={{ color: TEXT, fontSize: 13, fontWeight: 600, margin: '0 0 12px' }}>Product</p>
+              {[['Features', '#features'], ['Pricing', '#pricing'], ['Terms of Service', '/terms'], ['Privacy Policy', '/privacy']].map(([label, href]) => (
+                <a key={label} href={href} style={{ display: 'block', color: MUTED, fontSize: 13, textDecoration: 'none', marginBottom: 8 }}>{label}</a>
+              ))}
+            </div>
+            <div>
+              <p style={{ color: TEXT, fontSize: 13, fontWeight: 600, margin: '0 0 12px' }}>Support</p>
+              {[['Help Center', '#'], ['Video Guides', '#'], ['Contact', '#contact']].map(([label, href]) => (
+                <a key={label} href={href} style={{ display: 'block', color: MUTED, fontSize: 13, textDecoration: 'none', marginBottom: 8 }}>{label}</a>
+              ))}
+            </div>
+            <div>
+              <p style={{ color: TEXT, fontSize: 13, fontWeight: 600, margin: '0 0 12px' }}>Account</p>
+              {[['Sign in', '/login'], ['Register', '/register']].map(([label, href]) => (
+                <a key={label} href={href} style={{ display: 'block', color: MUTED, fontSize: 13, textDecoration: 'none', marginBottom: 8 }}>{label}</a>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{ maxWidth: 1100, margin: '28px auto 0', paddingTop: 20, borderTop: `1px solid ${BORDER}`, display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'center' }}>
+          <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>© 2026 A1 Wrecker, LLC · ShieldMyLot · All rights reserved</p>
+          <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>Licensed for Texas operations · Harris County jurisdiction</p>
+        </div>
+      </footer>
+
     </main>
   )
 }

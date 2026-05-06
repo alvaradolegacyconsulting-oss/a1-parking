@@ -7,17 +7,36 @@ function VisitorForm() {
   const searchParams = useSearchParams()
   const propertyName = searchParams.get('property') || 'A1 Wrecker Managed Property'
   const [step, setStep] = useState<'form' | 'success'>('form')
-  const [supportPhone, setSupportPhone] = useState('346-428-7864')
-  const [supportEmail, setSupportEmail] = useState('a1wrecker2023@gmail.com')
-  const [supportWebsite, setSupportWebsite] = useState('a1wreckerllc.net')
-  const [companyName, setCompanyName] = useState('A1 Wrecker LLC')
+  const [supportPhone, setSupportPhone] = useState('')
+  const [supportEmail, setSupportEmail] = useState('')
+  const [supportWebsite, setSupportWebsite] = useState('')
+  const [companyName, setCompanyName] = useState('')
 
   useEffect(() => {
-    setSupportPhone(localStorage.getItem('company_support_phone') || '346-428-7864')
-    setSupportEmail(localStorage.getItem('company_support_email') || 'a1wrecker2023@gmail.com')
-    setSupportWebsite(localStorage.getItem('company_support_website') || 'a1wreckerllc.net')
-    setCompanyName(localStorage.getItem('company_name') || 'A1 Wrecker LLC')
-  }, [])
+    async function loadSupportInfo() {
+      if (propertyName && propertyName !== 'A1 Wrecker Managed Property') {
+        const { data: prop } = await supabase.from('properties').select('company').ilike('name', propertyName).single()
+        if (prop?.company) {
+          const { data: co } = await supabase.from('companies').select('support_phone,support_email,support_website,display_name').ilike('name', prop.company).single()
+          if (co) {
+            setSupportPhone(co.support_phone || '')
+            setSupportEmail(co.support_email || '')
+            setSupportWebsite(co.support_website || '')
+            setCompanyName(co.display_name || prop.company)
+            return
+          }
+        }
+      }
+      const { data: ps } = await supabase.from('platform_settings').select('default_support_phone,default_support_email,default_support_website,default_display_name').eq('id', 1).single()
+      if (ps) {
+        setSupportPhone(ps.default_support_phone || '')
+        setSupportEmail(ps.default_support_email || '')
+        setSupportWebsite(ps.default_support_website || '')
+        setCompanyName(ps.default_display_name || '')
+      }
+    }
+    loadSupportInfo()
+  }, [propertyName])
   const [loading, setLoading] = useState(false)
   const [plateError, setPlateError] = useState('')
   const [tosChecked, setTosChecked] = useState(false)

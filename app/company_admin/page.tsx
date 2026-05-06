@@ -58,6 +58,7 @@ export default function CompanyAdminPortal() {
   const [showAddProperty, setShowAddProperty] = useState(false)
   const [newProperty, setNewProperty] = useState({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '' })
   const [propMsg, setPropMsg] = useState('')
+  const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
 
   const [companyUsers, setCompanyUsers] = useState<any[]>([])
   const [resetPwTarget, setResetPwTarget] = useState<string | null>(null)
@@ -269,6 +270,25 @@ export default function CompanyAdminPortal() {
     setPropMsg('Property updated!')
     setEditingProperty(null)
     await reloadProperties()
+  }
+
+  async function uploadLogo(file: File, pathPrefix: string, slot: string, onSuccess: (url: string) => void) {
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoUploadMsg(m => ({ ...m, [slot]: 'File exceeds 2MB limit' }))
+      return
+    }
+    setLogoUploadMsg(m => ({ ...m, [slot]: 'Uploading...' }))
+    const ext = file.name.split('.').pop() || 'png'
+    const filePath = `${pathPrefix}-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('logos').upload(filePath, file, { upsert: true })
+    if (error) {
+      setLogoUploadMsg(m => ({ ...m, [slot]: 'Upload failed: ' + error.message }))
+      return
+    }
+    const { data: urlData } = supabase.storage.from('logos').getPublicUrl(filePath)
+    onSuccess(urlData.publicUrl)
+    setLogoUploadMsg(m => ({ ...m, [slot]: 'Logo uploaded!' }))
+    setTimeout(() => setLogoUploadMsg(m => ({ ...m, [slot]: '' })), 3000)
   }
 
   async function togglePropertyActive(prop: any) {
@@ -1006,6 +1026,24 @@ export default function CompanyAdminPortal() {
     </button>
   )
 
+  const logoUploadBtnStyle: React.CSSProperties = { background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', padding:'8px 14px', fontSize:'12px', cursor:'pointer', whiteSpace:'nowrap', flexShrink:0, fontFamily:'Arial' }
+  const logoField = (value: string, onChange: (url: string) => void, pathPrefix: string, slot: string) => (
+    <div>
+      <label style={lbl}>Logo URL — paste a URL or upload an image file</label>
+      <div style={{ display:'flex', gap:'6px', alignItems:'center', marginTop:'6px', marginBottom:'4px' }}>
+        <input value={value} onChange={e => onChange(e.target.value)} placeholder="https://..." style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+        <label style={logoUploadBtnStyle}>
+          ↑ Upload Logo
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style={{ display:'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) uploadLogo(f, pathPrefix, slot, onChange); e.target.value = '' }} />
+        </label>
+      </div>
+      {logoUploadMsg[slot] && <p style={{ color: logoUploadMsg[slot].includes('fail') || logoUploadMsg[slot].includes('exceed') ? '#f44336' : logoUploadMsg[slot] === 'Uploading...' ? '#C9A227' : '#4caf50', fontSize:'11px', margin:'2px 0 4px' }}>{logoUploadMsg[slot]}</p>}
+      {value && <img src={value} alt="Logo preview" style={{ maxHeight:'60px', objectFit:'contain', display:'block', marginTop:'6px', marginBottom:'10px', borderRadius:'4px', border:'1px solid #2a2f3d' }} />}
+      {!value && <div style={{ marginBottom:'10px' }} />}
+    </div>
+  )
+
   if (loading) return (
     <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif' }}>
       <p style={{ color:'#888' }}>Loading...</p>
@@ -1600,6 +1638,12 @@ export default function CompanyAdminPortal() {
                             <input value={(editingProperty as any)[f.key] || ''} onChange={e => setEditingProperty({ ...editingProperty, [f.key]: e.target.value })} style={inp} />
                           </div>
                         ))}
+                        {logoField(
+                          editingProperty.logo_url || '',
+                          url => setEditingProperty({ ...editingProperty, logo_url: url }),
+                          `companies/${(editingProperty.company || 'company').toLowerCase().replace(/\s+/g,'-')}-logo`,
+                          `prop_${editingProperty.id}`
+                        )}
                         <div style={{ display:'flex', gap:'6px' }}>
                           <button onClick={updateProperty} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Save Changes</button>
                           <button onClick={() => setEditingProperty(null)} style={{ padding:'9px 10px', background:'#1e2535', color:'#aaa', fontSize:'11px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>

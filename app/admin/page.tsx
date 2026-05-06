@@ -57,6 +57,7 @@ export default function AdminPortal() {
   const [platformSettings, setPlatformSettings] = useState<any>({})
   const [platformMsg, setPlatformMsg] = useState('')
   const [pricingMsg, setPricingMsg] = useState('')
+  const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
   const [calcTrack, setCalcTrack] = useState('enforcement')
   const [calcTier, setCalcTier] = useState('starter')
   const [calcProperties, setCalcProperties] = useState(5)
@@ -210,6 +211,25 @@ export default function AdminPortal() {
     await auditLog(adminEmail, 'UPDATE_PRICING', 'platform_settings', '1', priceFields)
     setPricingMsg('Pricing updated successfully!')
     setTimeout(() => setPricingMsg(''), 3000)
+  }
+
+  async function uploadLogo(file: File, pathPrefix: string, slot: string, onSuccess: (url: string) => void) {
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoUploadMsg(m => ({ ...m, [slot]: 'File exceeds 2MB limit' }))
+      return
+    }
+    setLogoUploadMsg(m => ({ ...m, [slot]: 'Uploading...' }))
+    const ext = file.name.split('.').pop() || 'png'
+    const filePath = `${pathPrefix}-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('logos').upload(filePath, file, { upsert: true })
+    if (error) {
+      setLogoUploadMsg(m => ({ ...m, [slot]: 'Upload failed: ' + error.message }))
+      return
+    }
+    const { data: urlData } = supabase.storage.from('logos').getPublicUrl(filePath)
+    onSuccess(urlData.publicUrl)
+    setLogoUploadMsg(m => ({ ...m, [slot]: 'Logo uploaded!' }))
+    setTimeout(() => setLogoUploadMsg(m => ({ ...m, [slot]: '' })), 3000)
   }
 
   async function fetchCompanies() {
@@ -669,6 +689,23 @@ export default function AdminPortal() {
     </div>
   )
   const iCell = <span style={{ color:'#555', fontSize:'11px', fontStyle:'italic', display:'block', textAlign:'center' as const }}>Incl.</span>
+  const logoUploadBtn: React.CSSProperties = { background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', padding:'8px 14px', fontSize:'12px', cursor:'pointer', whiteSpace:'nowrap' as const, flexShrink:0, fontFamily:'Arial' }
+  const logoField = (value: string, onChange: (url: string) => void, pathPrefix: string, slot: string) => (
+    <div>
+      <label style={lbl}>Logo URL — paste a URL or upload an image file</label>
+      <div style={{ display:'flex', gap:'6px', alignItems:'center', marginTop:'6px', marginBottom:'4px' }}>
+        <input value={value} onChange={e => onChange(e.target.value)} placeholder="https://..." style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+        <label style={logoUploadBtn}>
+          ↑ Upload Logo
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style={{ display:'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) uploadLogo(f, pathPrefix, slot, onChange); e.target.value = '' }} />
+        </label>
+      </div>
+      {logoUploadMsg[slot] && <p style={{ color: logoUploadMsg[slot].includes('fail') || logoUploadMsg[slot].includes('exceed') ? '#f44336' : logoUploadMsg[slot] === 'Uploading...' ? '#C9A227' : '#4caf50', fontSize:'11px', margin:'2px 0 4px' }}>{logoUploadMsg[slot]}</p>}
+      {value && <img src={value} alt="Logo preview" style={{ maxHeight:'60px', objectFit:'contain', display:'block', marginTop:'6px', marginBottom:'12px', borderRadius:'4px', border:'1px solid #2a2f3d' }} />}
+      {!value && <div style={{ marginBottom:'12px' }} />}
+    </div>
+  )
   const tierBaseMap: Record<string, string> = {
     'enforcement:starter': 'price_enforcement_starter_base',
     'enforcement:growth': 'price_enforcement_growth_base',
@@ -726,7 +763,7 @@ export default function AdminPortal() {
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Company</p>
                 <label style={lbl}>Name *</label><input value={newCompany.name} onChange={e => setNewCompany({...newCompany, name: e.target.value})} style={inp} />
                 <label style={lbl}>Display Name</label><input value={newCompany.display_name} onChange={e => setNewCompany({...newCompany, display_name: e.target.value})} placeholder="Shown to users in app" style={inp} />
-                <label style={lbl}>Logo URL</label><input value={newCompany.logo_url} onChange={e => setNewCompany({...newCompany, logo_url: e.target.value})} placeholder="https://..." style={inp} />
+                {logoField(newCompany.logo_url, url => setNewCompany({...newCompany, logo_url: url}), `companies/${(newCompany.name || 'company').toLowerCase().replace(/\s+/g,'-')}-logo`, 'new_company')}
                 <label style={lbl}>Address</label><input value={newCompany.address} onChange={e => setNewCompany({...newCompany, address: e.target.value})} style={inp} />
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                   <div><label style={lbl}>Phone</label><input value={newCompany.phone} onChange={e => setNewCompany({...newCompany, phone: e.target.value})} style={inp} /></div>
@@ -782,7 +819,7 @@ export default function AdminPortal() {
                 <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Editing — {editingCompany.name}</p>
                 <label style={lbl}>Name *</label><input value={editingCompany.name} onChange={e => setEditingCompany({...editingCompany, name: e.target.value})} style={inp} />
                 <label style={lbl}>Display Name</label><input value={editingCompany.display_name || ''} onChange={e => setEditingCompany({...editingCompany, display_name: e.target.value})} placeholder="Shown to users in app" style={inp} />
-                <label style={lbl}>Logo URL</label><input value={editingCompany.logo_url || ''} onChange={e => setEditingCompany({...editingCompany, logo_url: e.target.value})} placeholder="https://..." style={inp} />
+                {logoField(editingCompany.logo_url || '', url => setEditingCompany({...editingCompany, logo_url: url}), `companies/${(editingCompany.name || 'company').toLowerCase().replace(/\s+/g,'-')}-logo`, 'edit_company')}
                 <label style={lbl}>Address</label><input value={editingCompany.address || ''} onChange={e => setEditingCompany({...editingCompany, address: e.target.value})} style={inp} />
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                   <div><label style={lbl}>Phone</label><input value={editingCompany.phone || ''} onChange={e => setEditingCompany({...editingCompany, phone: e.target.value})} style={inp} /></div>
@@ -1481,8 +1518,7 @@ export default function AdminPortal() {
               <label style={lbl}>Default Display Name</label>
               <input value={platformSettings.default_display_name || ''} onChange={e => setPlatformSettings({...platformSettings, default_display_name: e.target.value})} placeholder="A1 Wrecker, LLC" style={inp} />
 
-              <label style={lbl}>Default Logo URL</label>
-              <input value={platformSettings.default_logo_url || ''} onChange={e => setPlatformSettings({...platformSettings, default_logo_url: e.target.value})} placeholder="https://..." style={inp} />
+              {logoField(platformSettings.default_logo_url || '', url => setPlatformSettings({...platformSettings, default_logo_url: url}), 'platform/logo', 'platform')}
 
               <div>
                 <label style={{ ...lbl, display:'flex', alignItems:'center', gap:'8px' }}>
