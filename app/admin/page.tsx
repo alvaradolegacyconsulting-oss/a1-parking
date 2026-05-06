@@ -1189,29 +1189,42 @@ export default function AdminPortal() {
                   <div><label style={lbl}>Operator License</label><input value={newDriver.operator_license} onChange={e => setNewDriver({...newDriver, operator_license: e.target.value})} style={inp} /></div>
                   <div style={{ gridColumn:'span 2' }}>
                     <label style={lbl}>Assigned Properties</label>
-                    <div style={{ marginTop:'6px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px' }}>
-                      <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
-                        <input type="checkbox"
-                          checked={newDriver.assigned_properties.length === properties.length && properties.length > 0}
-                          onChange={e => setNewDriver({...newDriver, assigned_properties: e.target.checked ? properties.map(p => p.name) : []})}
-                          style={{ accentColor:'#C9A227', cursor:'pointer' }}
-                        />
-                        <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
-                      </label>
-                      {properties.map((p, i) => (
-                        <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
-                          <input type="checkbox"
-                            checked={newDriver.assigned_properties.includes(p.name)}
-                            onChange={e => {
-                              if (e.target.checked) setNewDriver({...newDriver, assigned_properties: [...newDriver.assigned_properties, p.name]})
-                              else setNewDriver({...newDriver, assigned_properties: newDriver.assigned_properties.filter((n: string) => n !== p.name)})
-                            }}
-                            style={{ accentColor:'#C9A227', cursor:'pointer' }}
-                          />
-                          <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
-                        </label>
-                      ))}
-                    </div>
+                    {(() => {
+                      const dProps = newDriver.company ? properties.filter((p: any) => p.company === newDriver.company) : []
+                      return (
+                        <div style={{ marginTop:'6px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px' }}>
+                          {!newDriver.company ? (
+                            <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Select a company first to see available properties.</p>
+                          ) : dProps.length === 0 ? (
+                            <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No properties found for this company.</p>
+                          ) : (
+                            <>
+                              <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
+                                <input type="checkbox"
+                                  checked={newDriver.assigned_properties.length === dProps.length}
+                                  onChange={e => setNewDriver({...newDriver, assigned_properties: e.target.checked ? dProps.map((p: any) => p.name) : []})}
+                                  style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                                />
+                                <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
+                              </label>
+                              {dProps.map((p: any, i: number) => (
+                                <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
+                                  <input type="checkbox"
+                                    checked={newDriver.assigned_properties.includes(p.name)}
+                                    onChange={e => {
+                                      if (e.target.checked) setNewDriver({...newDriver, assigned_properties: [...newDriver.assigned_properties, p.name]})
+                                      else setNewDriver({...newDriver, assigned_properties: newDriver.assigned_properties.filter((n: string) => n !== p.name)})
+                                    }}
+                                    style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                                  />
+                                  <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
+                                </label>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
                 </div>
                 {driverMsg && (
@@ -1243,30 +1256,43 @@ export default function AdminPortal() {
                   <div><label style={lbl}>Active</label><select value={editingDriver.is_active ? 'true' : 'false'} onChange={e => setEditingDriver({...editingDriver, is_active: e.target.value === 'true'})} style={inp}><option value="true">Yes</option><option value="false">No</option></select></div>
                   <div style={{ gridColumn:'span 2' }}>
                     <label style={lbl}>Assigned Properties</label>
-                    <div style={{ marginTop:'6px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px' }}>
-                      <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
-                        <input type="checkbox"
-                          checked={(editingDriver.assigned_properties || []).length === properties.length && properties.length > 0}
-                          onChange={e => setEditingDriver({...editingDriver, assigned_properties: e.target.checked ? properties.map(p => p.name) : []})}
-                          style={{ accentColor:'#C9A227', cursor:'pointer' }}
-                        />
-                        <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
-                      </label>
-                      {properties.map((p, i) => (
-                        <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
-                          <input type="checkbox"
-                            checked={(editingDriver.assigned_properties || []).includes(p.name)}
-                            onChange={e => {
-                              const cur: string[] = editingDriver.assigned_properties || []
-                              if (e.target.checked) setEditingDriver({...editingDriver, assigned_properties: [...cur, p.name]})
-                              else setEditingDriver({...editingDriver, assigned_properties: cur.filter((n: string) => n !== p.name)})
-                            }}
-                            style={{ accentColor:'#C9A227', cursor:'pointer' }}
-                          />
-                          <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
-                        </label>
-                      ))}
-                    </div>
+                    {(() => {
+                      const eProps = editingDriver.company ? properties.filter((p: any) => p.company === editingDriver.company) : []
+                      return (
+                        <div style={{ marginTop:'6px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px' }}>
+                          {!editingDriver.company ? (
+                            <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Select a company first to see available properties.</p>
+                          ) : eProps.length === 0 ? (
+                            <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No properties found for this company.</p>
+                          ) : (
+                            <>
+                              <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
+                                <input type="checkbox"
+                                  checked={(editingDriver.assigned_properties || []).length === eProps.length}
+                                  onChange={e => setEditingDriver({...editingDriver, assigned_properties: e.target.checked ? eProps.map((p: any) => p.name) : []})}
+                                  style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                                />
+                                <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
+                              </label>
+                              {eProps.map((p: any, i: number) => (
+                                <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
+                                  <input type="checkbox"
+                                    checked={(editingDriver.assigned_properties || []).includes(p.name)}
+                                    onChange={e => {
+                                      const cur: string[] = editingDriver.assigned_properties || []
+                                      if (e.target.checked) setEditingDriver({...editingDriver, assigned_properties: [...cur, p.name]})
+                                      else setEditingDriver({...editingDriver, assigned_properties: cur.filter((n: string) => n !== p.name)})
+                                    }}
+                                    style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                                  />
+                                  <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
+                                </label>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
                 </div>
                 <div style={{ display:'flex', gap:'8px' }}>
