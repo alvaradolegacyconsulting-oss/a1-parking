@@ -22,6 +22,9 @@ function RegisterForm() {
   const [logoFailed, setLogoFailed] = useState(false)
 
   const [tosChecked, setTosChecked] = useState(false)
+  const [texasCheck1, setTexasCheck1] = useState(false)
+  const [texasCheck2, setTexasCheck2] = useState(false)
+  const [texasCheck3, setTexasCheck3] = useState(false)
   const [account, setAccount] = useState({ email: '', password: '', confirm: '', name: '', phone: '', unit: '' })
   const [vehicles, setVehicles] = useState<any[]>([])
 
@@ -80,6 +83,7 @@ function RegisterForm() {
         return
       }
 
+      const texasConfirmedAt = new Date().toISOString()
       const { error: rErr } = await supabase.from('residents').insert([{
         email: account.email.trim().toLowerCase(),
         name: account.name.trim(),
@@ -89,6 +93,8 @@ function RegisterForm() {
         company: company || null,
         is_active: false,
         status: 'pending',
+        texas_confirmed: true,
+        texas_confirmed_at: texasConfirmedAt,
       }])
       if (rErr) {
         setError('Account created but resident record failed: ' + rErr.message)
@@ -128,7 +134,10 @@ function RegisterForm() {
         }])
       }
 
-      await supabase.from('audit_logs').insert([{ action: 'REGISTRATION_TOS_ACCEPTED', table_name: 'residents', new_values: { email: account.email.trim(), property: property || null } }])
+      await supabase.from('audit_logs').insert([
+        { action: 'REGISTRATION_TOS_ACCEPTED', table_name: 'residents', new_values: { email: account.email.trim(), property: property || null } },
+        { action: 'TEXAS_OPERATIONS_CONFIRMED', table_name: 'residents', new_values: { email: account.email.trim(), confirmed_at: texasConfirmedAt } },
+      ])
       setDone(true)
     } catch (e: any) {
       setError(e.message || 'An unexpected error occurred. Please try again.')
@@ -320,6 +329,22 @@ function RegisterForm() {
                 </div>
               )}
 
+              {/* Texas operations confirmation */}
+              <div style={{ background:'#1a1f2e', border:'1px solid #C9A227', borderRadius:'8px', padding:'12px', marginBottom:'12px' }}>
+                <p style={{ color:'#C9A227', fontSize:'13px', textAlign:'center', margin:'0 0 12px' }}>🤠 ShieldMyLot currently operates in Texas only.</p>
+                {[
+                  { state: texasCheck1, set: setTexasCheck1, label: 'My business is licensed to operate in Texas' },
+                  { state: texasCheck2, set: setTexasCheck2, label: 'My enforcement activities comply with Texas Transportation Code Chapter 2308 (for enforcement track) or applicable Texas property management law (for PM track)' },
+                  { state: texasCheck3, set: setTexasCheck3, label: "I understand ShieldMyLot's Terms of Service are governed by Texas law and Harris County jurisdiction" },
+                ].map((item, i) => (
+                  <label key={i} style={{ display:'flex', alignItems:'flex-start', gap:'10px', marginBottom: i < 2 ? '10px' : '0', cursor:'pointer' }}>
+                    <input type="checkbox" checked={item.state} onChange={e => item.set(e.target.checked)}
+                      style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer', flexShrink:0 }} />
+                    <span style={{ color:'#aaa', fontSize:'12px', lineHeight:'1.6' }}>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+
               <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', marginBottom:'14px', cursor:'pointer' }}>
                 <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
                   style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer' }} />
@@ -331,16 +356,22 @@ function RegisterForm() {
                 </span>
               </label>
 
-              <div style={{ display:'flex', gap:'8px' }}>
-                <button onClick={() => { setError(''); setStep(2) }}
-                  style={{ flex:1, padding:'12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontSize:'13px', fontFamily:'Arial' }}>
-                  ← Back
-                </button>
-                <button onClick={submit} disabled={submitting || !tosChecked}
-                  style={{ flex:2, padding:'12px', background: (submitting || !tosChecked) ? '#555' : '#C9A227', color: (submitting || !tosChecked) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: (submitting || !tosChecked) ? 'not-allowed' : 'pointer' }}>
-                  {submitting ? 'Submitting...' : 'Submit Registration'}
-                </button>
-              </div>
+              {(() => {
+                const allChecked = tosChecked && texasCheck1 && texasCheck2 && texasCheck3
+                const disabled = submitting || !allChecked
+                return (
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => { setError(''); setStep(2) }}
+                      style={{ flex:1, padding:'12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontSize:'13px', fontFamily:'Arial' }}>
+                      ← Back
+                    </button>
+                    <button onClick={submit} disabled={disabled}
+                      style={{ flex:2, padding:'12px', background: disabled ? '#555' : '#C9A227', color: disabled ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: disabled ? 'not-allowed' : 'pointer' }}>
+                      {submitting ? 'Submitting...' : 'Submit Registration'}
+                    </button>
+                  </div>
+                )
+              })()}
             </div>
           )}
         </div>

@@ -12,6 +12,19 @@ export default function Terms() {
           <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Draft — Pending Legal Review · Last updated: 2026</p>
         </div>
 
+        <div style={{ background:'#1a1f2e', border:'1px solid #C9A227', borderRadius:'8px', padding:'16px', marginBottom:'24px' }}>
+          <p style={{ color:'#C9A227', fontSize:'14px', fontWeight:'bold', margin:'0 0 8px' }}>📍 Geographic Restriction — Texas Only</p>
+          <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0 0 10px' }}>
+            ShieldMyLot is currently licensed and operated for use in the State of Texas only. Use of the platform outside Texas is not authorized and may not comply with applicable local, state, or federal laws governing parking enforcement in other jurisdictions.
+          </p>
+          <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0 0 10px' }}>
+            By using ShieldMyLot you confirm your business operations are based in Texas and subject to Texas law.
+          </p>
+          <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>
+            ShieldMyLot makes no representation that its platform, terms, or operations comply with the laws of any state other than Texas.
+          </p>
+        </div>
+
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'32px' }}>
           {[
             { title:'1. Platform Use', body:'This platform is a parking management tool provided by A1 Wrecker LLC for authorized users only. Use of this platform constitutes acceptance of these terms. Unauthorized access or use is strictly prohibited.' },

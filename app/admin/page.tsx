@@ -57,6 +57,10 @@ export default function AdminPortal() {
   const [platformSettings, setPlatformSettings] = useState<any>({})
   const [platformMsg, setPlatformMsg] = useState('')
   const [pricingMsg, setPricingMsg] = useState('')
+  const [calcTrack, setCalcTrack] = useState('enforcement')
+  const [calcTier, setCalcTier] = useState('starter')
+  const [calcProperties, setCalcProperties] = useState(5)
+  const [calcDrivers, setCalcDrivers] = useState(2)
 
   const [showActiveCompanies, setShowActiveCompanies] = useState(true)
   const [showActiveProperties, setShowActiveProperties] = useState(true)
@@ -157,12 +161,24 @@ export default function AdminPortal() {
 
   async function savePricing() {
     const priceFields = {
-      price_enforcement_starter: platformSettings.price_enforcement_starter ?? 49,
-      price_enforcement_growth: platformSettings.price_enforcement_growth ?? 99,
-      price_enforcement_legacy: platformSettings.price_enforcement_legacy ?? 149,
-      price_pm_essential: platformSettings.price_pm_essential ?? 29,
-      price_pm_professional: platformSettings.price_pm_professional ?? 59,
-      price_pm_enterprise: platformSettings.price_pm_enterprise ?? 99,
+      // Enforcement — hybrid: base + per-property + per-driver
+      price_enforcement_starter_base: platformSettings.price_enforcement_starter_base ?? 99,
+      price_enforcement_starter_per_property: platformSettings.price_enforcement_starter_per_property ?? 15,
+      price_enforcement_starter_per_driver: platformSettings.price_enforcement_starter_per_driver ?? 10,
+      price_enforcement_growth_base: platformSettings.price_enforcement_growth_base ?? 149,
+      price_enforcement_growth_per_property: platformSettings.price_enforcement_growth_per_property ?? 12,
+      price_enforcement_growth_per_driver: platformSettings.price_enforcement_growth_per_driver ?? 8,
+      price_enforcement_legacy_base: platformSettings.price_enforcement_legacy_base ?? 199,
+      price_enforcement_legacy_per_property: platformSettings.price_enforcement_legacy_per_property ?? 10,
+      price_enforcement_legacy_per_driver: platformSettings.price_enforcement_legacy_per_driver ?? 6,
+      // PM — hybrid: base + per-property (no per-driver)
+      price_pm_essential_base: platformSettings.price_pm_essential_base ?? 79,
+      price_pm_essential_per_property: platformSettings.price_pm_essential_per_property ?? 20,
+      price_pm_professional_base: platformSettings.price_pm_professional_base ?? 129,
+      price_pm_professional_per_property: platformSettings.price_pm_professional_per_property ?? 15,
+      price_pm_enterprise_base: platformSettings.price_pm_enterprise_base ?? 179,
+      price_pm_enterprise_per_property: platformSettings.price_pm_enterprise_per_property ?? 10,
+      // Add-ons
       addon_enforcement_starter_live_support: platformSettings.addon_enforcement_starter_live_support ?? 100,
       addon_enforcement_growth_live_support: platformSettings.addon_enforcement_growth_live_support ?? 50,
       addon_enforcement_starter_analytics: platformSettings.addon_enforcement_starter_analytics ?? 25,
@@ -653,20 +669,20 @@ export default function AdminPortal() {
     </div>
   )
   const iCell = <span style={{ color:'#555', fontSize:'11px', fontStyle:'italic', display:'block', textAlign:'center' as const }}>Incl.</span>
-  const tierPriceMap: Record<string, string> = {
-    'enforcement:starter': 'price_enforcement_starter',
-    'enforcement:growth': 'price_enforcement_growth',
-    'enforcement:legacy': 'price_enforcement_legacy',
-    'pm:essential': 'price_pm_essential',
-    'pm:professional': 'price_pm_professional',
-    'pm:enterprise': 'price_pm_enterprise',
+  const tierBaseMap: Record<string, string> = {
+    'enforcement:starter': 'price_enforcement_starter_base',
+    'enforcement:growth': 'price_enforcement_growth_base',
+    'enforcement:legacy': 'price_enforcement_legacy_base',
+    'pm:essential': 'price_pm_essential_base',
+    'pm:professional': 'price_pm_professional_base',
+    'pm:enterprise': 'price_pm_enterprise_base',
   }
   const getCompanyPrice = (c: any) => {
     const key = `${c.tier_type || 'enforcement'}:${c.tier || 'legacy'}`
-    const field = tierPriceMap[key]
+    const field = tierBaseMap[key]
     if (!field) return null
     const val = platformSettings[field]
-    return val != null ? `$${Number(val).toFixed(0)}/mo` : null
+    return val != null ? `from $${Number(val).toFixed(0)}/mo` : null
   }
 
   if (loading) return (
@@ -1505,46 +1521,136 @@ export default function AdminPortal() {
             {/* Section C — Base Subscription Pricing */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
               <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>Base Subscription Pricing</p>
-              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Changes take effect for new signups only. Existing subscribers keep their current price unless manually updated.</p>
+              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Hybrid model: base fee + per-property + per-driver. Changes apply to new signups only.</p>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' }}>
+
+                {/* Enforcement card */}
                 <div style={{ background:'#1e2535', borderRadius:'8px', padding:'12px' }}>
-                  <p style={{ color:'#b39ddb', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 10px' }}>Enforcement Track</p>
-                  <label style={lbl}>Starter /mo</label>
-                  <div style={{ display:'flex', alignItems:'center', gap:'4px', marginBottom:'10px' }}>
-                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
-                    <input type="number" step="0.01" min="0" value={platformSettings.price_enforcement_starter ?? 49} onChange={e => setPlatformSettings((p: any) => ({...p, price_enforcement_starter: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+                  <p style={{ color:'#b39ddb', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Enforcement Track</p>
+                  {/* Column headers */}
+                  <div style={{ display:'grid', gridTemplateColumns:'60px 1fr 1fr 1fr', gap:'4px', marginBottom:'6px' }}>
+                    <div />
+                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>Base</p>
+                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>/ Prop</p>
+                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>/ Driver</p>
                   </div>
-                  <label style={lbl}>Growth /mo</label>
-                  <div style={{ display:'flex', alignItems:'center', gap:'4px', marginBottom:'10px' }}>
-                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
-                    <input type="number" step="0.01" min="0" value={platformSettings.price_enforcement_growth ?? 99} onChange={e => setPlatformSettings((p: any) => ({...p, price_enforcement_growth: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
-                  </div>
-                  <label style={lbl}>Legacy /mo</label>
-                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
-                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
-                    <input type="number" step="0.01" min="0" value={platformSettings.price_enforcement_legacy ?? 149} onChange={e => setPlatformSettings((p: any) => ({...p, price_enforcement_legacy: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
-                  </div>
+                  {[
+                    { label:'Starter', base:'price_enforcement_starter_base', defBase:99, prop:'price_enforcement_starter_per_property', defProp:15, drv:'price_enforcement_starter_per_driver', defDrv:10 },
+                    { label:'Growth',  base:'price_enforcement_growth_base',  defBase:149, prop:'price_enforcement_growth_per_property',  defProp:12, drv:'price_enforcement_growth_per_driver',  defDrv:8 },
+                    { label:'Legacy',  base:'price_enforcement_legacy_base',  defBase:199, prop:'price_enforcement_legacy_per_property',  defProp:10, drv:'price_enforcement_legacy_per_driver',  defDrv:6 },
+                  ].map(t => (
+                    <div key={t.label} style={{ display:'grid', gridTemplateColumns:'60px 1fr 1fr 1fr', gap:'4px', alignItems:'center', marginBottom:'6px' }}>
+                      <span style={{ color:'#aaa', fontSize:'11px' }}>{t.label}</span>
+                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.base] ?? t.defBase} onChange={e => setPlatformSettings((p: any) => ({...p, [t.base]: parseFloat(e.target.value)}))} style={pInp} /></div>
+                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.prop] ?? t.defProp} onChange={e => setPlatformSettings((p: any) => ({...p, [t.prop]: parseFloat(e.target.value)}))} style={pInp} /></div>
+                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.drv] ?? t.defDrv} onChange={e => setPlatformSettings((p: any) => ({...p, [t.drv]: parseFloat(e.target.value)}))} style={pInp} /></div>
+                    </div>
+                  ))}
                 </div>
+
+                {/* PM card */}
                 <div style={{ background:'#1e2535', borderRadius:'8px', padding:'12px' }}>
-                  <p style={{ color:'#4fc3f7', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 10px' }}>Property Mgmt Track</p>
-                  <label style={lbl}>Essential /mo</label>
-                  <div style={{ display:'flex', alignItems:'center', gap:'4px', marginBottom:'10px' }}>
-                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
-                    <input type="number" step="0.01" min="0" value={platformSettings.price_pm_essential ?? 29} onChange={e => setPlatformSettings((p: any) => ({...p, price_pm_essential: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
+                  <p style={{ color:'#4fc3f7', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Property Mgmt Track</p>
+                  {/* Column headers */}
+                  <div style={{ display:'grid', gridTemplateColumns:'80px 1fr 1fr', gap:'4px', marginBottom:'6px' }}>
+                    <div />
+                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>Base</p>
+                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>/ Prop</p>
                   </div>
-                  <label style={lbl}>Professional /mo</label>
-                  <div style={{ display:'flex', alignItems:'center', gap:'4px', marginBottom:'10px' }}>
-                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
-                    <input type="number" step="0.01" min="0" value={platformSettings.price_pm_professional ?? 59} onChange={e => setPlatformSettings((p: any) => ({...p, price_pm_professional: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
-                  </div>
-                  <label style={lbl}>Enterprise /mo</label>
-                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
-                    <span style={{ color:'#aaa', fontSize:'13px' }}>$</span>
-                    <input type="number" step="0.01" min="0" value={platformSettings.price_pm_enterprise ?? 99} onChange={e => setPlatformSettings((p: any) => ({...p, price_pm_enterprise: parseFloat(e.target.value)}))} style={{ ...inp, marginTop:0, marginBottom:0, flex:1 }} />
-                  </div>
+                  {[
+                    { label:'Essential',     base:'price_pm_essential_base',     defBase:79,  prop:'price_pm_essential_per_property',     defProp:20 },
+                    { label:'Professional',  base:'price_pm_professional_base',  defBase:129, prop:'price_pm_professional_per_property',  defProp:15 },
+                    { label:'Enterprise',    base:'price_pm_enterprise_base',    defBase:179, prop:'price_pm_enterprise_per_property',    defProp:10 },
+                  ].map(t => (
+                    <div key={t.label} style={{ display:'grid', gridTemplateColumns:'80px 1fr 1fr', gap:'4px', alignItems:'center', marginBottom:'6px' }}>
+                      <span style={{ color:'#aaa', fontSize:'11px' }}>{t.label}</span>
+                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.base] ?? t.defBase} onChange={e => setPlatformSettings((p: any) => ({...p, [t.base]: parseFloat(e.target.value)}))} style={pInp} /></div>
+                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.prop] ?? t.defProp} onChange={e => setPlatformSettings((p: any) => ({...p, [t.prop]: parseFloat(e.target.value)}))} style={pInp} /></div>
+                    </div>
+                  ))}
+                  <p style={{ color:'#555', fontSize:'9px', margin:'8px 0 0', fontStyle:'italic' }}>No per-driver fee — PM clients do not have drivers.</p>
                 </div>
               </div>
             </div>
+
+            {/* Monthly Bill Calculator */}
+            {(() => {
+              const isEnf = calcTrack === 'enforcement'
+              const tiers = isEnf
+                ? ['starter','growth','legacy']
+                : ['essential','professional','enterprise']
+              const safeCalcTier = tiers.includes(calcTier) ? calcTier : tiers[0]
+              const baseKey = `price_${calcTrack}_${safeCalcTier}_base`
+              const propKey = `price_${calcTrack}_${safeCalcTier}_per_property`
+              const drvKey  = `price_${calcTrack}_${safeCalcTier}_per_driver`
+              const defBases: Record<string,number> = { starter:99, growth:149, legacy:199, essential:79, professional:129, enterprise:179 }
+              const defProps: Record<string,number>  = { starter:15, growth:12,  legacy:10,  essential:20, professional:15,  enterprise:10 }
+              const defDrvs: Record<string,number>   = { starter:10, growth:8,   legacy:6 }
+              const base   = Number(platformSettings[baseKey] ?? defBases[safeCalcTier] ?? 0)
+              const perProp = Number(platformSettings[propKey]  ?? defProps[safeCalcTier]  ?? 0)
+              const perDrv  = isEnf ? Number(platformSettings[drvKey] ?? defDrvs[safeCalcTier] ?? 0) : 0
+              const propTotal = perProp * calcProperties
+              const drvTotal  = isEnf ? perDrv * calcDrivers : 0
+              const monthly   = base + propTotal + drvTotal
+              const annual    = monthly * 10
+              const fmt = (n: number) => `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+              return (
+                <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>Monthly Bill Calculator</p>
+                  <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Estimate what a client should be charged based on their tier and usage.</p>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'12px' }}>
+                    <div>
+                      <label style={lbl}>Track</label>
+                      <select value={calcTrack} onChange={e => { setCalcTrack(e.target.value); setCalcTier(e.target.value === 'enforcement' ? 'starter' : 'essential') }} style={{ ...inp, marginTop:0, marginBottom:0 }}>
+                        <option value="enforcement">Enforcement</option>
+                        <option value="pm">Property Mgmt</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={lbl}>Tier</label>
+                      <select value={safeCalcTier} onChange={e => setCalcTier(e.target.value)} style={{ ...inp, marginTop:0, marginBottom:0 }}>
+                        {tiers.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={lbl}>Properties</label>
+                      <input type="number" min="1" value={calcProperties} onChange={e => setCalcProperties(Math.max(1, parseInt(e.target.value) || 1))} style={{ ...inp, marginTop:0, marginBottom:0 }} />
+                    </div>
+                    {isEnf && (
+                      <div>
+                        <label style={lbl}>Drivers</label>
+                        <input type="number" min="0" value={calcDrivers} onChange={e => setCalcDrivers(Math.max(0, parseInt(e.target.value) || 0))} style={{ ...inp, marginTop:0, marginBottom:0 }} />
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ background:'#0f1117', borderRadius:'8px', padding:'12px', fontFamily:'Courier New' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                      <span style={{ color:'#888', fontSize:'12px' }}>Base fee</span>
+                      <span style={{ color:'#ccc', fontSize:'12px' }}>{fmt(base)}</span>
+                    </div>
+                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                      <span style={{ color:'#888', fontSize:'12px' }}>Properties ({calcProperties})</span>
+                      <span style={{ color:'#ccc', fontSize:'12px' }}>{fmt(propTotal)}</span>
+                    </div>
+                    {isEnf && (
+                      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                        <span style={{ color:'#888', fontSize:'12px' }}>Drivers ({calcDrivers})</span>
+                        <span style={{ color:'#ccc', fontSize:'12px' }}>{fmt(drvTotal)}</span>
+                      </div>
+                    )}
+                    <div style={{ borderTop:'1px solid #2a2f3d', margin:'8px 0' }} />
+                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                      <span style={{ color:'#C9A227', fontSize:'13px', fontWeight:'bold' }}>Monthly total</span>
+                      <span style={{ color:'#C9A227', fontSize:'13px', fontWeight:'bold' }}>{fmt(monthly)}</span>
+                    </div>
+                    <div style={{ display:'flex', justifyContent:'space-between' }}>
+                      <span style={{ color:'#888', fontSize:'11px' }}>Annual total <span style={{ color:'#555' }}>(2 months free)</span></span>
+                      <span style={{ color:'#aaa', fontSize:'11px' }}>{fmt(annual)}</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Section D — À La Carte Add-on Pricing */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
