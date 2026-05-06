@@ -228,7 +228,7 @@ function VisitorForm() {
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>License Plate *</label>
             <input
               value={form.plate}
-              onChange={e => setForm({...form, plate: e.target.value.toUpperCase()})}
+              onChange={e => setForm({...form, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})}
               placeholder="ABC1234"
               style={{ display:'block', width:'100%', marginTop:'6px', padding:'12px', fontSize:'20px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.1em', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box' }}
             />

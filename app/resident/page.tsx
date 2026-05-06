@@ -509,7 +509,7 @@ export default function ResidentPortal() {
                           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                             <div style={{ gridColumn:'span 2' }}>
                               <label style={lbl}>Plate *</label>
-                              <input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: e.target.value.toUpperCase()})} placeholder="ABC1234" style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
+                              <input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})} placeholder="ABC1234" style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
                             </div>
                             <div>
                               <label style={lbl}>State</label>
@@ -592,7 +592,7 @@ export default function ResidentPortal() {
                             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                               <div style={{ gridColumn:'span 2' }}>
                                 <label style={lbl}>Plate</label>
-                                <input value={editingVehicle.plate || ''} onChange={e => setEditingVehicle({...editingVehicle, plate: e.target.value.toUpperCase()})} style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
+                                <input value={editingVehicle.plate || ''} onChange={e => setEditingVehicle({...editingVehicle, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})} style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
                               </div>
                               <div>
                                 <label style={lbl}>State</label>
@@ -756,7 +756,7 @@ export default function ResidentPortal() {
                 <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Visitor's Plate *</label>
                 <input
                   value={visitorForm.plate}
-                  onChange={e => setVisitorForm({...visitorForm, plate: e.target.value.toUpperCase()})}
+                  onChange={e => setVisitorForm({...visitorForm, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})}
                   placeholder="ABC1234"
                   style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', textAlign:'center', boxSizing:'border-box' }}
                 />

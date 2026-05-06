@@ -243,7 +243,7 @@ function RegisterForm() {
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                     <div style={{ gridColumn:'span 2' }}>
                       <label style={lbl}>License Plate *</label>
-                      <input value={v.plate} onChange={e => updateVehicle(i, 'plate', e.target.value.toUpperCase())}
+                      <input value={v.plate} onChange={e => updateVehicle(i, 'plate', e.target.value.replace(/\s+/g, '').toUpperCase())}
                         placeholder="ABC1234" style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center', letterSpacing:'0.1em' }} />
                     </div>
                     <div>
