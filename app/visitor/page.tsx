@@ -176,6 +176,11 @@ function VisitorForm() {
             </p>
           </div>
 
+          {/* Screenshot tip */}
+          <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 12px', color:'#666', fontSize:'11px', textAlign:'center', fontStyle:'italic', marginTop:'8px', marginBottom:'12px' }}>
+            📸 Tip: Take a screenshot of this pass for your records. Show it to your host or property management if needed.
+          </div>
+
           {/* Support */}
           <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px', marginBottom:'12px', textAlign:'center' }}>
             <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Questions or corrections?</p>
