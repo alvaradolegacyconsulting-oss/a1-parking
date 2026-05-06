@@ -728,11 +728,11 @@ export default function ManagerPortal() {
           <button style={tabStyle('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
           <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
-          <button style={tabStyle('activity')} onClick={() => setActiveTab('activity')}>Activity</button>
           <button style={tabStyle('disputes')} onClick={() => setActiveTab('disputes')}>
             Disputes{pendingDisputeCount > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingDisputeCount}</span>}
           </button>
           <button style={tabStyle('insights')} onClick={() => setActiveTab('insights')}>Insights</button>
+          <button style={tabStyle('activity')} onClick={() => setActiveTab('activity')}>Activity</button>
         </div>
 
         {/* OVERVIEW */}
