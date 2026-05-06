@@ -25,6 +25,20 @@ export default function Terms() {
           </p>
         </div>
 
+        <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'16px', marginBottom:'16px' }}>
+          <p style={{ color:'#C9A227', fontSize:'14px', fontWeight:'bold', margin:'0 0 8px' }}>🏢 Enterprise & Institutional Use</p>
+          <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0 0 10px' }}>
+            ShieldMyLot is designed for commercial towing companies and residential or commercial property management firms. Use by hospitals, universities, municipalities, government entities, or other institutional operators with high-volume enforcement needs requires a separate Enterprise Agreement.
+          </p>
+          <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0 0 10px' }}>
+            Institutional users who have registered under a standard subscription plan will be contacted to discuss appropriate Enterprise pricing and terms.
+          </p>
+          <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>
+            To inquire about Enterprise agreements contact:{' '}
+            <a href="mailto:support@shieldmylot.com" style={{ color:'#C9A227', textDecoration:'none' }}>support@shieldmylot.com</a>
+          </p>
+        </div>
+
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'32px' }}>
           {[
             { title:'1. Platform Use', body:'This platform is a parking management tool provided by A1 Wrecker LLC for authorized users only. Use of this platform constitutes acceptance of these terms. Unauthorized access or use is strictly prohibited.' },

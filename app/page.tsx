@@ -38,6 +38,11 @@ export default function Landing() {
       name: 'Legacy', base: 199, perProp: 10, perDriver: 6,
       features: ['Unlimited properties', 'Everything in Growth', 'White-label branding', 'Advanced analytics', 'Custom integrations', 'Dedicated account manager', 'Priority email support'],
     },
+    {
+      name: 'Enterprise', base: 'Custom', perProp: 'Custom', perDriver: 'Custom',
+      badge: 'Large operations', enterprise: true,
+      features: ['Unlimited everything', 'Dedicated support', 'Custom integrations', 'SLA guarantee', 'Volume pricing'],
+    },
   ]
 
   const pmTiers = [
@@ -153,15 +158,29 @@ export default function Landing() {
                     Most popular
                   </div>
                 )}
+                {tier.badge && !tier.popular && (
+                  <div style={{ position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: '#1e2535', color: MUTED, fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 10, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', border: `1px solid ${BORDER}` }}>
+                    {tier.badge}
+                  </div>
+                )}
                 <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>{activeTrack === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</p>
                 <h3 style={{ color: TEXT, fontSize: 22, fontWeight: 700, margin: '0 0 16px' }}>{tier.name}</h3>
-                <div style={{ marginBottom: 8 }}>
-                  <span style={{ color: GOLD, fontSize: 32, fontWeight: 800 }}>${tier.base}</span>
-                  <span style={{ color: MUTED, fontSize: 14 }}>/mo base</span>
-                </div>
-                <p style={{ color: MUTED, fontSize: 12, margin: '0 0 4px' }}>+ ${tier.perProp}/mo per property</p>
-                {tier.perDriver && <p style={{ color: MUTED, fontSize: 12, margin: '0 0 20px' }}>+ ${tier.perDriver}/mo per driver</p>}
-                {!tier.perDriver && <div style={{ marginBottom: 20 }} />}
+                {tier.enterprise ? (
+                  <div style={{ marginBottom: 20 }}>
+                    <p style={{ color: GOLD, fontSize: 28, fontWeight: 800, margin: '0 0 6px' }}>Let's talk</p>
+                    <p style={{ color: MUTED, fontSize: 13, margin: 0, lineHeight: 1.5 }}>Tailored for hospitals, universities, and large property groups</p>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ marginBottom: 8 }}>
+                      <span style={{ color: GOLD, fontSize: 32, fontWeight: 800 }}>${tier.base}</span>
+                      <span style={{ color: MUTED, fontSize: 14 }}>/mo base</span>
+                    </div>
+                    <p style={{ color: MUTED, fontSize: 12, margin: '0 0 4px' }}>+ ${tier.perProp}/mo per property</p>
+                    {tier.perDriver && <p style={{ color: MUTED, fontSize: 12, margin: '0 0 20px' }}>+ ${tier.perDriver}/mo per driver</p>}
+                    {!tier.perDriver && <div style={{ marginBottom: 20 }} />}
+                  </>
+                )}
                 <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 20, marginBottom: 24 }}>
                   {tier.features.map((f: string, j: number) => (
                     <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
@@ -170,9 +189,16 @@ export default function Landing() {
                     </div>
                   ))}
                 </div>
-                <a href="#contact" style={{ display: 'block', textAlign: 'center', background: tier.popular ? GOLD : CARD_BG, color: tier.popular ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${tier.popular ? GOLD : BORDER}` }}>
-                  Get started
-                </a>
+                {tier.enterprise ? (
+                  <a href="mailto:support@shieldmylot.com?subject=ShieldMyLot Enterprise Inquiry"
+                    style={{ display: 'block', textAlign: 'center', background: CARD_BG, color: TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${BORDER}` }}>
+                    Contact us →
+                  </a>
+                ) : (
+                  <a href="#contact" style={{ display: 'block', textAlign: 'center', background: tier.popular ? GOLD : CARD_BG, color: tier.popular ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${tier.popular ? GOLD : BORDER}` }}>
+                    Get started
+                  </a>
+                )}
               </div>
             ))}
           </div>
