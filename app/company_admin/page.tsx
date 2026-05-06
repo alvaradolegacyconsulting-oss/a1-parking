@@ -179,11 +179,8 @@ export default function CompanyAdminPortal() {
 
   async function fetchPasses(property: string) {
     const now = new Date().toISOString()
-    const { data: propResidents } = await supabase.from('residents').select('unit').ilike('property', property)
-    const units = [...new Set((propResidents || []).map((r: any) => r.unit).filter(Boolean))]
-    if (units.length === 0) { setPasses([]); setStats(s => ({ ...s, active_passes: 0 })); return }
     const { data } = await supabase.from('visitor_passes').select('*')
-      .gte('expires_at', now).eq('is_active', true).in('visiting_unit', units)
+      .ilike('property', property).gte('expires_at', now).eq('is_active', true)
       .order('created_at', { ascending: false })
     setPasses(data || [])
     setStats(s => ({ ...s, active_passes: data?.length || 0 }))
@@ -532,18 +529,13 @@ export default function CompanyAdminPortal() {
       if (inCompany) { setSearching(false); setResult({ status: 'expired', data: expiredVeh }); return }
     }
 
-    const { data: companyResidents } = await supabase.from('residents').select('unit').in('property', properties.map(p => p.name))
-    const companyUnits = [...new Set((companyResidents || []).map((r: any) => r.unit).filter(Boolean))]
-    let pass = null
-    if (companyUnits.length > 0) {
-      const { data: passData } = await supabase.from('visitor_passes').select('*')
-        .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString())
-        .in('visiting_unit', companyUnits).single()
-      pass = passData
-    }
+    const propNames = properties.map((p: any) => p.name)
+    const { data: passData } = await supabase.from('visitor_passes').select('*')
+      .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString())
+      .in('property', propNames).single()
 
     setSearching(false)
-    if (pass) setResult({ status: 'visitor', data: pass })
+    if (passData) setResult({ status: 'visitor', data: passData })
     else setResult({ status: 'notfound' })
   }
 
@@ -655,15 +647,11 @@ export default function CompanyAdminPortal() {
       supabase.from('dispute_requests').select('id').in('property', propNames).eq('status', 'pending'),
     ])
 
-    const { data: resData } = await supabase.from('residents').select('unit').in('property', propNames)
-    const allUnits = [...new Set((resData || []).map((r: any) => r.unit).filter(Boolean))]
     let passCount = 0
     const passMonthMap: Record<string, number> = {}
-    if (allUnits.length > 0) {
-      const { data: pData } = await supabase.from('visitor_passes').select('created_at').in('visiting_unit', allUnits).gte('created_at', startDate.toISOString())
-      passCount = pData?.length || 0
-      ;(pData || []).forEach((p: any) => { const k = mk(new Date(p.created_at)); passMonthMap[k] = (passMonthMap[k] || 0) + 1 })
-    }
+    const { data: pData } = await supabase.from('visitor_passes').select('created_at').in('property', propNames).gte('created_at', startDate.toISOString())
+    passCount = pData?.length || 0
+    ;(pData || []).forEach((p: any) => { const k = mk(new Date(p.created_at)); passMonthMap[k] = (passMonthMap[k] || 0) + 1 })
 
     const viols = vData || []
     const byProp: Record<string, { violations: number; tows: number }> = {}

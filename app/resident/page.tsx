@@ -242,23 +242,16 @@ export default function ResidentPortal() {
         const exemptPlates: string[] = propData.exempt_plates || []
         const isExempt = exemptPlates.some((ep: string) => ep.toUpperCase() === plate)
         if (!isExempt) {
-          const { data: units } = await supabase
-            .from('residents')
-            .select('unit')
+          const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString()
+          const { count } = await supabase
+            .from('visitor_passes')
+            .select('id', { count: 'exact', head: true })
+            .ilike('plate', plate)
             .ilike('property', resident.property)
-          const unitList = (units || []).map((r: any) => r.unit)
-          if (unitList.length > 0) {
-            const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString()
-            const { count } = await supabase
-              .from('visitor_passes')
-              .select('id', { count: 'exact', head: true })
-              .ilike('plate', plate)
-              .in('visiting_unit', unitList)
-              .gte('created_at', yearStart)
-            if ((count ?? 0) >= propData.visitor_pass_limit) {
-              setPassError('This vehicle has reached the maximum number of visitor passes allowed per year for this property.')
-              return
-            }
+            .gte('created_at', yearStart)
+          if ((count ?? 0) >= propData.visitor_pass_limit) {
+            setPassError('This vehicle has reached the maximum number of visitor passes allowed per year for this property.')
+            return
           }
         }
       }
@@ -272,6 +265,7 @@ export default function ResidentPortal() {
         plate,
         visitor_name: visitorForm.name,
         visiting_unit: resident.unit,
+        property: resident.property,
         vehicle_desc: visitorForm.vehicle_desc,
         duration_hours: parseInt(visitorForm.duration),
         created_at: new Date().toISOString(),

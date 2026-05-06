@@ -101,6 +101,7 @@ function VisitorForm() {
         plate,
         visitor_name: form.name,
         visiting_unit: form.unit,
+        property: propertyName,
         vehicle_desc: form.vehicle_desc,
         duration_hours: parseInt(form.duration),
         created_at: now.toISOString(),

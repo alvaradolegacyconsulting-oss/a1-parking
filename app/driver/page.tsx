@@ -215,11 +215,9 @@ export default function DriverPortal() {
       setSearching(false); setResult({ status: 'expired', data: { ...expiredVeh, _space_notes: spaceNotes } }); return
     }
 
-    const { data: propResidents } = await supabase.from('residents').select('unit').ilike('property', selectedProperty)
-    const unitList = (propResidents || []).map((r: any) => r.unit).filter(Boolean)
     const { data: pass } = await supabase.from('visitor_passes').select('*')
-      .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString())
-      .in('visiting_unit', unitList.length > 0 ? unitList : ['__none__'])
+      .ilike('plate', clean).ilike('property', selectedProperty)
+      .eq('is_active', true).gte('expires_at', new Date().toISOString())
       .single()
     setSearching(false)
     if (pass) setResult({ status: 'visitor', data: pass })
