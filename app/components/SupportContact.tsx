@@ -27,21 +27,18 @@ export default function SupportContact({ role, company, managerName, managerEmai
     let cancelled = false
     ;(async () => {
       const { data, error } = await supabase
-        .from('user_roles')
-        .select('email')
-        .eq('role', 'company_admin')
-        .ilike('company', company)
-        .order('email')
+        .rpc('get_company_admin_emails', { target_company: company })
       if (cancelled) return
       if (error) {
-        console.error('[SupportContact] user_roles query failed:', error)
+        console.error('[SupportContact] get_company_admin_emails RPC failed:', error)
         setQueryErrored(true)
         setLoaded(true)
         return
       }
-      const emails = (data || [])
-        .map((r: any) => (r.email as string | null) || null)
+      const emails = ((data as { email: string | null }[] | null) || [])
+        .map(r => r.email)
         .filter((e): e is string => !!e)
+        .sort((a: string, b: string) => a.localeCompare(b))
       setAdminEmails(emails)
       setLoaded(true)
     })()
