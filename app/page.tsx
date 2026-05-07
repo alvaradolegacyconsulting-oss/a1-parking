@@ -29,7 +29,7 @@ export default function Landing() {
 
   const enfTiers = [
     {
-      name: 'Starter', base: 99, perProp: 15, perDriver: 10,
+      name: 'Starter', base: 129, perProp: 15, perDriver: 10,
       features: ['Up to 3 properties', 'Unlimited violations', 'QR code registration', 'Resident portal', 'Visitor pass system', 'Driver app access', 'Email support'],
     },
     {
@@ -49,15 +49,15 @@ export default function Landing() {
 
   const pmTiers = [
     {
-      name: 'Essential', base: 79, perProp: 20,
+      name: 'Essential', base: 129, perProp: 20,
       features: ['Up to 3 properties', 'Resident portal', 'Visitor pass system', 'QR code registration', 'Manager dashboard', 'Email support'],
     },
     {
-      name: 'Professional', base: 129, perProp: 15, popular: true,
+      name: 'Professional', base: 199, perProp: 15, popular: true,
       features: ['Up to 10 properties', 'Everything in Essential', 'Analytics dashboard', 'Registration QR codes', 'Dispute management', 'Priority email support'],
     },
     {
-      name: 'Enterprise', base: 179, perProp: 10,
+      name: 'Enterprise', base: 279, perProp: 10,
       features: ['Unlimited properties', 'Everything in Professional', 'White-label branding', 'Custom integrations', 'Dedicated account manager', 'Priority email support'],
     },
   ]
