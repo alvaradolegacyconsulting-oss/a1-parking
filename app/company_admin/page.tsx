@@ -3,9 +3,10 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
+import SupportContact from '../components/SupportContact'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
-const BASE_URL = 'https://a1-parking.vercel.app'
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
 
 export default function CompanyAdminPortal() {
   const [user, setUser] = useState<any>(null)
@@ -756,8 +757,7 @@ export default function CompanyAdminPortal() {
       <div class="hdr">
         <img src="${window.location.origin}/logo.jpeg" class="logo" alt="" onerror="this.style.display='none'">
         <div>
-          <div style="font-size:20px;font-weight:bold">A1 Wrecker, LLC</div>
-          <div style="font-size:11px;color:#888;margin-top:2px">Houston's #1 Towing &amp; Recovery</div>
+          <div style="font-size:20px;font-weight:bold">${role?.company || 'Tow Service'}</div>
           <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET (REPRINT)</div>
         </div>
         <div style="margin-left:auto;text-align:right">
@@ -796,7 +796,7 @@ export default function CompanyAdminPortal() {
       </div></div>` : ''}
       ${photosHtml}
       <div class="sig-wrap"><div><div class="sig-line">Authorized Signature</div></div><div><div class="sig-line">Date</div></div></div>
-      <div class="ftr">A1 Wrecker, LLC &middot; Houston's #1 Towing &amp; Recovery &middot; a1wreckerllc.net<br>Reprinted ${new Date().toLocaleString()}</div>
+      <div class="ftr">${role?.company || ''}<br>Reprinted ${new Date().toLocaleString()}</div>
       <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center">
         <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
         <button onclick="window.close()" style="padding:11px 22px;background:#333;color:#fff;font-size:13px;border:none;border-radius:7px;cursor:pointer">Close</button>
@@ -814,7 +814,7 @@ export default function CompanyAdminPortal() {
     const total = (parseFloat(towFee || '0') + parseFloat(mileage || '0')).toFixed(2)
     const mailSubject = encodeURIComponent(`Tow Ticket - ${v.plate}`)
     const mailBody = encodeURIComponent([
-      `TOW TICKET — A1 Wrecker, LLC`,
+      `TOW TICKET — ${role?.company || ''}`,
       `Date/Time: ${new Date(v.created_at).toLocaleString()}`,
       `Ticket #: ${String(v.id).substring(0, 8).toUpperCase()}`,
       ``,`VEHICLE`,`Plate: ${v.plate}`,
@@ -850,8 +850,7 @@ export default function CompanyAdminPortal() {
       <div class="hdr">
         <img src="${window.location.origin}/logo.jpeg" class="logo" alt="" onerror="this.style.display='none'">
         <div>
-          <div style="font-size:20px;font-weight:bold">A1 Wrecker, LLC</div>
-          <div style="font-size:11px;color:#888;margin-top:2px">Houston's #1 Towing &amp; Recovery</div>
+          <div style="font-size:20px;font-weight:bold">${role?.company || 'Tow Service'}</div>
           <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET</div>
         </div>
         <div style="margin-left:auto;text-align:right">
@@ -892,7 +891,7 @@ export default function CompanyAdminPortal() {
       </div></div>` : ''}
       ${photosHtml}
       <div class="sig-wrap"><div><div class="sig-line">Authorized Signature</div></div><div><div class="sig-line">Date</div></div></div>
-      <div class="ftr">A1 Wrecker, LLC &middot; Houston's #1 Towing &amp; Recovery &middot; a1wreckerllc.net<br>Generated ${new Date().toLocaleString()}</div>
+      <div class="ftr">${role?.company || ''}<br>Generated ${new Date().toLocaleString()}</div>
       <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center">
         <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
         <a href="mailto:?subject=${mailSubject}&body=${mailBody}" style="padding:11px 22px;background:#1e3a5f;color:#fff;font-weight:bold;font-size:13px;border-radius:7px;text-decoration:none;display:inline-flex;align-items:center">Email Ticket</a>
@@ -976,8 +975,7 @@ export default function CompanyAdminPortal() {
     </style></head><body>
       <div class="card">
         <div class="hdr">
-          <p style="color:#C9A227;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:.1em">A1 WRECKER, LLC</p>
-          <p style="color:white;font-size:10px;margin-top:2px">Houston's #1 Towing &amp; Recovery</p>
+          <p style="color:#C9A227;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:.1em">${role?.company || 'Visitor Parking'}</p>
         </div>
         <p style="font-size:22px;font-weight:bold;color:#111;margin-bottom:4px">Visitor Parking</p>
         <p style="font-size:14px;color:#333;margin-bottom:20px">Scan to get your parking pass</p>
@@ -1059,10 +1057,10 @@ export default function CompanyAdminPortal() {
       <div style={{ maxWidth:'540px', margin:'0 auto' }}>
 
         <div style={{ marginBottom:'16px', textAlign:'center' }}>
-          <img src="/logo.jpeg" alt="A1 Wrecker"
+          <img src="/logo.jpeg" alt={role?.company || 'ShieldMyLot'}
             style={{ width:'60px', height:'60px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 8px' }}
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
-          <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
+          <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{role?.company || 'ShieldMyLot'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Company Admin Portal</p>
         </div>
 
@@ -2088,8 +2086,12 @@ export default function CompanyAdminPortal() {
           </div>
         )}
 
-        <div style={{ textAlign:'center', marginTop:'24px', paddingBottom:'20px' }}>
-          <p style={{ color:'#2a2f3d', fontSize:'11px', margin:'0' }}>A1 Wrecker, LLC · Houston's #1 Towing & Recovery</p>
+        <div style={{ marginTop: 24 }}>
+          <SupportContact role="company_admin" />
+        </div>
+
+        <div style={{ textAlign:'center', marginTop:'12px', paddingBottom:'20px' }}>
+          <p style={{ color:'#2a2f3d', fontSize:'11px', margin:'0' }}>Powered by ShieldMyLot · A product of Alvarado Legacy Consulting LLC</p>
         </div>
 
       </div>

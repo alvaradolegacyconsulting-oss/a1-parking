@@ -96,7 +96,7 @@ export default function History() {
       <div style={{ maxWidth:'600px', margin:'0 auto' }}>
 
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
-          <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
+          <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>ShieldMyLot</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Violation History</p>
         </div>
 

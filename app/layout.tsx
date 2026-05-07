@@ -14,8 +14,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "A1 Wrecker, LLC · Parking Management",
-  description: "A1 Wrecker, LLC Parking Management Platform",
+  title: "ShieldMyLot™ — Parking Enforcement & Management Platform",
+  description: "ShieldMyLot is a parking enforcement and property management platform for Texas towing companies and property managers. A product of Alvarado Legacy Consulting LLC.",
+  openGraph: {
+    title: "ShieldMyLot — Parking Enforcement & Management Platform",
+    description: "Resident registration, visitor passes, violation tracking, and tow ticketing — one platform for Texas property teams.",
+    url: "https://shieldmylot.com",
+    siteName: "ShieldMyLot",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ShieldMyLot — Parking Enforcement & Management Platform",
+    description: "Resident registration, visitor passes, violation tracking, and tow ticketing — one platform for Texas property teams.",
+  },
 };
 
 export default function RootLayout({

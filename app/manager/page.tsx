@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
+import SupportContact from '../components/SupportContact'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export default function ManagerPortal() {
@@ -91,7 +92,7 @@ export default function ManagerPortal() {
       .single()
 
     if (!roleData) {
-      setError('No role assigned. Contact A1 Wrecker.')
+      setError('No role assigned. Contact your administrator.')
       setLoading(false)
       return
     }
@@ -533,8 +534,7 @@ export default function ManagerPortal() {
       <div class="hdr">
         <img src="${window.location.origin}/logo.jpeg" class="logo" alt="" onerror="this.style.display='none'">
         <div>
-          <div style="font-size:20px;font-weight:bold">A1 Wrecker, LLC</div>
-          <div style="font-size:11px;color:#888;margin-top:2px">Houston's #1 Towing &amp; Recovery</div>
+          <div style="font-size:20px;font-weight:bold">${managerCompany || 'Tow Service'}</div>
           <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET (REPRINT)</div>
         </div>
         <div style="margin-left:auto;text-align:right">
@@ -575,7 +575,7 @@ export default function ManagerPortal() {
       </div></div>` : ''}
       ${photosHtml}
       <div class="sig-wrap"><div><div class="sig-line">Operator Signature</div></div><div><div class="sig-line">Date</div></div></div>
-      <div class="ftr">A1 Wrecker, LLC &middot; Houston's #1 Towing &amp; Recovery &middot; a1wreckerllc.net<br>Reprinted ${new Date().toLocaleString()}</div>
+      <div class="ftr">${managerCompany || ''}<br>Reprinted ${new Date().toLocaleString()}</div>
       <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center">
         <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
         <button onclick="window.close()" style="padding:11px 22px;background:#333;color:#fff;font-size:13px;border:none;border-radius:7px;cursor:pointer">Close</button>
@@ -669,7 +669,7 @@ export default function ManagerPortal() {
       <div style={{ maxWidth:'600px', margin:'0 auto' }}>
 
         <div style={{ marginBottom:'16px', textAlign:'center' }}>
-          <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
+          <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{managerCompany || 'ShieldMyLot'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Property Manager Portal</p>
         </div>
 
@@ -1281,7 +1281,7 @@ export default function ManagerPortal() {
           <div>
             <div style={{ background:'#1a2a1a', border:'1px solid #2e7d32', borderRadius:'8px', padding:'12px 14px', marginBottom:'12px' }}>
               <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'12px', margin:'0 0 2px' }}>View Only</p>
-              <p style={{ color:'#aaa', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>Violations are filed by A1 Wrecker drivers. Contact A1 Wrecker to report an issue.</p>
+              <p style={{ color:'#aaa', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>Violations are filed by enforcement drivers. Contact your company administrator to report an issue.</p>
             </div>
             <input value={violationSearch} onChange={e => setViolationSearch(e.target.value)} placeholder="Search plate, violation type, location..." style={{ ...inputStyle, marginBottom:'10px' }} />
             <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'12px' }}>
@@ -1379,7 +1379,7 @@ export default function ManagerPortal() {
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>New Resident Registration Link</p>
                 <p style={{ color:'#555', fontSize:'12px', margin:'0 0 16px', lineHeight:'1.5' }}>Share this QR code or link with new residents to allow them to self-register. Their account will require your approval before they can log in.</p>
                 {(() => {
-                  const regUrl = `https://a1-parking.vercel.app/register?property=${encodeURIComponent(manager.name)}${managerCompany ? `&company=${encodeURIComponent(managerCompany)}` : ''}`
+                  const regUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'}/register?property=${encodeURIComponent(manager.name)}${managerCompany ? `&company=${encodeURIComponent(managerCompany)}` : ''}`
                   return (
                     <>
                       <div id="qr-registration" style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
@@ -1669,6 +1669,12 @@ export default function ManagerPortal() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {!isAdmin && managerCompany && (
+          <div style={{ marginTop: 24 }}>
+            <SupportContact role={isReadOnly ? 'leasing_agent' : 'manager'} company={managerCompany} />
           </div>
         )}
 

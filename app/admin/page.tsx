@@ -734,7 +734,7 @@ export default function AdminPortal() {
 
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'20px' }}>
           <div>
-            <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
+            <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>ShieldMyLot</h1>
             <p style={{ color:'#888', fontSize:'12px', margin:'4px 0 0' }}>Super Admin · {adminEmail}</p>
           </div>
           <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}

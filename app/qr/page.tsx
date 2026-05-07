@@ -20,14 +20,15 @@ export default function QRPage() {
   const [selected, setSelected] = useState(PROPERTIES[0])
   const [printed, setPrinted] = useState(false)
 
-  const visitorUrl = `https://a1-parking.vercel.app/visitor?property=${encodeURIComponent(selected.name)}`
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
+  const visitorUrl = `${baseUrl}/visitor?property=${encodeURIComponent(selected.name)}`
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       <div style={{ maxWidth:'500px', margin:'0 auto' }}>
 
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
-          <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
+          <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>ShieldMyLot</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>QR Code Generator · Visitor Pass Signs</p>
         </div>
 

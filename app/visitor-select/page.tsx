@@ -42,12 +42,12 @@ function VisitorSelectForm() {
       <div style={{ maxWidth:'420px', width:'100%' }}>
 
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
-          <img src="/logo.jpeg" alt="A1 Wrecker"
+          <img src="/logo.jpeg" alt={company || 'ShieldMyLot'}
             style={{ width:'70px', height:'70px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 12px' }}
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
           />
-          <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
-          <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass{company ? ` · ${company}` : ''}</p>
+          <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>{company || 'Visitor Parking Pass'}</h1>
+          <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass{company ? '' : ''}</p>
           <p style={{ color:'#555', fontSize:'11px', margin:'4px 0 0' }}>No app download required</p>
         </div>
 
@@ -78,7 +78,7 @@ function VisitorSelectForm() {
         </div>
 
         <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'16px' }}>
-          A1 Wrecker, LLC · Houston's #1 Towing & Recovery · a1wreckerllc.net
+          {company ? `Questions about parking at this property? Contact ${company}.` : 'Powered by ShieldMyLot'}
         </p>
       </div>
     </main>

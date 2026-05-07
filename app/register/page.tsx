@@ -145,7 +145,7 @@ function RegisterForm() {
     setSubmitting(false)
   }
 
-  const displayName = companyName || 'A1 Wrecker, LLC'
+  const displayName = companyName || 'ShieldMyLot'
 
   if (done) {
     return (

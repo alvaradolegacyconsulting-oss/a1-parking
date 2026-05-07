@@ -62,7 +62,7 @@ export default function Login() {
 
     if (!roleData) {
       setLoading(false)
-      setError('No role assigned. Please contact A1 Wrecker to get access.')
+      setError('No role assigned. Please contact your administrator to get access.')
       await supabase.auth.signOut()
       return
     }
@@ -170,9 +170,9 @@ export default function Login() {
         <div style={{ marginBottom:'32px', textAlign:'center' }}>
           {logoFailed
             ? <div style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', background:'#1e2535', color:'#C9A227', fontSize:'28px', fontWeight:'bold', display:'flex', alignItems:'center', justifyContent:'center' }}>A1</div>
-            : <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'A1 Wrecker'} style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px' }} onError={() => setLogoFailed(true)} />
+            : <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'ShieldMyLot'} style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px' }} onError={() => setLogoFailed(true)} />
           }
-          <h1 style={{ color:'#C9A227', fontSize:'26px', fontWeight:'bold', margin:'0' }}>{companyName || 'A1 Wrecker, LLC'}</h1>
+          <h1 style={{ color:'#C9A227', fontSize:'26px', fontWeight:'bold', margin:'0' }}>{companyName || 'ShieldMyLot™'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Parking Management · Sign In</p>
         </div>
 
@@ -224,7 +224,7 @@ export default function Login() {
           </a>
         </div>
 
-        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'12px' }}>A1 Wrecker, LLC · Parking Management Platform</p>
+        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'12px' }}>Powered by ShieldMyLot</p>
       </div>
 
       {suspendedCompany && (
@@ -281,12 +281,12 @@ export default function Login() {
               onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop <= el.clientHeight + 10) setTosScrolled(true) }}
               style={{ overflowY:'scroll', maxHeight:'300px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'16px', marginBottom:'16px', fontSize:'13px', lineHeight:'1.7', color:'#aaa' }}
             >
-              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>1. Platform Use</strong><br />This platform is a parking management tool provided by A1 Wrecker LLC for authorized users only. Unauthorized access or use is strictly prohibited.</p>
+              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>1. Platform Use</strong><br />ShieldMyLot™ is a parking management platform provided by Alvarado Legacy Consulting LLC for authorized users only. Unauthorized access or use is strictly prohibited.</p>
               <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>2. User Responsibilities</strong><br />Users are responsible for the accuracy of all data entered. Towing decisions are made by licensed operators, not the platform. You must not enter false or misleading information.</p>
               <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>3. Data Collection</strong><br />We collect email, vehicle, and activity data to provide the service. All data is stored securely and used solely for parking management purposes.</p>
-              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>4. Limitation of Liability</strong><br />A1 Wrecker LLC is not liable for towing decisions, wrongful tow claims, or errors resulting from inaccurate data entry. The platform is provided as a management aid only.</p>
+              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>4. Limitation of Liability</strong><br />Alvarado Legacy Consulting LLC is not liable for towing decisions, wrongful tow claims, or errors resulting from inaccurate data entry by platform users. The platform is provided as a management aid only.</p>
               <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>5. Governing Law</strong><br />These terms are governed by the laws of the State of Texas. Any disputes shall be resolved in a court of competent jurisdiction in Texas.</p>
-              <p style={{ margin:'0' }}><strong style={{ color:'#C9A227' }}>6. Contact</strong><br />Questions? Contact A1 Wrecker LLC at 346-428-7864 or visit a1wreckerllc.net.</p>
+              <p style={{ margin:'0' }}><strong style={{ color:'#C9A227' }}>6. Contact</strong><br />Questions about ShieldMyLot? Contact support@shieldmylot.com.</p>
             </div>
             {!tosScrolled && <p style={{ color:'#555', fontSize:'11px', textAlign:'center', margin:'0 0 12px' }}>↓ Scroll to the bottom to enable the checkbox</p>}
             <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', cursor: tosScrolled ? 'pointer' : 'default', marginBottom:'16px' }}>

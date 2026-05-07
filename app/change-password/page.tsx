@@ -53,8 +53,8 @@ export default function ChangePassword() {
 
         <div style={{ marginBottom:'32px', textAlign:'center' }}>
           {logoFailed
-            ? <div style={{ width:'72px', height:'72px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', background:'#1e2535', color:'#C9A227', fontSize:'26px', fontWeight:'bold', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 12px' }}>A1</div>
-            : <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'A1 Wrecker'} style={{ width:'72px', height:'72px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', display:'block', margin:'0 auto 12px' }} onError={() => setLogoFailed(true)} />
+            ? <div style={{ width:'72px', height:'72px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', background:'#1e2535', color:'#C9A227', fontSize:'22px', fontWeight:'bold', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 12px' }}>SML</div>
+            : <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'ShieldMyLot'} style={{ width:'72px', height:'72px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', display:'block', margin:'0 auto 12px' }} onError={() => setLogoFailed(true)} />
           }
           <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0 0 6px' }}>Set Your Password</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'0', lineHeight:'1.6' }}>Welcome! Please set a new password before continuing.</p>

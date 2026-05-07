@@ -5,7 +5,7 @@ import { supabase } from '../supabase'
 
 function VisitorForm() {
   const searchParams = useSearchParams()
-  const propertyName = searchParams.get('property') || 'A1 Wrecker Managed Property'
+  const propertyName = searchParams.get('property') || 'Managed Property'
   const [step, setStep] = useState<'form' | 'success'>('form')
   const [supportPhone, setSupportPhone] = useState('')
   const [supportEmail, setSupportEmail] = useState('')
@@ -14,7 +14,7 @@ function VisitorForm() {
 
   useEffect(() => {
     async function loadSupportInfo() {
-      if (propertyName && propertyName !== 'A1 Wrecker Managed Property') {
+      if (propertyName && propertyName !== 'Managed Property') {
         const { data: prop } = await supabase.from('properties').select('company').ilike('name', propertyName).single()
         if (prop?.company) {
           const { data: co } = await supabase.from('companies').select('support_phone,support_email,support_website,display_name').ilike('name', prop.company).single()
@@ -58,7 +58,7 @@ function VisitorForm() {
 
     const plate = form.plate.toUpperCase().trim()
 
-    if (propertyName !== 'A1 Wrecker Managed Property') {
+    if (propertyName !== 'Managed Property') {
       const { data: existing } = await supabase
         .from('vehicles')
         .select('id')
@@ -236,7 +236,7 @@ function VisitorForm() {
       <div style={{ maxWidth:'420px', width:'100%' }}>
 
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
-          <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
+          <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>{companyName || 'Visitor Parking Pass'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass · {propertyName}</p>
           <p style={{ color:'#555', fontSize:'11px', margin:'4px 0 0' }}>Valid up to 24 hours · No app download required</p>
         </div>

@@ -6,9 +6,9 @@ export default function Privacy() {
       <div style={{ maxWidth:'680px', margin:'0 auto' }}>
 
         <div style={{ textAlign:'center', marginBottom:'40px' }}>
-          <img src="/logo.jpeg" alt="A1 Wrecker"
+          <img src="/logo.jpeg" alt="ShieldMyLot"
             style={{ width:'64px', height:'64px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 16px' }} />
-          <h1 style={{ color:'#C9A227', fontSize:'28px', fontWeight:'bold', margin:'0 0 8px' }}>Privacy Policy</h1>
+          <h1 style={{ color:'#C9A227', fontSize:'28px', fontWeight:'bold', margin:'0 0 8px' }}>ShieldMyLot™ — Privacy Policy</h1>
           <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Draft — Pending Legal Review · Last updated: 2026</p>
         </div>
 
@@ -19,7 +19,7 @@ export default function Privacy() {
             { title:'3. Who Can See It', body:'Data is accessible only to authorized users according to their assigned role. Administrators and company administrators see data relevant to their properties. Residents see only their own records. Visitors see only their own pass status.' },
             { title:'4. Data Retention', body:'Records are retained for a minimum of two years in accordance with standard property management practices. Violation records and tow logs may be retained longer as required by applicable Texas law.' },
             { title:'5. Your Rights', body:'You have the right to request access to, correction of, or deletion of your personal data. To submit a data request, contact us at the information below. We will respond within 30 days.' },
-            { title:'6. Contact', body:'A1 Wrecker LLC · 346-428-7864 · a1wreckerllc.net · a1wrecker2023@gmail.com' },
+            { title:'6. Contact', body:'Alvarado Legacy Consulting LLC · ShieldMyLot · support@shieldmylot.com' },
           ].map((s, i, arr) => (
             <div key={i} style={{ marginBottom: i < arr.length - 1 ? '28px' : '0' }}>
               <h2 style={{ color:'#C9A227', fontSize:'15px', fontWeight:'bold', margin:'0 0 8px' }}>{s.title}</h2>
@@ -28,7 +28,7 @@ export default function Privacy() {
           ))}
         </div>
 
-        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'24px' }}>A1 Wrecker, LLC · Parking Management Platform</p>
+        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'24px' }}>ShieldMyLot · A product of Alvarado Legacy Consulting LLC</p>
       </div>
     </main>
   )

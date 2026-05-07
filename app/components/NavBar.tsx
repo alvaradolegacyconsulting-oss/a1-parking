@@ -92,8 +92,8 @@ export default function NavBar() {
 
           {/* Logo + brand */}
           <a href={links[0]?.href ?? '/'} style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
-            <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'A1 Wrecker'} style={{ width: '30px', height: '30px', borderRadius: '6px', border: `1px solid ${themeColor}` }} />
-            <span style={{ color: themeColor, fontWeight: 'bold', fontSize: '13px', letterSpacing: '0.02em' }}>{companyName || 'A1 Wrecker'}</span>
+            <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'ShieldMyLot'} style={{ width: '30px', height: '30px', borderRadius: '6px', border: `1px solid ${themeColor}` }} />
+            <span style={{ color: themeColor, fontWeight: 'bold', fontSize: '13px', letterSpacing: '0.02em' }}>{companyName || 'ShieldMyLot'}</span>
           </a>
 
           {/* Desktop nav links */}

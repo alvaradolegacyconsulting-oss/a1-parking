@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
+import SupportContact from '../components/SupportContact'
 
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
@@ -23,6 +24,8 @@ export default function ResidentPortal() {
   const [supportPhone, setSupportPhone] = useState('')
   const [supportEmail, setSupportEmail] = useState('')
   const [supportWebsite, setSupportWebsite] = useState('')
+  const [propertyManager, setPropertyManager] = useState<{ name: string | null; email: string | null }>({ name: null, email: null })
+  const [companyName, setCompanyName] = useState<string>('')
   const [changePwForm, setChangePwForm] = useState({ current: '', newPw: '', confirmPw: '' })
   const [changePwMsg, setChangePwMsg] = useState('')
   const [changePwLoading, setChangePwLoading] = useState(false)
@@ -63,6 +66,15 @@ export default function ResidentPortal() {
       setEditForm(data)
       fetchVehicles(data.unit, data.property)
       fetchPasses(data.unit)
+      if (data.property) {
+        const { data: prop } = await supabase
+          .from('properties')
+          .select('pm_name, pm_email')
+          .ilike('name', data.property)
+          .single()
+        if (prop) setPropertyManager({ name: prop.pm_name || null, email: prop.pm_email || null })
+      }
+      setCompanyName(data.company || localStorage.getItem('company_name') || '')
     }
   }
 
@@ -364,7 +376,7 @@ export default function ResidentPortal() {
       <div style={{ maxWidth:'500px', margin:'0 auto' }}>
 
         <div style={{ marginBottom:'20px', textAlign:'center' }}>
-          <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>A1 Wrecker, LLC</h1>
+          <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{companyName || 'ShieldMyLot'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Resident Portal</p>
         </div>
 
@@ -826,8 +838,13 @@ export default function ResidentPortal() {
           </div>
         )}
 
+      {companyName && (
+        <div style={{ marginTop: 24 }}>
+          <SupportContact role="resident" company={companyName} managerName={propertyManager.name} managerEmail={propertyManager.email} />
+        </div>
+      )}
       {(supportPhone || supportEmail || supportWebsite) && (
-        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'24px' }}>
+        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'12px' }}>
           {[supportPhone, supportEmail, supportWebsite].filter(Boolean).join(' · ')}
         </p>
       )}

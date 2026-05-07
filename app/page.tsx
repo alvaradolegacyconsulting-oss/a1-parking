@@ -104,7 +104,7 @@ export default function Landing() {
           <span style={{ color: GOLD }}>Start enforcing.</span>
         </h1>
         <p style={{ fontSize: 18, color: MUTED, maxWidth: 580, margin: '0 auto 40px', lineHeight: 1.7 }}>
-          ShieldMyLot gives property managers and towing companies a complete parking enforcement system — resident registration, visitor passes, violation tracking, and tow ticketing in one platform.
+          ShieldMyLot™ gives property managers and towing companies a complete parking enforcement system — resident registration, visitor passes, violation tracking, and tow ticketing in one platform.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <a href="#contact" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Get started →</a>
@@ -296,7 +296,7 @@ export default function Landing() {
           </div>
         </div>
         <div style={{ maxWidth: 1100, margin: '28px auto 0', paddingTop: 20, borderTop: `1px solid ${BORDER}`, display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'center' }}>
-          <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>© 2026 A1 Wrecker, LLC · ShieldMyLot · All rights reserved</p>
+          <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>© 2026 ShieldMyLot™ · A product of Alvarado Legacy Consulting LLC · All rights reserved</p>
           <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>Licensed for Texas operations · Harris County jurisdiction</p>
         </div>
       </footer>

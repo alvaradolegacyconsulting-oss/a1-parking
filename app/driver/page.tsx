@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
+import SupportContact from '../components/SupportContact'
 
 export default function DriverPortal() {
   const [driver, setDriver] = useState<any>(null)
@@ -317,7 +318,7 @@ export default function DriverPortal() {
     const total = (parseFloat(towFee || '0') + parseFloat(mileage || '0')).toFixed(2)
     const mailSubject = encodeURIComponent(`Tow Ticket - ${v.plate}`)
     const mailBody = encodeURIComponent([
-      `TOW TICKET — A1 Wrecker, LLC`,
+      `TOW TICKET — ${driver?.company || 'A1 Wrecker, LLC'}`,
       `Date/Time: ${new Date(v.created_at).toLocaleString()}`,
       `Ticket #: ${String(v.id).substring(0, 8).toUpperCase()}`,
       ``,
@@ -370,7 +371,7 @@ export default function DriverPortal() {
       <div class="hdr">
         <img src="${window.location.origin}/logo.jpeg" class="logo" alt="" onerror="this.style.display='none'">
         <div>
-          <div style="font-size:20px;font-weight:bold">A1 Wrecker, LLC</div>
+          <div style="font-size:20px;font-weight:bold">${driver?.company || 'A1 Wrecker, LLC'}</div>
           <div style="font-size:11px;color:#888;margin-top:2px">Houston's #1 Towing &amp; Recovery</div>
           <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET</div>
         </div>
@@ -553,10 +554,10 @@ export default function DriverPortal() {
 
         {/* Header */}
         <div style={{ marginBottom: '16px', textAlign: 'center' }}>
-          <img src="/logo.jpeg" alt="A1 Wrecker"
+          <img src="/logo.jpeg" alt={driver?.company || 'ShieldMyLot'}
             style={{ width: '60px', height: '60px', borderRadius: '10px', border: '2px solid #C9A227', display: 'block', margin: '0 auto 8px' }}
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
-          <h1 style={{ color: '#C9A227', fontSize: '22px', fontWeight: 'bold', margin: '0' }}>A1 Wrecker, LLC</h1>
+          <h1 style={{ color: '#C9A227', fontSize: '22px', fontWeight: 'bold', margin: '0' }}>{driver?.company || 'ShieldMyLot'}</h1>
           <p style={{ color: '#888', fontSize: '13px', margin: '4px 0 0' }}>Driver Portal</p>
         </div>
 
@@ -906,8 +907,14 @@ export default function DriverPortal() {
           </div>
         )}
 
-        <div style={{ textAlign: 'center', marginTop: '24px', paddingBottom: '20px' }}>
-          <p style={{ color: '#2a2f3d', fontSize: '11px', margin: '0' }}>A1 Wrecker, LLC · Houston's #1 Towing & Recovery</p>
+        {driver?.company && (
+          <div style={{ marginTop: 24 }}>
+            <SupportContact role="driver" company={driver.company} />
+          </div>
+        )}
+
+        <div style={{ textAlign: 'center', marginTop: '20px', paddingBottom: '20px' }}>
+          <p style={{ color: '#2a2f3d', fontSize: '11px', margin: '0' }}>Powered by ShieldMyLot</p>
         </div>
 
       </div>
