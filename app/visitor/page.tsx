@@ -27,12 +27,11 @@ function VisitorForm() {
           }
         }
       }
-      const { data: ps } = await supabase.from('platform_settings').select('default_support_phone,default_support_email,default_support_website,default_display_name').eq('id', 1).single()
+      const { data: ps } = await supabase.from('platform_settings').select('default_support_phone,default_support_email,default_support_website').eq('id', 1).single()
       if (ps) {
         setSupportPhone(ps.default_support_phone || '')
         setSupportEmail(ps.default_support_email || '')
         setSupportWebsite(ps.default_support_website || '')
-        setCompanyName(ps.default_display_name || '')
       }
     }
     loadSupportInfo()

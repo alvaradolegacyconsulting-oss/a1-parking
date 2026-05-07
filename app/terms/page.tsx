@@ -1,12 +1,23 @@
 'use client'
+import { useState, useEffect } from 'react'
+import { supabase } from '../supabase'
 
 export default function Terms() {
+  const [logoUrl, setLogoUrl] = useState<string>('/logo.jpeg')
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const { data } = await supabase.from('platform_settings').select('default_logo_url').eq('id', 1).single()
+      if (!cancelled && data?.default_logo_url) setLogoUrl(data.default_logo_url)
+    })()
+    return () => { cancelled = true }
+  }, [])
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'40px 20px' }}>
       <div style={{ maxWidth:'680px', margin:'0 auto' }}>
 
         <div style={{ textAlign:'center', marginBottom:'40px' }}>
-          <img src="/logo.jpeg" alt="ShieldMyLot"
+          <img src={logoUrl} alt="ShieldMyLot"
             style={{ width:'64px', height:'64px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 16px' }} />
           <h1 style={{ color:'#C9A227', fontSize:'28px', fontWeight:'bold', margin:'0 0 8px' }}>ShieldMyLot™ — Terms of Service</h1>
           <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Draft — Pending Legal Review · Last updated: 2026</p>

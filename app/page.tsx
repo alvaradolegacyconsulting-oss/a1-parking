@@ -1,5 +1,6 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { supabase } from './supabase'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -11,6 +12,16 @@ const MUTED = '#64748b'
 export default function Landing() {
   const [contact, setContact] = useState({ name: '', email: '', type: 'General inquiry', message: '' })
   const [activeTrack, setActiveTrack] = useState<'enforcement' | 'pm'>('enforcement')
+  const [logoUrl, setLogoUrl] = useState<string>('/logo.jpeg')
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const { data } = await supabase.from('platform_settings').select('default_logo_url').eq('id', 1).single()
+      if (!cancelled && data?.default_logo_url) setLogoUrl(data.default_logo_url)
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   function sendContact() {
     const subject = encodeURIComponent(`[${contact.type}] from ${contact.name}`)
@@ -82,7 +93,7 @@ export default function Landing() {
       <nav style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(10,13,20,0.92)', backdropFilter: 'blur(12px)', borderBottom: `1px solid ${BORDER}`, padding: '0 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src="/logo.jpeg" alt="ShieldMyLot" style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${GOLD}` }} onError={e => (e.currentTarget.style.display = 'none')} />
+            <img src={logoUrl} alt="ShieldMyLot" style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${GOLD}` }} onError={e => (e.currentTarget.style.display = 'none')} />
             <span style={{ color: GOLD, fontWeight: 'bold', fontSize: 18, letterSpacing: '-0.02em' }}>ShieldMyLot</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
@@ -267,7 +278,7 @@ export default function Landing() {
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 32, justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <img src="/logo.jpeg" alt="ShieldMyLot" style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${GOLD}` }} onError={e => (e.currentTarget.style.display = 'none')} />
+              <img src={logoUrl} alt="ShieldMyLot" style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${GOLD}` }} onError={e => (e.currentTarget.style.display = 'none')} />
               <span style={{ color: GOLD, fontWeight: 'bold', fontSize: 15 }}>ShieldMyLot</span>
             </div>
             <p style={{ color: MUTED, fontSize: 13, margin: 0, maxWidth: 220, lineHeight: 1.6 }}>

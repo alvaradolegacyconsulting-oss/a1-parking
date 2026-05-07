@@ -9,17 +9,33 @@ function VisitorSelectForm() {
   const [properties, setProperties] = useState<any[]>([])
   const [selected, setSelected] = useState('')
   const [loading, setLoading] = useState(true)
+  const [logoUrl, setLogoUrl] = useState<string>('/logo.jpeg')
 
   useEffect(() => {
+    let cancelled = false
     async function load() {
       let query = supabase.from('properties').select('name').eq('is_active', true).order('name')
       if (company) query = query.ilike('company', company)
       const { data } = await query
+      if (cancelled) return
       setProperties(data || [])
       if (data && data.length > 0) setSelected(data[0].name)
       setLoading(false)
     }
     load()
+    ;(async () => {
+      let resolved: string | null = null
+      if (company) {
+        const { data: co } = await supabase.from('companies').select('logo_url').ilike('name', company).single()
+        if (co?.logo_url) resolved = co.logo_url
+      }
+      if (!resolved) {
+        const { data: ps } = await supabase.from('platform_settings').select('default_logo_url').eq('id', 1).single()
+        if (ps?.default_logo_url) resolved = ps.default_logo_url
+      }
+      if (!cancelled && resolved) setLogoUrl(resolved)
+    })()
+    return () => { cancelled = true }
   }, [company])
 
   if (loading) return (
@@ -42,7 +58,7 @@ function VisitorSelectForm() {
       <div style={{ maxWidth:'420px', width:'100%' }}>
 
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
-          <img src="/logo.jpeg" alt={company || 'ShieldMyLot'}
+          <img src={logoUrl} alt={company || 'ShieldMyLot'}
             style={{ width:'70px', height:'70px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 12px' }}
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
           />

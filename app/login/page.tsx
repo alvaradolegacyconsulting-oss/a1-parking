@@ -114,7 +114,7 @@ export default function Login() {
         platformData = pd
       }
       const logo = companyData?.logo_url || platformData?.default_logo_url
-      const displayName = companyData?.display_name || platformData?.default_display_name
+      const displayName = companyData?.display_name
       const theme = companyData?.theme || platformData?.default_theme || 'gold'
       const phone = companyData?.support_phone || platformData?.default_support_phone
       const email2 = companyData?.support_email || platformData?.default_support_email

@@ -1515,9 +1515,6 @@ export default function AdminPortal() {
               <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>Default Branding</p>
               <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>These defaults apply to all new companies unless overridden per company.</p>
 
-              <label style={lbl}>Default Display Name</label>
-              <input value={platformSettings.default_display_name || ''} onChange={e => setPlatformSettings({...platformSettings, default_display_name: e.target.value})} placeholder="A1 Wrecker, LLC" style={inp} />
-
               {logoField(platformSettings.default_logo_url || '', url => setPlatformSettings({...platformSettings, default_logo_url: url}), 'platform/logo', 'platform')}
 
               <div>
