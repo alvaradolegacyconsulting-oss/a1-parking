@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
+import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 
 export default function DriverPortal() {
   const [driver, setDriver] = useState<any>(null)
@@ -48,7 +49,9 @@ export default function DriverPortal() {
   const [dateTo, setDateTo] = useState('')
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null)
 
-  useEffect(() => { loadDriver() }, [])
+  const resolvedLogo = useResolvedLogo(typeof window !== 'undefined' ? localStorage.getItem('company_logo') : null)
+
+  useEffect(() => { loadDriver(); getPlatformLogoUrl() }, [])
 
   useEffect(() => {
     if (showCamera && videoRef.current && streamRef.current) {
@@ -369,7 +372,7 @@ export default function DriverPortal() {
       @media print{.no-print{display:none}body{padding:18px}}
     </style></head><body>
       <div class="hdr">
-        <img src="${window.location.origin}/logo.jpeg" class="logo" alt="" onerror="this.style.display='none'">
+        <img src="${getCachedLogoUrl(localStorage.getItem('company_logo'))}" class="logo" alt="" onerror="this.style.display='none'">
         <div>
           <div style="font-size:20px;font-weight:bold">${driver?.company || 'A1 Wrecker, LLC'}</div>
           <div style="font-size:11px;color:#888;margin-top:2px">Houston's #1 Towing &amp; Recovery</div>
@@ -554,7 +557,7 @@ export default function DriverPortal() {
 
         {/* Header */}
         <div style={{ marginBottom: '16px', textAlign: 'center' }}>
-          <img src="/logo.jpeg" alt={driver?.company || 'ShieldMyLot'}
+          <img src={resolvedLogo} alt={driver?.company || 'ShieldMyLot'}
             style={{ width: '60px', height: '60px', borderRadius: '10px', border: '2px solid #C9A227', display: 'block', margin: '0 auto 8px' }}
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
           <h1 style={{ color: '#C9A227', fontSize: '22px', fontWeight: 'bold', margin: '0' }}>{driver?.company || 'ShieldMyLot'}</h1>

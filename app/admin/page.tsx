@@ -4,8 +4,10 @@ import { supabase } from '../supabase'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { useResolvedLogo } from '../lib/logo'
 
 export default function AdminPortal() {
+  const resolvedLogo = useResolvedLogo()
   const [adminEmail, setAdminEmail] = useState('')
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('companies')
@@ -733,9 +735,12 @@ export default function AdminPortal() {
       <div style={{ maxWidth:'700px', margin:'0 auto' }}>
 
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'20px' }}>
-          <div>
-            <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>ShieldMyLot</h1>
-            <p style={{ color:'#888', fontSize:'12px', margin:'4px 0 0' }}>Super Admin · {adminEmail}</p>
+          <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+            <img src={resolvedLogo} alt="ShieldMyLot" style={{ width:'44px', height:'44px', borderRadius:'8px', border:'1px solid #C9A227', objectFit:'contain' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+            <div>
+              <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>ShieldMyLot</h1>
+              <p style={{ color:'#888', fontSize:'12px', margin:'4px 0 0' }}>Super Admin · {adminEmail}</p>
+            </div>
           </div>
           <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}
             style={{ padding:'6px 12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px' }}>

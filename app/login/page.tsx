@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import { applyTheme } from '../lib/theme'
+import { useResolvedLogo } from '../lib/logo'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -11,6 +12,7 @@ export default function Login() {
   const [logoFailed, setLogoFailed] = useState(false)
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
+  const resolvedLogo = useResolvedLogo(companyLogo)
   const [showTosModal, setShowTosModal] = useState(false)
   const [tosScrolled, setTosScrolled] = useState(false)
   const [tosChecked, setTosChecked] = useState(false)
@@ -170,7 +172,7 @@ export default function Login() {
         <div style={{ marginBottom:'32px', textAlign:'center' }}>
           {logoFailed
             ? <div style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', background:'#1e2535', color:'#C9A227', fontSize:'28px', fontWeight:'bold', display:'flex', alignItems:'center', justifyContent:'center' }}>A1</div>
-            : <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'ShieldMyLot'} style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px' }} onError={() => setLogoFailed(true)} />
+            : <img src={resolvedLogo} alt={companyName || 'ShieldMyLot'} style={{ width:'80px', height:'80px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px' }} onError={() => setLogoFailed(true)} />
           }
           <h1 style={{ color:'#C9A227', fontSize:'26px', fontWeight:'bold', margin:'0' }}>{companyName || 'ShieldMyLot™'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Parking Management · Sign In</p>

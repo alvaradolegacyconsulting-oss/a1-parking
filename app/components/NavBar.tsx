@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import { supabase } from '../supabase'
 import { applyTheme, getThemeColor } from '../lib/theme'
+import { useResolvedLogo } from '../lib/logo'
 
 const NAV_LINKS: Record<string, { label: string; href: string }[]> = {
   admin: [
@@ -41,6 +42,7 @@ export default function NavBar() {
   const [pendingDisputeCount, setPendingDisputeCount] = useState(0)
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
+  const resolvedLogo = useResolvedLogo(companyLogo)
 
   const hidden = pathname === '/login' || pathname === '/visitor' || pathname === '/visitor-select' || pathname.startsWith('/register')
 
@@ -92,7 +94,7 @@ export default function NavBar() {
 
           {/* Logo + brand */}
           <a href={links[0]?.href ?? '/'} style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
-            <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'ShieldMyLot'} style={{ width: '30px', height: '30px', borderRadius: '6px', border: `1px solid ${themeColor}` }} />
+            <img src={resolvedLogo} alt={companyName || 'ShieldMyLot'} style={{ width: '30px', height: '30px', borderRadius: '6px', border: `1px solid ${themeColor}` }} />
             <span style={{ color: themeColor, fontWeight: 'bold', fontSize: '13px', letterSpacing: '0.02em' }}>{companyName || 'ShieldMyLot'}</span>
           </a>
 

@@ -4,6 +4,7 @@ import { QRCodeCanvas } from 'qrcode.react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
+import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export default function ManagerPortal() {
@@ -60,7 +61,7 @@ export default function ManagerPortal() {
   const [insightsLoaded, setInsightsLoaded] = useState(false)
   const [mgAnalytics, setMgAnalytics] = useState<any>(null)
 
-  useEffect(() => { loadManager() }, [])
+  useEffect(() => { loadManager(); getPlatformLogoUrl() }, [])
   useEffect(() => { if (activeTab === 'activity' && manager) fetchActivityLogs() }, [activeTab, manager])
   useEffect(() => { if (activeTab === 'disputes' && manager) fetchDisputes(manager.name) }, [activeTab, manager])
   useEffect(() => { if (activeTab === 'insights' && manager) fetchInsights() }, [activeTab, manager])
@@ -532,7 +533,7 @@ export default function ManagerPortal() {
       @media print{.no-print{display:none}body{padding:18px}}
     </style></head><body>
       <div class="hdr">
-        <img src="${window.location.origin}/logo.jpeg" class="logo" alt="" onerror="this.style.display='none'">
+        <img src="${getCachedLogoUrl(localStorage.getItem('company_logo'))}" class="logo" alt="" onerror="this.style.display='none'">
         <div>
           <div style="font-size:20px;font-weight:bold">${managerCompany || 'Tow Service'}</div>
           <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET (REPRINT)</div>

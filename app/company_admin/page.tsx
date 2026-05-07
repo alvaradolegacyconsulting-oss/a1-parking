@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
+import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
@@ -12,6 +13,7 @@ export default function CompanyAdminPortal() {
   const [user, setUser] = useState<any>(null)
   const [role, setRole] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const resolvedLogo = useResolvedLogo(typeof window !== 'undefined' ? localStorage.getItem('company_logo') : null)
 
   const [properties, setProperties] = useState<any[]>([])
   const [selectedProperty, setSelectedProperty] = useState<any>(null)
@@ -755,7 +757,7 @@ export default function CompanyAdminPortal() {
       @media print{.no-print{display:none}body{padding:18px}}
     </style></head><body>
       <div class="hdr">
-        <img src="${window.location.origin}/logo.jpeg" class="logo" alt="" onerror="this.style.display='none'">
+        <img src="${getCachedLogoUrl(localStorage.getItem('company_logo'))}" class="logo" alt="" onerror="this.style.display='none'">
         <div>
           <div style="font-size:20px;font-weight:bold">${role?.company || 'Tow Service'}</div>
           <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET (REPRINT)</div>
@@ -848,7 +850,7 @@ export default function CompanyAdminPortal() {
       @media print{.no-print{display:none}body{padding:18px}}
     </style></head><body>
       <div class="hdr">
-        <img src="${window.location.origin}/logo.jpeg" class="logo" alt="" onerror="this.style.display='none'">
+        <img src="${getCachedLogoUrl(localStorage.getItem('company_logo'))}" class="logo" alt="" onerror="this.style.display='none'">
         <div>
           <div style="font-size:20px;font-weight:bold">${role?.company || 'Tow Service'}</div>
           <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET</div>
@@ -1057,7 +1059,7 @@ export default function CompanyAdminPortal() {
       <div style={{ maxWidth:'540px', margin:'0 auto' }}>
 
         <div style={{ marginBottom:'16px', textAlign:'center' }}>
-          <img src="/logo.jpeg" alt={role?.company || 'ShieldMyLot'}
+          <img src={resolvedLogo} alt={role?.company || 'ShieldMyLot'}
             style={{ width:'60px', height:'60px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 8px' }}
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{role?.company || 'ShieldMyLot'}</h1>

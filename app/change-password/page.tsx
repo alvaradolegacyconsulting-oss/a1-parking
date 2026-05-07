@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { useResolvedLogo } from '../lib/logo'
 
 const inp: React.CSSProperties = { display:'block', width:'100%', marginTop:'6px', marginBottom:'14px', padding:'11px 12px', fontSize:'13px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none', boxSizing:'border-box', fontFamily:'Arial' }
 const lbl: React.CSSProperties = { color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }
@@ -13,6 +14,7 @@ export default function ChangePassword() {
   const [logoFailed, setLogoFailed] = useState(false)
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
+  const resolvedLogo = useResolvedLogo(companyLogo)
 
   useEffect(() => {
     setCompanyLogo(localStorage.getItem('company_logo'))
@@ -54,7 +56,7 @@ export default function ChangePassword() {
         <div style={{ marginBottom:'32px', textAlign:'center' }}>
           {logoFailed
             ? <div style={{ width:'72px', height:'72px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', background:'#1e2535', color:'#C9A227', fontSize:'22px', fontWeight:'bold', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 12px' }}>SML</div>
-            : <img src={companyLogo || '/logo.jpeg'} alt={companyName || 'ShieldMyLot'} style={{ width:'72px', height:'72px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', display:'block', margin:'0 auto 12px' }} onError={() => setLogoFailed(true)} />
+            : <img src={resolvedLogo} alt={companyName || 'ShieldMyLot'} style={{ width:'72px', height:'72px', borderRadius:'12px', border:'2px solid #C9A227', marginBottom:'12px', display:'block', margin:'0 auto 12px' }} onError={() => setLogoFailed(true)} />
           }
           <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0 0 6px' }}>Set Your Password</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'0', lineHeight:'1.6' }}>Welcome! Please set a new password before continuing.</p>

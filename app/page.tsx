@@ -1,6 +1,6 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { supabase } from './supabase'
+import { useState } from 'react'
+import { useResolvedLogo } from './lib/logo'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -12,16 +12,7 @@ const MUTED = '#64748b'
 export default function Landing() {
   const [contact, setContact] = useState({ name: '', email: '', type: 'General inquiry', message: '' })
   const [activeTrack, setActiveTrack] = useState<'enforcement' | 'pm'>('enforcement')
-  const [logoUrl, setLogoUrl] = useState<string>('/logo.jpeg')
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const { data } = await supabase.from('platform_settings').select('default_logo_url').eq('id', 1).single()
-      if (!cancelled && data?.default_logo_url) setLogoUrl(data.default_logo_url)
-    })()
-    return () => { cancelled = true }
-  }, [])
+  const logoUrl = useResolvedLogo()
 
   function sendContact() {
     const subject = encodeURIComponent(`[${contact.type}] from ${contact.name}`)

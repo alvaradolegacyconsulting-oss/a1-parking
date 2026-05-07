@@ -2,6 +2,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
+import { useResolvedLogo } from '../lib/logo'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY']
 
@@ -20,6 +21,7 @@ function RegisterForm() {
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
   const [logoFailed, setLogoFailed] = useState(false)
+  const resolvedLogo = useResolvedLogo(companyLogo)
 
   const [tosChecked, setTosChecked] = useState(false)
   const [texasCheck1, setTexasCheck1] = useState(false)
@@ -174,7 +176,7 @@ function RegisterForm() {
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
           {logoFailed
             ? <div style={{ width:'70px', height:'70px', borderRadius:'10px', border:'2px solid #C9A227', marginBottom:'10px', background:'#1e2535', color:'#C9A227', fontSize:'24px', fontWeight:'bold', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 10px' }}>A1</div>
-            : <img src={companyLogo || '/logo.jpeg'} alt={displayName} style={{ width:'70px', height:'70px', borderRadius:'10px', border:'2px solid #C9A227', marginBottom:'10px', display:'block', margin:'0 auto 10px' }} onError={() => setLogoFailed(true)} />
+            : <img src={resolvedLogo} alt={displayName} style={{ width:'70px', height:'70px', borderRadius:'10px', border:'2px solid #C9A227', marginBottom:'10px', display:'block', margin:'0 auto 10px' }} onError={() => setLogoFailed(true)} />
           }
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0 0 4px' }}>{displayName}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'0 0 4px' }}>Resident Registration</p>

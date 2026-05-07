@@ -2,6 +2,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
+import { getPlatformLogoUrl, STATIC_LOGO_FALLBACK } from '../lib/logo'
 
 function VisitorSelectForm() {
   const searchParams = useSearchParams()
@@ -9,7 +10,7 @@ function VisitorSelectForm() {
   const [properties, setProperties] = useState<any[]>([])
   const [selected, setSelected] = useState('')
   const [loading, setLoading] = useState(true)
-  const [logoUrl, setLogoUrl] = useState<string>('/logo.jpeg')
+  const [logoUrl, setLogoUrl] = useState<string>(STATIC_LOGO_FALLBACK)
 
   useEffect(() => {
     let cancelled = false
@@ -29,11 +30,8 @@ function VisitorSelectForm() {
         const { data: co } = await supabase.from('companies').select('logo_url').ilike('name', company).single()
         if (co?.logo_url) resolved = co.logo_url
       }
-      if (!resolved) {
-        const { data: ps } = await supabase.from('platform_settings').select('default_logo_url').eq('id', 1).single()
-        if (ps?.default_logo_url) resolved = ps.default_logo_url
-      }
-      if (!cancelled && resolved) setLogoUrl(resolved)
+      if (!resolved) resolved = await getPlatformLogoUrl()
+      if (!cancelled) setLogoUrl(resolved || STATIC_LOGO_FALLBACK)
     })()
     return () => { cancelled = true }
   }, [company])
