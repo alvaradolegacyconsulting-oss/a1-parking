@@ -165,15 +165,15 @@ export default function AdminPortal() {
   async function savePricing() {
     const priceFields = {
       // Enforcement — hybrid: base + per-property + per-driver
-      price_enforcement_starter_base: platformSettings.price_enforcement_starter_base ?? 99,
-      price_enforcement_starter_per_property: platformSettings.price_enforcement_starter_per_property ?? 15,
-      price_enforcement_starter_per_driver: platformSettings.price_enforcement_starter_per_driver ?? 10,
-      price_enforcement_growth_base: platformSettings.price_enforcement_growth_base ?? 149,
-      price_enforcement_growth_per_property: platformSettings.price_enforcement_growth_per_property ?? 12,
-      price_enforcement_growth_per_driver: platformSettings.price_enforcement_growth_per_driver ?? 8,
-      price_enforcement_legacy_base: platformSettings.price_enforcement_legacy_base ?? 199,
-      price_enforcement_legacy_per_property: platformSettings.price_enforcement_legacy_per_property ?? 10,
-      price_enforcement_legacy_per_driver: platformSettings.price_enforcement_legacy_per_driver ?? 6,
+      price_starter_base: platformSettings.price_starter_base ?? 99,
+      price_starter_per_property: platformSettings.price_starter_per_property ?? 15,
+      price_starter_per_driver: platformSettings.price_starter_per_driver ?? 10,
+      price_growth_base: platformSettings.price_growth_base ?? 149,
+      price_growth_per_property: platformSettings.price_growth_per_property ?? 12,
+      price_growth_per_driver: platformSettings.price_growth_per_driver ?? 8,
+      price_legacy_base: platformSettings.price_legacy_base ?? 199,
+      price_legacy_per_property: platformSettings.price_legacy_per_property ?? 10,
+      price_legacy_per_driver: platformSettings.price_legacy_per_driver ?? 6,
       // PM — hybrid: base + per-property (no per-driver)
       price_pm_essential_base: platformSettings.price_pm_essential_base ?? 79,
       price_pm_essential_per_property: platformSettings.price_pm_essential_per_property ?? 20,
@@ -181,31 +181,6 @@ export default function AdminPortal() {
       price_pm_professional_per_property: platformSettings.price_pm_professional_per_property ?? 15,
       price_pm_enterprise_base: platformSettings.price_pm_enterprise_base ?? 179,
       price_pm_enterprise_per_property: platformSettings.price_pm_enterprise_per_property ?? 10,
-      // Add-ons
-      addon_enforcement_starter_live_support: platformSettings.addon_enforcement_starter_live_support ?? 100,
-      addon_enforcement_growth_live_support: platformSettings.addon_enforcement_growth_live_support ?? 50,
-      addon_enforcement_starter_analytics: platformSettings.addon_enforcement_starter_analytics ?? 25,
-      addon_enforcement_growth_analytics: platformSettings.addon_enforcement_growth_analytics ?? 15,
-      addon_enforcement_starter_camera_scan: platformSettings.addon_enforcement_starter_camera_scan ?? 20,
-      addon_enforcement_starter_video_upload: platformSettings.addon_enforcement_starter_video_upload ?? 15,
-      addon_enforcement_growth_video_upload: platformSettings.addon_enforcement_growth_video_upload ?? 10,
-      addon_enforcement_starter_white_label: platformSettings.addon_enforcement_starter_white_label ?? 30,
-      addon_enforcement_starter_extra_property: platformSettings.addon_enforcement_starter_extra_property ?? 10,
-      addon_enforcement_growth_extra_property: platformSettings.addon_enforcement_growth_extra_property ?? 8,
-      addon_enforcement_legacy_extra_property: platformSettings.addon_enforcement_legacy_extra_property ?? 5,
-      addon_enforcement_starter_extra_driver: platformSettings.addon_enforcement_starter_extra_driver ?? 8,
-      addon_enforcement_growth_extra_driver: platformSettings.addon_enforcement_growth_extra_driver ?? 5,
-      addon_enforcement_legacy_extra_driver: platformSettings.addon_enforcement_legacy_extra_driver ?? 3,
-      addon_pm_essential_live_support: platformSettings.addon_pm_essential_live_support ?? 100,
-      addon_pm_professional_live_support: platformSettings.addon_pm_professional_live_support ?? 50,
-      addon_pm_essential_analytics: platformSettings.addon_pm_essential_analytics ?? 20,
-      addon_pm_professional_analytics: platformSettings.addon_pm_professional_analytics ?? 10,
-      addon_pm_essential_visitor_qr: platformSettings.addon_pm_essential_visitor_qr ?? 15,
-      addon_pm_essential_registration_qr: platformSettings.addon_pm_essential_registration_qr ?? 15,
-      addon_pm_professional_registration_qr: platformSettings.addon_pm_professional_registration_qr ?? 10,
-      addon_pm_essential_extra_property: platformSettings.addon_pm_essential_extra_property ?? 8,
-      addon_pm_professional_extra_property: platformSettings.addon_pm_professional_extra_property ?? 6,
-      addon_pm_enterprise_extra_property: platformSettings.addon_pm_enterprise_extra_property ?? 4,
     }
     const { error } = await supabase.from('platform_settings').upsert({ id: 1, ...priceFields, updated_at: new Date().toISOString() })
     if (error) { setPricingMsg('Error saving pricing'); return }
@@ -681,16 +656,6 @@ export default function AdminPortal() {
   const addCard: React.CSSProperties = { background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }
   const editCard: React.CSSProperties = { background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }
   const pInp: React.CSSProperties = { ...inp, marginTop:0, marginBottom:0, padding:'4px 6px', fontSize:'11px', width:'100%' }
-  const pCell = (field: string, def: number) => (
-    <div style={{ display:'flex', alignItems:'center', gap:'2px' }}>
-      <span style={{ color:'#555', fontSize:'11px' }}>$</span>
-      <input type="number" step="0.01" min="0"
-        value={platformSettings[field] ?? def}
-        onChange={e => setPlatformSettings((p: any) => ({ ...p, [field]: parseFloat(e.target.value) }))}
-        style={pInp} />
-    </div>
-  )
-  const iCell = <span style={{ color:'#555', fontSize:'11px', fontStyle:'italic', display:'block', textAlign:'center' as const }}>Incl.</span>
   const logoUploadBtn: React.CSSProperties = { background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', padding:'8px 14px', fontSize:'12px', cursor:'pointer', whiteSpace:'nowrap' as const, flexShrink:0, fontFamily:'Arial' }
   const logoField = (value: string, onChange: (url: string) => void, pathPrefix: string, slot: string) => (
     <div>
@@ -709,9 +674,9 @@ export default function AdminPortal() {
     </div>
   )
   const tierBaseMap: Record<string, string> = {
-    'enforcement:starter': 'price_enforcement_starter_base',
-    'enforcement:growth': 'price_enforcement_growth_base',
-    'enforcement:legacy': 'price_enforcement_legacy_base',
+    'enforcement:starter': 'price_starter_base',
+    'enforcement:growth': 'price_growth_base',
+    'enforcement:legacy': 'price_legacy_base',
     'pm:essential': 'price_pm_essential_base',
     'pm:professional': 'price_pm_professional_base',
     'pm:enterprise': 'price_pm_enterprise_base',
@@ -1573,9 +1538,9 @@ export default function AdminPortal() {
                     <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>/ Driver</p>
                   </div>
                   {[
-                    { label:'Starter', base:'price_enforcement_starter_base', defBase:99, prop:'price_enforcement_starter_per_property', defProp:15, drv:'price_enforcement_starter_per_driver', defDrv:10 },
-                    { label:'Growth',  base:'price_enforcement_growth_base',  defBase:149, prop:'price_enforcement_growth_per_property',  defProp:12, drv:'price_enforcement_growth_per_driver',  defDrv:8 },
-                    { label:'Legacy',  base:'price_enforcement_legacy_base',  defBase:199, prop:'price_enforcement_legacy_per_property',  defProp:10, drv:'price_enforcement_legacy_per_driver',  defDrv:6 },
+                    { label:'Starter', base:'price_starter_base', defBase:99, prop:'price_starter_per_property', defProp:15, drv:'price_starter_per_driver', defDrv:10 },
+                    { label:'Growth',  base:'price_growth_base',  defBase:149, prop:'price_growth_per_property',  defProp:12, drv:'price_growth_per_driver',  defDrv:8 },
+                    { label:'Legacy',  base:'price_legacy_base',  defBase:199, prop:'price_legacy_per_property',  defProp:10, drv:'price_legacy_per_driver',  defDrv:6 },
                   ].map(t => (
                     <div key={t.label} style={{ display:'grid', gridTemplateColumns:'60px 1fr 1fr 1fr', gap:'4px', alignItems:'center', marginBottom:'6px' }}>
                       <span style={{ color:'#aaa', fontSize:'11px' }}>{t.label}</span>
@@ -1618,9 +1583,10 @@ export default function AdminPortal() {
                 ? ['starter','growth','legacy']
                 : ['essential','professional','enterprise']
               const safeCalcTier = tiers.includes(calcTier) ? calcTier : tiers[0]
-              const baseKey = `price_${calcTrack}_${safeCalcTier}_base`
-              const propKey = `price_${calcTrack}_${safeCalcTier}_per_property`
-              const drvKey  = `price_${calcTrack}_${safeCalcTier}_per_driver`
+              const trackPrefix = isEnf ? '' : 'pm_'
+              const baseKey = `price_${trackPrefix}${safeCalcTier}_base`
+              const propKey = `price_${trackPrefix}${safeCalcTier}_per_property`
+              const drvKey  = isEnf ? `price_${safeCalcTier}_per_driver` : ''
               const defBases: Record<string,number> = { starter:99, growth:149, legacy:199, essential:79, professional:129, enterprise:179 }
               const defProps: Record<string,number>  = { starter:15, growth:12,  legacy:10,  essential:20, professional:15,  enterprise:10 }
               const defDrvs: Record<string,number>   = { starter:10, growth:8,   legacy:6 }
@@ -1690,89 +1656,8 @@ export default function AdminPortal() {
               )
             })()}
 
-            {/* Section D — À La Carte Add-on Pricing */}
+            {/* Save block */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
-              <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>À La Carte Add-on Pricing</p>
-              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Add-on prices vary by base tier. Features marked Incl. are part of that tier and cannot be purchased separately.</p>
-
-              {/* Enforcement add-ons table */}
-              <p style={{ color:'#b39ddb', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 8px' }}>Enforcement Track Add-ons</p>
-              <div style={{ display:'grid', gridTemplateColumns:'1.6fr 1fr 1fr 1fr', gap:'6px', alignItems:'center', marginBottom:'16px' }}>
-                <div />
-                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Starter</p>
-                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Growth</p>
-                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Legacy</p>
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Live Support</p>
-                {pCell('addon_enforcement_starter_live_support', 100)}
-                {pCell('addon_enforcement_growth_live_support', 50)}
-                {iCell}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Analytics</p>
-                {pCell('addon_enforcement_starter_analytics', 25)}
-                {pCell('addon_enforcement_growth_analytics', 15)}
-                {iCell}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Camera Scan</p>
-                {pCell('addon_enforcement_starter_camera_scan', 20)}
-                {iCell}
-                {iCell}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Video Upload</p>
-                {pCell('addon_enforcement_starter_video_upload', 15)}
-                {pCell('addon_enforcement_growth_video_upload', 10)}
-                {iCell}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>White Label</p>
-                {pCell('addon_enforcement_starter_white_label', 30)}
-                {iCell}
-                {iCell}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Extra Property</p>
-                {pCell('addon_enforcement_starter_extra_property', 10)}
-                {pCell('addon_enforcement_growth_extra_property', 8)}
-                {pCell('addon_enforcement_legacy_extra_property', 5)}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Extra Driver</p>
-                {pCell('addon_enforcement_starter_extra_driver', 8)}
-                {pCell('addon_enforcement_growth_extra_driver', 5)}
-                {pCell('addon_enforcement_legacy_extra_driver', 3)}
-              </div>
-
-              {/* PM add-ons table */}
-              <p style={{ color:'#4fc3f7', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 8px' }}>Property Mgmt Track Add-ons</p>
-              <div style={{ display:'grid', gridTemplateColumns:'1.6fr 1fr 1fr 1fr', gap:'6px', alignItems:'center', marginBottom:'16px' }}>
-                <div />
-                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Essential</p>
-                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Professional</p>
-                <p style={{ color:'#888', fontSize:'10px', textAlign:'center', margin:0, fontWeight:'bold' }}>Enterprise</p>
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Live Support</p>
-                {pCell('addon_pm_essential_live_support', 100)}
-                {pCell('addon_pm_professional_live_support', 50)}
-                {iCell}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Analytics</p>
-                {pCell('addon_pm_essential_analytics', 20)}
-                {pCell('addon_pm_professional_analytics', 10)}
-                {iCell}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Visitor QR</p>
-                {pCell('addon_pm_essential_visitor_qr', 15)}
-                {iCell}
-                {iCell}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Registration QR</p>
-                {pCell('addon_pm_essential_registration_qr', 15)}
-                {pCell('addon_pm_professional_registration_qr', 10)}
-                {iCell}
-
-                <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>Extra Property</p>
-                {pCell('addon_pm_essential_extra_property', 8)}
-                {pCell('addon_pm_professional_extra_property', 6)}
-                {pCell('addon_pm_enterprise_extra_property', 4)}
-              </div>
-
               {pricingMsg && (
                 <div style={{ background: pricingMsg.includes('Error') ? '#3a1a1a' : '#1a3a1a', border:`1px solid ${pricingMsg.includes('Error') ? '#b71c1c' : '#2e7d32'}`, borderRadius:'8px', padding:'10px 14px', marginBottom:'10px' }}>
                   <p style={{ color: pricingMsg.includes('Error') ? '#f44336' : '#4caf50', fontSize:'12px', margin:'0' }}>{pricingMsg}</p>
