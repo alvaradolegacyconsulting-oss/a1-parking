@@ -5,6 +5,8 @@ import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
+import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt } from '../lib/tier'
+import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
@@ -244,6 +246,13 @@ export default function CompanyAdminPortal() {
 
   async function saveProperty() {
     if (!newProperty.name) { setPropMsg('Property name is required'); return }
+    const ctx = getCompanyContext()
+    const activeCount = properties.filter(p => p.is_active).length
+    if (!isUnderLimit(FEATURE_FLAGS.MAX_PROPERTIES, activeCount, ctx)) {
+      const limit = getLimit(FEATURE_FLAGS.MAX_PROPERTIES, ctx)
+      setPropMsg(`Property limit reached (${limit}). Upgrade your tier to add more.`)
+      return
+    }
     setPropMsg('')
     const { data, error: insErr } = await supabase.from('properties').insert([{
       name: newProperty.name, address: newProperty.address || null,
@@ -1570,7 +1579,31 @@ export default function CompanyAdminPortal() {
             {manageSection === 'properties' && (
               <div>
                 {propMsg && msgBox(propMsg)}
-                {isCA && addBtn('+ Add Property', () => { setShowAddProperty(true); setPropMsg('') })}
+                {(() => {
+                  if (!isCA) return null
+                  const ctx = getCompanyContext()
+                  const activeCount = properties.filter(p => p.is_active).length
+                  const limit = getLimit(FEATURE_FLAGS.MAX_PROPERTIES, ctx)
+                  const atLimit = limit >= 0 && activeCount >= limit
+                  if (!atLimit) {
+                    return addBtn('+ Add Property', () => { setShowAddProperty(true); setPropMsg('') })
+                  }
+                  const upgrade = getUpgradePrompt(FEATURE_FLAGS.MAX_PROPERTIES, ctx.tier, ctx.tier_type)
+                  return (
+                    <div style={{ background:'#1a1f2e', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 6px' }}>
+                        Property limit reached ({activeCount} / {limit})
+                      </p>
+                      <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 10px', lineHeight:'1.6' }}>
+                        {upgrade ? upgrade.message : 'You are on the highest tier; contact support for a custom plan.'}
+                      </p>
+                      <a href="/#pricing" style={{ display:'inline-block', padding:'8px 14px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', borderRadius:'8px', textDecoration:'none' }}>View pricing</a>
+                      {!upgrade && (
+                        <a href="mailto:support@shieldmylot.com?subject=Property%20limit%20expansion" style={{ display:'inline-block', padding:'8px 14px', marginLeft:'8px', background:'#1e2535', color:'#C9A227', fontSize:'12px', border:'1px solid #C9A227', borderRadius:'8px', textDecoration:'none' }}>Contact support</a>
+                      )}
+                    </div>
+                  )
+                })()}
 
                 {showAddProperty && isCA && (
                   <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>

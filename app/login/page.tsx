@@ -72,7 +72,7 @@ export default function Login() {
     if (roleData.role !== 'admin' && roleData.company) {
       const { data: companyData } = await supabase
         .from('companies')
-        .select('is_active, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type, theme')
+        .select('id, is_active, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type, theme')
         .ilike('name', roleData.company)
         .single()
 
@@ -134,10 +134,27 @@ export default function Login() {
       else localStorage.removeItem('company_support_website')
       if (companyData?.tier) localStorage.setItem('company_tier', companyData.tier)
       else localStorage.removeItem('company_tier')
-      if (companyData?.tier_type) localStorage.setItem('company_tier_type', companyData.tier_type)
-      else localStorage.removeItem('company_tier_type')
+      if (companyData?.tier_type) {
+        const canonicalTierType = companyData.tier_type === 'pm' ? 'property_management' : companyData.tier_type
+        localStorage.setItem('company_tier_type', canonicalTierType)
+      } else {
+        localStorage.removeItem('company_tier_type')
+      }
       localStorage.setItem('company_theme', theme)
       applyTheme()
+
+      if (companyData?.id) {
+        const { data: pc } = await supabase
+          .from('proposal_codes_summary')
+          .select('id, code, status, feature_overrides, redeemed_at, expires_at, client_name, client_email, notes')
+          .eq('company_id', companyData.id)
+          .eq('status', 'redeemed')
+          .maybeSingle()
+        if (pc) localStorage.setItem('company_proposal_code', JSON.stringify(pc))
+        else localStorage.removeItem('company_proposal_code')
+      } else {
+        localStorage.removeItem('company_proposal_code')
+      }
     } else {
       localStorage.removeItem('company_logo')
       localStorage.removeItem('company_name')
@@ -147,6 +164,7 @@ export default function Login() {
       localStorage.removeItem('company_tier')
       localStorage.removeItem('company_tier_type')
       localStorage.removeItem('company_theme')
+      localStorage.removeItem('company_proposal_code')
     }
 
     setLoading(false)
