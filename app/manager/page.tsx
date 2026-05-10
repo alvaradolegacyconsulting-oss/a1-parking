@@ -422,7 +422,12 @@ export default function ManagerPortal() {
 
   async function addResident() {
     if (!newResident.name || !newResident.unit || !newResident.email) { alert('Name, email and unit are required'); return }
-    const { error } = await supabase.from('residents').insert([{ ...newResident, property: manager.name, is_active: true }])
+    const { error } = await supabase.from('residents').insert([{
+      ...newResident,
+      lease_end: newResident.lease_end || null,
+      property: manager.name,
+      is_active: true,
+    }])
     if (error) { alert('Error: ' + error.message) }
     else {
       await logAudit({ action: 'ADD_RESIDENT', table_name: 'residents', new_values: { name: newResident.name, email: newResident.email, unit: newResident.unit, property: manager.name } })
@@ -440,7 +445,7 @@ export default function ManagerPortal() {
       phone: editingResident.phone,
       unit: editingResident.unit,
       space: editingResident.space,
-      lease_end: editingResident.lease_end,
+      lease_end: editingResident.lease_end || null,
     }).eq('id', editingResident.id)
     if (error) { alert('Error: ' + error.message) }
     else {
