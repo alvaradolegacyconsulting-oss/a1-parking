@@ -33,6 +33,13 @@ export default function ChangePassword() {
     await supabase.auth.updateUser({ data: { force_password_reset: false } })
 
     const { data: { user } } = await supabase.auth.getUser()
+    // Also clear the user_roles flag (set during manager/admin/company_admin
+    // temp-password creation). Sequential, not atomic — if this fails the
+    // password is already updated; the user would re-hit /change-password
+    // on next login. Acceptable per spec.
+    if (user?.email) {
+      await supabase.rpc('set_must_change_password', { p_email: user.email, p_value: false })
+    }
     const { data: roleData } = await supabase
       .from('user_roles')
       .select('role')

@@ -170,7 +170,12 @@ export default function Login() {
     setLoading(false)
 
     const { data: { user: freshUser } } = await supabase.auth.getUser()
-    const forcePwReset = freshUser?.user_metadata?.force_password_reset === true
+    // Belt + suspenders: honor either the user_metadata flag (legacy /
+    // future Supabase admin path) OR the user_roles.must_change_password
+    // column (set during manager/admin/company_admin temp-password creation).
+    const metaForce = freshUser?.user_metadata?.force_password_reset === true
+    const dbForce = roleData.must_change_password === true
+    const forcePwReset = metaForce || dbForce
 
     if (!roleData.tos_accepted_at) {
       setPendingRole(roleData.role)

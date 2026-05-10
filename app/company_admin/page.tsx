@@ -8,6 +8,8 @@ import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/lo
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { normalizePlate } from '../lib/plate'
+import { generateTempPassword } from '../lib/temp-password'
+import CredentialsModal from '../components/CredentialsModal'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
@@ -15,6 +17,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
 export default function CompanyAdminPortal() {
   const [user, setUser] = useState<any>(null)
   const [role, setRole] = useState<any>(null)
+  const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const resolvedLogo = useResolvedLogo(typeof window !== 'undefined' ? localStorage.getItem('company_logo') : null)
 
@@ -312,22 +315,87 @@ export default function CompanyAdminPortal() {
   }
 
   async function createUser() {
-    if (!newUser.email || !newUser.password || !newUser.role) { setUserMsg('Email, password, and role are required'); return }
+    const isResident = newUser.role === 'resident'
+    if (!newUser.email || !newUser.role) { setUserMsg('Email and role are required'); return }
+    if (!isResident && !newUser.password) { setUserMsg('Password is required for non-resident roles'); return }
     setUserMsg('Creating...')
+
+    const passwordToUse = isResident ? generateTempPassword() : newUser.password
+    const targetEmail = newUser.email.trim().toLowerCase()
+
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
     const { data: { session } } = await supabase.auth.getSession()
+    const swiftUrl = (fnBase ?? '') + '/swift-handler'
     try {
-      const res = await fetch(fnBase + '/swift-handler', {
+      const res = await fetch(swiftUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ action: 'create_user', email: newUser.email, password: newUser.password })
+        body: JSON.stringify({ action: 'create_user', email: newUser.email, password: passwordToUse })
       })
       const json = await res.json()
       if (!res.ok) { setUserMsg('Error: ' + (json.error || 'Failed to create auth account')); return }
     } catch (e: any) { setUserMsg('Error: ' + e.message); return }
+
     const propertyArray = newUser.property
       ? newUser.property.split('|').map(p => p.trim()).filter(Boolean)
       : []
+
+    if (isResident) {
+      // Wrap post-auth steps in try/catch with rollback so the manager
+      // never sees "success + temp password" when the user can't actually
+      // log in.
+      let residentInserted = false
+      try {
+        const { error: insErr } = await supabase.rpc('insert_user_role', {
+          p_email: targetEmail,
+          p_role: 'resident',
+          p_company: role?.company || '',
+          p_property: propertyArray.length > 0 ? propertyArray : []
+        })
+        if (insErr) throw new Error('user_role INSERT failed: ' + insErr.message)
+
+        const { error: rErr } = await supabase.from('residents').insert([{
+          email: targetEmail,
+          name: newUser.email.trim(),
+          property: propertyArray[0] || null,
+          company: role?.company || null,
+          unit: '',
+          is_active: true
+        }])
+        if (rErr) throw new Error('residents INSERT failed: ' + rErr.message)
+        residentInserted = true
+
+        const { error: flagErr } = await supabase.rpc('set_must_change_password', {
+          p_email: targetEmail,
+          p_value: true,
+        })
+        if (flagErr) throw new Error('must_change_password set failed: ' + flagErr.message)
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        await fetch(swiftUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
+        }).catch(() => {})
+        if (residentInserted) {
+          await supabase.from('residents').delete().ilike('email', targetEmail)
+        }
+        setUserMsg('Could not complete resident setup: ' + msg + '. Login account deactivated.')
+        return
+      }
+
+      await auditLog('RESIDENT_CREATED_WITH_AUTH', 'residents', targetEmail, {
+        email: targetEmail, created_by_role: 'company_admin', created_by_email: user?.email, company: role?.company,
+      })
+      setUserMsg('Resident created successfully!')
+      setNewUser({ email: '', password: '', role: 'manager', property: '' })
+      setShowAddUser(false)
+      fetchCompanyUsers()
+      setCredentials({ email: targetEmail, password: passwordToUse })
+      return
+    }
+
+    // Non-resident path — original behavior.
     const { error: insErr } = await supabase
       .rpc('insert_user_role', {
         p_email: newUser.email.trim(),
@@ -336,16 +404,6 @@ export default function CompanyAdminPortal() {
         p_property: propertyArray.length > 0 ? propertyArray : []
       })
     if (insErr) { setUserMsg('Auth created but role insert failed: ' + insErr.message); return }
-    if (newUser.role === 'resident') {
-      await supabase.from('residents').insert([{
-        email: newUser.email.trim(),
-        name: newUser.email.trim(),
-        property: propertyArray[0] || null,
-        company: role?.company || null,
-        unit: '',
-        is_active: true
-      }])
-    }
     if (newUser.role === 'driver') {
       await supabase.from('drivers').insert([{
         email: newUser.email.trim(),
@@ -1702,8 +1760,10 @@ export default function CompanyAdminPortal() {
                     <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New User</p>
                     <label style={lbl}>Email *</label>
                     <input type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="user@example.com" style={inp} />
-                    <label style={lbl}>Password *</label>
-                    <input type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} placeholder="Temporary password" style={inp} />
+                    {newUser.role !== 'resident' && (<>
+                      <label style={lbl}>Password *</label>
+                      <input type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} placeholder="Temporary password" style={inp} />
+                    </>)}
                     <label style={lbl}>Role *</label>
                     <select value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })} style={inp}>
                       <option value="manager">Manager</option>
@@ -1711,6 +1771,11 @@ export default function CompanyAdminPortal() {
                       <option value="driver">Driver</option>
                       <option value="resident">Resident</option>
                     </select>
+                    {newUser.role === 'resident' && (
+                      <p style={{ color:'#fbbf24', fontSize:'11px', margin:'-6px 0 12px' }}>
+                        A temp password will be auto-generated and shown once after submit.
+                      </p>
+                    )}
                     <label style={lbl}>Property</label>
                     <select value={newUser.property} onChange={e => setNewUser({ ...newUser, property: e.target.value })} style={inp}>
                       <option value="">No specific property</option>
@@ -2187,6 +2252,9 @@ export default function CompanyAdminPortal() {
             </div>
           </div>
         </div>
+      )}
+      {credentials && (
+        <CredentialsModal email={credentials.email} password={credentials.password} onClose={() => setCredentials(null)} />
       )}
     </main>
   )

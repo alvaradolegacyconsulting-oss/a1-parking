@@ -4,8 +4,10 @@ import { QRCodeCanvas } from 'qrcode.react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
+import CredentialsModal from '../components/CredentialsModal'
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
+import { generateTempPassword } from '../lib/temp-password'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export default function ManagerPortal() {
@@ -48,6 +50,8 @@ export default function ManagerPortal() {
   const [pendingResidents, setPendingResidents] = useState<any[]>([])
   const [residentNotes, setResidentNotes] = useState<Record<string, string>>({})
   const [managerCompany, setManagerCompany] = useState('')
+  const [managerEmail, setManagerEmail] = useState('')
+  const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null)
   const [resetPwTarget, setResetPwTarget] = useState<string | null>(null)
   const [resetPwForm, setResetPwForm] = useState({ newPw: '', confirmPw: '' })
   const [resetPwMsg, setResetPwMsg] = useState('')
@@ -86,6 +90,7 @@ export default function ManagerPortal() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { window.location.href = '/login'; return }
+    setManagerEmail(user.email || '')
 
     const { data: roleData } = await supabase
       .from('user_roles')
@@ -422,20 +427,90 @@ export default function ManagerPortal() {
 
   async function addResident() {
     if (!newResident.name || !newResident.unit || !newResident.email) { alert('Name, email and unit are required'); return }
-    const { error } = await supabase.from('residents').insert([{
-      ...newResident,
-      lease_end: newResident.lease_end || null,
-      property: manager.name,
-      is_active: true,
-    }])
-    if (error) { alert('Error: ' + error.message) }
-    else {
-      await logAudit({ action: 'ADD_RESIDENT', table_name: 'residents', new_values: { name: newResident.name, email: newResident.email, unit: newResident.unit, property: manager.name } })
-      alert('Resident added!')
-      setShowAddResident(false)
-      setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'' })
-      fetchResidents(manager.name)
+
+    const targetEmail = newResident.email.trim().toLowerCase()
+    const tempPassword = generateTempPassword()
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
+
+    // Step 1: Create the auth user via swift-handler (service-role bridge).
+    const swiftRes = await fetch(fnBase + '/swift-handler', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ action: 'create_user', email: targetEmail, password: tempPassword }),
+    })
+    if (!swiftRes.ok) {
+      const j = await swiftRes.json().catch(() => ({}))
+      alert('Could not create login account: ' + (j.error || j.message || 'unknown error'))
+      return
     }
+
+    // Steps 2 + 3: Insert residents row + user_role with must_change_password.
+    // If either fails, deactivate the orphan auth user and surface a clear
+    // error — do NOT show the credentials modal.
+    let residentInserted = false
+    try {
+      const { error: rErr } = await supabase.from('residents').insert([{
+        ...newResident,
+        email: targetEmail,
+        lease_end: newResident.lease_end || null,
+        property: manager.name,
+        is_active: true,
+      }])
+      if (rErr) throw new Error('residents INSERT failed: ' + rErr.message)
+      residentInserted = true
+
+      const { error: roleErr } = await supabase.rpc('insert_user_role', {
+        p_email: targetEmail,
+        p_role: 'resident',
+        p_company: managerCompany || null,
+        p_property: manager.name ? [manager.name] : [],
+      })
+      if (roleErr) throw new Error('user_role INSERT failed: ' + roleErr.message)
+
+      const { error: flagErr } = await supabase.rpc('set_must_change_password', {
+        p_email: targetEmail,
+        p_value: true,
+      })
+      if (flagErr) throw new Error('must_change_password set failed: ' + flagErr.message)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      // Roll back the auth user (and the residents row if it landed).
+      await fetch(fnBase + '/swift-handler', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
+      }).catch(() => { /* best-effort */ })
+      if (residentInserted) {
+        // Best-effort. Supabase queries return { error } rather than
+        // throwing, so an explicit catch isn't needed; we just don't
+        // surface the result.
+        await supabase.from('residents').delete().ilike('email', targetEmail).ilike('property', manager.name)
+      }
+      alert('Could not complete resident setup: ' + msg + '\n\nThe login account has been deactivated. Try again or contact support.')
+      return
+    }
+
+    await logAudit({
+      action: 'RESIDENT_CREATED_WITH_AUTH',
+      table_name: 'residents',
+      new_values: {
+        email: targetEmail,
+        created_by_role: isReadOnly ? 'leasing_agent' : 'manager',
+        created_by_email: managerEmail,
+        property: manager.name,
+      },
+    })
+
+    setShowAddResident(false)
+    setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'' })
+    fetchResidents(manager.name)
+    setCredentials({ email: targetEmail, password: tempPassword })
   }
 
   async function saveResident() {
@@ -1689,6 +1764,9 @@ export default function ManagerPortal() {
         )}
 
       </div>
+      {credentials && (
+        <CredentialsModal email={credentials.email} password={credentials.password} onClose={() => setCredentials(null)} />
+      )}
     </main>
   )
 }

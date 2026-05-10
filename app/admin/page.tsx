@@ -5,10 +5,13 @@ import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useResolvedLogo } from '../lib/logo'
+import CredentialsModal from '../components/CredentialsModal'
+import { generateTempPassword } from '../lib/temp-password'
 
 export default function AdminPortal() {
   const resolvedLogo = useResolvedLogo()
   const [adminEmail, setAdminEmail] = useState('')
+  const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('companies')
 
@@ -365,31 +368,90 @@ export default function AdminPortal() {
   }
 
   async function addUser() {
-    if (!newUser.email || !newUser.password) { setUserMsg('Email and password are required'); return }
+    const isResident = newUser.role === 'resident'
+    if (!newUser.email) { setUserMsg('Email is required'); return }
+    if (!isResident && !newUser.password) { setUserMsg('Password is required for non-resident roles'); return }
     setUserMsg('Creating account...')
+
+    // Resident accounts use an auto-generated temp password shown to admin
+    // once via the credentials modal. Other roles use the admin-typed pw.
+    const passwordToUse = isResident ? generateTempPassword() : newUser.password
+    const targetEmail = newUser.email.trim().toLowerCase()
+
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
-    console.log('Functions URL env:', fnBase)
     const { data: { session } } = await supabase.auth.getSession()
     const url = (fnBase ?? '') + '/swift-handler'
-    const reqBody = JSON.stringify({ action: 'create_user', email: newUser.email, password: newUser.password })
-    console.log('Edge function URL:', url)
-    console.log('Request body:', reqBody)
+    const reqBody = JSON.stringify({ action: 'create_user', email: newUser.email, password: passwordToUse })
     try {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
         body: reqBody
       })
-      console.log('Response status:', res.status)
       const text = await res.text()
-      console.log('Response text:', text)
       const err = (() => { try { return JSON.parse(text) } catch { return {} } })()
       if (!res.ok) { setUserMsg('Auth error: ' + (err.error || err.message || res.statusText)); return }
-    } catch (e: any) { console.log('Fetch threw:', e); setUserMsg('Error: ' + e.message); return }
+    } catch (e: any) { setUserMsg('Error: ' + e.message); return }
+
     const propertyArray = newUser.property
       ? newUser.property.split('|').map(p => p.trim()).filter(Boolean)
       : []
-    console.log('propertyArray type:', typeof propertyArray, 'value:', JSON.stringify(propertyArray), 'isArray:', Array.isArray(propertyArray))
+
+    // For residents, wrap the post-auth steps in try/catch and roll back
+    // on failure (deactivate the orphan auth user, delete the residents
+    // row if it landed). Don't show the credentials modal on failure.
+    if (isResident) {
+      let residentInserted = false
+      try {
+        const { error: roleError } = await supabase.rpc('insert_user_role', {
+          p_email: targetEmail,
+          p_role: 'resident',
+          p_company: newUser.company.trim() || null,
+          p_property: propertyArray.length > 0 ? propertyArray : []
+        })
+        if (roleError) throw new Error('user_role INSERT failed: ' + roleError.message)
+
+        const { error: rErr } = await supabase.from('residents').insert([{
+          email: targetEmail,
+          name: newUser.email.trim(),
+          property: propertyArray[0] || null,
+          company: newUser.company.trim() || null,
+          unit: '',
+          is_active: true
+        }])
+        if (rErr) throw new Error('residents INSERT failed: ' + rErr.message)
+        residentInserted = true
+
+        const { error: flagErr } = await supabase.rpc('set_must_change_password', {
+          p_email: targetEmail,
+          p_value: true,
+        })
+        if (flagErr) throw new Error('must_change_password set failed: ' + flagErr.message)
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
+        }).catch(() => {})
+        if (residentInserted) {
+          await supabase.from('residents').delete().ilike('email', targetEmail)
+        }
+        setUserMsg('Could not complete resident setup: ' + msg + '. Login account deactivated.')
+        return
+      }
+
+      await auditLog(adminEmail, 'RESIDENT_CREATED_WITH_AUTH', 'residents', targetEmail, {
+        email: targetEmail, created_by_role: 'admin', created_by_email: adminEmail,
+      })
+      setUserMsg('Resident created successfully!')
+      setNewUser({ email:'', password:'', role:'manager', company:'', property:'' })
+      fetchUsers()
+      setCredentials({ email: targetEmail, password: passwordToUse })
+      return
+    }
+
+    // Non-resident path — original behavior preserved.
     const { error: roleError } = await supabase
       .rpc('insert_user_role', {
         p_email: newUser.email.trim(),
@@ -398,16 +460,6 @@ export default function AdminPortal() {
         p_property: propertyArray.length > 0 ? propertyArray : []
       })
     if (roleError) { setUserMsg('Auth created but role insert failed: ' + roleError.message); return }
-    if (newUser.role === 'resident') {
-      await supabase.from('residents').insert([{
-        email: newUser.email.trim(),
-        name: newUser.email.trim(),
-        property: propertyArray[0] || null,
-        company: newUser.company.trim() || null,
-        unit: '',
-        is_active: true
-      }])
-    }
     if (newUser.role === 'driver') {
       await supabase.from('drivers').insert([{
         email: newUser.email.trim(),
@@ -973,12 +1025,19 @@ export default function AdminPortal() {
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New User Account</p>
                 <label style={lbl}>Email *</label>
                 <input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} placeholder="user@example.com" style={inp} />
-                <label style={lbl}>Password *</label>
-                <input type="password" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} placeholder="Min 8 characters" style={inp} />
+                {newUser.role !== 'resident' && (<>
+                  <label style={lbl}>Password *</label>
+                  <input type="password" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} placeholder="Min 8 characters" style={inp} />
+                </>)}
                 <label style={lbl}>Role</label>
                 <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} style={inp}>
                   {['admin','company_admin','manager','driver','resident'].map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
+                {newUser.role === 'resident' && (
+                  <p style={{ color:'#fbbf24', fontSize:'11px', margin:'-6px 0 12px' }}>
+                    A temp password will be auto-generated and shown once after submit.
+                  </p>
+                )}
                 <label style={lbl}>Company</label>
                 <select value={newUser.company} onChange={e => setNewUser({...newUser, company: e.target.value})} style={inp}>
                   <option value=''>None</option>
@@ -1769,6 +1828,9 @@ export default function AdminPortal() {
         )}
 
       </div>
+      {credentials && (
+        <CredentialsModal email={credentials.email} password={credentials.password} onClose={() => setCredentials(null)} />
+      )}
     </main>
   )
 }
