@@ -13,6 +13,7 @@ const NAV_LINKS: Record<string, { label: string; href: string }[]> = {
     { label: 'Driver', href: '/driver' },
     { label: 'Company Admin', href: '/company_admin' },
     { label: 'Admin', href: '/admin' },
+    { label: 'Proposals', href: '/admin/proposal-codes' },
     { label: 'QR Codes', href: '/qr' },
   ],
   company_admin: [
