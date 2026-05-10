@@ -1,20 +1,24 @@
 import puppeteer, { type Browser } from 'puppeteer-core'
-import chromium from '@sparticuz/chromium'
+import chromium from '@sparticuz/chromium-min'
 import { existsSync } from 'node:fs'
 import { renderProposalPdfHtml, ProposalForPdf } from './proposal-pdf-template'
 
+// chromium-min downloads the Chromium binary at runtime from this CDN URL
+// (a GitHub release artifact) instead of bundling it in the function. This
+// sidesteps the libnss3.so bundling problem we hit with @sparticuz/chromium —
+// the binary's sibling shared libraries weren't reaching the function bundle
+// even with vercel.json includeFiles. Version must match the chromium-min
+// package version (currently ^131.0.1).
+const CHROMIUM_PACK_URL =
+  'https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar'
+
 async function launchBrowser(): Promise<Browser> {
-  // Use Vercel as the canonical signal for serverless. On Vercel, the only
-  // working setup is @sparticuz/chromium's args + executablePath +
-  // defaultViewport + headless. Setting `headless: true` (a boolean) instead
-  // of `chromium.headless` skips @sparticuz's library-path setup and the
-  // bundled Chromium fails to load libnss3.so.
   const isVercel = !!process.env.VERCEL
   if (isVercel) {
     return puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
+      executablePath: await chromium.executablePath(CHROMIUM_PACK_URL),
       headless: chromium.headless,
     })
   }
@@ -36,7 +40,7 @@ export async function generateProposalPdf(
   // Remove once libnss3.so / launch issues are resolved.
   if (process.env.VERCEL) {
     try {
-      const ep = await chromium.executablePath()
+      const ep = await chromium.executablePath(CHROMIUM_PACK_URL)
       console.log('[proposal-pdf] VERCEL=', process.env.VERCEL)
       console.log('[proposal-pdf] executablePath=', ep)
       console.log('[proposal-pdf] file exists at executablePath=', ep ? existsSync(ep) : 'n/a (no path)')
