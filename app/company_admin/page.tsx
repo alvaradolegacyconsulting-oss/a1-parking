@@ -7,6 +7,7 @@ import SupportContact from '../components/SupportContact'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
+import { normalizePlate } from '../lib/plate'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
@@ -594,8 +595,9 @@ export default function CompanyAdminPortal() {
       }
       setUploadingVideo(false)
     }
+    const normalizedPlate = normalizePlate(plate)
     const { data: newV, error: insErr } = await supabase.from('violations').insert([{
-      plate: plate.toUpperCase().trim(), violation_type: violation.type,
+      plate: normalizedPlate, violation_type: violation.type,
       location: violation.location, notes: violation.notes,
       property: violation.property, driver_name: role?.email, photos: photoUrls,
       video_url: videoUrl,
@@ -605,7 +607,7 @@ export default function CompanyAdminPortal() {
     }]).select().single()
     setSubmitting(false)
     if (insErr) { alert('Error: ' + insErr.message); return }
-    await auditLog('ADD_VIOLATION', 'violations', newV?.id, { plate: plate.toUpperCase().trim(), property: violation.property, violation_type: violation.type })
+    await auditLog('ADD_VIOLATION', 'violations', newV?.id, { plate: normalizedPlate, property: violation.property, violation_type: violation.type })
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
     setPhotos([])
@@ -1182,7 +1184,7 @@ export default function CompanyAdminPortal() {
                 style={{ width:'100%', padding:'12px', background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', cursor:'pointer', fontSize:'14px', fontWeight:'bold', marginTop:'8px', marginBottom:'8px', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px', fontFamily:'Arial' }}>
                 📷 Scan License Plate
               </button>
-              <input value={plate} onChange={e => { setPlate(e.target.value.toUpperCase().replace(/\s/g, '')); setResult(null); setTicketTarget(null); setScanMsg('') }}
+              <input value={plate} onChange={e => { setPlate(normalizePlate(e.target.value)); setResult(null); setTicketTarget(null); setScanMsg('') }}
                 onKeyDown={e => e.key === 'Enter' && searchPlate()} placeholder="ABC1234" maxLength={10}
                 style={{ display:'block', width:'100%', padding:'16px', fontSize:'28px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.12em', background:'#1e2535', border:'2px solid #3a4055', borderRadius:'10px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box', textTransform:'uppercase' }}
               />

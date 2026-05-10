@@ -2,6 +2,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
+import { normalizePlate } from '../lib/plate'
 
 function VisitorForm() {
   const searchParams = useSearchParams()
@@ -55,7 +56,7 @@ function VisitorForm() {
     setLoading(true)
     setPlateError('')
 
-    const plate = form.plate.toUpperCase().trim()
+    const plate = normalizePlate(form.plate)
 
     if (propertyName !== 'Managed Property') {
       const { data: existing } = await supabase
@@ -164,7 +165,7 @@ function VisitorForm() {
               <span style={{ background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'20px', padding:'3px 10px', fontSize:'11px', fontWeight:'bold' }}>✓ Active</span>
             </div>
 
-            <p style={{ color:'white', fontFamily:'Courier New', fontSize:'36px', fontWeight:'bold', letterSpacing:'0.14em', margin:'0 0 4px', textAlign:'center' }}>{form.plate.toUpperCase()}</p>
+            <p style={{ color:'white', fontFamily:'Courier New', fontSize:'36px', fontWeight:'bold', letterSpacing:'0.14em', margin:'0 0 4px', textAlign:'center' }}>{normalizePlate(form.plate)}</p>
             {form.vehicle_desc && <p style={{ color:'#C9A227', fontSize:'12px', margin:'0 0 16px', textAlign:'center' }}>{form.vehicle_desc}</p>}
             {!form.vehicle_desc && <div style={{ marginBottom:'16px' }} />}
 
@@ -246,7 +247,7 @@ function VisitorForm() {
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>License Plate *</label>
             <input
               value={form.plate}
-              onChange={e => setForm({...form, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})}
+              onChange={e => setForm({...form, plate: normalizePlate(e.target.value)})}
               placeholder="ABC1234"
               style={{ display:'block', width:'100%', marginTop:'6px', padding:'12px', fontSize:'20px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.1em', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box' }}
             />

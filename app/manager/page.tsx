@@ -5,6 +5,7 @@ import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
+import { normalizePlate } from '../lib/plate'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export default function ManagerPortal() {
@@ -170,7 +171,7 @@ export default function ManagerPortal() {
   }
 
   async function addExemptPlate() {
-    const plate = newExemptPlate.toUpperCase().trim()
+    const plate = normalizePlate(newExemptPlate)
     if (!plate || exemptPlates.includes(plate)) { setNewExemptPlate(''); return }
     const updated = [...exemptPlates, plate]
     const { error } = await supabase.from('properties').update({ exempt_plates: updated }).eq('id', manager.id)
@@ -393,9 +394,10 @@ export default function ManagerPortal() {
 
   async function addVehicle(unit?: string) {
     if (!newVehicle.plate) { alert('Plate is required'); return }
+    const normalizedPlate = normalizePlate(newVehicle.plate)
     const { error } = await supabase.from('vehicles').insert([{
       ...newVehicle,
-      plate: newVehicle.plate.toUpperCase().trim(),
+      plate: normalizedPlate,
       unit: unit || newVehicle.unit,
       property: manager.name,
       is_active: true,
@@ -403,7 +405,7 @@ export default function ManagerPortal() {
     }])
     if (error) { alert('Error: ' + error.message) }
     else {
-      await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: newVehicle.plate.toUpperCase().trim(), make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name } })
+      await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name } })
       alert('Vehicle added!')
       setShowAddVehicle(false)
       setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', unit:'', space:'', permit_expiry:'' })
@@ -477,8 +479,9 @@ export default function ManagerPortal() {
     if (showActiveVehicles) list = list.filter(v => v.is_active)
     if (!vehicleSearch) return list
     const q = vehicleSearch.toLowerCase()
+    const qPlate = normalizePlate(vehicleSearch)
     return list.filter(v =>
-      v.plate?.toLowerCase().includes(q) ||
+      (qPlate && normalizePlate(v.plate).includes(qPlate)) ||
       v.unit?.toLowerCase().includes(q) ||
       v.make?.toLowerCase().includes(q) ||
       v.model?.toLowerCase().includes(q) ||
@@ -509,7 +512,8 @@ export default function ManagerPortal() {
       if (!inPeriod) return false
       if (!violationSearch) return true
       const q = violationSearch.toLowerCase()
-      return v.plate?.toLowerCase().includes(q) || v.violation_type?.toLowerCase().includes(q) || v.location?.toLowerCase().includes(q)
+      const qPlate = normalizePlate(violationSearch)
+      return (qPlate && normalizePlate(v.plate).includes(qPlate)) || v.violation_type?.toLowerCase().includes(q) || v.location?.toLowerCase().includes(q)
     })
   }
 
@@ -867,7 +871,7 @@ export default function ManagerPortal() {
               <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Add New Vehicle</p>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate *</label><input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate *</label><input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inputStyle}>{['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}</select></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Make</label><input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} placeholder="Toyota" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Model</label><input value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} placeholder="Camry" style={inputStyle} /></div>
@@ -1180,7 +1184,7 @@ export default function ManagerPortal() {
                   {showAddVehicle && (
                     <div style={{ background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', padding:'12px', marginBottom:'10px' }}>
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
-                        <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate *</label><input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
+                        <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate *</label><input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inputStyle}>{['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}</select></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Make</label><input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} placeholder="Toyota" style={inputStyle} /></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Model</label><input value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} placeholder="Camry" style={inputStyle} /></div>
@@ -1214,7 +1218,7 @@ export default function ManagerPortal() {
                         <div style={{ display:'flex', gap:'6px' }}>
                           <button onClick={async () => { const space = prompt('Update space:', v.space || ''); if (space === null) return; await supabase.from('vehicles').update({ space }).eq('id', v.id); fetchVehicles(manager.name) }}
                             style={{ flex:1, padding:'6px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>Edit Space</button>
-                          <button onClick={async () => { const plate = prompt('Update plate:', v.plate); if (plate === null) return; await supabase.from('vehicles').update({ plate: plate.toUpperCase().trim() }).eq('id', v.id); fetchVehicles(manager.name) }}
+                          <button onClick={async () => { const plate = prompt('Update plate:', v.plate); if (plate === null) return; await supabase.from('vehicles').update({ plate: normalizePlate(plate) }).eq('id', v.id); fetchVehicles(manager.name) }}
                             style={{ flex:1, padding:'6px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Edit Plate</button>
                           <button onClick={() => removeVehicle(v.id)}
                             style={{ padding:'6px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Remove</button>

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
+import { normalizePlate } from '../lib/plate'
 
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
@@ -110,7 +111,7 @@ export default function ResidentPortal() {
   }
 
   async function fetchMyViolations() {
-    const plates = vehicles.map((v: any) => v.plate?.toUpperCase().trim()).filter(Boolean)
+    const plates = vehicles.map((v: any) => normalizePlate(v.plate)).filter(Boolean)
     if (plates.length === 0) { setMyViolations([]); return }
     const { data } = await supabase.from('violations').select('*').in('plate', plates).order('created_at', { ascending: false })
     setMyViolations(data || [])
@@ -184,8 +185,9 @@ export default function ResidentPortal() {
   }
 
   async function saveVehicle() {
+    const normalizedPlate = normalizePlate(editingVehicle.plate)
     const { error } = await supabase.from('vehicles').update({
-      plate: editingVehicle.plate.toUpperCase().trim(),
+      plate: normalizedPlate,
       state: editingVehicle.state,
       make: editingVehicle.make,
       model: editingVehicle.model,
@@ -195,7 +197,7 @@ export default function ResidentPortal() {
     }).eq('id', editingVehicle.id)
     if (error) { alert('Error: ' + error.message) }
     else {
-      await logAudit({ action: 'EDIT_VEHICLE', table_name: 'vehicles', record_id: editingVehicle.id, new_values: { plate: editingVehicle.plate.toUpperCase().trim(), make: editingVehicle.make, model: editingVehicle.model, color: editingVehicle.color, year: editingVehicle.year } })
+      await logAudit({ action: 'EDIT_VEHICLE', table_name: 'vehicles', record_id: editingVehicle.id, new_values: { plate: normalizedPlate, make: editingVehicle.make, model: editingVehicle.model, color: editingVehicle.color, year: editingVehicle.year } })
       setEditingVehicleId(null); fetchVehicles(resident.unit, resident.property)
     }
   }
@@ -210,8 +212,9 @@ export default function ResidentPortal() {
       setRequestMsg('Maximum of 2 vehicles allowed per resident at initial registration. To add an additional vehicle beyond this limit, please contact your Property Manager directly.')
       return
     }
+    const normalizedPlate = normalizePlate(newVehicle.plate)
     const { error } = await supabase.from('vehicles').insert([{
-      plate: newVehicle.plate.toUpperCase().trim(),
+      plate: normalizedPlate,
       state: newVehicle.state,
       make: newVehicle.make,
       model: newVehicle.model,
@@ -225,7 +228,7 @@ export default function ResidentPortal() {
     }])
     if (error) { alert('Error: ' + error.message) }
     else {
-      await logAudit({ action: 'REQUEST_VEHICLE', table_name: 'vehicles', new_values: { plate: newVehicle.plate.toUpperCase().trim(), make: newVehicle.make, model: newVehicle.model, unit: resident.unit, property: resident.property } })
+      await logAudit({ action: 'REQUEST_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: resident.unit, property: resident.property } })
       setRequestMsg('Vehicle submitted for Property Manager approval. You will see the status update here.')
       setShowRequestForm(false)
       setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
@@ -241,7 +244,7 @@ export default function ResidentPortal() {
   async function issueVisitorPass() {
     if (!visitorForm.plate || !resident) return
     setPassError('')
-    const plate = visitorForm.plate.toUpperCase().trim()
+    const plate = normalizePlate(visitorForm.plate)
 
     if (resident.property) {
       const { data: propData } = await supabase
@@ -252,7 +255,7 @@ export default function ResidentPortal() {
 
       if (propData && propData.visitor_pass_limit && propData.visitor_pass_limit > 0) {
         const exemptPlates: string[] = propData.exempt_plates || []
-        const isExempt = exemptPlates.some((ep: string) => ep.toUpperCase() === plate)
+        const isExempt = exemptPlates.some((ep: string) => normalizePlate(ep) === plate)
         if (!isExempt) {
           const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString()
           const { count } = await supabase
@@ -521,7 +524,7 @@ export default function ResidentPortal() {
                           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                             <div style={{ gridColumn:'span 2' }}>
                               <label style={lbl}>Plate *</label>
-                              <input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})} placeholder="ABC1234" style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
+                              <input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
                             </div>
                             <div>
                               <label style={lbl}>State</label>
@@ -604,7 +607,7 @@ export default function ResidentPortal() {
                             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                               <div style={{ gridColumn:'span 2' }}>
                                 <label style={lbl}>Plate</label>
-                                <input value={editingVehicle.plate || ''} onChange={e => setEditingVehicle({...editingVehicle, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})} style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
+                                <input value={editingVehicle.plate || ''} onChange={e => setEditingVehicle({...editingVehicle, plate: normalizePlate(e.target.value)})} style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
                               </div>
                               <div>
                                 <label style={lbl}>State</label>
@@ -768,7 +771,7 @@ export default function ResidentPortal() {
                 <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Visitor's Plate *</label>
                 <input
                   value={visitorForm.plate}
-                  onChange={e => setVisitorForm({...visitorForm, plate: e.target.value.replace(/\s+/g, '').toUpperCase()})}
+                  onChange={e => setVisitorForm({...visitorForm, plate: normalizePlate(e.target.value)})}
                   placeholder="ABC1234"
                   style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', textAlign:'center', boxSizing:'border-box' }}
                 />

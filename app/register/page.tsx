@@ -3,6 +3,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { useResolvedLogo } from '../lib/logo'
+import { normalizePlate } from '../lib/plate'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY']
 
@@ -123,7 +124,7 @@ function RegisterForm() {
       for (const v of vehicles) {
         if (!v.plate.trim()) continue
         await supabase.from('vehicles').insert([{
-          plate: v.plate.toUpperCase().trim(),
+          plate: normalizePlate(v.plate),
           state: v.state,
           make: v.make.trim() || null,
           model: v.model.trim() || null,
@@ -254,7 +255,7 @@ function RegisterForm() {
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                     <div style={{ gridColumn:'span 2' }}>
                       <label style={lbl}>License Plate *</label>
-                      <input value={v.plate} onChange={e => updateVehicle(i, 'plate', e.target.value.replace(/\s+/g, '').toUpperCase())}
+                      <input value={v.plate} onChange={e => updateVehicle(i, 'plate', normalizePlate(e.target.value))}
                         placeholder="ABC1234" style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center', letterSpacing:'0.1em' }} />
                     </div>
                     <div>

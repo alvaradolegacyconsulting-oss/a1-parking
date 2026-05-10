@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
+import { normalizePlate } from '../lib/plate'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 
 export default function DriverPortal() {
@@ -251,8 +252,9 @@ export default function DriverPortal() {
       }
       setUploadingVideo(false)
     }
+    const normalizedPlate = normalizePlate(plate)
     const { data: newV, error: insErr } = await supabase.from('violations').insert([{
-      plate: plate.toUpperCase().trim(),
+      plate: normalizedPlate,
       violation_type: violation.type,
       location: violation.location,
       notes: violation.notes,
@@ -267,7 +269,7 @@ export default function DriverPortal() {
     }]).select().single()
     setSubmitting(false)
     if (insErr) { alert('Error: ' + insErr.message); return }
-    await logAudit({ action: 'ADD_VIOLATION', table_name: 'violations', record_id: newV?.id, new_values: { plate: plate.toUpperCase().trim(), property: violation.property, violation_type: violation.type, driver_name: driver?.name } })
+    await logAudit({ action: 'ADD_VIOLATION', table_name: 'violations', record_id: newV?.id, new_values: { plate: normalizedPlate, property: violation.property, violation_type: violation.type, driver_name: driver?.name } })
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
     setPhotos([])
@@ -294,8 +296,9 @@ export default function DriverPortal() {
     })
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
+      const qPlate = normalizePlate(searchQuery)
       list = list.filter(v =>
-        v.plate?.toLowerCase().includes(q) ||
+        (qPlate && normalizePlate(v.plate).includes(qPlate)) ||
         v.property?.toLowerCase().includes(q) ||
         v.violation_type?.toLowerCase().includes(q) ||
         v.driver_name?.toLowerCase().includes(q)
@@ -621,7 +624,7 @@ export default function DriverPortal() {
               </button>
               <input
                 value={plate}
-                onChange={e => { setPlate(e.target.value.toUpperCase().replace(/\s/g, '')); setResult(null); setTicketTarget(null); setScanMsg(''); setSearchTimestamp(null) }}
+                onChange={e => { setPlate(normalizePlate(e.target.value)); setResult(null); setTicketTarget(null); setScanMsg(''); setSearchTimestamp(null) }}
                 onKeyDown={e => e.key === 'Enter' && searchPlate()}
                 placeholder="ABC1234"
                 maxLength={10}
