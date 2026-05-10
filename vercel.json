@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "app/api/proposal-codes/[id]/issue/route.ts": {
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
+    },
+    "app/api/proposal-codes/[id]/preview-pdf/route.ts": {
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
+    }
+  }
+}
