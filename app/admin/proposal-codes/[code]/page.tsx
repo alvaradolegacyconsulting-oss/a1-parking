@@ -86,7 +86,6 @@ export default function ProposalCodeDetail() {
   const code = params?.code
 
   const [authChecked, setAuthChecked] = useState(false)
-  const [adminEmail, setAdminEmail] = useState<string>('')
   const [row, setRow] = useState<ProposalRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState<string>('')
@@ -123,7 +122,6 @@ export default function ProposalCodeDetail() {
       const { data: roleData } = await supabase
         .from('user_roles').select('role').ilike('email', user.email!).single()
       if (roleData?.role !== 'admin') { window.location.href = '/'; return }
-      setAdminEmail(user.email || '')
       setAuthChecked(true)
       await load()
     })()
@@ -206,28 +204,54 @@ export default function ProposalCodeDetail() {
   async function issueCode() {
     if (!row || !isDraft) return
     if (!overrideValidation.valid) { setMsg(overrideValidation.error); return }
-    // STUB for commit 1 — full PDF + Storage upload wires in commit 2.
-    // For now: transition status to 'issued' so the rest of the lifecycle
-    // (apply, revoke) is testable. pdf_url stays NULL until commit 2 wires
-    // the /api/proposal-codes/[id]/issue endpoint.
-    if (!confirm('Issue this code? In commit 1 this stubs the PDF (pdf_url stays empty until the next commit wires Puppeteer).')) return
+    if (!confirm('Issue this code? This generates the PDF and locks the code. After issue, the only edits allowed are revoke.')) return
     setBusy(true)
-    const { error } = await supabase
-      .from('proposal_codes')
-      .update({ status: 'issued', issued_at: new Date().toISOString(), issued_by: adminEmail })
-      .eq('id', row.id)
+    setMsg('Generating PDF…')
+    const res = await fetch(`/api/proposal-codes/${row.id}/issue`, { method: 'POST' })
     setBusy(false)
-    if (error) { setMsg('Issue failed: ' + error.message); return }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setMsg('Issue failed: ' + (body.error || res.statusText))
+      return
+    }
+    setMsg('Issued.')
     await load()
   }
 
-  function previewPdfStub() {
-    alert('Preview PDF wires up in commit 2 (Puppeteer install + template).')
+  async function previewPdf() {
+    if (!row) return
+    setBusy(true)
+    setMsg('Rendering preview…')
+    const res = await fetch(`/api/proposal-codes/${row.id}/preview-pdf`, { method: 'POST' })
+    setBusy(false)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setMsg('Preview failed: ' + (body.error || res.statusText))
+      return
+    }
+    setMsg('')
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
-  function viewPdfStub() {
-    alert(row?.pdf_url
-      ? 'View PDF wires up in commit 2 (signed-URL endpoint).'
-      : 'PDF was not generated (this code was issued before Puppeteer wiring).')
+
+  async function viewPdf() {
+    if (!row) return
+    if (!row.pdf_url) {
+      setMsg('PDF was not generated for this code (was it issued before PDF wiring?).')
+      return
+    }
+    setBusy(true)
+    const res = await fetch(`/api/proposal-codes/${row.id}/pdf-url`, { method: 'GET' })
+    setBusy(false)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setMsg('View PDF failed: ' + (body.error || res.statusText))
+      return
+    }
+    const body = await res.json()
+    if (body.url) window.open(body.url, '_blank')
   }
 
   async function openApplyModal() {
@@ -426,23 +450,23 @@ export default function ProposalCodeDetail() {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           {isDraft && (<>
             <button onClick={saveDraft} disabled={busy || !overrideValidation.valid} style={{ ...btnGold, opacity: busy || !overrideValidation.valid ? 0.5 : 1 }}>Save Draft</button>
-            <button onClick={previewPdfStub} style={btnGhost}>Preview PDF</button>
+            <button onClick={previewPdf} style={btnGhost}>Preview PDF</button>
             <button onClick={issueCode} disabled={busy} style={btnGold}>Issue Code</button>
             <button onClick={() => setDeleteOpen(true)} style={btnDanger}>Delete Draft</button>
           </>)}
           {status === 'issued' && (<>
-            <button onClick={viewPdfStub} style={btnGhost}>View PDF</button>
+            <button onClick={viewPdf} style={btnGhost}>View PDF</button>
             <button onClick={openApplyModal} style={btnGold}>Apply to Company</button>
             <button onClick={() => setRevokeOpen(true)} style={btnDanger}>Revoke</button>
           </>)}
           {status === 'redeemed' && (<>
-            <button onClick={viewPdfStub} style={btnGhost}>View PDF</button>
+            <button onClick={viewPdf} style={btnGhost}>View PDF</button>
             {row.company_id && (
               <a href={`/admin?company_id=${row.company_id}`} style={{ ...btnGhost, textDecoration: 'none', display: 'inline-block' }}>View Company</a>
             )}
           </>)}
           {(status === 'expired' || status === 'revoked') && (
-            <button onClick={viewPdfStub} style={btnGhost}>View PDF</button>
+            <button onClick={viewPdf} style={btnGhost}>View PDF</button>
           )}
         </div>
 
