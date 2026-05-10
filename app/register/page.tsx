@@ -25,9 +25,6 @@ function RegisterForm() {
   const resolvedLogo = useResolvedLogo(companyLogo)
 
   const [tosChecked, setTosChecked] = useState(false)
-  const [texasCheck1, setTexasCheck1] = useState(false)
-  const [texasCheck2, setTexasCheck2] = useState(false)
-  const [texasCheck3, setTexasCheck3] = useState(false)
   const [account, setAccount] = useState({ email: '', password: '', confirm: '', name: '', phone: '', unit: '' })
   const [vehicles, setVehicles] = useState<any[]>([])
 
@@ -139,7 +136,6 @@ function RegisterForm() {
 
       await supabase.from('audit_logs').insert([
         { action: 'REGISTRATION_TOS_ACCEPTED', table_name: 'residents', new_values: { email: account.email.trim(), property: property || null } },
-        { action: 'TEXAS_OPERATIONS_CONFIRMED', table_name: 'residents', new_values: { email: account.email.trim(), confirmed_at: texasConfirmedAt } },
       ])
       setDone(true)
     } catch (e: any) {
@@ -332,20 +328,9 @@ function RegisterForm() {
                 </div>
               )}
 
-              {/* Texas operations confirmation */}
-              <div style={{ background:'#1a1f2e', border:'1px solid #C9A227', borderRadius:'8px', padding:'12px', marginBottom:'12px' }}>
-                <p style={{ color:'#C9A227', fontSize:'13px', textAlign:'center', margin:'0 0 12px' }}>🤠 ShieldMyLot currently operates in Texas only.</p>
-                {[
-                  { state: texasCheck1, set: setTexasCheck1, label: 'My business is licensed to operate in Texas' },
-                  { state: texasCheck2, set: setTexasCheck2, label: 'My enforcement activities comply with Texas Transportation Code Chapter 2308 (for enforcement track) or applicable Texas property management law (for PM track)' },
-                  { state: texasCheck3, set: setTexasCheck3, label: "I understand ShieldMyLot's Terms of Service are governed by Texas law and Harris County jurisdiction" },
-                ].map((item, i) => (
-                  <label key={i} style={{ display:'flex', alignItems:'flex-start', gap:'10px', marginBottom: i < 2 ? '10px' : '0', cursor:'pointer' }}>
-                    <input type="checkbox" checked={item.state} onChange={e => item.set(e.target.checked)}
-                      style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer', flexShrink:0 }} />
-                    <span style={{ color:'#aaa', fontSize:'12px', lineHeight:'1.6' }}>{item.label}</span>
-                  </label>
-                ))}
+              {/* Texas-only informational notice (no checkbox) */}
+              <div style={{ background:'#1a1f2e', border:'1px solid #C9A227', borderRadius:'8px', padding:'10px 12px', marginBottom:'12px' }}>
+                <p style={{ color:'#C9A227', fontSize:'13px', textAlign:'center', margin:'0' }}>🤠 ShieldMyLot currently operates in Texas only.</p>
               </div>
 
               <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', marginBottom:'14px', cursor:'pointer' }}>
@@ -360,7 +345,7 @@ function RegisterForm() {
               </label>
 
               {(() => {
-                const allChecked = tosChecked && texasCheck1 && texasCheck2 && texasCheck3
+                const allChecked = tosChecked
                 const disabled = submitting || !allChecked
                 return (
                   <div style={{ display:'flex', gap:'8px' }}>
