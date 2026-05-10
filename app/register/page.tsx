@@ -83,6 +83,20 @@ function RegisterForm() {
         return
       }
 
+      // Sign in as the just-created user so the residents INSERT below
+      // runs with their JWT. The residents_self_insert RLS policy checks
+      // lower(auth.jwt() ->> 'email') = lower(residents.email); without
+      // a session, that comparison is null and the INSERT is denied.
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: account.email.trim(),
+        password: account.password,
+      })
+      if (signInErr) {
+        setError('Account created but session setup failed: ' + signInErr.message)
+        setSubmitting(false)
+        return
+      }
+
       const texasConfirmedAt = new Date().toISOString()
       const { error: rErr } = await supabase.from('residents').insert([{
         email: account.email.trim().toLowerCase(),
@@ -137,6 +151,11 @@ function RegisterForm() {
       await supabase.from('audit_logs').insert([
         { action: 'REGISTRATION_TOS_ACCEPTED', table_name: 'residents', new_values: { email: account.email.trim(), property: property || null } },
       ])
+      // Sign out — registration complete, account is in pending state.
+      // Leaving the session active would auto-redirect to /resident on
+      // the next nav and surface a "pending" landing page; signing out
+      // keeps the success page anonymous and "Back to Login" clean.
+      await supabase.auth.signOut()
       setDone(true)
     } catch (e: any) {
       setError(e.message || 'An unexpected error occurred. Please try again.')
