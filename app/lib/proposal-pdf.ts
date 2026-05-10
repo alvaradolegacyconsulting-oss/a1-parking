@@ -3,25 +3,27 @@ import chromium from '@sparticuz/chromium'
 import { renderProposalPdfHtml, ProposalForPdf } from './proposal-pdf-template'
 
 async function launchBrowser(): Promise<Browser> {
-  // On Vercel (Linux serverless), @sparticuz/chromium provides the binary.
-  // On macOS/Windows local dev, fall back to a system Chrome.
-  const isServerless = !!process.env.VERCEL || process.env.NODE_ENV === 'production'
-  if (isServerless) {
+  // Use Vercel as the canonical signal for serverless. On Vercel, the only
+  // working setup is @sparticuz/chromium's args + executablePath +
+  // defaultViewport + headless. Setting `headless: true` (a boolean) instead
+  // of `chromium.headless` skips @sparticuz's library-path setup and the
+  // bundled Chromium fails to load libnss3.so.
+  const isVercel = !!process.env.VERCEL
+  if (isVercel) {
     return puppeteer.launch({
       args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
       executablePath: await chromium.executablePath(),
-      headless: true,
+      headless: chromium.headless,
     })
   }
-  // Local dev: use installed Chrome / Chromium binary.
-  const localCandidates = [
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  ].filter(Boolean) as string[]
+  // Local dev: env var override > standard macOS Chrome path.
+  const localPath = process.env.PUPPETEER_EXECUTABLE_PATH
+    || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
   return puppeteer.launch({
+    args: [],
     headless: true,
-    executablePath: localCandidates[0] || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    executablePath: localPath,
   })
 }
 
