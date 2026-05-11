@@ -8,6 +8,7 @@ import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/lo
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { normalizePlate } from '../lib/plate'
+import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import CredentialsModal from '../components/CredentialsModal'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
@@ -1482,10 +1483,10 @@ export default function CompanyAdminPortal() {
                     </button>
                   </div>
                 )}
-                <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
-                  style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'2px 0', display:'block', marginBottom:'8px' }}>
-                  🔍 Find this vehicle — FindMyTowedCar.org (Houston & Harris County)
-                </button>
+                <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
+                  style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'2px 0', display:'block', marginBottom:'8px' }}>
+                  🔍 Search FindMyTowedCar.org
+                </a>
                 {(() => {
                   const d = violationDisputes.find(d => d.violation_id === v.id)
                   if (!d) return null

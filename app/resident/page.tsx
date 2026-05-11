@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
+import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
@@ -595,10 +596,10 @@ export default function ResidentPortal() {
                         </div>
 
                         <div style={{ paddingBottom:'4px' }}>
-                          <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
-                            style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'4px 0' }}>
-                            🔍 Find My Towed Vehicle (Houston & Harris County)
-                          </button>
+                          <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
+                            style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'4px 0', display:'inline-block' }}>
+                            🔍 Search FindMyTowedCar.org
+                          </a>
                         </div>
 
                         {isEditing && (
@@ -674,10 +675,10 @@ export default function ResidentPortal() {
                     <div><span style={{ color:'#555' }}>Property</span><br/><span style={{ color:'#aaa' }}>{v.property || '—'}</span></div>
                     <div><span style={{ color:'#555' }}>Location</span><br/><span style={{ color:'#aaa' }}>{v.location || '—'}</span></div>
                   </div>
-                  <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
-                    style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'4px 0', display:'block', marginBottom:'8px' }}>
-                    🔍 Search FindMyTowedCar.org — Houston & Harris County area
-                  </button>
+                  <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
+                    style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'4px 0', display:'block', marginBottom:'8px' }}>
+                    🔍 Search FindMyTowedCar.org
+                  </a>
                   {v.photos && v.photos.length > 0 && (
                     <div style={{ display:'flex', gap:'6px', marginBottom:'10px' }}>
                       {v.photos.slice(0,3).map((url: string, pi: number) => (

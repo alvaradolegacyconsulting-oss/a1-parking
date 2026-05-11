@@ -3,6 +3,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { normalizePlate } from '../lib/plate'
+import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 
 function VisitorForm() {
   const searchParams = useSearchParams()
@@ -217,7 +218,7 @@ function VisitorForm() {
           </div>
 
           <div style={{ textAlign:'center', padding:'12px 0' }}>
-            <p style={{ color:'#555', fontSize:'11px', margin:'0 0 6px' }}>If your vehicle has been towed, search for it at <a href="https://www.findmytowedcar.org" target="_blank" rel="noopener noreferrer" style={{ color:'#C9A227', textDecoration:'underline' }}>FindMyTowedCar.org</a> — available for Houston & Harris County area.</p>
+            <p style={{ color:'#555', fontSize:'11px', margin:'0 0 6px' }}>If your vehicle has been towed, you can search at <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer" style={{ color:'#C9A227', textDecoration:'underline' }}>FindMyTowedCar.org</a>.</p>
           </div>
 
           <button

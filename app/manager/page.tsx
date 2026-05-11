@@ -7,6 +7,7 @@ import SupportContact from '../components/SupportContact'
 import CredentialsModal from '../components/CredentialsModal'
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
+import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
@@ -1303,10 +1304,10 @@ export default function ManagerPortal() {
                           <button onClick={() => removeVehicle(v.id)}
                             style={{ padding:'6px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Remove</button>
                         </div>
-                        <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
-                          style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'6px 0 2px', display:'block' }}>
-                          🔍 Find Towed Vehicle (Houston & Harris County)
-                        </button>
+                        <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
+                          style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'6px 0 2px', display:'block' }}>
+                          🔍 Search FindMyTowedCar.org
+                        </a>
                       </div>
                     ))
                   }
@@ -1420,10 +1421,10 @@ export default function ManagerPortal() {
                       </button>
                     </div>
                   )}
-                  <button onClick={() => window.open(`https://www.findmytowedcar.org/advancesearch?plate=${v.plate}`, '_blank')}
-                    style={{ color:'#C9A227', fontSize:'11px', background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:'6px 0 2px', display:'block' }}>
-                    🔍 Find this vehicle — FindMyTowedCar.org (Houston & Harris County)
-                  </button>
+                  <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
+                    style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'6px 0 2px', display:'block' }}>
+                    🔍 Search FindMyTowedCar.org
+                  </a>
                 </div>
               ))
             }
