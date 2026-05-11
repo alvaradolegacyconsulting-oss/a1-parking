@@ -204,9 +204,9 @@ export default function ProposalCodeDetail() {
   async function issueCode() {
     if (!row || !isDraft) return
     if (!overrideValidation.valid) { setMsg(overrideValidation.error); return }
-    if (!confirm('Issue this code? This generates the PDF and locks the code. After issue, the only edits allowed are revoke.')) return
+    if (!confirm('Issue this code? Status will transition to issued and the code becomes immutable. PDF generation is currently manual — see docs/hand-gen-pdf.md.')) return
     setBusy(true)
-    setMsg('Generating PDF…')
+    setMsg('Issuing…')
     const res = await fetch(`/api/proposal-codes/${row.id}/issue`, { method: 'POST' })
     setBusy(false)
     if (!res.ok) {
@@ -214,32 +214,14 @@ export default function ProposalCodeDetail() {
       setMsg('Issue failed: ' + (body.error || res.statusText))
       return
     }
-    setMsg('Issued.')
+    setMsg('Code issued. PDF generation pending — see docs/hand-gen-pdf.md to create and upload the PDF.')
     await load()
-  }
-
-  async function previewPdf() {
-    if (!row) return
-    setBusy(true)
-    setMsg('Rendering preview…')
-    const res = await fetch(`/api/proposal-codes/${row.id}/preview-pdf`, { method: 'POST' })
-    setBusy(false)
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      setMsg('Preview failed: ' + (body.error || res.statusText))
-      return
-    }
-    setMsg('')
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    window.open(url, '_blank')
-    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
   async function viewPdf() {
     if (!row) return
     if (!row.pdf_url) {
-      setMsg('PDF was not generated for this code (was it issued before PDF wiring?).')
+      setMsg('PDF Pending — upload via the hand-gen workflow (see docs/hand-gen-pdf.md) and set pdf_url on the row.')
       return
     }
     setBusy(true)
@@ -446,27 +428,42 @@ export default function ProposalCodeDetail() {
           )}
         </div>
 
+        {/* Hand-gen workflow notice — only relevant while a code is a
+            draft (the only state from which a PDF can be uploaded). */}
+        {isDraft && (
+          <div style={{ background: '#1a1f2e', border: '1px solid #3a4055', borderRadius: '8px', padding: '10px 14px', marginBottom: '10px' }}>
+            <p style={{ color: '#aaa', fontSize: '12px', margin: 0, lineHeight: 1.6 }}>
+              PDF preview unavailable. Use the hand-gen workflow (see <code style={{ color: '#C9A227' }}>docs/hand-gen-pdf.md</code>) to create the PDF before issuing.
+            </p>
+          </div>
+        )}
+
         {/* Action bar — varies by status */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           {isDraft && (<>
             <button onClick={saveDraft} disabled={busy || !overrideValidation.valid} style={{ ...btnGold, opacity: busy || !overrideValidation.valid ? 0.5 : 1 }}>Save Draft</button>
-            <button onClick={previewPdf} style={btnGhost}>Preview PDF</button>
             <button onClick={issueCode} disabled={busy} style={btnGold}>Issue Code</button>
             <button onClick={() => setDeleteOpen(true)} style={btnDanger}>Delete Draft</button>
           </>)}
           {status === 'issued' && (<>
-            <button onClick={viewPdf} style={btnGhost}>View PDF</button>
+            <button onClick={viewPdf} disabled={!row.pdf_url} style={{ ...btnGhost, opacity: row.pdf_url ? 1 : 0.5, cursor: row.pdf_url ? 'pointer' : 'not-allowed' }}>
+              {row.pdf_url ? 'View PDF' : 'PDF Pending'}
+            </button>
             <button onClick={openApplyModal} style={btnGold}>Apply to Company</button>
             <button onClick={() => setRevokeOpen(true)} style={btnDanger}>Revoke</button>
           </>)}
           {status === 'redeemed' && (<>
-            <button onClick={viewPdf} style={btnGhost}>View PDF</button>
+            <button onClick={viewPdf} disabled={!row.pdf_url} style={{ ...btnGhost, opacity: row.pdf_url ? 1 : 0.5, cursor: row.pdf_url ? 'pointer' : 'not-allowed' }}>
+              {row.pdf_url ? 'View PDF' : 'PDF Pending'}
+            </button>
             {row.company_id && (
               <a href={`/admin?company_id=${row.company_id}`} style={{ ...btnGhost, textDecoration: 'none', display: 'inline-block' }}>View Company</a>
             )}
           </>)}
           {(status === 'expired' || status === 'revoked') && (
-            <button onClick={viewPdf} style={btnGhost}>View PDF</button>
+            <button onClick={viewPdf} disabled={!row.pdf_url} style={{ ...btnGhost, opacity: row.pdf_url ? 1 : 0.5, cursor: row.pdf_url ? 'pointer' : 'not-allowed' }}>
+              {row.pdf_url ? 'View PDF' : 'PDF Pending'}
+            </button>
           )}
         </div>
 
