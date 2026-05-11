@@ -40,7 +40,12 @@ export default function Login() {
   async function acceptTos() {
     setTosLoading(true)
     const now = new Date().toISOString()
-    await supabase.from('user_roles').update({ tos_accepted_at: now }).ilike('email', pendingEmail)
+    // accept_tos() RPC is SECURITY DEFINER — bypasses the missing
+    // user_roles self-UPDATE policy. Graceful degrade: if it fails,
+    // log and continue. The user re-sees the ToS modal next login,
+    // which is not catastrophic.
+    const { error: tosErr } = await supabase.rpc('accept_tos')
+    if (tosErr) console.error('accept_tos RPC failed:', tosErr)
     await supabase.from('audit_logs').insert([{ action: 'TOS_ACCEPTED', table_name: 'user_roles', new_values: { email: pendingEmail, accepted_at: now } }])
     redirectByRole(pendingRole, pendingForcePwReset)
   }
