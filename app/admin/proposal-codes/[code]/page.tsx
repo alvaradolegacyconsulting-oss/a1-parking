@@ -320,6 +320,25 @@ export default function ProposalCodeDetail() {
           </div>
         )}
 
+        {/* PDF pending banner — shown whenever the row has progressed past
+            draft but pdf_url is still NULL (i.e., it was issued via the
+            current PDF-disabled endpoint and hasn't been hand-uploaded yet).
+            Disappears once pdf_url is set. */}
+        {!isDraft && !row.pdf_url && (
+          <div style={{ background: '#2a1f0a', border: '1px solid #a16207', borderRadius: '8px', padding: '12px 14px', marginBottom: '14px' }}>
+            <p style={{ color: '#fbbf24', fontSize: '12px', fontWeight: 'bold', margin: '0 0 6px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+              📄 PDF: Pending hand-generation
+            </p>
+            <p style={{ color: '#aaa', fontSize: '12px', margin: '0 0 4px', lineHeight: 1.6 }}>
+              The status transitioned but no PDF was generated. Run the local helper, upload the file, then update <code style={{ color: '#C9A227' }}>pdf_url</code>:
+            </p>
+            <pre style={{ background: '#0f1117', border: '1px solid #2a2f3d', borderRadius: '6px', padding: '8px 10px', fontFamily: 'Courier New', fontSize: '11px', color: '#C9A227', margin: '6px 0', overflow: 'auto' }}>npx tsx scripts/render-proposal.ts {row.code}</pre>
+            <p style={{ color: '#888', fontSize: '11px', margin: '4px 0 0', lineHeight: 1.6 }}>
+              Full workflow in <code style={{ color: '#C9A227' }}>docs/hand-gen-pdf.md</code>. After upload run <code style={{ color: '#C9A227' }}>UPDATE proposal_codes SET pdf_url = &apos;proposals/{row.code}.pdf&apos; WHERE code = &apos;{row.code}&apos;;</code>
+            </p>
+          </div>
+        )}
+
         <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: '12px', padding: '20px', marginBottom: '14px' }}>
 
           {/* Editable form (drafts) OR read-only summary */}
