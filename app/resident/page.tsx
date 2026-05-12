@@ -186,19 +186,30 @@ export default function ResidentPortal() {
   }
 
   async function saveVehicle() {
-    const normalizedPlate = normalizePlate(editingVehicle.plate)
+    // Residents can only edit cosmetic descriptors (B9 May 13 spec).
+    // plate, unit, space are excluded from the payload regardless of
+    // what's in editingVehicle state — defensive.
     const { error } = await supabase.from('vehicles').update({
-      plate: normalizedPlate,
       state: editingVehicle.state,
       make: editingVehicle.make,
       model: editingVehicle.model,
       year: editingVehicle.year,
       color: editingVehicle.color,
-      space: editingVehicle.space,
     }).eq('id', editingVehicle.id)
     if (error) { alert('Error: ' + error.message) }
     else {
-      await logAudit({ action: 'EDIT_VEHICLE', table_name: 'vehicles', record_id: editingVehicle.id, new_values: { plate: normalizedPlate, make: editingVehicle.make, model: editingVehicle.model, color: editingVehicle.color, year: editingVehicle.year } })
+      await logAudit({
+        action: 'RESIDENT_EDIT_VEHICLE',
+        table_name: 'vehicles',
+        record_id: editingVehicle.id,
+        new_values: {
+          state: editingVehicle.state,
+          color: editingVehicle.color,
+          make: editingVehicle.make,
+          model: editingVehicle.model,
+          year: editingVehicle.year,
+        },
+      })
       setEditingVehicleId(null); fetchVehicles(resident.unit, resident.property)
     }
   }
@@ -587,12 +598,10 @@ export default function ResidentPortal() {
                               Mark as Read
                             </button>
                           )}
-                          {!v.status && (
-                            <button onClick={() => { setEditingVehicleId(isEditing ? null : v.id); setEditingVehicle({...v}) }}
-                              style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
-                              {isEditing ? 'Cancel Edit' : 'Edit'}
-                            </button>
-                          )}
+                          <button onClick={() => { setEditingVehicleId(isEditing ? null : v.id); setEditingVehicle({...v}) }}
+                            style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                            {isEditing ? 'Cancel Edit' : 'Edit'}
+                          </button>
                         </div>
 
                         <div style={{ paddingBottom:'4px' }}>
@@ -602,29 +611,47 @@ export default function ResidentPortal() {
                           </a>
                         </div>
 
-                        {isEditing && (
-                          <div style={{ background:'#0f1117', borderTop:'1px solid #2a2f3d', padding:'16px' }}>
-                            <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', margin:'0 0 12px' }}>Edit Vehicle</p>
-                            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
-                              <div style={{ gridColumn:'span 2' }}>
-                                <label style={lbl}>Plate</label>
-                                <input value={editingVehicle.plate || ''} onChange={e => setEditingVehicle({...editingVehicle, plate: normalizePlate(e.target.value)})} style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
+                        {isEditing && (() => {
+                          // Plate / unit / space are display-only per B9 spec.
+                          // To change plate: add a new vehicle (goes through
+                          // manager approval). To change unit/space: contact
+                          // your property manager.
+                          const lockedInp: React.CSSProperties = { ...inp, background:'#0a0d14', color:'#666', cursor:'not-allowed' }
+                          const helperTxt: React.CSSProperties = { color:'#555', fontSize:'10px', margin:'2px 0 8px', lineHeight:'1.4' }
+                          return (
+                            <div style={{ background:'#0f1117', borderTop:'1px solid #2a2f3d', padding:'16px' }}>
+                              <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', margin:'0 0 12px' }}>Edit Vehicle</p>
+                              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                                <div style={{ gridColumn:'span 2' }}>
+                                  <label style={lbl}>Plate</label>
+                                  <input value={editingVehicle.plate || ''} disabled readOnly style={{ ...lockedInp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
+                                  <p style={helperTxt}>To change your plate, add a new vehicle (manager will review).</p>
+                                </div>
+                                <div>
+                                  <label style={lbl}>State</label>
+                                  <select value={editingVehicle.state || 'TX'} onChange={e => setEditingVehicle({...editingVehicle, state: e.target.value})} style={inp}>
+                                    {states.map(s => <option key={s}>{s}</option>)}
+                                  </select>
+                                </div>
+                                <div><label style={lbl}>Color</label><input value={editingVehicle.color || ''} onChange={e => setEditingVehicle({...editingVehicle, color: e.target.value})} style={inp} /></div>
+                                <div><label style={lbl}>Make</label><input value={editingVehicle.make || ''} onChange={e => setEditingVehicle({...editingVehicle, make: e.target.value})} style={inp} /></div>
+                                <div><label style={lbl}>Model</label><input value={editingVehicle.model || ''} onChange={e => setEditingVehicle({...editingVehicle, model: e.target.value})} style={inp} /></div>
+                                <div><label style={lbl}>Year</label><input value={editingVehicle.year || ''} onChange={e => setEditingVehicle({...editingVehicle, year: e.target.value})} style={inp} /></div>
+                                <div style={{ gridColumn:'span 2' }}>
+                                  <label style={lbl}>Unit</label>
+                                  <input value={editingVehicle.unit || ''} disabled readOnly style={lockedInp} />
+                                  <p style={helperTxt}>Contact your property manager to change your unit.</p>
+                                </div>
+                                <div style={{ gridColumn:'span 2' }}>
+                                  <label style={lbl}>Space</label>
+                                  <input value={editingVehicle.space || ''} disabled readOnly style={lockedInp} />
+                                  <p style={helperTxt}>Space is assigned by your property manager.</p>
+                                </div>
                               </div>
-                              <div>
-                                <label style={lbl}>State</label>
-                                <select value={editingVehicle.state || 'TX'} onChange={e => setEditingVehicle({...editingVehicle, state: e.target.value})} style={inp}>
-                                  {states.map(s => <option key={s}>{s}</option>)}
-                                </select>
-                              </div>
-                              <div><label style={lbl}>Color</label><input value={editingVehicle.color || ''} onChange={e => setEditingVehicle({...editingVehicle, color: e.target.value})} style={inp} /></div>
-                              <div><label style={lbl}>Make</label><input value={editingVehicle.make || ''} onChange={e => setEditingVehicle({...editingVehicle, make: e.target.value})} style={inp} /></div>
-                              <div><label style={lbl}>Model</label><input value={editingVehicle.model || ''} onChange={e => setEditingVehicle({...editingVehicle, model: e.target.value})} style={inp} /></div>
-                              <div><label style={lbl}>Year</label><input value={editingVehicle.year || ''} onChange={e => setEditingVehicle({...editingVehicle, year: e.target.value})} style={inp} /></div>
-                              <div><label style={lbl}>Space</label><input value={editingVehicle.space || ''} onChange={e => setEditingVehicle({...editingVehicle, space: e.target.value})} style={inp} /></div>
+                              <button onClick={saveVehicle} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Save Changes</button>
                             </div>
-                            <button onClick={saveVehicle} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Save Changes</button>
-                          </div>
-                        )}
+                          )
+                        })()}
                       </div>
                     )
                   })}
