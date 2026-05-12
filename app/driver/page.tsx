@@ -1172,6 +1172,13 @@ export default function DriverPortal() {
                   </div>
                 )}
 
+                {v.video_url && (
+                  <button onClick={() => window.open(v.video_url, '_blank')}
+                    style={{ width: '100%', padding: '7px', background: '#0f1620', color: '#C9A227', border: '1px solid #C9A227', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial', marginBottom: '10px' }}>
+                    ▶ Play Video
+                  </button>
+                )}
+
                 <button
                   onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
                   style={{ width: '100%', padding: '9px', background: expandedTicketId === v.id ? '#1a1200' : '#0f1620', color: '#C9A227', border: '1px solid #C9A227', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial' }}>
