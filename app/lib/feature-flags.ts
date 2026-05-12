@@ -8,6 +8,11 @@ export const FEATURE_FLAGS = {
   MAX_DRIVERS: 'max_drivers',
   MAX_VISITOR_PASSES_PER_PROPERTY_MONTH: 'max_visitor_passes_per_property_month',
   MAX_VISITOR_PASS_DURATION_HOURS: 'max_visitor_pass_duration_hours',
+  // Phase 2a (May 17, 2026): replaces the awkward booleans
+  // VIDEO_UPLOADS_LIMITED / VIDEO_UPLOADS_FULL. Number speaks for itself.
+  // Booleans kept for back-compat through this commit; removal slated
+  // for B35 follow-up.
+  VIDEO_MAX_DURATION_SECONDS: 'video_max_duration_seconds',
 
   // ─── Enforcement-track core (true on all enforcement tiers) ─────────
   AI_PLATE_SCANNING: 'ai_plate_scanning',
@@ -66,6 +71,7 @@ export const NUMERIC_FLAGS = new Set<FeatureFlag>([
   FEATURE_FLAGS.MAX_DRIVERS,
   FEATURE_FLAGS.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH,
   FEATURE_FLAGS.MAX_VISITOR_PASS_DURATION_HOURS,
+  FEATURE_FLAGS.VIDEO_MAX_DURATION_SECONDS,
 ])
 
 export function isNumericFlag(flag: FeatureFlag): boolean {

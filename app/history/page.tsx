@@ -1,6 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { getCompanyContext, hasFeature } from '../lib/tier'
+import { FEATURE_FLAGS } from '../lib/feature-flags'
 
 export default function History() {
   const [violations, setViolations] = useState<any[]>([])
@@ -150,11 +152,16 @@ export default function History() {
           ))}
         </div>
 
-        <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'16px' }}>
-          <button onClick={exportTowbook} style={{ background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', padding:'8px 14px', fontSize:'12px', cursor:'pointer', fontFamily:'Arial' }}>
-            ↓ Export for Towbook
-          </button>
-        </div>
+        {/* Phase 2a: Towbook export tier-gated. history page serves any role; the
+            company_tier in localStorage decides. No admin-role escape here — admin's
+            forensic export path remains the CA portal where role flows naturally. */}
+        {hasFeature(FEATURE_FLAGS.TOWBOOK_CSV_EXPORT, getCompanyContext()) === true && (
+          <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'16px' }}>
+            <button onClick={exportTowbook} style={{ background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', padding:'8px 14px', fontSize:'12px', cursor:'pointer', fontFamily:'Arial' }}>
+              ↓ Export for Towbook
+            </button>
+          </div>
+        )}
         {exportMsg && (
           <p style={{ color: exportMsg.startsWith('No') ? '#f44336' : '#C9A227', fontSize:'12px', textAlign:'right', margin:'-10px 0 12px' }}>{exportMsg}</p>
         )}

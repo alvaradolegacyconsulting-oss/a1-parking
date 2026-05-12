@@ -7,6 +7,8 @@ import { normalizePlate } from '../lib/plate'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationReviewScreen'
+import { getCompanyContext, getLimit } from '../lib/tier'
+import { FEATURE_FLAGS } from '../lib/feature-flags'
 
 export default function DriverPortal() {
   const [driver, setDriver] = useState<any>(null)
@@ -1042,23 +1044,34 @@ export default function DriverPortal() {
                     </div>
                   )}
 
-                  <label style={lbl}>Video (optional) — max 60 sec, 150MB</label>
-                  <input type="file" accept="video/*"
-                    onChange={e => {
-                      const file = e.target.files?.[0]
-                      if (!file) { setViolationVideo(null); setVideoDuration(null); return }
-                      if (file.size > 150 * 1024 * 1024) { alert('Video exceeds 150MB limit. Please use standard camera mode or reduce video quality in camera settings.'); setViolationVideo(null); e.target.value = ''; return }
-                      const url = URL.createObjectURL(file)
-                      const vid = document.createElement('video')
-                      vid.src = url
-                      vid.onloadedmetadata = () => {
-                        URL.revokeObjectURL(url)
-                        if (vid.duration > 60) { alert('Video must be 60 seconds or less'); setViolationVideo(null); setVideoDuration(null); e.target.value = ''; return }
-                        setViolationVideo(file)
-                        setVideoDuration(Math.round(vid.duration))
-                      }
-                    }}
-                    style={{ ...inp, color: '#aaa' }} />
+                  {(() => {
+                    // Phase 2a: video duration cap pulled from tier. localStorage
+                    // company_tier may not be populated on driver portals (no CA
+                    // onboarding flow for drivers); falls back to legacy/enforcement
+                    // = 60s, which matches the pre-Phase-2a hardcoded default.
+                    const videoMaxSec = Number(getLimit(FEATURE_FLAGS.VIDEO_MAX_DURATION_SECONDS, getCompanyContext())) || 60
+                    return (
+                      <>
+                        <label style={lbl}>Video (optional) — max {videoMaxSec} sec, 150MB</label>
+                        <input type="file" accept="video/*"
+                          onChange={e => {
+                            const file = e.target.files?.[0]
+                            if (!file) { setViolationVideo(null); setVideoDuration(null); return }
+                            if (file.size > 150 * 1024 * 1024) { alert('Video exceeds 150MB limit. Please use standard camera mode or reduce video quality in camera settings.'); setViolationVideo(null); e.target.value = ''; return }
+                            const url = URL.createObjectURL(file)
+                            const vid = document.createElement('video')
+                            vid.src = url
+                            vid.onloadedmetadata = () => {
+                              URL.revokeObjectURL(url)
+                              if (vid.duration > videoMaxSec) { alert(`Video must be ${videoMaxSec} seconds or less`); setViolationVideo(null); setVideoDuration(null); e.target.value = ''; return }
+                              setViolationVideo(file)
+                              setVideoDuration(Math.round(vid.duration))
+                            }
+                          }}
+                          style={{ ...inp, color: '#aaa' }} />
+                      </>
+                    )
+                  })()}
                   {violationVideo && (
                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'5px', padding:'6px 10px', marginBottom:'10px' }}>
                       <span style={{ color:'#aaa', fontSize:'11px' }}>🎥 {violationVideo.name.length > 22 ? violationVideo.name.substring(0, 22) + '…' : violationVideo.name}{videoDuration !== null ? ` (${videoDuration}s)` : ''}</span>

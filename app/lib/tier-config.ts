@@ -26,6 +26,8 @@ const ENF_STARTER: TierConfigShape = {
   [F.MAX_DRIVERS]: 3,
   [F.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH]: 0,
   [F.MAX_VISITOR_PASS_DURATION_HOURS]: 0,
+  // Phase 2a: video uploads allowed at 30s on starter (matches Q2 decision).
+  [F.VIDEO_MAX_DURATION_SECONDS]: 30,
 
   // enforcement core
   [F.AI_PLATE_SCANNING]: true,
@@ -80,6 +82,8 @@ const ENF_GROWTH: TierConfigShape = {
   ...ENF_STARTER,
   [F.MAX_PROPERTIES]: 15,
   [F.MAX_DRIVERS]: 10,
+  // Phase 2a: growth and legacy both allow 60s video.
+  [F.VIDEO_MAX_DURATION_SECONDS]: 60,
 
   [F.LEASING_AGENT_ROLE]: true,
   [F.ADVANCED_ANALYTICS]: true,
@@ -113,6 +117,9 @@ const PM_ESSENTIAL: TierConfigShape = {
   [F.MAX_DRIVERS]: 0,
   [F.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH]: 50,
   [F.MAX_VISITOR_PASS_DURATION_HOURS]: 12,
+  // Phase 2a: PM tiers don't have driver/violation/video workflow.
+  // 0 means "no video allowed on this track". Inherited by professional + enterprise.
+  [F.VIDEO_MAX_DURATION_SECONDS]: 0,
 
   // PM-only core
   [F.PROPERTY_MANAGEMENT]: true,
