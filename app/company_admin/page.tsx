@@ -190,17 +190,23 @@ export default function CompanyAdminPortal() {
   async function fetchViolations(property: string) {
     const sixmo = new Date(); sixmo.setMonth(sixmo.getMonth() - 6)
     const { data } = await supabase.from('violations')
-      .select('*, photo_rows:violation_photos(photo_url, removed_at)')
+      .select('*, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', true)
       .ilike('property', property).gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
     // B13/B18 Commit A: flatten photo_rows → v.photos filtered active.
-    const flattened = (data || []).map(v => ({
-      ...v,
-      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
-        .filter(p => !p.removed_at)
-        .map(p => p.photo_url),
-    }))
+    // C1: same flatten for video_rows → v.video_url filtered active.
+    const flattened = (data || []).map(v => {
+      const activeVideos = ((v.video_rows as { id: number; video_url: string; removed_at: string | null }[] | null) || [])
+        .filter(vid => !vid.removed_at)
+      return {
+        ...v,
+        photos: ((v.photo_rows as { id: number; photo_url: string; removed_at: string | null }[] | null) || [])
+          .filter(p => !p.removed_at)
+          .map(p => p.photo_url),
+        video_url: activeVideos[0]?.video_url ?? null,
+      }
+    })
     setViolations(flattened)
     const { data: ddata } = await supabase.from('dispute_requests').select('*').ilike('property', property)
     setViolationDisputes(ddata || [])
@@ -700,12 +706,33 @@ export default function CompanyAdminPortal() {
       setSubmitting(false)
       alert('Error: ' + insErr.message); return
     }
+    let insertedPhotoIds: number[] = []
     if (photoUrls.length > 0 && newV) {
       const photoRows = photoUrls.map(url => ({ violation_id: newV.id, photo_url: url }))
-      const { error: phErr } = await supabase.from('violation_photos').insert(photoRows)
+      // C1: .select('id, photo_url') so we can pair IDs with URLs for
+      // the review screen's per-photo X buttons. Supabase returns rows
+      // in insertion order, so insertedPhotoIds[i] pairs with photoUrls[i].
+      const { data: photoData, error: phErr } = await supabase.from('violation_photos')
+        .insert(photoRows).select('id, photo_url')
       if (phErr) {
         console.error('[violation_photos INSERT] failed:', phErr.message)
         alert('Some photos failed to attach: ' + phErr.message + '\nYou can still confirm; a manager can add photos later.')
+      } else {
+        insertedPhotoIds = (photoData || []).map(p => p.id)
+      }
+    }
+    // C1: write video metadata to violation_videos alongside the
+    // legacy violations.video_url (safety net per locked decision).
+    let insertedVideoId: number | null = null
+    if (videoUrl && newV) {
+      const { data: videoData, error: vidErr } = await supabase.from('violation_videos')
+        .insert([{ violation_id: newV.id, video_url: videoUrl }])
+        .select('id').single()
+      if (vidErr) {
+        console.error('[violation_videos INSERT] failed:', vidErr.message)
+        alert('Video metadata failed to attach: ' + vidErr.message + '\nYou can still confirm; a manager can re-attach the video later.')
+      } else if (videoData) {
+        insertedVideoId = videoData.id
       }
     }
     await auditLog('ADD_VIOLATION', 'violations', newV?.id, { plate: normalizedPlate, property: violation.property, violation_type: violation.type })
@@ -718,11 +745,36 @@ export default function CompanyAdminPortal() {
       location: newV.location,
       notes: newV.notes,
       photos: photoUrls,
+      photo_ids: insertedPhotoIds,
       video_url: newV.video_url,
+      video_id: insertedVideoId,
       driver_name: newV.driver_name,
       created_at: newV.created_at,
     })
     setViolationStage('review')
+  }
+
+  // C1: re-query the violation after a soft-delete on the review screen.
+  async function refetchReviewViolation() {
+    if (!reviewViolation) return
+    const { data, error } = await supabase.from('violations')
+      .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
+      .eq('id', reviewViolation.id)
+      .single()
+    if (error || !data) { console.error('[refetchReviewViolation] failed:', error?.message); return }
+    const activePhotos = ((data.photo_rows as { id: number; photo_url: string; removed_at: string | null }[] | null) || [])
+      .filter(p => !p.removed_at)
+    const activeVideos = ((data.video_rows as { id: number; video_url: string; removed_at: string | null }[] | null) || [])
+      .filter(v => !v.removed_at)
+    setReviewViolation({
+      id: data.id, plate: data.plate, violation_type: data.violation_type,
+      property: data.property, location: data.location, notes: data.notes,
+      photos: activePhotos.map(p => p.photo_url),
+      photo_ids: activePhotos.map(p => p.id),
+      video_url: activeVideos[0]?.video_url ?? null,
+      video_id: activeVideos[0]?.id ?? null,
+      driver_name: data.driver_name, created_at: data.created_at,
+    })
   }
 
   async function confirmReviewedViolation() {
@@ -767,18 +819,26 @@ export default function CompanyAdminPortal() {
     if (!role?.email) { setUnconfirmedDrafts([]); return }
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
     const { data } = await supabase.from('violations')
-      .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, photo_rows:violation_photos(photo_url, removed_at)')
+      .select('id, plate, violation_type, property, location, notes, driver_name, created_at, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', false)
       .ilike('driver_name', role.email)
       .gte('created_at', since)
       .order('created_at', { ascending: true })
-    const drafts = (data || []).map(v => ({
-      id: v.id, plate: v.plate, violation_type: v.violation_type,
-      property: v.property, location: v.location, notes: v.notes,
-      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
-        .filter(p => !p.removed_at).map(p => p.photo_url),
-      video_url: v.video_url, driver_name: v.driver_name, created_at: v.created_at,
-    })) as ReviewViolation[]
+    const drafts = (data || []).map(v => {
+      const activePhotos = ((v.photo_rows as { id: number; photo_url: string; removed_at: string | null }[] | null) || [])
+        .filter(p => !p.removed_at)
+      const activeVideos = ((v.video_rows as { id: number; video_url: string; removed_at: string | null }[] | null) || [])
+        .filter(vid => !vid.removed_at)
+      return {
+        id: v.id, plate: v.plate, violation_type: v.violation_type,
+        property: v.property, location: v.location, notes: v.notes,
+        photos: activePhotos.map(p => p.photo_url),
+        photo_ids: activePhotos.map(p => p.id),
+        video_url: activeVideos[0]?.video_url ?? null,
+        video_id: activeVideos[0]?.id ?? null,
+        driver_name: v.driver_name, created_at: v.created_at,
+      }
+    }) as ReviewViolation[]
     setUnconfirmedDrafts(drafts)
   }
 
@@ -1347,6 +1407,9 @@ export default function CompanyAdminPortal() {
             busy={reviewBusy}
             onEdit={editFromReview}
             onConfirm={confirmReviewedViolation}
+            userRole="company_admin"
+            userEmail={role?.email || user?.email || ''}
+            onMediaRemoved={refetchReviewViolation}
           />
         )}
 

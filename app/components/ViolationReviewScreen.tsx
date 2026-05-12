@@ -1,14 +1,20 @@
 'use client'
-import React from 'react'
+import React, { useState } from 'react'
+import MediaRemovalDialog, { RemoverRole } from './MediaRemovalDialog'
 
 // B18 Commit B — review-before-confirm screen.
-// Photo X (soft-delete) buttons are intentionally NOT in this commit;
-// they wire up in Commit C alongside the post-confirmation edit UIs
-// for manager / CA / admin (which share the same removal dialog and
-// require UPDATE policies on violation_photos that ship with C).
-// For Commit B, a driver who needs to remove a photo clicks Edit
-// (which discards the unconfirmed row entirely; CASCADE deletes the
-// photo rows; storage objects orphan until a Phase 2 cleanup cron).
+// B13/B18 Commit C1 — extended with per-photo + video soft-delete
+// X buttons (Option B: drivers can fix a wrong photo without nuking
+// the whole submission). X buttons render only when userRole +
+// userEmail + onMediaRemoved are all provided. If any is missing,
+// the screen renders read-only as before.
+//
+// X click opens MediaRemovalDialog which writes removed_at / role /
+// reason via UPDATE. RLS enforces who's allowed (driver:
+// preconfirmation-only via v.is_confirmed=false bound; CA: any time
+// within company). On successful soft-delete, onMediaRemoved fires;
+// parent re-queries the violation with photo_rows + video_rows
+// embedded and calls setReviewViolation with the fresh state.
 
 export type ReviewViolation = {
   id: number
@@ -18,7 +24,13 @@ export type ReviewViolation = {
   location: string | null
   notes: string | null
   photos: string[]
+  // C1: parallel ID array. photos[i] pairs with photo_ids[i].
+  // Optional so legacy callers that haven't migrated still render
+  // (photos appear, X buttons stay hidden — read-only mode).
+  photo_ids?: number[]
   video_url: string | null
+  // C1: video_id pairs with video_url. Same back-compat semantics.
+  video_id?: number | null
   driver_name: string | null
   created_at: string | null
 }
@@ -30,6 +42,10 @@ type Props = {
   busy?: boolean
   onEdit: () => void
   onConfirm: () => void
+  // C1: when all three are present, per-media X buttons render.
+  userRole?: RemoverRole
+  userEmail?: string
+  onMediaRemoved?: () => void
 }
 
 const card: React.CSSProperties = {
@@ -51,7 +67,19 @@ export default function ViolationReviewScreen({
   busy = false,
   onEdit,
   onConfirm,
+  userRole,
+  userEmail,
+  onMediaRemoved,
 }: Props) {
+  const [removalTarget, setRemovalTarget] = useState<null | {
+    mediaType: 'photo' | 'video'
+    mediaId: number
+    mediaUrl: string
+    thumbnailUrl?: string
+  }>(null)
+
+  const canRemove = !!(userRole && userEmail && onMediaRemoved)
+
   return (
     <div style={{ background: '#0f1117', padding: '16px 0' }}>
       <div style={{ marginBottom: '14px', textAlign: 'center' }}>
@@ -93,23 +121,49 @@ export default function ViolationReviewScreen({
         <div style={card}>
           <p style={fieldLabel}>Photos ({violation.photos.length})</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
-            {violation.photos.map((url, i) => (
-              <img key={i} src={url} alt={`evidence ${i + 1}`}
-                style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2a2f3d', cursor: 'zoom-in' }}
-                onClick={() => window.open(url, '_blank')}
-                onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
-            ))}
+            {violation.photos.map((url, i) => {
+              const photoId = violation.photo_ids?.[i]
+              const showX = canRemove && photoId !== undefined
+              return (
+                <span key={i} style={{ position: 'relative', display: 'block' }}>
+                  <img src={url} alt={`evidence ${i + 1}`}
+                    style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2a2f3d', cursor: 'zoom-in', display: 'block' }}
+                    onClick={() => window.open(url, '_blank')}
+                    onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                  {showX && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setRemovalTarget({ mediaType: 'photo', mediaId: photoId, mediaUrl: url, thumbnailUrl: url }) }}
+                      aria-label={`Remove photo ${i + 1}`}
+                      style={{ position: 'absolute', top: '4px', right: '4px', width: '22px', height: '22px', background: 'rgba(15,17,23,0.85)', border: '1px solid #3a4055', borderRadius: '50%', color: '#f44336', cursor: 'pointer', fontSize: '12px', padding: '0', lineHeight: '1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      ✕
+                    </button>
+                  )}
+                </span>
+              )
+            })}
           </div>
         </div>
       )}
 
-      {videoFileName && (
+      {(videoFileName || violation.video_url) && (
         <div style={card}>
           <p style={fieldLabel}>Video</p>
-          <p style={fieldVal}>
-            🎥 {videoFileName}{videoDuration != null ? ` (${videoDuration}s)` : ''}
-            {violation.video_url ? '' : <span style={{ color: '#f59e0b' }}> — upload failed; violation will save without video</span>}
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+            <p style={{ ...fieldVal, flex: 1, wordBreak: 'break-word' }}>
+              🎥 {videoFileName || violation.video_url}{videoDuration != null ? ` (${videoDuration}s)` : ''}
+              {videoFileName && !violation.video_url
+                ? <span style={{ color: '#f59e0b' }}> — upload failed; violation will save without video</span>
+                : ''}
+            </p>
+            {canRemove && violation.video_id != null && violation.video_url && (
+              <button
+                onClick={() => setRemovalTarget({ mediaType: 'video', mediaId: violation.video_id!, mediaUrl: violation.video_url! })}
+                aria-label="Remove video"
+                style={{ background: 'none', border: 'none', color: '#f44336', cursor: 'pointer', fontSize: '14px', padding: '0 4px', lineHeight: '1' }}>
+                ✕
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -154,6 +208,24 @@ export default function ViolationReviewScreen({
           {busy ? 'Confirming…' : 'Confirm & Submit'}
         </button>
       </div>
+
+      {removalTarget && canRemove && (
+        <MediaRemovalDialog
+          open={true}
+          mediaType={removalTarget.mediaType}
+          mediaUrl={removalTarget.mediaUrl}
+          thumbnailUrl={removalTarget.thumbnailUrl}
+          violationId={violation.id}
+          mediaId={removalTarget.mediaId}
+          userRole={userRole!}
+          userEmail={userEmail!}
+          onCancel={() => setRemovalTarget(null)}
+          onRemoved={() => {
+            setRemovalTarget(null)
+            onMediaRemoved!()
+          }}
+        />
+      )}
     </div>
   )
 }

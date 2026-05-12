@@ -39,7 +39,7 @@ export default function History() {
 
     const { data, error } = await supabase
       .from('violations')
-      .select('*, photo_rows:violation_photos(photo_url, removed_at)')
+      .select('*, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', true)
       .gte('created_at', startDate.toISOString())
       .order('created_at', { ascending: false })
@@ -47,12 +47,18 @@ export default function History() {
     setLoading(false)
     if (error) return
     // B13/B18 Commit A: flatten photo_rows → v.photos filtered active.
-    const flattened = (data || []).map(v => ({
-      ...v,
-      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
-        .filter(p => !p.removed_at)
-        .map(p => p.photo_url),
-    }))
+    // C1: same flatten for video_rows → v.video_url filtered active.
+    const flattened = (data || []).map(v => {
+      const activeVideos = ((v.video_rows as { id: number; video_url: string; removed_at: string | null }[] | null) || [])
+        .filter(vid => !vid.removed_at)
+      return {
+        ...v,
+        photos: ((v.photo_rows as { id: number; photo_url: string; removed_at: string | null }[] | null) || [])
+          .filter(p => !p.removed_at)
+          .map(p => p.photo_url),
+        video_url: activeVideos[0]?.video_url ?? null,
+      }
+    })
     setViolations(flattened)
   }
 

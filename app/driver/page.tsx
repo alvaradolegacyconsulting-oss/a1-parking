@@ -103,18 +103,26 @@ export default function DriverPortal() {
     if (d.name) {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
       const { data } = await supabase.from('violations')
-        .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, photo_rows:violation_photos(photo_url, removed_at)')
+        .select('id, plate, violation_type, property, location, notes, driver_name, created_at, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
         .eq('is_confirmed', false)
         .eq('driver_name', d.name)
         .gte('created_at', since)
         .order('created_at', { ascending: true })
-      const drafts = (data || []).map(v => ({
-        id: v.id, plate: v.plate, violation_type: v.violation_type,
-        property: v.property, location: v.location, notes: v.notes,
-        photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
-          .filter(p => !p.removed_at).map(p => p.photo_url),
-        video_url: v.video_url, driver_name: v.driver_name, created_at: v.created_at,
-      })) as ReviewViolation[]
+      const drafts = (data || []).map(v => {
+        const activePhotos = ((v.photo_rows as { id: number; photo_url: string; removed_at: string | null }[] | null) || [])
+          .filter(p => !p.removed_at)
+        const activeVideos = ((v.video_rows as { id: number; video_url: string; removed_at: string | null }[] | null) || [])
+          .filter(vid => !vid.removed_at)
+        return {
+          id: v.id, plate: v.plate, violation_type: v.violation_type,
+          property: v.property, location: v.location, notes: v.notes,
+          photos: activePhotos.map(p => p.photo_url),
+          photo_ids: activePhotos.map(p => p.id),
+          video_url: activeVideos[0]?.video_url ?? null,
+          video_id: activeVideos[0]?.id ?? null,
+          driver_name: v.driver_name, created_at: v.created_at,
+        }
+      }) as ReviewViolation[]
       setUnconfirmedDrafts(drafts)
     }
   }
@@ -134,7 +142,7 @@ export default function DriverPortal() {
     // exists during the transition window). Filter removed photos
     // client-side and overwrite v.photos with the flat string[] shape
     // every existing reader expects.
-    let query = supabase.from('violations').select('*, photo_rows:violation_photos(photo_url, removed_at)')
+    let query = supabase.from('violations').select('*, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', true)
       .gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
@@ -142,12 +150,17 @@ export default function DriverPortal() {
       query = query.in('property', properties)
     }
     const { data } = await query
-    const flattened = (data || []).map(v => ({
-      ...v,
-      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
-        .filter(p => !p.removed_at)
-        .map(p => p.photo_url),
-    }))
+    const flattened = (data || []).map(v => {
+      const activeVideos = ((v.video_rows as { id: number; video_url: string; removed_at: string | null }[] | null) || [])
+        .filter(vid => !vid.removed_at)
+      return {
+        ...v,
+        photos: ((v.photo_rows as { id: number; photo_url: string; removed_at: string | null }[] | null) || [])
+          .filter(p => !p.removed_at)
+          .map(p => p.photo_url),
+        video_url: activeVideos[0]?.video_url ?? null,
+      }
+    })
     setViolations(flattened)
   }
 
@@ -326,14 +339,36 @@ export default function DriverPortal() {
       setSubmitting(false)
       alert('Error: ' + insErr.message); return
     }
+    let insertedPhotoIds: number[] = []
     if (photoUrls.length > 0 && newV) {
       const photoRows = photoUrls.map(url => ({ violation_id: newV.id, photo_url: url }))
-      const { error: phErr } = await supabase.from('violation_photos').insert(photoRows)
+      // C1: .select('id, photo_url') so we can pair IDs with URLs for
+      // the review screen's per-photo X buttons. Supabase returns rows
+      // in insertion order, so insertedPhotoIds[i] pairs with photoUrls[i].
+      const { data: photoData, error: phErr } = await supabase.from('violation_photos')
+        .insert(photoRows).select('id, photo_url')
       if (phErr) {
         console.error('[violation_photos INSERT] failed:', phErr.message)
         // The violation row is created; photos can be re-added later by a manager.
         // Surface but don't block the review flow.
         alert('Some photos failed to attach: ' + phErr.message + '\nYou can still confirm; a manager can add photos later.')
+      } else {
+        insertedPhotoIds = (photoData || []).map(p => p.id)
+      }
+    }
+    // C1: write the video to violation_videos in parallel with the
+    // legacy violations.video_url (kept as safety net per locked
+    // decision — dropped in follow-up after ~1 week clean prod).
+    let insertedVideoId: number | null = null
+    if (videoUrl && newV) {
+      const { data: videoData, error: vidErr } = await supabase.from('violation_videos')
+        .insert([{ violation_id: newV.id, video_url: videoUrl }])
+        .select('id').single()
+      if (vidErr) {
+        console.error('[violation_videos INSERT] failed:', vidErr.message)
+        alert('Video metadata failed to attach: ' + vidErr.message + '\nYou can still confirm; a manager can re-attach the video later.')
+      } else if (videoData) {
+        insertedVideoId = videoData.id
       }
     }
     await logAudit({ action: 'ADD_VIOLATION', table_name: 'violations', record_id: newV?.id, new_values: { plate: normalizedPlate, property: violation.property, violation_type: violation.type, driver_name: driver?.name } })
@@ -346,11 +381,40 @@ export default function DriverPortal() {
       location: newV.location,
       notes: newV.notes,
       photos: photoUrls,
+      photo_ids: insertedPhotoIds,
       video_url: newV.video_url,
+      video_id: insertedVideoId,
       driver_name: newV.driver_name,
       created_at: newV.created_at,
     })
     setViolationStage('review')
+  }
+
+  // C1: after a soft-delete on the review screen, re-query the
+  // violation with photo_rows + video_rows embedded and rebuild the
+  // ReviewViolation. RLS already filters out rows the caller can't
+  // see; the active-only filter on removed_at IS NULL is enforced
+  // client-side here (consistent with how reader sites flatten).
+  async function refetchReviewViolation() {
+    if (!reviewViolation) return
+    const { data, error } = await supabase.from('violations')
+      .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
+      .eq('id', reviewViolation.id)
+      .single()
+    if (error || !data) { console.error('[refetchReviewViolation] failed:', error?.message); return }
+    const activePhotos = ((data.photo_rows as { id: number; photo_url: string; removed_at: string | null }[] | null) || [])
+      .filter(p => !p.removed_at)
+    const activeVideos = ((data.video_rows as { id: number; video_url: string; removed_at: string | null }[] | null) || [])
+      .filter(v => !v.removed_at)
+    setReviewViolation({
+      id: data.id, plate: data.plate, violation_type: data.violation_type,
+      property: data.property, location: data.location, notes: data.notes,
+      photos: activePhotos.map(p => p.photo_url),
+      photo_ids: activePhotos.map(p => p.id),
+      video_url: activeVideos[0]?.video_url ?? null,
+      video_id: activeVideos[0]?.id ?? null,
+      driver_name: data.driver_name, created_at: data.created_at,
+    })
   }
 
   async function confirmReviewedViolation() {
@@ -401,18 +465,26 @@ export default function DriverPortal() {
     if (!driver?.name) { setUnconfirmedDrafts([]); return }
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
     const { data } = await supabase.from('violations')
-      .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, photo_rows:violation_photos(photo_url, removed_at)')
+      .select('id, plate, violation_type, property, location, notes, driver_name, created_at, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', false)
       .eq('driver_name', driver.name)
       .gte('created_at', since)
       .order('created_at', { ascending: true })
-    const drafts = (data || []).map(v => ({
-      id: v.id, plate: v.plate, violation_type: v.violation_type,
-      property: v.property, location: v.location, notes: v.notes,
-      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
-        .filter(p => !p.removed_at).map(p => p.photo_url),
-      video_url: v.video_url, driver_name: v.driver_name, created_at: v.created_at,
-    })) as ReviewViolation[]
+    const drafts = (data || []).map(v => {
+      const activePhotos = ((v.photo_rows as { id: number; photo_url: string; removed_at: string | null }[] | null) || [])
+        .filter(p => !p.removed_at)
+      const activeVideos = ((v.video_rows as { id: number; video_url: string; removed_at: string | null }[] | null) || [])
+        .filter(vid => !vid.removed_at)
+      return {
+        id: v.id, plate: v.plate, violation_type: v.violation_type,
+        property: v.property, location: v.location, notes: v.notes,
+        photos: activePhotos.map(p => p.photo_url),
+        photo_ids: activePhotos.map(p => p.id),
+        video_url: activeVideos[0]?.video_url ?? null,
+        video_id: activeVideos[0]?.id ?? null,
+        driver_name: v.driver_name, created_at: v.created_at,
+      }
+    }) as ReviewViolation[]
     setUnconfirmedDrafts(drafts)
   }
 
@@ -770,6 +842,9 @@ export default function DriverPortal() {
             busy={reviewBusy}
             onEdit={editFromReview}
             onConfirm={confirmReviewedViolation}
+            userRole="driver"
+            userEmail={driver?.email || ''}
+            onMediaRemoved={refetchReviewViolation}
           />
         )}
 
