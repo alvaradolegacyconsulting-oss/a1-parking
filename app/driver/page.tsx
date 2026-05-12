@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
+import { uploadVideoResumable } from '../lib/video-upload'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 
 export default function DriverPortal() {
@@ -31,6 +32,7 @@ export default function DriverPortal() {
   const [violationVideo, setViolationVideo] = useState<File|null>(null)
   const [videoDuration, setVideoDuration] = useState<number|null>(null)
   const [uploadingVideo, setUploadingVideo] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [submitting, setSubmitting] = useState(false)
 
   // Tow ticket (shared)
@@ -244,16 +246,22 @@ export default function DriverPortal() {
     let videoUrl: string | null = null
     if (violationVideo) {
       setUploadingVideo(true)
+      setUploadProgress(0)
       const fileName = `${Date.now()}-${violationVideo.name}`
-      const { error: vidErr } = await supabase.storage.from('violation-videos').upload(fileName, violationVideo)
-      if (vidErr) {
-        console.error('[video upload] failed:', vidErr.message, 'file size:', violationVideo.size, 'mime:', violationVideo.type)
-        alert(`Video upload failed: ${vidErr.message}. Violation will be saved without video.`)
+      const result = await uploadVideoResumable(
+        'violation-videos',
+        fileName,
+        violationVideo,
+        (pct) => setUploadProgress(pct),
+      )
+      if ('error' in result) {
+        console.error('[video upload] failed:', result.error, 'file size:', violationVideo.size, 'mime:', violationVideo.type)
+        alert(`Video upload failed: ${result.error}. Violation will be saved without video.`)
       } else {
-        const { data: vidUrlData } = supabase.storage.from('violation-videos').getPublicUrl(fileName)
-        videoUrl = vidUrlData.publicUrl
+        videoUrl = result.publicUrl
       }
       setUploadingVideo(false)
+      setUploadProgress(0)
     }
     const normalizedPlate = normalizePlate(plate)
     const { data: newV, error: insErr } = await supabase.from('violations').insert([{
@@ -815,7 +823,7 @@ export default function DriverPortal() {
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button onClick={submitViolation} disabled={submitting}
                       style={{ flex: 1, padding: '11px', background: submitting ? '#555' : '#991b1b', color: 'white', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: submitting ? 'not-allowed' : 'pointer', fontFamily: 'Arial' }}>
-                      {submitting ? (uploadingVideo ? 'Uploading video...' : 'Submitting...') : 'Submit Violation'}
+                      {submitting ? (uploadingVideo ? `Uploading video... ${uploadProgress}%` : 'Submitting...') : 'Submit Violation'}
                     </button>
                     <button onClick={() => setShowViolation(false)}
                       style={{ padding: '11px 12px', background: '#1e2535', color: '#aaa', fontSize: '12px', border: '1px solid #3a4055', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>

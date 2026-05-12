@@ -19,6 +19,7 @@
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
     "tesseract.js": "^7.0.0",
+    "tus-js-client": "^4.3.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
