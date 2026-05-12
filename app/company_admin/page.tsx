@@ -13,6 +13,7 @@ import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import CredentialsModal from '../components/CredentialsModal'
 import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationReviewScreen'
+import PostConfirmationEditModal from '../components/PostConfirmationEditModal'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
@@ -53,6 +54,8 @@ export default function CompanyAdminPortal() {
   const [reviewViolation, setReviewViolation] = useState<ReviewViolation | null>(null)
   const [reviewBusy, setReviewBusy] = useState(false)
   const [unconfirmedDrafts, setUnconfirmedDrafts] = useState<ReviewViolation[]>([])
+  // C2: post-confirmation media edit modal
+  const [editMediaViolationId, setEditMediaViolationId] = useState<number | null>(null)
 
   const [storageFacilities, setStorageFacilities] = useState<any[]>([])
   const [ticketTarget, setTicketTarget] = useState<any>(null)
@@ -1733,6 +1736,10 @@ export default function CompanyAdminPortal() {
                     </div>
                   )
                 })()}
+                <button onClick={() => setEditMediaViolationId(v.id)}
+                  style={{ width:'100%', padding:'9px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', marginBottom:'6px' }}>
+                  Manage Media
+                </button>
                 <button onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
                   style={{ width:'100%', padding:'9px', background:expandedTicketId === v.id ? '#1a1200' : '#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
                   {expandedTicketId === v.id ? '▲ Close Ticket' : 'Generate Tow Ticket'}
@@ -2489,6 +2496,18 @@ export default function CompanyAdminPortal() {
       {credentials && (
         <CredentialsModal email={credentials.email} password={credentials.password} onClose={() => setCredentials(null)} />
       )}
+      <PostConfirmationEditModal
+        open={editMediaViolationId != null}
+        violationId={editMediaViolationId}
+        userRole="company_admin"
+        userEmail={role?.email || user?.email || ''}
+        onClose={() => {
+          setEditMediaViolationId(null)
+          // Refresh the violations list so a card whose only photo was just
+          // removed re-renders with the updated v.photos / v.video_url state.
+          if (selectedProperty) fetchViolations(selectedProperty.name)
+        }}
+      />
     </main>
   )
 }
