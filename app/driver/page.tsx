@@ -944,11 +944,12 @@ export default function DriverPortal() {
                   <label style={lbl}>Photos (optional) — max 10MB each</label>
                   <input type="file" accept="image/*" multiple
                     onChange={e => {
-                      const files = Array.from(e.target.files || [])
-                      for (const f of files) {
+                      const newFiles = Array.from(e.target.files || [])
+                      for (const f of newFiles) {
                         if (f.size > 10 * 1024 * 1024) { alert(`Photo "${f.name}" exceeds 10MB limit. Please use standard camera mode.`); e.target.value = ''; return }
                       }
-                      setPhotos(files)
+                      setPhotos(prev => [...prev, ...newFiles])
+                      e.target.value = ''
                     }}
                     style={{ ...inp, color: '#aaa' }} />
                   {photos.length > 0 && (
