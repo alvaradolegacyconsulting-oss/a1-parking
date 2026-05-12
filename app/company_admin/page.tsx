@@ -1522,8 +1522,15 @@ export default function CompanyAdminPortal() {
                   {photos.length > 0 && (
                     <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'10px' }}>
                       {photos.map((f, i) => (
-                        <img key={i} src={URL.createObjectURL(f)} alt={f.name}
-                          style={{ width:'60px', height:'60px', objectFit:'cover', borderRadius:'6px', border:'1px solid #3a4055' }} />
+                        <span key={i} style={{ position: 'relative', display: 'inline-block' }}>
+                          <img src={URL.createObjectURL(f)} alt={f.name}
+                            style={{ width:'60px', height:'60px', objectFit:'cover', borderRadius:'6px', border:'1px solid #3a4055', display:'block' }} />
+                          <button onClick={() => setPhotos(prev => prev.filter((_, idx) => idx !== i))}
+                            aria-label={`Remove photo ${f.name}`}
+                            style={{ position:'absolute', top:'2px', right:'2px', width:'18px', height:'18px', background:'rgba(15,17,23,0.85)', border:'1px solid #3a4055', borderRadius:'50%', color:'#f44336', cursor:'pointer', fontSize:'11px', padding:'0', lineHeight:'1', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                            ✕
+                          </button>
+                        </span>
                       ))}
                     </div>
                   )}

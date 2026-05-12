@@ -955,8 +955,13 @@ export default function DriverPortal() {
                   {photos.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                       {photos.map((p, i) => (
-                        <span key={i} style={{ background: '#1e2535', border: '1px solid #3a4055', borderRadius: '5px', padding: '3px 8px', fontSize: '10px', color: '#aaa' }}>
+                        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#1e2535', border: '1px solid #3a4055', borderRadius: '5px', padding: '3px 8px', fontSize: '10px', color: '#aaa' }}>
                           📷 {p.name.length > 14 ? p.name.substring(0, 14) + '…' : p.name}
+                          <button onClick={() => setPhotos(prev => prev.filter((_, idx) => idx !== i))}
+                            aria-label={`Remove photo ${p.name}`}
+                            style={{ background: 'none', border: 'none', color: '#f44336', cursor: 'pointer', fontSize: '12px', padding: '0 2px', lineHeight: '1' }}>
+                            ✕
+                          </button>
                         </span>
                       ))}
                     </div>
