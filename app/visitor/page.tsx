@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
+import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
 
 function VisitorForm() {
   const searchParams = useSearchParams()
@@ -48,6 +49,21 @@ function VisitorForm() {
     duration: '4',
     vehicle_desc: ''
   })
+  const [limitStatus, setLimitStatus] = useState<PlateLimitStatus | null>(null)
+
+  // B19: query per-plate active-pass count on plate change so the user
+  // sees the limit before submit. Debounced 400ms.
+  useEffect(() => {
+    if (!form.plate || !propertyName || propertyName === 'Managed Property') {
+      setLimitStatus(null); return
+    }
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      const result = await getPlateLimitStatus(propertyName, form.plate)
+      if (!cancelled) setLimitStatus(result)
+    }, 400)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [form.plate, propertyName])
 
   async function submitPass() {
     if (!form.plate || !form.unit) {
@@ -74,42 +90,11 @@ function VisitorForm() {
         return
       }
 
-      const { data: propData } = await supabase
-        .from('properties')
-        .select('visitor_pass_limit, exempt_plates')
-        .ilike('name', propertyName)
-        .single()
-
-      if (propData && propData.visitor_pass_limit && propData.visitor_pass_limit > 0) {
-        const exemptPlates: string[] = propData.exempt_plates || []
-        const isExempt = exemptPlates.some(ep => ep.toUpperCase() === plate)
-
-        if (!isExempt) {
-          const { data: units } = await supabase
-            .from('residents')
-            .select('unit')
-            .ilike('property', propertyName)
-
-          const unitList = (units || []).map((r: { unit: string }) => r.unit)
-
-          if (unitList.length > 0) {
-            const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString()
-            const { count } = await supabase
-              .from('visitor_passes')
-              .select('id', { count: 'exact', head: true })
-              .ilike('plate', plate)
-              .in('visiting_unit', unitList)
-              .gte('created_at', yearStart)
-
-            if ((count ?? 0) >= propData.visitor_pass_limit) {
-              setLoading(false)
-              setPlateError('This vehicle has reached the maximum number of visitor passes allowed per year for this property.')
-              return
-            }
-          }
-        }
-      }
     }
+    // B19: per-plate-concurrent-active enforcement runs in the DB trigger
+    // (enforce_visitor_pass_limit). The UI counter above this submit
+    // disables the button when at_limit; submit-time errors are caught
+    // below via parseLimitTriggerError.
 
     const now = new Date()
     const expires = new Date()
@@ -131,11 +116,16 @@ function VisitorForm() {
 
     setLoading(false)
     if (error) {
-      alert('Error: ' + error.message)
-    } else {
-      await supabase.from('audit_logs').insert([{ action: 'VISITOR_TOS_ACCEPTED', table_name: 'visitor_passes', new_values: { plate, property: propertyName } }])
-      setStep('success')
+      const friendly = parseLimitTriggerError(error)
+      if (friendly) {
+        setPlateError(friendly)
+      } else {
+        alert('Error: ' + error.message)
+      }
+      return
     }
+    await supabase.from('audit_logs').insert([{ action: 'VISITOR_TOS_ACCEPTED', table_name: 'visitor_passes', new_values: { plate, property: propertyName } }])
+    setStep('success')
   }
 
   function formatTimestamp(d: Date) {
@@ -252,6 +242,15 @@ function VisitorForm() {
               placeholder="ABC1234"
               style={{ display:'block', width:'100%', marginTop:'6px', padding:'12px', fontSize:'20px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.1em', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box' }}
             />
+            {limitStatus?.state === 'exempt' && (
+              <p style={{ color:'#4caf50', fontSize:'11px', margin:'6px 0 0' }}>✓ Exempt plate — no limit</p>
+            )}
+            {limitStatus?.state === 'within' && (
+              <p style={{ color:'#888', fontSize:'11px', margin:'6px 0 0' }}>{limitStatus.used} of {limitStatus.limit} active passes used.</p>
+            )}
+            {limitStatus?.state === 'at_limit' && (
+              <p style={{ color:'#f44336', fontSize:'11px', margin:'6px 0 0', lineHeight:'1.5' }}>Limit reached: {limitStatus.used} of {limitStatus.limit} active passes. Wait for existing passes to expire or contact the property manager.</p>
+            )}
           </div>
 
           <div style={{ marginBottom:'14px' }}>
@@ -318,8 +317,8 @@ function VisitorForm() {
 
           <button
             onClick={submitPass}
-            disabled={loading || !form.plate || !form.unit || !tosChecked}
-            style={{ width:'100%', padding:'14px', background: (!form.plate || !form.unit || !tosChecked) ? '#555' : '#C9A227', color: (!form.plate || !form.unit || !tosChecked) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!form.plate || !form.unit || !tosChecked) ? 'not-allowed' : 'pointer' }}
+            disabled={loading || !form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus)}
+            style={{ width:'100%', padding:'14px', background: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus)) ? '#555' : '#C9A227', color: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus)) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus)) ? 'not-allowed' : 'pointer' }}
           >
             {loading ? 'Activating Pass...' : 'Get Visitor Pass'}
           </button>

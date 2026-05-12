@@ -5,6 +5,7 @@ import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
+import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
 
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
@@ -17,6 +18,7 @@ export default function ResidentPortal() {
   const [editForm, setEditForm] = useState<any>({})
   const [showVisitorForm, setShowVisitorForm] = useState(false)
   const [visitorForm, setVisitorForm] = useState({ plate: '', name: '', vehicle_desc: '', duration: '4' })
+  const [limitStatus, setLimitStatus] = useState<PlateLimitStatus | null>(null)
   const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null)
   const [editingVehicle, setEditingVehicle] = useState<any>({})
   const [showRequestForm, setShowRequestForm] = useState(false)
@@ -48,6 +50,19 @@ export default function ResidentPortal() {
     setSupportEmail(localStorage.getItem('company_support_email') || '')
     setSupportWebsite(localStorage.getItem('company_support_website') || '')
   }, [])
+
+  // B19: per-plate concurrent-active limit lookup on plate change (400ms
+  // debounce). Drives the badge under the plate input + the submit button
+  // disabled state.
+  useEffect(() => {
+    if (!visitorForm.plate || !resident?.property) { setLimitStatus(null); return }
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      const result = await getPlateLimitStatus(resident.property, visitorForm.plate)
+      if (!cancelled) setLimitStatus(result)
+    }, 400)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [visitorForm.plate, resident?.property])
 
   async function loadResident() {
     setLoading(true)
@@ -257,32 +272,11 @@ export default function ResidentPortal() {
     if (!visitorForm.plate || !resident) return
     setPassError('')
     const plate = normalizePlate(visitorForm.plate)
-
-    if (resident.property) {
-      const { data: propData } = await supabase
-        .from('properties')
-        .select('visitor_pass_limit, exempt_plates')
-        .ilike('name', resident.property)
-        .single()
-
-      if (propData && propData.visitor_pass_limit && propData.visitor_pass_limit > 0) {
-        const exemptPlates: string[] = propData.exempt_plates || []
-        const isExempt = exemptPlates.some((ep: string) => normalizePlate(ep) === plate)
-        if (!isExempt) {
-          const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString()
-          const { count } = await supabase
-            .from('visitor_passes')
-            .select('id', { count: 'exact', head: true })
-            .ilike('plate', plate)
-            .ilike('property', resident.property)
-            .gte('created_at', yearStart)
-          if ((count ?? 0) >= propData.visitor_pass_limit) {
-            setPassError('This vehicle has reached the maximum number of visitor passes allowed per year for this property.')
-            return
-          }
-        }
-      }
-    }
+    // B19: per-plate-concurrent-active enforcement runs in the DB trigger
+    // (enforce_visitor_pass_limit). The previous yearly client-side check
+    // was using the same column with different semantics; removed so both
+    // surfaces and the trigger agree on one policy. Submit-time errors
+    // are caught below via parseLimitTriggerError.
 
     const expires = new Date()
     expires.setHours(expires.getHours() + parseInt(visitorForm.duration))
@@ -300,14 +294,19 @@ export default function ResidentPortal() {
         is_active: true
       }])
     if (error) {
-      alert('Error: ' + error.message)
-    } else {
-      await logAudit({ action: 'ISSUE_VISITOR_PASS', table_name: 'visitor_passes', new_values: { plate, visiting_unit: resident.unit, duration_hours: parseInt(visitorForm.duration) } })
-      alert('Visitor pass issued!')
-      setShowVisitorForm(false)
-      setVisitorForm({ plate: '', name: '', vehicle_desc: '', duration: '4' })
-      fetchPasses(resident.unit)
+      const friendly = parseLimitTriggerError(error)
+      if (friendly) {
+        setPassError(friendly)
+      } else {
+        alert('Error: ' + error.message)
+      }
+      return
     }
+    await logAudit({ action: 'ISSUE_VISITOR_PASS', table_name: 'visitor_passes', new_values: { plate, visiting_unit: resident.unit, duration_hours: parseInt(visitorForm.duration) } })
+    alert('Visitor pass issued!')
+    setShowVisitorForm(false)
+    setVisitorForm({ plate: '', name: '', vehicle_desc: '', duration: '4' })
+    fetchPasses(resident.unit)
   }
 
   const tabStyle = (tab: string) => ({
@@ -801,8 +800,18 @@ export default function ResidentPortal() {
                   value={visitorForm.plate}
                   onChange={e => setVisitorForm({...visitorForm, plate: normalizePlate(e.target.value)})}
                   placeholder="ABC1234"
-                  style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', textAlign:'center', boxSizing:'border-box' }}
+                  style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'6px', padding:'10px', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', textAlign:'center', boxSizing:'border-box' }}
                 />
+                {limitStatus?.state === 'exempt' && (
+                  <p style={{ color:'#4caf50', fontSize:'11px', margin:'0 0 12px' }}>✓ Exempt plate — no limit</p>
+                )}
+                {limitStatus?.state === 'within' && (
+                  <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px' }}>{limitStatus.used} of {limitStatus.limit} active passes used.</p>
+                )}
+                {limitStatus?.state === 'at_limit' && (
+                  <p style={{ color:'#f44336', fontSize:'11px', margin:'0 0 12px', lineHeight:'1.5' }}>Limit reached: {limitStatus.used} of {limitStatus.limit} active passes. Wait for existing passes to expire or contact your property manager.</p>
+                )}
+                {!limitStatus && <div style={{ marginBottom:'12px' }} />}
                 <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Visitor Name</label>
                 <input
                   value={visitorForm.name}
@@ -836,8 +845,8 @@ export default function ResidentPortal() {
                   </div>
                 )}
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={issueVisitorPass}
-                    style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>
+                  <button onClick={issueVisitorPass} disabled={isAtLimit(limitStatus)}
+                    style={{ flex:1, padding:'11px', background: isAtLimit(limitStatus) ? '#555' : '#C9A227', color: isAtLimit(limitStatus) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: isAtLimit(limitStatus) ? 'not-allowed' : 'pointer' }}>
                     Issue Pass
                   </button>
                   <button onClick={() => { setShowVisitorForm(false); setPassError('') }}
