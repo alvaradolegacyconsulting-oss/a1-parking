@@ -12,6 +12,7 @@ import { uploadVideoResumable } from '../lib/video-upload'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import CredentialsModal from '../components/CredentialsModal'
+import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationReviewScreen'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
@@ -47,6 +48,11 @@ export default function CompanyAdminPortal() {
   const [uploadingVideo, setUploadingVideo] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  // B18 two-step submission state — mirrors the driver page.
+  const [violationStage, setViolationStage] = useState<'form' | 'review'>('form')
+  const [reviewViolation, setReviewViolation] = useState<ReviewViolation | null>(null)
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [unconfirmedDrafts, setUnconfirmedDrafts] = useState<ReviewViolation[]>([])
 
   const [storageFacilities, setStorageFacilities] = useState<any[]>([])
   const [ticketTarget, setTicketTarget] = useState<any>(null)
@@ -148,6 +154,7 @@ export default function CompanyAdminPortal() {
     }
     setLoading(false)
     fetchStorageFacilities()
+    loadUnconfirmedDrafts()
   }
 
   async function switchProperty(name: string) {
@@ -168,7 +175,7 @@ export default function CompanyAdminPortal() {
     const week = new Date(); week.setDate(week.getDate() - 7)
     const [{ data: vehicles }, { data: viol }] = await Promise.all([
       supabase.from('vehicles').select('id').ilike('property', property).eq('is_active', true),
-      supabase.from('violations').select('created_at').ilike('property', property).gte('created_at', sixmo.toISOString()),
+      supabase.from('violations').select('created_at').eq('is_confirmed', true).ilike('property', property).gte('created_at', sixmo.toISOString()),
     ])
     const todayCount = (viol || []).filter(v => new Date(v.created_at) >= today).length
     const weekCount = (viol || []).filter(v => new Date(v.created_at) >= week).length
@@ -184,6 +191,7 @@ export default function CompanyAdminPortal() {
     const sixmo = new Date(); sixmo.setMonth(sixmo.getMonth() - 6)
     const { data } = await supabase.from('violations')
       .select('*, photo_rows:violation_photos(photo_url, removed_at)')
+      .eq('is_confirmed', true)
       .ilike('property', property).gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
     // B13/B18 Commit A: flatten photo_rows → v.photos filtered active.
@@ -644,6 +652,10 @@ export default function CompanyAdminPortal() {
   async function submitViolation() {
     if (!violation.type || !violation.property) { alert('Violation type and property are required'); return }
     setSubmitting(true)
+    // B18 Commit B: upload media first, then INSERT violation row with
+    // is_confirmed=false, then INSERT photo rows into violation_photos.
+    // The legacy violations.photos array is no longer written; reader
+    // sites pull from violation_photos via the Commit A embed.
     const photoUrls: string[] = []
     for (const photo of photos) {
       const fileName = `${Date.now()}-${photo.name}`
@@ -677,22 +689,115 @@ export default function CompanyAdminPortal() {
     const { data: newV, error: insErr } = await supabase.from('violations').insert([{
       plate: normalizedPlate, violation_type: violation.type,
       location: violation.location, notes: violation.notes,
-      property: violation.property, driver_name: role?.email, photos: photoUrls,
+      property: violation.property, driver_name: role?.email,
       video_url: videoUrl,
       vehicle_color: violation.vehicle_color || null,
       vehicle_make: violation.vehicle_make || null,
       vehicle_model: violation.vehicle_model || null,
+      is_confirmed: false,
     }]).select().single()
-    setSubmitting(false)
-    if (insErr) { alert('Error: ' + insErr.message); return }
+    if (insErr) {
+      setSubmitting(false)
+      alert('Error: ' + insErr.message); return
+    }
+    if (photoUrls.length > 0 && newV) {
+      const photoRows = photoUrls.map(url => ({ violation_id: newV.id, photo_url: url }))
+      const { error: phErr } = await supabase.from('violation_photos').insert(photoRows)
+      if (phErr) {
+        console.error('[violation_photos INSERT] failed:', phErr.message)
+        alert('Some photos failed to attach: ' + phErr.message + '\nYou can still confirm; a manager can add photos later.')
+      }
+    }
     await auditLog('ADD_VIOLATION', 'violations', newV?.id, { plate: normalizedPlate, property: violation.property, violation_type: violation.type })
+    setSubmitting(false)
+    setReviewViolation({
+      id: newV.id,
+      plate: newV.plate,
+      violation_type: newV.violation_type,
+      property: newV.property,
+      location: newV.location,
+      notes: newV.notes,
+      photos: photoUrls,
+      video_url: newV.video_url,
+      driver_name: newV.driver_name,
+      created_at: newV.created_at,
+    })
+    setViolationStage('review')
+  }
+
+  async function confirmReviewedViolation() {
+    if (!reviewViolation) return
+    setReviewBusy(true)
+    const { error } = await supabase.from('violations')
+      .update({ is_confirmed: true })
+      .eq('id', reviewViolation.id)
+    setReviewBusy(false)
+    if (error) { alert('Confirm failed: ' + error.message); return }
+    await auditLog('VIOLATION_CONFIRMED', 'violations', String(reviewViolation.id), { plate: reviewViolation.plate, property: reviewViolation.property })
+    const confirmed = reviewViolation
+    setReviewViolation(null)
+    setViolationStage('form')
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
     setPhotos([])
     setViolationVideo(null)
     setVideoDuration(null)
+    await loadUnconfirmedDrafts()
     if (selectedProperty) fetchViolations(selectedProperty.name)
-    if (newV) { setTicketTarget(newV); setSelectedStorage(''); setTowFee(''); setMileage('') }
+    setTicketTarget(confirmed); setSelectedStorage(''); setTowFee(''); setMileage('')
+  }
+
+  async function editFromReview() {
+    // Discard the unconfirmed row entirely so the user submits cleanly on
+    // the next round. CASCADE drops photo rows. Storage objects orphan
+    // until a Phase 2 cleanup cron. Form state is preserved so they don't
+    // have to re-type everything.
+    if (!reviewViolation) return
+    setReviewBusy(true)
+    await supabase.from('violations').delete().eq('id', reviewViolation.id)
+    setReviewBusy(false)
+    setReviewViolation(null)
+    setViolationStage('form')
+  }
+
+  // Resume banner: drafts created by this CA within 24h that haven't been
+  // confirmed. driver_name == role.email since that's what we wrote at
+  // submit time.
+  async function loadUnconfirmedDrafts() {
+    if (!role?.email) { setUnconfirmedDrafts([]); return }
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { data } = await supabase.from('violations')
+      .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, photo_rows:violation_photos(photo_url, removed_at)')
+      .eq('is_confirmed', false)
+      .ilike('driver_name', role.email)
+      .gte('created_at', since)
+      .order('created_at', { ascending: true })
+    const drafts = (data || []).map(v => ({
+      id: v.id, plate: v.plate, violation_type: v.violation_type,
+      property: v.property, location: v.location, notes: v.notes,
+      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
+        .filter(p => !p.removed_at).map(p => p.photo_url),
+      video_url: v.video_url, driver_name: v.driver_name, created_at: v.created_at,
+    })) as ReviewViolation[]
+    setUnconfirmedDrafts(drafts)
+  }
+
+  async function reviewOldestDraft() {
+    if (unconfirmedDrafts.length === 0) return
+    setReviewViolation(unconfirmedDrafts[0])
+    setShowViolation(true)
+    setViolationStage('review')
+  }
+
+  async function discardAllUnconfirmedDrafts() {
+    if (unconfirmedDrafts.length === 0) return
+    if (!confirm(`Discard ${unconfirmedDrafts.length} unfinished violation${unconfirmedDrafts.length === 1 ? '' : 's'}? This cannot be undone.`)) return
+    const ids = unconfirmedDrafts.map(d => d.id)
+    await supabase.from('violations').delete().in('id', ids)
+    setUnconfirmedDrafts([])
+    setReviewViolation(null)
+    setViolationStage('form')
+    setShowViolation(false)
   }
 
   function filteredViolations() {
@@ -755,7 +860,7 @@ export default function CompanyAdminPortal() {
     const startDate = new Date(now.getFullYear(), now.getMonth() - numMonths, analyticsRange === '30d' ? now.getDate() - 30 : 1)
 
     const [{ data: vData }, { data: drData }] = await Promise.all([
-      supabase.from('violations').select('property,created_at,tow_ticket_generated,violation_type,driver_name').in('property', propNames).gte('created_at', startDate.toISOString()),
+      supabase.from('violations').select('property,created_at,tow_ticket_generated,violation_type,driver_name').eq('is_confirmed', true).in('property', propNames).gte('created_at', startDate.toISOString()),
       supabase.from('dispute_requests').select('id').in('property', propNames).eq('status', 'pending'),
     ])
 
@@ -1211,6 +1316,42 @@ export default function CompanyAdminPortal() {
           ))}
         </div>
 
+        {/* B18 resume banner — unfinished drafts from prior tab-closes */}
+        {unconfirmedDrafts.length > 0 && violationStage !== 'review' && (
+          <div style={{ background: '#1a1f2e', border: '1px solid #C9A227', borderRadius: '10px', padding: '12px 14px', marginBottom: '12px' }}>
+            <p style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '13px', margin: '0 0 4px' }}>
+              {unconfirmedDrafts.length} unfinished violation{unconfirmedDrafts.length === 1 ? '' : 's'}
+            </p>
+            <p style={{ color: '#aaa', fontSize: '11px', margin: '0 0 10px', lineHeight: '1.5' }}>
+              You submitted but didn&apos;t confirm. Review or discard before they expire (24h).
+            </p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={reviewOldestDraft}
+                style={{ flex: 1, padding: '8px 12px', background: '#C9A227', color: '#0f1117', fontWeight: 'bold', fontSize: '12px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                Review oldest
+              </button>
+              <button onClick={discardAllUnconfirmedDrafts}
+                style={{ padding: '8px 12px', background: '#3a1a1a', color: '#f44336', fontSize: '12px', border: '1px solid #b71c1c', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                Discard all
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* B18 review screen — replaces tabs when active */}
+        {violationStage === 'review' && reviewViolation && (
+          <ViolationReviewScreen
+            violation={reviewViolation}
+            videoFileName={violationVideo?.name || null}
+            videoDuration={videoDuration}
+            busy={reviewBusy}
+            onEdit={editFromReview}
+            onConfirm={confirmReviewedViolation}
+          />
+        )}
+
+        {/* Tabs + tab content — hidden in review mode so the review screen owns focus */}
+        {violationStage !== 'review' && (<>
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
           <button style={tab('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
           <button style={tab('lookup')} onClick={() => setActiveTab('lookup')}>Plate Lookup</button>
@@ -2207,6 +2348,7 @@ export default function CompanyAdminPortal() {
             )}
           </div>
         )}
+        </>)}
 
         <div style={{ marginTop: 24 }}>
           <SupportContact role="company_admin" />

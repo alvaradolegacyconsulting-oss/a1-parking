@@ -6,6 +6,7 @@ import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
+import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationReviewScreen'
 
 export default function DriverPortal() {
   const [driver, setDriver] = useState<any>(null)
@@ -27,6 +28,14 @@ export default function DriverPortal() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [showViolation, setShowViolation] = useState(false)
+  // B18 Commit B: review-before-confirm. stage='form' while user fills
+  // out the violation; flips to 'review' after upload + INSERT lands;
+  // back to 'form' on Edit; back to closed on Confirm.
+  const [violationStage, setViolationStage] = useState<'form' | 'review'>('form')
+  const [reviewViolation, setReviewViolation] = useState<ReviewViolation | null>(null)
+  const [reviewBusy, setReviewBusy] = useState(false)
+  // Resume banner — unconfirmed violations by this driver within 24h
+  const [unconfirmedDrafts, setUnconfirmedDrafts] = useState<ReviewViolation[]>([])
   const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
   const [photos, setPhotos] = useState<File[]>([])
   const [violationVideo, setViolationVideo] = useState<File|null>(null)
@@ -90,6 +99,24 @@ export default function DriverPortal() {
     setLoading(false)
     fetchViolations(d.assigned_properties || ['All'])
     fetchStorageFacilities()
+    // B18 Commit B: surface unfinished drafts from prior tab-closes
+    if (d.name) {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+      const { data } = await supabase.from('violations')
+        .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, photo_rows:violation_photos(photo_url, removed_at)')
+        .eq('is_confirmed', false)
+        .eq('driver_name', d.name)
+        .gte('created_at', since)
+        .order('created_at', { ascending: true })
+      const drafts = (data || []).map(v => ({
+        id: v.id, plate: v.plate, violation_type: v.violation_type,
+        property: v.property, location: v.location, notes: v.notes,
+        photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
+          .filter(p => !p.removed_at).map(p => p.photo_url),
+        video_url: v.video_url, driver_name: v.driver_name, created_at: v.created_at,
+      })) as ReviewViolation[]
+      setUnconfirmedDrafts(drafts)
+    }
   }
 
   async function fetchStorageFacilities() {
@@ -108,6 +135,7 @@ export default function DriverPortal() {
     // client-side and overwrite v.photos with the flat string[] shape
     // every existing reader expects.
     let query = supabase.from('violations').select('*, photo_rows:violation_photos(photo_url, removed_at)')
+      .eq('is_confirmed', true)
       .gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
     if (!properties.includes('All')) {
@@ -246,6 +274,10 @@ export default function DriverPortal() {
   async function submitViolation() {
     if (!violation.type || !violation.property) { alert('Violation type and property are required'); return }
     setSubmitting(true)
+    // B18 Commit B: upload media first, then INSERT violation row with
+    // is_confirmed=false, then INSERT photo rows into violation_photos.
+    // The legacy violations.photos array is no longer written; reader
+    // sites pull from violation_photos via the Commit A embed.
     const photoUrls: string[] = []
     for (const photo of photos) {
       const fileName = `${Date.now()}-${photo.name}`
@@ -284,22 +316,122 @@ export default function DriverPortal() {
       property: violation.property,
       driver_name: driver?.name,
       driver_license: driver?.operator_license,
-      photos: photoUrls,
       video_url: videoUrl,
       vehicle_color: violation.vehicle_color || null,
       vehicle_make: violation.vehicle_make || null,
       vehicle_model: violation.vehicle_model || null,
+      is_confirmed: false,
     }]).select().single()
-    setSubmitting(false)
-    if (insErr) { alert('Error: ' + insErr.message); return }
+    if (insErr) {
+      setSubmitting(false)
+      alert('Error: ' + insErr.message); return
+    }
+    if (photoUrls.length > 0 && newV) {
+      const photoRows = photoUrls.map(url => ({ violation_id: newV.id, photo_url: url }))
+      const { error: phErr } = await supabase.from('violation_photos').insert(photoRows)
+      if (phErr) {
+        console.error('[violation_photos INSERT] failed:', phErr.message)
+        // The violation row is created; photos can be re-added later by a manager.
+        // Surface but don't block the review flow.
+        alert('Some photos failed to attach: ' + phErr.message + '\nYou can still confirm; a manager can add photos later.')
+      }
+    }
     await logAudit({ action: 'ADD_VIOLATION', table_name: 'violations', record_id: newV?.id, new_values: { plate: normalizedPlate, property: violation.property, violation_type: violation.type, driver_name: driver?.name } })
+    setSubmitting(false)
+    setReviewViolation({
+      id: newV.id,
+      plate: newV.plate,
+      violation_type: newV.violation_type,
+      property: newV.property,
+      location: newV.location,
+      notes: newV.notes,
+      photos: photoUrls,
+      video_url: newV.video_url,
+      driver_name: newV.driver_name,
+      created_at: newV.created_at,
+    })
+    setViolationStage('review')
+  }
+
+  async function confirmReviewedViolation() {
+    if (!reviewViolation) return
+    setReviewBusy(true)
+    const { error } = await supabase.from('violations')
+      .update({ is_confirmed: true })
+      .eq('id', reviewViolation.id)
+    setReviewBusy(false)
+    if (error) { alert('Confirm failed: ' + error.message); return }
+    await logAudit({
+      action: 'VIOLATION_CONFIRMED',
+      table_name: 'violations',
+      record_id: String(reviewViolation.id),
+      new_values: { plate: reviewViolation.plate, property: reviewViolation.property },
+    })
+    const confirmed = reviewViolation
+    setReviewViolation(null)
+    setViolationStage('form')
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
     setPhotos([])
     setViolationVideo(null)
     setVideoDuration(null)
+    await loadUnconfirmedDrafts()
     fetchViolations(driver?.assigned_properties || ['All'])
-    if (newV) { setTicketTarget(newV); setSelectedStorage(''); setTowFee(''); setMileage('') }
+    // Existing flow: open the tow-ticket modal after confirm.
+    setTicketTarget(confirmed); setSelectedStorage(''); setTowFee(''); setMileage('')
+  }
+
+  async function editFromReview() {
+    // Per Commit B scope: discard the unconfirmed row entirely so the
+    // user submits cleanly on the next round. CASCADE drops photo rows.
+    // Storage objects orphan until a Phase 2 cleanup cron. Form state is
+    // preserved so they don't have to re-type everything.
+    if (!reviewViolation) return
+    setReviewBusy(true)
+    await supabase.from('violations').delete().eq('id', reviewViolation.id)
+    setReviewBusy(false)
+    setReviewViolation(null)
+    setViolationStage('form')
+  }
+
+  // Resume banner: drafts created by this driver within 24h that
+  // haven't been confirmed. driver_name is the cheap, RLS-narrowed
+  // match (RLS already scopes the SELECT to the driver's company).
+  async function loadUnconfirmedDrafts() {
+    if (!driver?.name) { setUnconfirmedDrafts([]); return }
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { data } = await supabase.from('violations')
+      .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, photo_rows:violation_photos(photo_url, removed_at)')
+      .eq('is_confirmed', false)
+      .eq('driver_name', driver.name)
+      .gte('created_at', since)
+      .order('created_at', { ascending: true })
+    const drafts = (data || []).map(v => ({
+      id: v.id, plate: v.plate, violation_type: v.violation_type,
+      property: v.property, location: v.location, notes: v.notes,
+      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
+        .filter(p => !p.removed_at).map(p => p.photo_url),
+      video_url: v.video_url, driver_name: v.driver_name, created_at: v.created_at,
+    })) as ReviewViolation[]
+    setUnconfirmedDrafts(drafts)
+  }
+
+  async function reviewOldestDraft() {
+    if (unconfirmedDrafts.length === 0) return
+    setReviewViolation(unconfirmedDrafts[0])
+    setShowViolation(true)
+    setViolationStage('review')
+  }
+
+  async function discardAllUnconfirmedDrafts() {
+    if (unconfirmedDrafts.length === 0) return
+    if (!confirm(`Discard ${unconfirmedDrafts.length} unfinished violation${unconfirmedDrafts.length === 1 ? '' : 's'}? This cannot be undone.`)) return
+    const ids = unconfirmedDrafts.map(d => d.id)
+    await supabase.from('violations').delete().in('id', ids)
+    setUnconfirmedDrafts([])
+    setReviewViolation(null)
+    setViolationStage('form')
+    setShowViolation(false)
   }
 
   function filteredViolations() {
@@ -607,7 +739,42 @@ export default function DriverPortal() {
           </button>
         </div>
 
-        {/* Tabs */}
+        {/* B18 resume banner — unfinished drafts from prior tab-closes */}
+        {unconfirmedDrafts.length > 0 && violationStage !== 'review' && (
+          <div style={{ background: '#1a1f2e', border: '1px solid #C9A227', borderRadius: '10px', padding: '12px 14px', marginBottom: '12px' }}>
+            <p style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '13px', margin: '0 0 4px' }}>
+              {unconfirmedDrafts.length} unfinished violation{unconfirmedDrafts.length === 1 ? '' : 's'}
+            </p>
+            <p style={{ color: '#aaa', fontSize: '11px', margin: '0 0 10px', lineHeight: '1.5' }}>
+              You submitted but didn&apos;t confirm. Review or discard before they expire (24h).
+            </p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={reviewOldestDraft}
+                style={{ flex: 1, padding: '8px 12px', background: '#C9A227', color: '#0f1117', fontWeight: 'bold', fontSize: '12px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                Review oldest
+              </button>
+              <button onClick={discardAllUnconfirmedDrafts}
+                style={{ padding: '8px 12px', background: '#3a1a1a', color: '#f44336', fontSize: '12px', border: '1px solid #b71c1c', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                Discard all
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* B18 review screen — replaces lookup/violations tabs when active */}
+        {violationStage === 'review' && reviewViolation && (
+          <ViolationReviewScreen
+            violation={reviewViolation}
+            videoFileName={violationVideo?.name || null}
+            videoDuration={videoDuration}
+            busy={reviewBusy}
+            onEdit={editFromReview}
+            onConfirm={confirmReviewedViolation}
+          />
+        )}
+
+        {/* Tabs — hidden while in review mode so the review screen owns focus */}
+        {violationStage !== 'review' && (<>
         <div style={{ display: 'flex', gap: '4px', background: '#1e2535', borderRadius: '8px', padding: '3px', marginBottom: '14px' }}>
           <button style={tab('lookup')} onClick={() => setActiveTab('lookup')}>Plate Lookup</button>
           <button style={tab('violations')} onClick={() => setActiveTab('violations')}>
@@ -935,6 +1102,7 @@ export default function DriverPortal() {
             ))}
           </div>
         )}
+        </>)}
 
         {driver?.company && (
           <div style={{ marginTop: 24 }}>

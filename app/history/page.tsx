@@ -40,6 +40,7 @@ export default function History() {
     const { data, error } = await supabase
       .from('violations')
       .select('*, photo_rows:violation_photos(photo_url, removed_at)')
+      .eq('is_confirmed', true)
       .gte('created_at', startDate.toISOString())
       .order('created_at', { ascending: false })
 

@@ -338,6 +338,7 @@ export default function ManagerPortal() {
     const week = new Date(); week.setDate(week.getDate() - 7)
     const { data } = await supabase.from('violations')
       .select('*, photo_rows:violation_photos(photo_url, removed_at)')
+      .eq('is_confirmed', true)
       .ilike('property', property)
       .gte('created_at', week.toISOString())
       .order('created_at', { ascending: false })
@@ -689,7 +690,7 @@ export default function ManagerPortal() {
     const mk = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`
 
     const [{ data: vData }, { data: vehData }, { data: drData }] = await Promise.all([
-      supabase.from('violations').select('created_at,tow_ticket_generated').ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
+      supabase.from('violations').select('created_at,tow_ticket_generated').eq('is_confirmed', true).ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
       supabase.from('vehicles').select('status,is_active').ilike('property', manager.name),
       supabase.from('dispute_requests').select('id').ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
     ])

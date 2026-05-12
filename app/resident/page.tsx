@@ -131,6 +131,7 @@ export default function ResidentPortal() {
     if (plates.length === 0) { setMyViolations([]); return }
     const { data } = await supabase.from('violations')
       .select('*, photo_rows:violation_photos(photo_url, removed_at)')
+      .eq('is_confirmed', true)
       .in('plate', plates)
       .order('created_at', { ascending: false })
     // B13/B18 Commit A: flatten photo_rows → v.photos string[] filtered
