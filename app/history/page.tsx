@@ -212,6 +212,11 @@ export default function History() {
                   <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0 0' }}>{v.notes}</p>
                 </div>
               )}
+              {(v.vehicle_color || v.vehicle_make || v.vehicle_model) && (
+                <div style={{ gridColumn:'span 2' }}>
+                  <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>🚗 {[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join(' ')}</p>
+                </div>
+              )}
               {v.photos && v.photos.length > 0 && (
                 <div style={{ gridColumn:'span 2', marginTop:'8px' }}>
                   <p style={{ color:'#555', fontSize:'11px', margin:'0 0 6px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Photos ({v.photos.length})</p>

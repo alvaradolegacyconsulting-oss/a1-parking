@@ -719,6 +719,9 @@ export default function ResidentPortal() {
                     <div><span style={{ color:'#555' }}>Property</span><br/><span style={{ color:'#aaa' }}>{v.property || '—'}</span></div>
                     <div><span style={{ color:'#555' }}>Location</span><br/><span style={{ color:'#aaa' }}>{v.location || '—'}</span></div>
                   </div>
+                  {(v.vehicle_color || v.vehicle_make || v.vehicle_model) && (
+                    <p style={{ color:'#555', fontSize:'11px', margin:'0 0 10px' }}>🚗 {[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join(' ')}</p>
+                  )}
                   <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
                     style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'4px 0', display:'block', marginBottom:'8px' }}>
                     🔍 Search FindMyTowedCar.org
