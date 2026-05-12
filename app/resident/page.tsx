@@ -788,8 +788,9 @@ export default function ResidentPortal() {
                   value={visitorForm.vehicle_desc}
                   onChange={e => setVisitorForm({...visitorForm, vehicle_desc: e.target.value})}
                   placeholder="White Toyota RAV4"
-                  style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
+                  style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
                 />
+                <p style={{ color:'#555', fontSize:'11px', margin:'4px 0 12px' }}>Optional — helps property staff identify your car.</p>
                 <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Duration</label>
                 <select
                   value={visitorForm.duration}

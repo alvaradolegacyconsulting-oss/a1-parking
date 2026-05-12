@@ -282,6 +282,7 @@ function VisitorForm() {
               placeholder="e.g. White Toyota RAV4"
               style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px 12px', fontSize:'13px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none', boxSizing:'border-box' }}
             />
+            <p style={{ color:'#555', fontSize:'11px', margin:'4px 0 0' }}>Optional — helps property staff identify your car.</p>
           </div>
 
           <div style={{ marginBottom:'20px' }}>
