@@ -246,7 +246,10 @@ export default function DriverPortal() {
       setUploadingVideo(true)
       const fileName = `${Date.now()}-${violationVideo.name}`
       const { error: vidErr } = await supabase.storage.from('violation-videos').upload(fileName, violationVideo)
-      if (!vidErr) {
+      if (vidErr) {
+        console.error('[video upload] failed:', vidErr.message, 'file size:', violationVideo.size, 'mime:', violationVideo.type)
+        alert(`Video upload failed: ${vidErr.message}. Violation will be saved without video.`)
+      } else {
         const { data: vidUrlData } = supabase.storage.from('violation-videos').getPublicUrl(fileName)
         videoUrl = vidUrlData.publicUrl
       }
