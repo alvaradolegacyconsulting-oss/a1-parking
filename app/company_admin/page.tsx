@@ -182,10 +182,18 @@ export default function CompanyAdminPortal() {
 
   async function fetchViolations(property: string) {
     const sixmo = new Date(); sixmo.setMonth(sixmo.getMonth() - 6)
-    const { data } = await supabase.from('violations').select('*')
+    const { data } = await supabase.from('violations')
+      .select('*, photo_rows:violation_photos(photo_url, removed_at)')
       .ilike('property', property).gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
-    setViolations(data || [])
+    // B13/B18 Commit A: flatten photo_rows → v.photos filtered active.
+    const flattened = (data || []).map(v => ({
+      ...v,
+      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
+        .filter(p => !p.removed_at)
+        .map(p => p.photo_url),
+    }))
+    setViolations(flattened)
     const { data: ddata } = await supabase.from('dispute_requests').select('*').ilike('property', property)
     setViolationDisputes(ddata || [])
   }

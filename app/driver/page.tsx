@@ -101,14 +101,26 @@ export default function DriverPortal() {
     // Fetch 6 months so all filter presets have data
     const sixmo = new Date()
     sixmo.setMonth(sixmo.getMonth() - 6)
-    let query = supabase.from('violations').select('*')
+    // B13/B18 Commit A: photos source from violation_photos via the
+    // embedded FK relationship (alias `photo_rows` to avoid colliding
+    // with the legacy violations.photos array column, which still
+    // exists during the transition window). Filter removed photos
+    // client-side and overwrite v.photos with the flat string[] shape
+    // every existing reader expects.
+    let query = supabase.from('violations').select('*, photo_rows:violation_photos(photo_url, removed_at)')
       .gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
     if (!properties.includes('All')) {
       query = query.in('property', properties)
     }
     const { data } = await query
-    setViolations(data || [])
+    const flattened = (data || []).map(v => ({
+      ...v,
+      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
+        .filter(p => !p.removed_at)
+        .map(p => p.photo_url),
+    }))
+    setViolations(flattened)
   }
 
   async function openCamera() {

@@ -39,12 +39,20 @@ export default function History() {
 
     const { data, error } = await supabase
       .from('violations')
-      .select('*')
+      .select('*, photo_rows:violation_photos(photo_url, removed_at)')
       .gte('created_at', startDate.toISOString())
       .order('created_at', { ascending: false })
 
     setLoading(false)
-    if (!error) setViolations(data || [])
+    if (error) return
+    // B13/B18 Commit A: flatten photo_rows → v.photos filtered active.
+    const flattened = (data || []).map(v => ({
+      ...v,
+      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
+        .filter(p => !p.removed_at)
+        .map(p => p.photo_url),
+    }))
+    setViolations(flattened)
   }
 
   function escapeCsv(val: any): string {

@@ -129,8 +129,19 @@ export default function ResidentPortal() {
   async function fetchMyViolations() {
     const plates = vehicles.map((v: any) => normalizePlate(v.plate)).filter(Boolean)
     if (plates.length === 0) { setMyViolations([]); return }
-    const { data } = await supabase.from('violations').select('*').in('plate', plates).order('created_at', { ascending: false })
-    setMyViolations(data || [])
+    const { data } = await supabase.from('violations')
+      .select('*, photo_rows:violation_photos(photo_url, removed_at)')
+      .in('plate', plates)
+      .order('created_at', { ascending: false })
+    // B13/B18 Commit A: flatten photo_rows → v.photos string[] filtered
+    // by removed_at IS NULL, matching the legacy column's shape readers expect.
+    const flattened = (data || []).map(v => ({
+      ...v,
+      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
+        .filter(p => !p.removed_at)
+        .map(p => p.photo_url),
+    }))
+    setMyViolations(flattened)
   }
 
   async function fetchMyDisputes() {

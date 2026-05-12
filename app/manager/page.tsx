@@ -336,8 +336,19 @@ export default function ManagerPortal() {
 
   async function fetchViolations(property: string) {
     const week = new Date(); week.setDate(week.getDate() - 7)
-    const { data } = await supabase.from('violations').select('*').ilike('property', property).gte('created_at', week.toISOString()).order('created_at', { ascending: false })
-    setViolations(data || [])
+    const { data } = await supabase.from('violations')
+      .select('*, photo_rows:violation_photos(photo_url, removed_at)')
+      .ilike('property', property)
+      .gte('created_at', week.toISOString())
+      .order('created_at', { ascending: false })
+    // B13/B18 Commit A: flatten photo_rows → v.photos filtered active.
+    const flattened = (data || []).map(v => ({
+      ...v,
+      photos: ((v.photo_rows as { photo_url: string; removed_at: string | null }[] | null) || [])
+        .filter(p => !p.removed_at)
+        .map(p => p.photo_url),
+    }))
+    setViolations(flattened)
     const today = new Date(); today.setHours(0,0,0,0)
     const todayCount = (data || []).filter(v => new Date(v.created_at) >= today).length
     setStats(s => ({ ...s, violations_today: todayCount, violations_week: data?.length || 0 }))
