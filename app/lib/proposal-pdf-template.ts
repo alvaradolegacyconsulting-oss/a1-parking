@@ -60,7 +60,13 @@ export function renderProposalPdfHtml(p: ProposalForPdf, opts: { logoUrl: string
   const drvFee = p.custom_per_driver_fee != null ? p.custom_per_driver_fee : drvDefault
 
   const overrides = p.feature_overrides && Object.keys(p.feature_overrides).length ? p.feature_overrides : null
-  const acceptanceUrl = `${opts.appUrl}/proposal/${p.code}`
+  // B48 (2026-05-19): acceptanceUrl removed. Online acceptance link
+  // (/proposal/<code>) currently points at a non-existent route — the
+  // Phase 2 web acceptance page is unbuilt. The clickable link is
+  // replaced with a "sign and email" instruction in Option A below.
+  // When Phase 2 ships the acceptance page, restore this const + put
+  // the link back into the Option A card (see project_b48 memory entry
+  // for the full Path 1 → Path 3 narrative).
 
   const logoBlock = opts.logoUrl
     ? `<img src="${escape(opts.logoUrl)}" alt="ShieldMyLot" style="height:48px;width:48px;border-radius:6px;border:1px solid #C9A227;object-fit:contain" />`
@@ -185,9 +191,8 @@ export function renderProposalPdfHtml(p: ProposalForPdf, opts: { logoUrl: string
     <div class="sh">${overrides ? '5' : '4'}. Acceptance</div>
     <div class="accept">
       <div class="accept-card">
-        <h4>Option A — Accept Online</h4>
-        <p style="font-size:11px;color:#333;margin-bottom:8px">Visit the secure link below to accept and activate this proposal:</p>
-        <p class="accept-url">${escape(acceptanceUrl)}</p>
+        <h4>Option A — Sign and Email</h4>
+        <p style="font-size:11px;color:#333;margin-bottom:8px">Complete the signature in Option B below, then email the signed PDF to support@shieldmylot.com.</p>
       </div>
       <div class="accept-card">
         <h4>Option B — Sign and Return</h4>

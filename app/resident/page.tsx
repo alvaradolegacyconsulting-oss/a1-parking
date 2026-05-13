@@ -733,7 +733,9 @@ export default function ResidentPortal() {
                   </a>
                   {v.photos && v.photos.length > 0 && (
                     <div style={{ display:'flex', gap:'6px', marginBottom:'10px' }}>
-                      {v.photos.slice(0,3).map((url: string, pi: number) => (
+                      {/* B41 (2026-05-19): cap removed. Don't-hide-information principle —
+                          residents may need every angle of evidence to decide whether to dispute. */}
+                      {v.photos.map((url: string, pi: number) => (
                         <a key={pi} href={url} target="_blank" rel="noopener noreferrer">
                           <img src={url} alt="" style={{ width:'56px', height:'56px', objectFit:'cover', borderRadius:'5px', border:'1px solid #2a2f3d' }} />
                         </a>

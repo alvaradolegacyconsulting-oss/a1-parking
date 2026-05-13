@@ -1031,7 +1031,9 @@ export default function AdminPortal() {
                 </>)}
                 <label style={lbl}>Role</label>
                 <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} style={inp}>
-                  {['admin','company_admin','manager','driver','resident'].map(r => <option key={r} value={r}>{r}</option>)}
+                  {/* B45 (2026-05-19): leasing_agent added. Super-admin discretion —
+                      no tier gating; admin can provision any role regardless of customer tier. */}
+                  {['admin','company_admin','manager','leasing_agent','driver','resident'].map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
                 {newUser.role === 'resident' && (
                   <p style={{ color:'#fbbf24', fontSize:'11px', margin:'-6px 0 12px' }}>
