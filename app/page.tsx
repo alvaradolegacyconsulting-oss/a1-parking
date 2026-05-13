@@ -34,17 +34,21 @@ export default function Landing() {
     },
     {
       name: 'Growth', base: 149, perProp: 12, perDriver: 8, popular: true,
-      features: ['Up to 10 properties', 'Everything in Starter', 'Analytics dashboard', 'Bulk CSV upload', 'Camera scan assist', 'Dispute management', 'Priority email support'],
+      // B55: removed 'Camera scan assist' — plate scanning is available on all tiers,
+      // listing as Growth-only is inaccurate.
+      features: ['Up to 10 properties', 'Everything in Starter', 'Analytics dashboard', 'Bulk CSV upload', 'Dispute management', 'Priority email support'],
     },
     {
       name: 'Legacy', base: 199, perProp: 10, perDriver: 6,
-      features: ['Unlimited properties', 'Everything in Growth', 'White-label branding', 'Advanced analytics', 'Custom integrations', 'Dedicated account manager', 'Priority email support'],
+      // B55: three overpromise corrections — White-label branding → logo upload reality;
+      // Custom integrations → Towbook CSV export (the only integration that exists);
+      // Dedicated account manager → Dedicated escalation path (no staffed AM today).
+      features: ['Unlimited properties', 'Everything in Growth', 'Custom logo on tow tickets and resident pages', 'Advanced analytics', 'Towbook CSV export', 'Dedicated escalation path', 'Priority email support'],
     },
-    {
-      name: 'Enterprise', base: 'Custom', perProp: 'Custom', perDriver: 'Custom',
-      badge: 'Large operations', enterprise: true,
-      features: ['Unlimited everything', 'Dedicated support', 'Custom integrations', 'SLA guarantee', 'Volume pricing'],
-    },
+    // B55: Enterprise removed as 4th Enforcement tier — replaced with a callout below
+    // the three-tier grid. PM Enterprise remains. tier.enterprise render branches kept
+    // in place as unreachable dead code per Jose's scope guard (deletion deferred to
+    // Phase 2 or a dedicated cleanup commit).
   ]
 
   const pmTiers = [
@@ -58,15 +62,16 @@ export default function Landing() {
     },
     {
       name: 'Enterprise', base: 279, perProp: 10,
-      features: ['Unlimited properties', 'Everything in Professional', 'White-label branding', 'Custom integrations', 'Dedicated account manager', 'Priority email support'],
+      // B55: same three overpromise corrections as Enf Legacy — overpromise reasoning
+      // applies regardless of track (no staffed AM, no white-label, no bespoke integrations).
+      features: ['Unlimited properties', 'Everything in Professional', 'Custom logo on tow tickets and resident pages', 'Towbook CSV export', 'Dedicated escalation path', 'Priority email support'],
     },
   ]
 
-  const testimonials = [
-    { quote: 'ShieldMyLot eliminated our unauthorized parking problem within the first week. Our residents actually thank us for it now.', name: 'Property Manager', company: 'Houston Area Apartment Community' },
-    { quote: 'The violation tracking and tow ticket system saves us hours of paperwork every month. Worth every penny.', name: 'Operations Director', company: 'Texas Gulf Coast Property Group' },
-    { quote: "We manage 8 communities and the multi-property dashboard is exactly what we needed. Set it up in an afternoon.", name: 'Regional Manager', company: 'Greater Houston Residential Services' },
-  ]
+  // B55: testimonials array removed. Section markup also removed below — see
+  // "CREDIBILITY SECTION — Phase 2 deliverable" placeholder comment. Do not
+  // re-introduce testimonials until real customers exist and have agreed in
+  // writing to be quoted with company attribution.
 
   const features = [
     { icon: '🚗', title: 'Plate-based enforcement', body: 'Every registered vehicle gets a digital permit tied to their plate. Drivers verify against the live registry in seconds.' },
@@ -204,30 +209,32 @@ export default function Landing() {
               </div>
             ))}
           </div>
+          {/* B55: Enterprise-scale enforcement callout — replaces removed 4th Enforcement
+              tier. PM Enterprise stays as its own tier in pmTiers; this callout only
+              appears under the Enforcement track. */}
+          {activeTrack === 'enforcement' && (
+            <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 24, marginTop: 28, textAlign: 'center' }}>
+              <h4 style={{ color: GOLD, fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>Enterprise-scale operations?</h4>
+              <p style={{ color: MUTED, fontSize: 14, margin: '0 0 14px', lineHeight: 1.6 }}>
+                For unusually large enforcement operations (15+ properties, 25+ drivers, or multi-region needs), contact us for custom pricing and account structure.
+              </p>
+              <a href="mailto:support@shieldmylot.com?subject=ShieldMyLot Enterprise Inquiry"
+                style={{ color: GOLD, fontSize: 14, fontWeight: 600, textDecoration: 'none' }}>
+                Contact us for enterprise pricing →
+              </a>
+            </div>
+          )}
           <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 28 }}>
-            Annual billing available — save 2 months. All plans include a 14-day free trial.
+            Annual billing available — save 2 months. 14-day money-back guarantee on all plans.
           </p>
         </div>
       </section>
 
-      {/* ── TESTIMONIALS ── */}
-      <section style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '80px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <h2 style={{ textAlign: 'center', fontSize: 36, fontWeight: 700, margin: '0 0 48px', letterSpacing: '-0.02em' }}>Trusted by Houston property teams</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
-            {testimonials.map((t, i) => (
-              <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 28 }}>
-                <div style={{ color: GOLD, fontSize: 24, marginBottom: 14, letterSpacing: '-0.05em' }}>"</div>
-                <p style={{ color: '#94a3b8', fontSize: 15, lineHeight: 1.7, margin: '0 0 20px' }}>{t.quote}</p>
-                <div>
-                  <p style={{ color: TEXT, fontWeight: 600, fontSize: 14, margin: '0 0 2px' }}>{t.name}</p>
-                  <p style={{ color: MUTED, fontSize: 13, margin: 0 }}>{t.company}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* CREDIBILITY SECTION — Phase 2 deliverable
+          Will replace this with a founder/company credibility block referencing
+          Alvarado Legacy Consulting LLC. Do not add testimonials until real customers
+          exist and have agreed in writing to be quoted with company attribution.
+          (B55: removed fabricated "Trusted by Houston property teams" section.) */}
 
       {/* ── CONTACT FORM ── */}
       <section id="contact" style={{ padding: '80px 24px' }}>
@@ -285,7 +292,15 @@ export default function Landing() {
             </div>
             <div>
               <p style={{ color: TEXT, fontSize: 13, fontWeight: 600, margin: '0 0 12px' }}>Support</p>
-              {[['Help Center', '#'], ['Video Guides', '#'], ['Contact', '#contact']].map(([label, href]) => (
+              {/* B55: Help Center + Video Guides currently route to mailto fallback —
+                  no broken-link experience while docs/videos don't exist yet.
+                  TODO: When B50 help docs ship to /help route, update Help Center href to /help.
+                  When HeyGen Creator videos ship, update Video Guides href to the video library. */}
+              {[
+                ['Help Center', 'mailto:support@shieldmylot.com?subject=ShieldMyLot Help Inquiry'],
+                ['Video Guides', 'mailto:support@shieldmylot.com?subject=ShieldMyLot Help Inquiry'],
+                ['Contact', '#contact'],
+              ].map(([label, href]) => (
                 <a key={label} href={href} style={{ display: 'block', color: MUTED, fontSize: 13, textDecoration: 'none', marginBottom: 8 }}>{label}</a>
               ))}
             </div>
