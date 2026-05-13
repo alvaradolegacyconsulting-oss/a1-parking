@@ -28,6 +28,8 @@ const ENF_STARTER: TierConfigShape = {
   [F.MAX_VISITOR_PASS_DURATION_HOURS]: 0,
   // Phase 2a: video uploads allowed at 30s on starter (matches Q2 decision).
   [F.VIDEO_MAX_DURATION_SECONDS]: 30,
+  // B42: photo count cap per violation. Starter = 3.
+  [F.MAX_PHOTOS_PER_VIOLATION]: 3,
 
   // enforcement core
   [F.AI_PLATE_SCANNING]: true,
@@ -84,6 +86,8 @@ const ENF_GROWTH: TierConfigShape = {
   [F.MAX_DRIVERS]: 10,
   // Phase 2a: growth and legacy both allow 60s video.
   [F.VIDEO_MAX_DURATION_SECONDS]: 60,
+  // B42: photo cap on Growth = 10.
+  [F.MAX_PHOTOS_PER_VIOLATION]: 10,
 
   [F.LEASING_AGENT_ROLE]: true,
   [F.ADVANCED_ANALYTICS]: true,
@@ -100,6 +104,12 @@ const ENF_LEGACY: TierConfigShape = {
   ...ENF_GROWTH,
   [F.MAX_PROPERTIES]: -1,
   [F.MAX_DRIVERS]: -1,
+  // B42: legacy bumps video duration from inherited 60s → 120s, and
+  // photo cap from inherited 10 → unlimited. BOTH must be explicit
+  // overrides because spread-inheritance from ENF_GROWTH carries 60s
+  // and 10. Same gotcha as Phase 2a's video override pattern.
+  [F.VIDEO_MAX_DURATION_SECONDS]: 120,
+  [F.MAX_PHOTOS_PER_VIOLATION]: -1,
 
   [F.ADVANCED_PDF_REPORTS]: true,
   [F.API_ACCESS_READ_ONLY]: true,
@@ -120,6 +130,11 @@ const PM_ESSENTIAL: TierConfigShape = {
   // Phase 2a: PM tiers don't have driver/violation/video workflow.
   // 0 means "no video allowed on this track". Inherited by professional + enterprise.
   [F.VIDEO_MAX_DURATION_SECONDS]: 0,
+  // B42: photo cap = 3 on all PM tiers. Present-but-dead — PM has
+  // no driver violation submission surface today, but populating the
+  // value keeps the matrix self-documenting and survives any future
+  // PM submission workflow addition. Inherited by professional + enterprise.
+  [F.MAX_PHOTOS_PER_VIOLATION]: 3,
 
   // PM-only core
   [F.PROPERTY_MANAGEMENT]: true,

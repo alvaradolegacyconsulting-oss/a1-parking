@@ -1630,17 +1630,39 @@ export default function CompanyAdminPortal() {
                   <input value={violation.vehicle_make} onChange={e => setViolation({ ...violation, vehicle_make: e.target.value })} placeholder="e.g. Toyota, Honda" style={inp} />
                   <label style={lbl}>Vehicle Model (optional)</label>
                   <input value={violation.vehicle_model} onChange={e => setViolation({ ...violation, vehicle_model: e.target.value })} placeholder="e.g. Camry, Civic" style={inp} />
-                  <label style={lbl}>Photos (optional) — max 10MB each</label>
-                  <input type="file" accept="image/*" multiple
-                    onChange={e => {
-                      const newFiles = Array.from(e.target.files || [])
-                      for (const f of newFiles) {
-                        if (f.size > 10 * 1024 * 1024) { alert(`Photo "${f.name}" exceeds 10MB limit. Please use standard camera mode.`); e.target.value = ''; return }
-                      }
-                      setPhotos(prev => [...prev, ...newFiles])
-                      e.target.value = ''
-                    }}
-                    style={{ display:'block', width:'100%', marginBottom:'8px', color:'#aaa', fontSize:'12px' }} />
+                  {(() => {
+                    // B42: photo count cap from tier. -1 = unlimited.
+                    // Fallback: Starter (3) when localStorage tier is empty — same
+                    // asymmetric most-restrictive policy as the driver portal. See
+                    // driver/page.tsx for the full rationale.
+                    const hasLocalStorageTier = typeof window !== 'undefined' && !!localStorage.getItem('company_tier')
+                    const rawCap = Number(getLimit(FEATURE_FLAGS.MAX_PHOTOS_PER_VIOLATION, getCompanyContext()))
+                    const photoCap = (hasLocalStorageTier && !isNaN(rawCap)) ? rawCap : 3
+                    const photoLabel = photoCap < 0
+                      ? 'Photos (optional) — 10MB each'
+                      : `Photos (optional) — max ${photoCap} photos, 10MB each`
+                    return (
+                      <>
+                        <label style={lbl}>{photoLabel}</label>
+                        <input type="file" accept="image/*" multiple
+                          onChange={e => {
+                            const newFiles = Array.from(e.target.files || [])
+                            for (const f of newFiles) {
+                              if (f.size > 10 * 1024 * 1024) { alert(`Photo "${f.name}" exceeds 10MB limit. Please use standard camera mode.`); e.target.value = ''; return }
+                            }
+                            // B42: batch-reject if adding this batch would exceed the cap.
+                            if (photoCap >= 0 && photos.length + newFiles.length > photoCap) {
+                              alert(`Photo limit: ${photoCap} max per violation. You have ${photos.length} attached; this batch of ${newFiles.length} would exceed the cap.`)
+                              e.target.value = ''
+                              return
+                            }
+                            setPhotos(prev => [...prev, ...newFiles])
+                            e.target.value = ''
+                          }}
+                          style={{ display:'block', width:'100%', marginBottom:'8px', color:'#aaa', fontSize:'12px' }} />
+                      </>
+                    )
+                  })()}
                   {photos.length > 0 && (
                     <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'10px' }}>
                       {photos.map((f, i) => (
@@ -2569,6 +2591,7 @@ export default function CompanyAdminPortal() {
           )
 
           const videoMaxSec = Number(getLimit(FEATURE_FLAGS.VIDEO_MAX_DURATION_SECONDS, ctx))
+          const photoCap = Number(getLimit(FEATURE_FLAGS.MAX_PHOTOS_PER_VIOLATION, ctx))
           const passMonthly = getLimit(FEATURE_FLAGS.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH, ctx)
           const passDuration = getLimit(FEATURE_FLAGS.MAX_VISITOR_PASS_DURATION_HOURS, ctx)
           const hasOverride = ctx.proposal_code?.feature_overrides
@@ -2665,6 +2688,16 @@ export default function CompanyAdminPortal() {
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                     <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:0 }}>Video upload cap</p>
                     <p style={{ color:'#aaa', fontSize:'12px', margin:0 }}>{videoMaxSec > 0 ? `${videoMaxSec}s max` : 'disabled'}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* B42: Photos per violation (enforcement) */}
+              {isEnf && (
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'10px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                    <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:0 }}>Photos per violation</p>
+                    <p style={{ color:'#aaa', fontSize:'12px', margin:0 }}>{photoCap < 0 ? 'unlimited' : `${photoCap} max`}</p>
                   </div>
                 </div>
               )}

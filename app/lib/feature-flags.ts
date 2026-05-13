@@ -13,6 +13,11 @@ export const FEATURE_FLAGS = {
   // Booleans kept for back-compat through this commit; removal slated
   // for B35 follow-up.
   VIDEO_MAX_DURATION_SECONDS: 'video_max_duration_seconds',
+  // B42 (May 18, 2026): max photos per violation submission.
+  // -1 = unlimited. Client-side enforcement only (no DB trigger);
+  // matches VIDEO_MAX_DURATION_SECONDS precedent. Server-side trigger
+  // would be a B44 follow-up if real-world data shows bypass abuse.
+  MAX_PHOTOS_PER_VIOLATION: 'max_photos_per_violation',
 
   // ─── Enforcement-track core (true on all enforcement tiers) ─────────
   AI_PLATE_SCANNING: 'ai_plate_scanning',
@@ -72,6 +77,7 @@ export const NUMERIC_FLAGS = new Set<FeatureFlag>([
   FEATURE_FLAGS.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH,
   FEATURE_FLAGS.MAX_VISITOR_PASS_DURATION_HOURS,
   FEATURE_FLAGS.VIDEO_MAX_DURATION_SECONDS,
+  FEATURE_FLAGS.MAX_PHOTOS_PER_VIOLATION,
 ])
 
 export function isNumericFlag(flag: FeatureFlag): boolean {

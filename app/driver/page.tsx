@@ -1018,17 +1018,49 @@ export default function DriverPortal() {
                   <label style={lbl}>VIN (optional)</label>
                   <input value={vin} onChange={e => setVin(e.target.value)} placeholder="17-character VIN" style={inp} />
 
-                  <label style={lbl}>Photos (optional) — max 10MB each</label>
-                  <input type="file" accept="image/*" multiple
-                    onChange={e => {
-                      const newFiles = Array.from(e.target.files || [])
-                      for (const f of newFiles) {
-                        if (f.size > 10 * 1024 * 1024) { alert(`Photo "${f.name}" exceeds 10MB limit. Please use standard camera mode.`); e.target.value = ''; return }
-                      }
-                      setPhotos(prev => [...prev, ...newFiles])
-                      e.target.value = ''
-                    }}
-                    style={{ ...inp, color: '#aaa' }} />
+                  {(() => {
+                    // B42: photo count cap from tier. -1 = unlimited.
+                    //
+                    // Fallback policy (asymmetric with VIDEO_MAX_DURATION_SECONDS):
+                    // when localStorage company_tier isn't populated, default to
+                    // Starter cap (3) rather than the tier-config default (legacy = -1 unlimited).
+                    // Rationale: photo cap is a multiplier (many uploads per submission)
+                    // while video duration is single-value (one upload, one time check).
+                    // The asymmetric risk warrants an asymmetric default — most-restrictive
+                    // for photos, legacy-permissive for video.
+                    //
+                    // Combined guards: empty-localStorage check (the stated failure mode)
+                    // + isNaN guard (defensive against any future non-numeric return from
+                    // getLimit). Either condition triggers the Starter fallback.
+                    const hasLocalStorageTier = typeof window !== 'undefined' && !!localStorage.getItem('company_tier')
+                    const rawCap = Number(getLimit(FEATURE_FLAGS.MAX_PHOTOS_PER_VIOLATION, getCompanyContext()))
+                    const photoCap = (hasLocalStorageTier && !isNaN(rawCap)) ? rawCap : 3
+                    const photoLabel = photoCap < 0
+                      ? 'Photos (optional) — 10MB each'
+                      : `Photos (optional) — max ${photoCap} photos, 10MB each`
+                    return (
+                      <>
+                        <label style={lbl}>{photoLabel}</label>
+                        <input type="file" accept="image/*" multiple
+                          onChange={e => {
+                            const newFiles = Array.from(e.target.files || [])
+                            for (const f of newFiles) {
+                              if (f.size > 10 * 1024 * 1024) { alert(`Photo "${f.name}" exceeds 10MB limit. Please use standard camera mode.`); e.target.value = ''; return }
+                            }
+                            // B42: batch-reject if adding this batch would exceed the cap.
+                            // Consistent with the existing 10MB batch-reject semantics.
+                            if (photoCap >= 0 && photos.length + newFiles.length > photoCap) {
+                              alert(`Photo limit: ${photoCap} max per violation. You have ${photos.length} attached; this batch of ${newFiles.length} would exceed the cap.`)
+                              e.target.value = ''
+                              return
+                            }
+                            setPhotos(prev => [...prev, ...newFiles])
+                            e.target.value = ''
+                          }}
+                          style={{ ...inp, color: '#aaa' }} />
+                      </>
+                    )
+                  })()}
                   {photos.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                       {photos.map((p, i) => (
