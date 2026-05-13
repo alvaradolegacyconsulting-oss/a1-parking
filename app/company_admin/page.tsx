@@ -81,7 +81,10 @@ export default function CompanyAdminPortal() {
 
   const [editingProperty, setEditingProperty] = useState<any>(null)
   const [showAddProperty, setShowAddProperty] = useState(false)
-  const [newProperty, setNewProperty] = useState({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '' })
+  // B51a: new properties can optionally land with expiration date + notes at
+  // create time. PDF upload deferred to the Edit form because Storage paths
+  // depend on the property_id, which doesn't exist until after INSERT.
+  const [newProperty, setNewProperty] = useState({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
   const [propMsg, setPropMsg] = useState('')
   const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
 
@@ -333,12 +336,15 @@ export default function CompanyAdminPortal() {
       zip: newProperty.zip || null,
       total_spaces: newProperty.total_spaces ? parseInt(newProperty.total_spaces) : null,
       pm_name: newProperty.pm_name || null, pm_phone: newProperty.pm_phone || null,
-      pm_email: newProperty.pm_email || null, company: role?.company, is_active: true
+      pm_email: newProperty.pm_email || null, company: role?.company, is_active: true,
+      // B51a: optional auth fields at create time. PDF upload deferred to Edit form.
+      authorization_expiration_date: newProperty.authorization_expiration_date || null,
+      authorization_notes: newProperty.authorization_notes || null,
     }]).select().single()
     if (insErr) { setPropMsg('Error: ' + insErr.message); return }
     await auditLog('create_property', 'properties', data.id, { name: newProperty.name, company: role?.company })
     setPropMsg('Property added!')
-    setNewProperty({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '' })
+    setNewProperty({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
     setShowAddProperty(false)
     await reloadProperties()
   }
@@ -347,14 +353,97 @@ export default function CompanyAdminPortal() {
     if (!editingProperty) return
     setPropMsg('')
     const { id, company, created_at, ...fields } = editingProperty
-    const { error: updErr } = await supabase.from('properties').update({
-      ...fields, total_spaces: fields.total_spaces ? parseInt(fields.total_spaces) : null
-    }).eq('id', id)
+    // B51a: normalize empty strings to null for the auth fields so DATE
+    // doesn't choke on '' and notes don't store empty strings as data.
+    const normalizedFields = {
+      ...fields,
+      total_spaces: fields.total_spaces ? parseInt(fields.total_spaces) : null,
+      authorization_expiration_date: fields.authorization_expiration_date || null,
+      authorization_notes: fields.authorization_notes || null,
+    }
+    const { error: updErr } = await supabase.from('properties').update(normalizedFields).eq('id', id)
     if (updErr) { setPropMsg('Error: ' + updErr.message); return }
-    await auditLog('update_property', 'properties', id, fields)
+
+    // B51a granular audit: detect auth-field changes against the pre-edit
+    // cached state in `properties` and emit per-field actions. Other changes
+    // continue to emit the existing 'update_property' action.
+    const oldProp = properties.find(p => p.id === id) as any
+    const oldExpiration = oldProp?.authorization_expiration_date ?? null
+    const newExpiration = normalizedFields.authorization_expiration_date ?? null
+    const oldNotes = oldProp?.authorization_notes ?? null
+    const newNotes = normalizedFields.authorization_notes ?? null
+    // PDF column is mutated by uploadAuthPdf / removeAuthPdf / replaceAuthPdf
+    // directly, not through this form — no PDF diff to log here.
+
+    const nonAuthFields: Record<string, any> = { ...normalizedFields }
+    delete nonAuthFields.authorization_expiration_date
+    delete nonAuthFields.authorization_notes
+    delete nonAuthFields.authorization_pdf_path
+    // Compare any non-auth field against old to decide whether to log update_property.
+    const nonAuthChanged = Object.keys(nonAuthFields).some(k => (oldProp?.[k] ?? null) !== (nonAuthFields[k] ?? null))
+    if (nonAuthChanged) {
+      await auditLog('update_property', 'properties', String(id), nonAuthFields)
+    }
+    if (oldExpiration !== newExpiration) {
+      await auditLog('update_authorization_expiration', 'properties', String(id), { old_date: oldExpiration, new_date: newExpiration })
+    }
+    if (oldNotes !== newNotes) {
+      // Per B51a decision 2: log only "changed: true" — never capture
+      // notes content, length, or any content-shape metadata.
+      await auditLog('update_authorization_notes', 'properties', String(id), { changed: true })
+    }
+
     setPropMsg('Property updated!')
     setEditingProperty(null)
     await reloadProperties()
+  }
+
+  // B51a: standalone PDF handlers. Each does its own DB UPDATE + audit log,
+  // independent of the Save Changes flow. Eager-write model means orphan
+  // bucket files possible if user cancels mid-flow — accepted for MVP; the
+  // file lives in storage but properties.authorization_pdf_path is what the
+  // app considers authoritative. Phase 2 storage cleanup cron (B26) will
+  // sweep orphans if/when it ships.
+  async function uploadAuthPdf(propertyId: number, file: File, replaceOldPath: string | null = null) {
+    if (file.size > 10 * 1024 * 1024) { setPropMsg('PDF exceeds 10MB limit'); return }
+    if (file.type !== 'application/pdf') { setPropMsg('Only PDF files accepted'); return }
+    const path = `${propertyId}/${Date.now()}.pdf`
+    const { error: upErr } = await supabase.storage
+      .from('property-authorizations')
+      .upload(path, file, { contentType: 'application/pdf' })
+    if (upErr) { setPropMsg('Upload failed: ' + upErr.message); return }
+    const { error: updErr } = await supabase.from('properties').update({ authorization_pdf_path: path }).eq('id', propertyId)
+    if (updErr) { setPropMsg('Update failed: ' + updErr.message); return }
+    if (replaceOldPath) {
+      await auditLog('replace_authorization_pdf', 'properties', String(propertyId), { old_path: replaceOldPath, new_path: path, filename: file.name, file_size: file.size })
+    } else {
+      await auditLog('upload_authorization_pdf', 'properties', String(propertyId), { path, filename: file.name, file_size: file.size })
+    }
+    // Reflect locally so the edit form re-renders with the new path.
+    setEditingProperty((p: any) => p && p.id === propertyId ? { ...p, authorization_pdf_path: path } : p)
+    await reloadProperties()
+    setPropMsg(replaceOldPath ? 'PDF replaced.' : 'PDF uploaded.')
+  }
+
+  async function removeAuthPdf(propertyId: number, oldPath: string) {
+    if (!confirm('Remove the authorization PDF? The file stays in storage for audit retention, but the property no longer references it.')) return
+    const { error } = await supabase.from('properties').update({ authorization_pdf_path: null }).eq('id', propertyId)
+    if (error) { setPropMsg('Remove failed: ' + error.message); return }
+    await auditLog('remove_authorization_pdf', 'properties', String(propertyId), { old_path: oldPath })
+    setEditingProperty((p: any) => p && p.id === propertyId ? { ...p, authorization_pdf_path: null } : p)
+    await reloadProperties()
+    setPropMsg('PDF removed.')
+  }
+
+  async function viewAuthPdf(propertyId: number) {
+    const res = await fetch(`/api/properties/${propertyId}/authorization-pdf-url`)
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      alert('Could not load PDF: ' + (json.error || res.statusText))
+      return
+    }
+    const { url } = await res.json()
+    window.open(url, '_blank')
   }
 
   async function uploadLogo(file: File, pathPrefix: string, slot: string, onSuccess: (url: string) => void) {
@@ -2087,6 +2176,18 @@ export default function CompanyAdminPortal() {
                         <input value={(newProperty as any)[f.key]} onChange={e => setNewProperty({ ...newProperty, [f.key]: e.target.value })} placeholder={f.placeholder} style={inp} />
                       </div>
                     ))}
+                    {/* B51a: Towing Authorization section.
+                        PDF upload is deferred to the Edit form (after the property
+                        exists with an id, since the storage path is {id}/{ts}.pdf).
+                        Date + notes can be set at create time. */}
+                    <div style={{ marginTop:'8px', padding:'10px 12px', background:'#0d1520', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                      <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 6px' }}>Towing Authorization (optional)</p>
+                      <p style={{ color:'#555', fontSize:'10px', margin:'0 0 8px', fontStyle:'italic' }}>Upload the signed authorization PDF after saving — the upload form appears in the Edit dialog once the property exists.</p>
+                      <label style={lbl}>Expiration Date</label>
+                      <input type="date" value={newProperty.authorization_expiration_date} onChange={e => setNewProperty({ ...newProperty, authorization_expiration_date: e.target.value })} style={inp} />
+                      <label style={lbl}>Notes</label>
+                      <textarea value={newProperty.authorization_notes} maxLength={1000} onChange={e => setNewProperty({ ...newProperty, authorization_notes: e.target.value })} placeholder="Renewal terms, contact info, special conditions, etc." style={{ ...inp, minHeight:'60px', resize:'vertical' }} />
+                    </div>
                     <div style={{ display:'flex', gap:'8px' }}>
                       <button onClick={saveProperty} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Save Property</button>
                       <button onClick={() => { setShowAddProperty(false); setPropMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
@@ -2105,6 +2206,17 @@ export default function CompanyAdminPortal() {
                         {prop.address && <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{prop.address}{prop.city ? `, ${prop.city}` : ''}{prop.state ? ` ${prop.state}` : ''}{prop.zip ? ` ${prop.zip}` : ''}</p>}
                         {prop.pm_name && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>PM: {prop.pm_name}{prop.pm_phone ? ` · ${prop.pm_phone}` : ''}</p>}
                         {prop.total_spaces && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{prop.total_spaces} spaces</p>}
+                        {/* B51a: authorization summary line. Click "View PDF" → server signs URL */}
+                        {prop.authorization_pdf_path ? (
+                          <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>
+                            📄 Authorization on file · <button onClick={() => viewAuthPdf(prop.id)} style={{ background:'none', border:'none', color:'#C9A227', fontSize:'11px', textDecoration:'underline', cursor:'pointer', padding:0, fontFamily:'inherit' }}>View PDF</button>
+                            {prop.authorization_expiration_date && ` · Expires ${prop.authorization_expiration_date}`}
+                          </p>
+                        ) : prop.authorization_expiration_date ? (
+                          <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0', fontStyle:'italic' }}>📄 No PDF on file · Expires {prop.authorization_expiration_date}</p>
+                        ) : (
+                          <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0', fontStyle:'italic' }}>📄 No authorization document on file</p>
+                        )}
                       </div>
                       <span style={{ background: prop.is_active ? '#1a3a1a' : '#2a1a1a', color: prop.is_active ? '#4caf50' : '#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold', flexShrink:0 }}>
                         {prop.is_active ? 'Active' : 'Inactive'}
@@ -2134,6 +2246,47 @@ export default function CompanyAdminPortal() {
                             <input value={(editingProperty as any)[f.key] || ''} onChange={e => setEditingProperty({ ...editingProperty, [f.key]: e.target.value })} style={inp} />
                           </div>
                         ))}
+                        {/* B51a: Towing Authorization section in Edit form. PDF
+                            upload + replace + remove operate immediately (each is
+                            its own DB UPDATE + audit log). Expiration date + notes
+                            are part of the Save Changes flow. */}
+                        <div style={{ marginTop:'12px', padding:'12px', background:'#161b26', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                          <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 8px' }}>Towing Authorization</p>
+                          <label style={lbl}>Authorization PDF (10MB max, .pdf only)</label>
+                          {editingProperty.authorization_pdf_path ? (
+                            <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap', background:'#0d1520', border:'1px solid #2a2f3d', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
+                              <span style={{ color:'#aaa', fontSize:'11px', flex:1, minWidth:0, wordBreak:'break-all' }}>📄 {editingProperty.authorization_pdf_path}</span>
+                              <button onClick={() => viewAuthPdf(editingProperty.id)} style={{ padding:'4px 10px', background:'#1a1f2e', color:'#C9A227', fontSize:'11px', fontWeight:'bold', border:'1px solid #C9A227', borderRadius:'5px', cursor:'pointer', fontFamily:'Arial' }}>View</button>
+                              <label style={{ padding:'4px 10px', background:'#1a1f2e', color:'#C9A227', fontSize:'11px', fontWeight:'bold', border:'1px solid #C9A227', borderRadius:'5px', cursor:'pointer', fontFamily:'Arial' }}>
+                                Replace
+                                <input type="file" accept="application/pdf" style={{ display:'none' }}
+                                  onChange={async e => {
+                                    const f = e.target.files?.[0]
+                                    if (!f) return
+                                    await uploadAuthPdf(editingProperty.id, f, editingProperty.authorization_pdf_path)
+                                    e.target.value = ''
+                                  }} />
+                              </label>
+                              <button onClick={() => removeAuthPdf(editingProperty.id, editingProperty.authorization_pdf_path)} style={{ padding:'4px 10px', background:'#3a1a1a', color:'#f44336', fontSize:'11px', border:'1px solid #b71c1c', borderRadius:'5px', cursor:'pointer', fontFamily:'Arial' }}>Remove</button>
+                            </div>
+                          ) : (
+                            <input type="file" accept="application/pdf"
+                              onChange={async e => {
+                                const f = e.target.files?.[0]
+                                if (!f) return
+                                await uploadAuthPdf(editingProperty.id, f, null)
+                                e.target.value = ''
+                              }}
+                              style={{ ...inp, color:'#aaa' }} />
+                          )}
+                          <label style={lbl}>Expiration Date</label>
+                          <input type="date" value={editingProperty.authorization_expiration_date || ''} onChange={e => setEditingProperty({ ...editingProperty, authorization_expiration_date: e.target.value })} style={inp} />
+                          <label style={lbl}>Notes</label>
+                          <textarea value={editingProperty.authorization_notes || ''} maxLength={1000} onChange={e => setEditingProperty({ ...editingProperty, authorization_notes: e.target.value })} placeholder="Renewal terms, contact info, special conditions, etc." style={{ ...inp, minHeight:'60px', resize:'vertical' }} />
+                          <p style={{ color:'#555', fontSize:'10px', margin:'-4px 0 0', fontStyle:'italic' }}>
+                            PDF changes save instantly. Expiration date + notes save when you click Save Changes below.
+                          </p>
+                        </div>
                         {logoField(
                           editingProperty.logo_url || '',
                           url => setEditingProperty({ ...editingProperty, logo_url: url }),

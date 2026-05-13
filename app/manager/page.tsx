@@ -794,6 +794,34 @@ export default function ManagerPortal() {
             <div>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'15px', margin:'0' }}>{manager?.name}</p>
               <p style={{ color:'#aaa', fontSize:'12px', margin:'4px 0 0' }}>{manager?.address || ''} · {manager?.pm_name || ''}</p>
+              {/* B51a: view-only authorization display. Manager can see whether
+                  the property has an authorization PDF on file + the expiration
+                  date, but cannot edit (per RLS + UI scope decision). View PDF
+                  button hits the server-signed-URL endpoint; RLS on the bucket
+                  re-checks manager has SELECT rights before signing. */}
+              {manager?.authorization_pdf_path ? (
+                <p style={{ color:'#555', fontSize:'11px', margin:'6px 0 0' }}>
+                  📄 Authorization on file · <button
+                    onClick={async () => {
+                      const res = await fetch(`/api/properties/${manager.id}/authorization-pdf-url`)
+                      if (!res.ok) {
+                        const j = await res.json().catch(() => ({}))
+                        alert('Could not load PDF: ' + (j.error || res.statusText))
+                        return
+                      }
+                      const { url } = await res.json()
+                      window.open(url, '_blank')
+                    }}
+                    style={{ background:'none', border:'none', color:'#C9A227', fontSize:'11px', textDecoration:'underline', cursor:'pointer', padding:0, fontFamily:'inherit' }}>
+                    View PDF
+                  </button>
+                  {manager?.authorization_expiration_date && ` · Expires ${manager.authorization_expiration_date}`}
+                </p>
+              ) : manager?.authorization_expiration_date ? (
+                <p style={{ color:'#555', fontSize:'11px', margin:'6px 0 0', fontStyle:'italic' }}>📄 No PDF on file · Expires {manager.authorization_expiration_date}</p>
+              ) : (
+                <p style={{ color:'#555', fontSize:'11px', margin:'6px 0 0', fontStyle:'italic' }}>📄 No authorization document on file</p>
+              )}
             </div>
             <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}
               style={{ padding:'6px 12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
