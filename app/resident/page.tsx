@@ -536,43 +536,48 @@ export default function ResidentPortal() {
 
               return (
                 <>
-                  {vehicles.filter(v => v.status === 'active' || v.status === 'pending').length >= 2 ? (
-                    <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'12px' }}>
-                      <p style={{ color:'#888', fontSize:'12px', margin:'0', lineHeight:'1.6' }}>You have reached the maximum vehicles allowed at initial registration. Please contact your Property Manager to request additional vehicles.</p>
-                    </div>
-                  ) : (
-                    <>
-                      <button onClick={() => { setShowRequestForm(s => !s); setRequestMsg('') }}
-                        style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
-                        + Request New Vehicle
-                      </button>
+                  {/* B36 (2026-05-19): replaced the restrictive "at initial registration"
+                      message with an enabling prompt. By the time the portal renders the
+                      My Vehicles tab, registration is already complete (pending/declined
+                      branches early-return upstream), so the old text was vestigial copy
+                      from the /register flow that doesn't apply here. Residents post-
+                      registration CAN add more vehicles via the "+ Request New Vehicle"
+                      button below; the message now points them at it instead of misleading
+                      them into thinking they can't add more. */}
+                  {vehicles.filter(v => v.status === 'active' || v.status === 'pending').length >= 2 && (
+                    <p style={{ color:'#888', fontSize:'12px', margin:'0 0 12px', lineHeight:'1.6' }}>
+                      To add more vehicles, use the &quot;+ Request New Vehicle&quot; button below. Your property manager will review and approve.
+                    </p>
+                  )}
+                  <button onClick={() => { setShowRequestForm(s => !s); setRequestMsg('') }}
+                    style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
+                    + Request New Vehicle
+                  </button>
 
-                      {showRequestForm && (
-                        <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
-                          <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Vehicle Request</p>
-                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
-                            <div style={{ gridColumn:'span 2' }}>
-                              <label style={lbl}>Plate *</label>
-                              <input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
-                            </div>
-                            <div>
-                              <label style={lbl}>State</label>
-                              <select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inp}>
-                                {states.map(s => <option key={s}>{s}</option>)}
-                              </select>
-                            </div>
-                            <div><label style={lbl}>Color</label><input value={newVehicle.color} onChange={e => setNewVehicle({...newVehicle, color: e.target.value})} placeholder="Black" style={inp} /></div>
-                            <div><label style={lbl}>Make</label><input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} placeholder="Toyota" style={inp} /></div>
-                            <div><label style={lbl}>Model</label><input value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} placeholder="Camry" style={inp} /></div>
-                            <div><label style={lbl}>Year</label><input value={newVehicle.year} onChange={e => setNewVehicle({...newVehicle, year: e.target.value})} placeholder="2022" style={inp} /></div>
-                          </div>
-                          <div style={{ display:'flex', gap:'8px' }}>
-                            <button onClick={requestVehicle} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Submit Request</button>
-                            <button onClick={() => setShowRequestForm(false)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
-                          </div>
+                  {showRequestForm && (
+                    <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                      <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Vehicle Request</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                        <div style={{ gridColumn:'span 2' }}>
+                          <label style={lbl}>Plate *</label>
+                          <input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inp, fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', textAlign:'center' }} />
                         </div>
-                      )}
-                    </>
+                        <div>
+                          <label style={lbl}>State</label>
+                          <select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inp}>
+                            {states.map(s => <option key={s}>{s}</option>)}
+                          </select>
+                        </div>
+                        <div><label style={lbl}>Color</label><input value={newVehicle.color} onChange={e => setNewVehicle({...newVehicle, color: e.target.value})} placeholder="Black" style={inp} /></div>
+                        <div><label style={lbl}>Make</label><input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} placeholder="Toyota" style={inp} /></div>
+                        <div><label style={lbl}>Model</label><input value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} placeholder="Camry" style={inp} /></div>
+                        <div><label style={lbl}>Year</label><input value={newVehicle.year} onChange={e => setNewVehicle({...newVehicle, year: e.target.value})} placeholder="2022" style={inp} /></div>
+                      </div>
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={requestVehicle} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Submit Request</button>
+                        <button onClick={() => setShowRequestForm(false)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                      </div>
+                    </div>
                   )}
 
                   {requestMsg && (

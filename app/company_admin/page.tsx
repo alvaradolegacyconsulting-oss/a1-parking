@@ -915,6 +915,50 @@ export default function CompanyAdminPortal() {
     setShowViolation(false)
   }
 
+  // B38: explicit discard from the review screen. Same DELETE as
+  // editFromReview, but ALSO clears the form state and closes the
+  // form so the user returns to portal home rather than the form.
+  // Kept deliberately separate from editFromReview — 1 line of DELETE
+  // duplication is cheaper than the indirection of a shared helper.
+  async function discardFromReview() {
+    if (!reviewViolation) return
+    if (!confirm('Discard this draft? Cannot be undone.')) return
+    setReviewBusy(true)
+    await supabase.from('violations').delete().eq('id', reviewViolation.id)
+    setReviewBusy(false)
+    setReviewViolation(null)
+    setViolationStage('form')
+    setShowViolation(false)
+    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+    setPhotos([])
+    setViolationVideo(null)
+    setVideoDuration(null)
+    await loadUnconfirmedDrafts()
+  }
+
+  // B38: discard a specific draft from the per-draft resume banner.
+  async function discardSingleDraft(id: number) {
+    if (!confirm('Discard this draft? Cannot be undone.')) return
+    await supabase.from('violations').delete().eq('id', id)
+    await loadUnconfirmedDrafts()
+  }
+
+  // B38: review a specific draft (not just the oldest).
+  async function reviewDraft(d: ReviewViolation) {
+    setReviewViolation(d)
+    setShowViolation(true)
+    setViolationStage('review')
+  }
+
+  // B38: relative-time formatter for resume banner per-draft rows.
+  function timeAgo(iso: string | null): string {
+    if (!iso) return ''
+    const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    return `${Math.floor(mins / 60)}h ago`
+  }
+
   function filteredViolations() {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const week = new Date(); week.setDate(week.getDate() - 7)
@@ -1431,7 +1475,9 @@ export default function CompanyAdminPortal() {
           ))}
         </div>
 
-        {/* B18 resume banner — unfinished drafts from prior tab-closes */}
+        {/* B18 resume banner — unfinished drafts from prior tab-closes.
+            B38: per-draft Review + Discard controls when N > 1; the
+            original two-button shape stays for N == 1. */}
         {unconfirmedDrafts.length > 0 && violationStage !== 'review' && (
           <div style={{ background: '#1a1f2e', border: '1px solid #C9A227', borderRadius: '10px', padding: '12px 14px', marginBottom: '12px' }}>
             <p style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '13px', margin: '0 0 4px' }}>
@@ -1440,16 +1486,43 @@ export default function CompanyAdminPortal() {
             <p style={{ color: '#aaa', fontSize: '11px', margin: '0 0 10px', lineHeight: '1.5' }}>
               You submitted but didn&apos;t confirm. Review or discard before they expire (24h).
             </p>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={reviewOldestDraft}
-                style={{ flex: 1, padding: '8px 12px', background: '#C9A227', color: '#0f1117', fontWeight: 'bold', fontSize: '12px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Arial' }}>
-                Review oldest
-              </button>
-              <button onClick={discardAllUnconfirmedDrafts}
-                style={{ padding: '8px 12px', background: '#3a1a1a', color: '#f44336', fontSize: '12px', border: '1px solid #b71c1c', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Arial' }}>
-                Discard all
-              </button>
-            </div>
+            {unconfirmedDrafts.length === 1 ? (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={reviewOldestDraft}
+                  style={{ flex: 1, padding: '8px 12px', background: '#C9A227', color: '#0f1117', fontWeight: 'bold', fontSize: '12px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                  Review oldest
+                </button>
+                <button onClick={discardAllUnconfirmedDrafts}
+                  style={{ padding: '8px 12px', background: '#3a1a1a', color: '#f44336', fontSize: '12px', border: '1px solid #b71c1c', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                  Discard all
+                </button>
+              </div>
+            ) : (
+              <>
+                <div style={{ background: '#0f1117', border: '1px solid #2a2f3d', borderRadius: '6px', padding: '4px', marginBottom: '8px' }}>
+                  {unconfirmedDrafts.map(d => (
+                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', borderBottom: '1px solid #1e2535' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ color: '#C9A227', fontFamily: 'Courier New', fontSize: '12px', fontWeight: 'bold', letterSpacing: '0.06em' }}>{d.plate || '—'}</span>
+                        <span style={{ color: '#555', fontSize: '11px', marginLeft: '8px' }}>{timeAgo(d.created_at)}</span>
+                      </div>
+                      <button onClick={() => reviewDraft(d)}
+                        style={{ padding: '4px 10px', background: '#C9A227', color: '#0f1117', fontWeight: 'bold', fontSize: '11px', border: 'none', borderRadius: '5px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                        Review
+                      </button>
+                      <button onClick={() => discardSingleDraft(d.id)}
+                        style={{ padding: '4px 10px', background: '#3a1a1a', color: '#f44336', fontSize: '11px', border: '1px solid #b71c1c', borderRadius: '5px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                        Discard
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={discardAllUnconfirmedDrafts}
+                  style={{ width: '100%', padding: '8px 12px', background: '#3a1a1a', color: '#f44336', fontSize: '12px', border: '1px solid #b71c1c', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                  Discard all {unconfirmedDrafts.length}
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -1462,6 +1535,7 @@ export default function CompanyAdminPortal() {
             busy={reviewBusy}
             onEdit={editFromReview}
             onConfirm={confirmReviewedViolation}
+            onDiscard={discardFromReview}
             userRole="company_admin"
             userEmail={role?.email || user?.email || ''}
             onMediaRemoved={refetchReviewViolation}

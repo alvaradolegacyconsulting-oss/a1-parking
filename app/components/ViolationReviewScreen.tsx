@@ -42,6 +42,10 @@ type Props = {
   busy?: boolean
   onEdit: () => void
   onConfirm: () => void
+  // B38: explicit discard. Same DELETE as onEdit but parent is expected
+  // to clear form state and close the form, not return to the form for
+  // re-submission. Optional — when omitted, no third button renders.
+  onDiscard?: () => void
   // C1: when all three are present, per-media X buttons render.
   userRole?: RemoverRole
   userEmail?: string
@@ -67,6 +71,7 @@ export default function ViolationReviewScreen({
   busy = false,
   onEdit,
   onConfirm,
+  onDiscard,
   userRole,
   userEmail,
   onMediaRemoved,
@@ -193,6 +198,22 @@ export default function ViolationReviewScreen({
           }}>
           ← Edit
         </button>
+        {onDiscard && (
+          <button
+            onClick={onDiscard}
+            disabled={busy}
+            style={{
+              flex: 1, padding: '14px',
+              background: '#1a0808', color: '#f44336',
+              fontSize: '14px', fontWeight: 'bold',
+              border: '1px solid #b71c1c', borderRadius: '10px',
+              cursor: busy ? 'not-allowed' : 'pointer',
+              opacity: busy ? 0.5 : 1,
+              fontFamily: 'Arial',
+            }}>
+            Discard
+          </button>
+        )}
         <button
           onClick={onConfirm}
           disabled={busy}
