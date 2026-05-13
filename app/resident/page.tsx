@@ -735,6 +735,12 @@ export default function ResidentPortal() {
                       ))}
                     </div>
                   )}
+                  {v.video_url && (
+                    <button onClick={() => window.open(v.video_url, '_blank')}
+                      style={{ width:'100%', padding:'7px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', marginBottom:'10px' }}>
+                      ▶ Play Video
+                    </button>
+                  )}
                   <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: (!dispute && canDispute) ? '10px' : '0' }}>
                     <span style={{ background:dispBadge.bg, color:dispBadge.color, padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', border:`1px solid ${dispBadge.color}33` }}>{dispBadge.text}</span>
                     {dispute?.resolved_at && <span style={{ color:'#555', fontSize:'10px' }}>Resolved {new Date(dispute.resolved_at).toLocaleDateString()}</span>}
