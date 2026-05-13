@@ -1033,7 +1033,10 @@ export default function CompanyAdminPortal() {
     const byProp: Record<string, { violations: number; tows: number }> = {}
     const byMonthMap: Record<string, number> = {}
     const byType: Record<string, number> = {}
-    const byDriver: Record<string, number> = {}
+    // B58: removed byDriver aggregate — was computed but never rendered.
+    // Driver-performance UI was the orphan consumer of the now-deleted
+    // DRIVER_PERFORMANCE_REPORTS flag. If a real driver-performance chart
+    // gets built later, re-introduce the aggregate as part of that work.
     viols.forEach((v: any) => {
       const p = v.property || 'Unknown'
       byProp[p] = byProp[p] || { violations: 0, tows: 0 }
@@ -1041,7 +1044,6 @@ export default function CompanyAdminPortal() {
       if (v.tow_ticket_generated) byProp[p].tows++
       const k = mk(new Date(v.created_at)); byMonthMap[k] = (byMonthMap[k] || 0) + 1
       const t = v.violation_type || 'Unknown'; byType[t] = (byType[t] || 0) + 1
-      const dn = v.driver_name || 'Unknown'; byDriver[dn] = (byDriver[dn] || 0) + 1
     })
 
     const monthLabels: { label: string; key: string }[] = []
@@ -1053,7 +1055,6 @@ export default function CompanyAdminPortal() {
     const propertyChartData = Object.entries(byProp).map(([name, d]) => ({ name: name.length > 16 ? name.slice(0, 16) + '…' : name, violations: d.violations, tows: d.tows }))
     const trendData = monthLabels.map(m => ({ month: m.label, violations: byMonthMap[m.key] || 0, passes: passMonthMap[m.key] || 0 }))
     const typeChartData = Object.entries(byType).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, count]) => ({ name: name.length > 22 ? name.slice(0, 22) + '…' : name, count }))
-    const driverChartData = Object.entries(byDriver).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, count]) => ({ name, count }))
 
     const totalViolations = viols.length
     const totalTows = viols.filter((v: any) => v.tow_ticket_generated).length
@@ -1081,7 +1082,7 @@ export default function CompanyAdminPortal() {
       insights.push('⚖ Dispute rate elevated. Review violation accuracy.')
     if (insights.length === 0) insights.push('✅ Everything looks normal. No anomalies detected.')
 
-    setCAAnalytics({ propertyChartData, trendData, typeChartData, driverChartData, totalViolations, avgTowRate, passCount, pendingDisputes, insights })
+    setCAAnalytics({ propertyChartData, trendData, typeChartData, totalViolations, avgTowRate, passCount, pendingDisputes, insights })
     setAnalyticsLoaded(true)
   }
 
@@ -2649,16 +2650,17 @@ export default function CompanyAdminPortal() {
           const propUpgrade = getUpgradePrompt(FEATURE_FLAGS.MAX_PROPERTIES, ctx.tier, ctx.tier_type)
           const drvUpgrade = getUpgradePrompt(FEATURE_FLAGS.MAX_DRIVERS, ctx.tier, ctx.tier_type)
 
+          // B57+B58: rows display only features that exist today. AI chatbot text/avatar,
+          // live chat, white-glove onboarding, and driver performance reports were removed
+          // because they aren't built. When real replacement features ship (AI-powered
+          // docs search, video tutorial library, etc.), add their rows at that time —
+          // never as forward-looking placeholders.
           const FEATURE_SUMMARY: { flag: string; label: string; tracks: string }[] = [
             { flag: FEATURE_FLAGS.LEASING_AGENT_ROLE, label: 'Leasing Agent role', tracks: 'both' },
             { flag: FEATURE_FLAGS.ADVANCED_ANALYTICS, label: 'Advanced Analytics tab', tracks: 'both' },
             { flag: FEATURE_FLAGS.TOWBOOK_CSV_EXPORT, label: 'Towbook CSV export', tracks: 'enf' },
             { flag: FEATURE_FLAGS.API_ACCESS_READ_ONLY, label: 'Read-only API access', tracks: 'enf' },
-            { flag: FEATURE_FLAGS.DRIVER_PERFORMANCE_REPORTS, label: 'Driver performance reports', tracks: 'enf' },
-            { flag: FEATURE_FLAGS.AI_CHATBOT_TEXT, label: 'AI chatbot (text)', tracks: 'both' },
-            { flag: FEATURE_FLAGS.AI_CHATBOT_AVATAR, label: 'AI chatbot (avatar)', tracks: 'both' },
             { flag: FEATURE_FLAGS.PRIORITY_SUPPORT, label: 'Priority support', tracks: 'both' },
-            { flag: FEATURE_FLAGS.WHITE_GLOVE_ONBOARDING, label: 'White-glove onboarding', tracks: 'both' },
           ]
           const visibleFeatures = FEATURE_SUMMARY.filter(row =>
             row.tracks === 'both' || (row.tracks === 'enf' && isEnf) || (row.tracks === 'pm' && isPM)

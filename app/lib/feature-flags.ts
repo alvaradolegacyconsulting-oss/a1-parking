@@ -54,15 +54,10 @@ export const FEATURE_FLAGS = {
   ADVANCED_ANALYTICS: 'advanced_analytics',
   CUSTOM_DATE_RANGE_EXPORTS: 'custom_date_range_exports',
   ADVANCED_PDF_REPORTS: 'advanced_pdf_reports',
-  AI_CHATBOT_TEXT: 'ai_chatbot_text',
-  AI_CHATBOT_AVATAR: 'ai_chatbot_avatar',
-  LIVE_CHAT_SUPPORT: 'live_chat_support',
   PRIORITY_SUPPORT: 'priority_support',
-  WHITE_GLOVE_ONBOARDING: 'white_glove_onboarding',
   DEDICATED_ACCOUNT_MANAGER: 'dedicated_account_manager',
 
   // Tiered, enforcement-only:
-  DRIVER_PERFORMANCE_REPORTS: 'driver_performance_reports',
   TOWBOOK_CSV_EXPORT: 'towbook_csv_export',
   API_ACCESS_READ_ONLY: 'api_access_read_only',
   VIDEO_UPLOADS_LIMITED: 'video_uploads_limited',

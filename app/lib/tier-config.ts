@@ -64,18 +64,13 @@ const ENF_STARTER: TierConfigShape = {
   // tiered
   [F.LEASING_AGENT_ROLE]: false,
   [F.ADVANCED_ANALYTICS]: false,
-  [F.DRIVER_PERFORMANCE_REPORTS]: false,
   [F.CUSTOM_DATE_RANGE_EXPORTS]: false,
   [F.ADVANCED_PDF_REPORTS]: false,
   [F.TOWBOOK_CSV_EXPORT]: false,
   [F.API_ACCESS_READ_ONLY]: false,
   [F.VIDEO_UPLOADS_LIMITED]: false,
   [F.VIDEO_UPLOADS_FULL]: false,
-  [F.AI_CHATBOT_TEXT]: false,
-  [F.AI_CHATBOT_AVATAR]: false,
-  [F.LIVE_CHAT_SUPPORT]: false,
   [F.PRIORITY_SUPPORT]: false,
-  [F.WHITE_GLOVE_ONBOARDING]: false,
   [F.DEDICATED_ACCOUNT_MANAGER]: false,
 }
 
@@ -91,12 +86,9 @@ const ENF_GROWTH: TierConfigShape = {
 
   [F.LEASING_AGENT_ROLE]: true,
   [F.ADVANCED_ANALYTICS]: true,
-  [F.DRIVER_PERFORMANCE_REPORTS]: true,
   [F.CUSTOM_DATE_RANGE_EXPORTS]: true,
   [F.TOWBOOK_CSV_EXPORT]: true,
   [F.VIDEO_UPLOADS_LIMITED]: true,
-  [F.AI_CHATBOT_TEXT]: true,
-  [F.LIVE_CHAT_SUPPORT]: true,
 }
 
 // Enforcement: legacy ──────────────────────────────────────────────────
@@ -115,9 +107,7 @@ const ENF_LEGACY: TierConfigShape = {
   [F.API_ACCESS_READ_ONLY]: true,
   [F.VIDEO_UPLOADS_LIMITED]: false, // matrix: legacy = full only, limited off
   [F.VIDEO_UPLOADS_FULL]: true,
-  [F.AI_CHATBOT_AVATAR]: true,
   [F.PRIORITY_SUPPORT]: true,
-  [F.WHITE_GLOVE_ONBOARDING]: true,
   [F.DEDICATED_ACCOUNT_MANAGER]: true,
 }
 
@@ -165,7 +155,6 @@ const PM_ESSENTIAL: TierConfigShape = {
   [F.DISPUTE_REQUESTS]: false,
   [F.FINDMYTOWEDCAR_LINKS]: false,
   [F.CSV_EXPORT_BASIC]: false,
-  [F.DRIVER_PERFORMANCE_REPORTS]: false,
   [F.TOWBOOK_CSV_EXPORT]: false,
   [F.API_ACCESS_READ_ONLY]: false,
   [F.VIDEO_UPLOADS_LIMITED]: false,
@@ -176,11 +165,7 @@ const PM_ESSENTIAL: TierConfigShape = {
   [F.ADVANCED_ANALYTICS]: false,
   [F.CUSTOM_DATE_RANGE_EXPORTS]: false,
   [F.ADVANCED_PDF_REPORTS]: false,
-  [F.AI_CHATBOT_TEXT]: false,
-  [F.AI_CHATBOT_AVATAR]: false,
-  [F.LIVE_CHAT_SUPPORT]: false,
   [F.PRIORITY_SUPPORT]: false,
-  [F.WHITE_GLOVE_ONBOARDING]: false,
   [F.DEDICATED_ACCOUNT_MANAGER]: false,
 }
 
@@ -194,8 +179,6 @@ const PM_PROFESSIONAL: TierConfigShape = {
   [F.LEASING_AGENT_ROLE]: true,
   [F.ADVANCED_ANALYTICS]: true,
   [F.CUSTOM_DATE_RANGE_EXPORTS]: true,
-  [F.AI_CHATBOT_TEXT]: true,
-  [F.LIVE_CHAT_SUPPORT]: true,
 }
 
 // PM: enterprise ───────────────────────────────────────────────────────
@@ -206,9 +189,7 @@ const PM_ENTERPRISE: TierConfigShape = {
   [F.MAX_VISITOR_PASS_DURATION_HOURS]: 48,
 
   [F.ADVANCED_PDF_REPORTS]: true,
-  [F.AI_CHATBOT_AVATAR]: true,
   [F.PRIORITY_SUPPORT]: true,
-  [F.WHITE_GLOVE_ONBOARDING]: true,
   [F.DEDICATED_ACCOUNT_MANAGER]: true,
 }
 
