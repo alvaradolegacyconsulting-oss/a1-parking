@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useResolvedLogo } from './lib/logo'
 
 const GOLD = '#C9A227'
@@ -13,6 +13,17 @@ export default function Landing() {
   const [contact, setContact] = useState({ name: '', email: '', type: 'General inquiry', message: '' })
   const [activeTrack, setActiveTrack] = useState<'enforcement' | 'pm'>('enforcement')
   const logoUrl = useResolvedLogo()
+
+  // B62.2: support deep-link from "Learn more about Enforcement / Property
+  // Management" links in the Audience Split section. URL params like
+  // ?track=enforcement or ?track=pm pre-select the pricing tab on mount.
+  // Plain anchor (#pricing) without param falls through to the default.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const t = params.get('track')
+    if (t === 'enforcement' || t === 'pm') setActiveTrack(t)
+  }, [])
 
   function sendContact() {
     const subject = encodeURIComponent(`[${contact.type}] from ${contact.name}`)
@@ -120,9 +131,120 @@ export default function Landing() {
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <a href="#contact" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Request Access →</a>
-          <a href="#features" style={{ background: CARD_BG, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>See how it works</a>
+          <a href="#how-it-works" style={{ background: CARD_BG, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>See how it works</a>
         </div>
         <p style={{ color: MUTED, fontSize: 12, marginTop: 28 }}>Licensed for Texas operations · Harris County jurisdiction</p>
+      </section>
+
+      {/* ── AUDIENCE SPLIT (B62.2) ── */}
+      <section id="audiences" style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '80px 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 48 }}>
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em' }}>Built for two kinds of operators</h2>
+            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '12px auto 0' }} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20 }}>
+            {/* Towing Companies card */}
+            <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 32 }}>
+              <div style={{ fontSize: 40, marginBottom: 16 }}>🚛</div>
+              <h3 style={{ color: TEXT, fontSize: 22, fontWeight: 700, margin: '0 0 12px' }}>Towing Companies</h3>
+              <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 18px' }}>
+                If you patrol properties and enforce parking rules, ShieldMyLot gives your drivers the tools to do it right.
+              </p>
+              <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 22px' }}>
+                {[
+                  'Mobile-friendly violation submission with photo and video evidence',
+                  'Plate scanning and exempt plate cross-reference',
+                  'Tow ticket generation that meets Texas Chapter 2308 requirements',
+                  'Towbook CSV export (Growth+ tiers)',
+                  'Full audit trails for dispute defense',
+                ].map((item, i) => (
+                  <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
+                    <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 2 }}>✓</span>
+                    <span style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.55 }}>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <a href="#pricing?track=enforcement" onClick={(e) => { e.preventDefault(); setActiveTrack('enforcement'); document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }) }}
+                style={{ color: GOLD, fontSize: 14, fontWeight: 600, textDecoration: 'none', cursor: 'pointer' }}>
+                Learn more about Enforcement →
+              </a>
+            </div>
+
+            {/* Property Managers card */}
+            <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 32 }}>
+              <div style={{ fontSize: 40, marginBottom: 16 }}>🏢</div>
+              <h3 style={{ color: TEXT, fontSize: 22, fontWeight: 700, margin: '0 0 12px' }}>Property Managers</h3>
+              <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 18px' }}>
+                If you manage residential or commercial properties with parking, ShieldMyLot helps you set the rules and let your towing partner enforce them.
+              </p>
+              <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 22px' }}>
+                {[
+                  'QR code resident self-registration',
+                  'Visitor pass system (resident-issued or manager-issued)',
+                  'Exempt plate management per property',
+                  'Multi-property dashboard',
+                  'Coordination with your towing partner',
+                ].map((item, i) => (
+                  <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
+                    <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 2 }}>✓</span>
+                    <span style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.55 }}>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <a href="#pricing?track=pm" onClick={(e) => { e.preventDefault(); setActiveTrack('pm'); document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }) }}
+                style={{ color: GOLD, fontSize: 14, fontWeight: 600, textDecoration: 'none', cursor: 'pointer' }}>
+                Learn more about Property Management →
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── HOW IT WORKS (B62.2) ── */}
+      <section id="how-it-works" style={{ padding: '80px 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 40 }}>
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>How it works</h2>
+            <p style={{ color: MUTED, fontSize: 16, margin: '0 0 24px' }}>From signup to first violation in days, not weeks.</p>
+            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '0 auto 28px' }} />
+            {/* Reuse pricing-section tab pattern */}
+            <div style={{ display: 'inline-flex', background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 4 }}>
+              <button onClick={() => setActiveTrack('enforcement')}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'enforcement' ? GOLD : 'transparent', color: activeTrack === 'enforcement' ? '#0a0d14' : MUTED }}>
+                For Enforcement
+              </button>
+              <button onClick={() => setActiveTrack('pm')}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'pm' ? GOLD : 'transparent', color: activeTrack === 'pm' ? '#0a0d14' : MUTED }}>
+                For Property Management
+              </button>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20 }}>
+            {(activeTrack === 'enforcement'
+              ? [
+                  { title: 'Set up your account', body: 'Configure company profile, add admin users, verify your tier.' },
+                  { title: 'Add properties', body: 'Document your towing authorizations, configure exempt plates per property.' },
+                  { title: 'Provision drivers', body: 'Add field driver accounts and train them on submission workflow.' },
+                  { title: 'Start enforcing', body: 'Drivers submit violations with photo/video evidence; tickets generate automatically.' },
+                ]
+              : [
+                  { title: 'Set up your account', body: 'Configure company profile, add property managers, verify your tier.' },
+                  { title: 'Add properties', body: 'Configure visitor pass rules and exempt plate lists per property.' },
+                  { title: 'Distribute QR codes', body: 'Residents scan and self-register their vehicles.' },
+                  { title: 'Manage day-to-day', body: 'Approve registrations, issue visitor passes, handle disputes.' },
+                ]
+            ).map((step, i) => (
+              <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 24, position: 'relative' }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(201,162,39,0.15)', border: `1px solid ${GOLD}`, color: GOLD, fontWeight: 700, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                  {i + 1}
+                </div>
+                <h3 style={{ color: TEXT, fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>{step.title}</h3>
+                <p style={{ color: MUTED, fontSize: 14, lineHeight: 1.65, margin: 0 }}>{step.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       {/* ── FEATURES ── */}
