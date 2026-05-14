@@ -98,6 +98,31 @@ export default function Landing() {
   return (
     <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'system-ui, Arial, sans-serif' }}>
 
+      {/* B62.4: JSON-LD structured data. Inline in page.tsx rather than
+          layout.tsx so the schema lives next to the content it describes.
+          Service schema (not SoftwareApplication) to avoid the offers/
+          price requirement — schema stays consistent with page copy: no
+          pricing claims, no ratings, no review counts. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "Service",
+            "name": "ShieldMyLot™",
+            "description": "Texas-only parking enforcement platform built around Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
+            "provider": {
+              "@type": "Organization",
+              "name": "Alvarado Legacy Consulting LLC",
+              "url": "https://shieldmylot.com"
+            },
+            "serviceType": "Parking Enforcement & Property Management Platform",
+            "areaServed": { "@type": "State", "name": "Texas" },
+            "url": "https://shieldmylot.com"
+          })
+        }}
+      />
+
       {/* ── NAV ── */}
       <nav style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(10,13,20,0.92)', backdropFilter: 'blur(12px)', borderBottom: `1px solid ${BORDER}`, padding: '0 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
@@ -139,7 +164,7 @@ export default function Landing() {
       </section>
 
       {/* ── AUDIENCE SPLIT (B62.2) ── */}
-      <section id="audiences" style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '80px 24px' }}>
+      <section id="audiences" style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 48 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em' }}>Built for two kinds of operators</h2>
@@ -204,7 +229,7 @@ export default function Landing() {
       </section>
 
       {/* ── HOW IT WORKS (B62.2) ── */}
-      <section id="how-it-works" style={{ padding: '80px 24px' }}>
+      <section id="how-it-works" style={{ padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>How it works</h2>
@@ -250,7 +275,7 @@ export default function Landing() {
       </section>
 
       {/* ── FEATURES (refined in B62.3) ── */}
-      <section id="features" style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '80px 24px' }}>
+      <section id="features" style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 48 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Everything you need</h2>
@@ -289,7 +314,7 @@ export default function Landing() {
       </section>
 
       {/* ── PRICING ── */}
-      <section id="pricing" style={{ padding: '80px 24px' }}>
+      <section id="pricing" style={{ padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Simple, hybrid pricing</h2>
@@ -306,12 +331,14 @@ export default function Landing() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24 }}>
             {(activeTrack === 'enforcement' ? enfTiers : pmTiers).map((tier: any, i) => (
-              <div key={i} style={{ background: tier.popular ? 'rgba(201,162,39,0.06)' : CARD_BG, border: `1px solid ${tier.popular ? 'rgba(201,162,39,0.4)' : BORDER}`, borderRadius: 20, padding: 28, position: 'relative' }}>
+              <div key={i} style={{ background: tier.popular ? 'rgba(201,162,39,0.08)' : CARD_BG, border: `1px solid ${tier.popular ? 'rgba(201,162,39,0.5)' : BORDER}`, borderRadius: 20, padding: 36, position: 'relative', boxShadow: tier.popular ? '0 0 0 1px rgba(201,162,39,0.25), 0 8px 32px rgba(201,162,39,0.06)' : 'none' }}>
+                {/* B62.4: MOST POPULAR badge integrated into card header (no longer floats above).
+                    Richer gold accent + a thin gold rule across the top of the card. */}
                 {tier.popular && (
-                  <div style={{ position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: GOLD, color: '#0a0d14', fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 10, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
-                    Most popular
+                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, background: GOLD, color: '#0a0d14', fontSize: 11, fontWeight: 700, padding: '6px 12px', borderTopLeftRadius: 20, borderTopRightRadius: 20, letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'center' }}>
+                    ★ Most Popular
                   </div>
                 )}
                 {tier.badge && !tier.popular && (
@@ -319,7 +346,7 @@ export default function Landing() {
                     {tier.badge}
                   </div>
                 )}
-                <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>{activeTrack === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</p>
+                <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: `${tier.popular ? '14px' : '0'} 0 6px` }}>{activeTrack === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</p>
                 <h3 style={{ color: TEXT, fontSize: 22, fontWeight: 700, margin: '0 0 16px' }}>{tier.name}</h3>
                 {tier.enterprise ? (
                   <div style={{ marginBottom: 20 }}>
@@ -383,7 +410,7 @@ export default function Landing() {
           Replaces the B55 Phase 1 testimonials placeholder. No customer
           testimonials until real customers exist + have written authorization
           to be quoted with company attribution. */}
-      <section id="about" style={{ background: 'rgba(255,255,255,0.025)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '80px 24px' }}>
+      <section id="about" style={{ background: 'rgba(255,255,255,0.025)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 48 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Built in Texas, for Texas</h2>
@@ -431,8 +458,37 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── WHAT TO EXPECT (B62.4) ── */}
+      <section id="what-to-expect" style={{ background: 'rgba(255,255,255,0.025)', borderTop: `1px solid ${BORDER}`, padding: '104px 24px' }}>
+        <div style={{ maxWidth: 900, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 40 }}>
+            <h2 style={{ fontSize: 32, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>What happens after you reach out</h2>
+            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '12px auto 0' }} />
+          </div>
+          <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {[
+              { title: 'We respond within one business day', body: 'You’ll hear back from us at the email you provide. Most initial responses include a few clarifying questions about your operation and a suggested next step.' },
+              { title: 'We learn about your operation (15–30 min call)', body: 'A short conversation by video or phone to understand your size, properties, current workflow, and what success looks like for you. No sales pressure — this is mutual fit-checking.' },
+              { title: 'We send a service agreement', body: 'If we’re a good match, you’ll receive a service agreement with pricing tailored to your operation. Standard tier pricing for most customers; custom pricing for unusual situations.' },
+              { title: 'We activate your account', body: 'Once the agreement is signed and your account is ready, we provision your team and walk you through setup. You’re typically operating within a week.' },
+            ].map((step, i) => (
+              <li key={i} style={{ display: 'flex', gap: 16, alignItems: 'flex-start', background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '18px 22px' }}>
+                <div style={{ flexShrink: 0, width: 32, height: 32, borderRadius: '50%', background: 'rgba(201,162,39,0.15)', border: `1px solid ${GOLD}`, color: GOLD, fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {i + 1}
+                </div>
+                <div>
+                  <h3 style={{ color: TEXT, fontSize: 15, fontWeight: 700, margin: '0 0 6px' }}>{step.title}</h3>
+                  <p style={{ color: MUTED, fontSize: 14, lineHeight: 1.65, margin: 0 }}>{step.body}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+          {/* B54: self-serve video callout goes here when HeyGen videos ship */}
+        </div>
+      </section>
+
       {/* ── CONTACT FORM ── */}
-      <section id="contact" style={{ padding: '80px 24px' }}>
+      <section id="contact" style={{ padding: '104px 24px' }}>
         <div style={{ maxWidth: 600, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Get in touch</h2>

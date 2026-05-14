@@ -14,19 +14,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ShieldMyLot™ — Parking Enforcement & Management Platform",
-  description: "ShieldMyLot is a parking enforcement and property management platform for Texas towing companies and property managers. A product of Alvarado Legacy Consulting LLC.",
+  // B62.4: Texas-first positioning + Chapter 2308 specificity in title + desc.
+  title: "ShieldMyLot™ — Texas Parking Enforcement Platform | Chapter 2308 Compliance",
+  description: "Texas-only parking enforcement platform built around Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
   openGraph: {
-    title: "ShieldMyLot — Parking Enforcement & Management Platform",
-    description: "Resident registration, visitor passes, violation tracking, and tow ticketing — one platform for Texas property teams.",
+    title: "ShieldMyLot — Texas Parking Enforcement Platform",
+    description: "Texas-only parking enforcement platform built around Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
     url: "https://shieldmylot.com",
     siteName: "ShieldMyLot",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "ShieldMyLot — Parking Enforcement & Management Platform",
-    description: "Resident registration, visitor passes, violation tracking, and tow ticketing — one platform for Texas property teams.",
+    title: "ShieldMyLot — Texas Parking Enforcement Platform",
+    description: "Texas-only parking enforcement platform built around Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
   },
 };
 
