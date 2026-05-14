@@ -101,23 +101,28 @@ export default function Landing() {
         </div>
       </nav>
 
-      {/* ── HERO ── */}
-      <section style={{ maxWidth: 1100, margin: '0 auto', padding: '100px 24px 80px', textAlign: 'center' }}>
-        <div style={{ display: 'inline-block', background: 'rgba(201,162,39,0.1)', border: `1px solid rgba(201,162,39,0.3)`, borderRadius: 20, padding: '6px 16px', fontSize: 12, color: GOLD, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 24 }}>
+      {/* ── HERO ──
+          B62.1 (2026-05-19): updated headline + subhead + primary CTA label.
+          Secondary CTA stays on #features until B62.2 lands #how-it-works.
+          Logo prominence + accent line + breathing room added. */}
+      <section style={{ maxWidth: 1100, margin: '0 auto', padding: '120px 24px 100px', textAlign: 'center' }}>
+        <img src={logoUrl} alt="ShieldMyLot" onError={e => (e.currentTarget.style.display = 'none')}
+          style={{ width: 72, height: 72, borderRadius: 14, border: `1px solid ${GOLD}`, marginBottom: 28 }} />
+        <div style={{ display: 'inline-block', background: 'rgba(201,162,39,0.1)', border: `1px solid rgba(201,162,39,0.3)`, borderRadius: 20, padding: '6px 16px', fontSize: 12, color: GOLD, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28 }}>
           Texas Parking Management Platform
         </div>
-        <h1 style={{ fontSize: 'clamp(36px, 6vw, 64px)', fontWeight: 800, lineHeight: 1.1, margin: '0 0 24px', letterSpacing: '-0.03em' }}>
-          Stop unauthorized parking.<br />
-          <span style={{ color: GOLD }}>Start enforcing.</span>
+        <h1 style={{ fontSize: 'clamp(36px, 6vw, 64px)', fontWeight: 800, lineHeight: 1.15, margin: '0 0 16px', letterSpacing: '-0.03em' }}>
+          The parking platform built for <span style={{ color: GOLD }}>Texas operators.</span>
         </h1>
-        <p style={{ fontSize: 18, color: MUTED, maxWidth: 580, margin: '0 auto 40px', lineHeight: 1.7 }}>
-          ShieldMyLot™ gives property managers and towing companies a complete parking enforcement system — resident registration, visitor passes, violation tracking, and tow ticketing in one platform.
+        <div style={{ width: 60, height: 2, background: GOLD, margin: '0 auto 28px', opacity: 0.7 }} />
+        <p style={{ fontSize: 18, color: MUTED, maxWidth: 620, margin: '0 auto 44px', lineHeight: 1.7 }}>
+          Resident registration, visitor passes, violation tracking, and tow ticketing — designed specifically for Texas Chapter 2308 compliance. Built for towing companies and property managers.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <a href="#contact" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Get started →</a>
+          <a href="#contact" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Request Access →</a>
           <a href="#features" style={{ background: CARD_BG, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>See how it works</a>
         </div>
-        <p style={{ color: MUTED, fontSize: 12, marginTop: 20 }}>Licensed for Texas operations · Harris County jurisdiction</p>
+        <p style={{ color: MUTED, fontSize: 12, marginTop: 28 }}>Licensed for Texas operations · Harris County jurisdiction</p>
       </section>
 
       {/* ── FEATURES ── */}
@@ -203,7 +208,7 @@ export default function Landing() {
                   </a>
                 ) : (
                   <a href="#contact" style={{ display: 'block', textAlign: 'center', background: tier.popular ? GOLD : CARD_BG, color: tier.popular ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${tier.popular ? GOLD : BORDER}` }}>
-                    Get started
+                    Request Access
                   </a>
                 )}
               </div>
@@ -241,7 +246,7 @@ export default function Landing() {
         <div style={{ maxWidth: 600, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Get in touch</h2>
-            <p style={{ color: MUTED, fontSize: 16, margin: 0 }}>Questions about ShieldMyLot? We'd love to hear from you.</p>
+            <p style={{ color: MUTED, fontSize: 16, margin: 0 }}>Tell us about your operation and we&apos;ll respond within one business day.</p>
           </div>
           <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 40 }}>
             <label style={labelStyle}>Name</label>
@@ -265,8 +270,11 @@ export default function Landing() {
 
             <button onClick={sendContact} disabled={!contact.name || !contact.email || !contact.message}
               style={{ width: '100%', padding: '14px', background: (!contact.name || !contact.email || !contact.message) ? '#2a2f3d' : GOLD, color: (!contact.name || !contact.email || !contact.message) ? MUTED : '#0a0d14', fontWeight: 'bold', fontSize: 15, border: 'none', borderRadius: 10, cursor: (!contact.name || !contact.email || !contact.message) ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
-              Send message
+              Request Access
             </button>
+            <p style={{ color: MUTED, fontSize: 13, textAlign: 'center', margin: '16px 0 0' }}>
+              Prefer to email directly? Reach us at <a href="mailto:support@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none', fontWeight: 600 }}>support@shieldmylot.com</a>
+            </p>
           </div>
         </div>
       </section>
