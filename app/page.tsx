@@ -84,13 +84,15 @@ export default function Landing() {
   // re-introduce testimonials until real customers exist and have agreed in
   // writing to be quoted with company attribution.
 
+  // B62.3: refined feature tiles — copy updated + tier-availability
+  // hint added to each. Six honest tiles, no overpromised claims.
   const features = [
-    { icon: '🚗', title: 'Plate-based enforcement', body: 'Every registered vehicle gets a digital permit tied to their plate. Drivers verify against the live registry in seconds.' },
-    { icon: '📱', title: 'QR code self-registration', body: 'Residents scan a property QR code, register their vehicles in minutes, and get instant manager approval.' },
-    { icon: '🎫', title: 'Visitor pass system', body: 'Residents issue digital visitor passes to guests. Passes auto-expire. No paper, no clipboards, no disputes.' },
-    { icon: '📊', title: 'Analytics & reporting', body: 'Track violations, pass usage, tow events, and occupancy trends across all your properties from one dashboard.' },
-    { icon: '⚖️', title: 'Dispute management', body: 'Built-in dispute workflow lets residents contest violations with evidence. Managers resolve in-app, not over email.' },
-    { icon: '🏗️', title: 'Multi-property management', body: 'Manage your entire portfolio from one login. Each property has its own rules, managers, and resident database.' },
+    { icon: '🚗', title: 'Plate-based enforcement', body: 'Every registered vehicle gets a digital permit tied to their plate. Drivers verify against the live registry in seconds.', tier: 'Available on all tiers' },
+    { icon: '📱', title: 'QR code self-registration', body: 'Residents scan a property QR code, register their vehicles in minutes, and get manager approval.', tier: 'Available on all tiers' },
+    { icon: '🎫', title: 'Visitor pass system', body: 'Residents issue digital visitor passes to guests. Passes auto-expire. Manager-issued passes also available.', tier: 'Available on Property Management tiers' },
+    { icon: '📊', title: 'Analytics & reporting', body: 'Track violations, pass usage, tow events, and trends across all your properties.', tier: 'Basic: All tiers · Advanced: Growth+ and Professional+' },
+    { icon: '⚖️', title: 'Dispute management', body: 'Built-in dispute workflow with full audit trail. Residents file, managers respond, all evidence retained.', tier: 'Available on all tiers' },
+    { icon: '🏗️', title: 'Multi-property management', body: 'Manage your entire portfolio from one login. Each property has its own rules, managers, and resident database.', tier: 'Available on all tiers (property count varies by tier)' },
   ]
 
   return (
@@ -247,23 +249,43 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── FEATURES ── */}
+      {/* ── FEATURES (refined in B62.3) ── */}
       <section id="features" style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '80px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ textAlign: 'center', marginBottom: 56 }}>
+          <div style={{ textAlign: 'center', marginBottom: 48 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Everything you need</h2>
-            <p style={{ color: MUTED, fontSize: 16, margin: 0 }}>One platform for enforcement companies and property managers alike.</p>
+            <p style={{ color: MUTED, fontSize: 16, margin: 0 }}>Built around the workflows of Texas towing operators and property managers.</p>
+            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '16px auto 0' }} />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
             {features.map((f, i) => (
-              <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 28 }}>
-                <div style={{ fontSize: 28, marginBottom: 14 }}>{f.icon}</div>
-                <h3 style={{ color: TEXT, fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>{f.title}</h3>
-                <p style={{ color: MUTED, fontSize: 14, lineHeight: 1.7, margin: 0 }}>{f.body}</p>
+              <div key={i} className="b62-feature-tile" style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 28, display: 'flex', flexDirection: 'column', transition: 'transform 0.2s, border-color 0.2s' }}>
+                <div style={{ fontSize: 32, marginBottom: 14, color: GOLD }}>{f.icon}</div>
+                <h3 style={{ color: TEXT, fontSize: 17, fontWeight: 700, margin: '0 0 10px' }}>{f.title}</h3>
+                <p style={{ color: MUTED, fontSize: 14, lineHeight: 1.7, margin: 0, flex: 1 }}>{f.body}</p>
+                {f.tier && (
+                  <p style={{ color: GOLD, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '16px 0 0', paddingTop: 14, borderTop: `1px solid ${BORDER}` }}>
+                    {f.tier}
+                  </p>
+                )}
               </div>
             ))}
           </div>
+          <div style={{ textAlign: 'center', marginTop: 32 }}>
+            <a href="#pricing" style={{ color: GOLD, fontSize: 14, fontWeight: 600, textDecoration: 'none' }}>
+              See full feature comparison by tier →
+            </a>
+          </div>
         </div>
+        {/* B62.3: hover state for feature tiles. Inline style can't express
+            :hover, so a small style tag scoped by className lifts + gold-borders
+            on hover. Cheaper than dragging in a CSS module for one rule. */}
+        <style>{`
+          .b62-feature-tile:hover {
+            transform: translateY(-2px);
+            border-color: rgba(201,162,39,0.4) !important;
+          }
+        `}</style>
       </section>
 
       {/* ── PRICING ── */}
@@ -357,11 +379,57 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* CREDIBILITY SECTION — Phase 2 deliverable
-          Will replace this with a founder/company credibility block referencing
-          Alvarado Legacy Consulting LLC. Do not add testimonials until real customers
-          exist and have agreed in writing to be quoted with company attribution.
-          (B55: removed fabricated "Trusted by Houston property teams" section.) */}
+      {/* ── CREDIBILITY (B62.3) ──
+          Replaces the B55 Phase 1 testimonials placeholder. No customer
+          testimonials until real customers exist + have written authorization
+          to be quoted with company attribution. */}
+      <section id="about" style={{ background: 'rgba(255,255,255,0.025)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '80px 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 48 }}>
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Built in Texas, for Texas</h2>
+            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '12px auto 0' }} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 24, marginBottom: 40 }}>
+            {/* Block 1 — About the company */}
+            <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 32 }}>
+              <h3 style={{ color: TEXT, fontSize: 18, fontWeight: 700, margin: '0 0 14px' }}>A product of Alvarado Legacy Consulting LLC</h3>
+              <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 14px' }}>
+                ShieldMyLot is built and operated by Alvarado Legacy Consulting LLC, a Houston-based consulting firm specializing in operational software for Texas businesses.
+              </p>
+              <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: 0 }}>
+                We work directly with Texas towing operators and property managers to understand the realities of parking enforcement under Chapter 2308 — and we built ShieldMyLot to fit how the work actually happens.
+              </p>
+            </div>
+            {/* Block 2 — Texas focus */}
+            <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 32 }}>
+              <h3 style={{ color: TEXT, fontSize: 18, fontWeight: 700, margin: '0 0 14px' }}>Designed for Texas Chapter 2308 compliance</h3>
+              <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 14px' }}>
+                Every feature in ShieldMyLot is shaped by Texas Occupations Code Chapter 2308 — the Texas Towing and Booting Act.
+              </p>
+              <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 14px' }}>
+                From tow ticket content requirements to evidence retention timelines to dispute workflows, the platform is built around the law rather than retrofitted to comply with it after the fact.
+              </p>
+              <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: 0 }}>
+                Operating outside Texas? ShieldMyLot isn&apos;t the right fit for you yet — we focus on doing one state exceptionally well rather than many states adequately.
+              </p>
+            </div>
+          </div>
+          {/* Trust signals — emoji per the locked icon-vocabulary decision */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 12 }}>
+            {[
+              { icon: '🛡️', label: 'Texas-only operations' },
+              { icon: '📋', label: 'Chapter 2308 framework' },
+              { icon: '🔒', label: 'Encrypted data, audit-trailed actions' },
+              { icon: '👥', label: 'B2B support model' },
+            ].map(b => (
+              <div key={b.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: CARD_BG, border: `1px solid rgba(201,162,39,0.25)`, borderRadius: 999, padding: '8px 16px' }}>
+                <span style={{ fontSize: 16 }}>{b.icon}</span>
+                <span style={{ color: GOLD, fontSize: 12, fontWeight: 600, letterSpacing: '0.04em' }}>{b.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* ── CONTACT FORM ── */}
       <section id="contact" style={{ padding: '80px 24px' }}>
