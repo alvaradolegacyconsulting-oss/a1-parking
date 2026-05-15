@@ -6,6 +6,8 @@ import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature } from '../lib/tier'
+// B65.2: account_state gate (spec §3.4) — defense in depth with login dispatch.
+import { gateAccountState, AccountState } from '../lib/account-state'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { normalizePlate } from '../lib/plate'
 import { uploadVideoResumable } from '../lib/video-upload'
@@ -23,6 +25,11 @@ export default function CompanyAdminPortal() {
   const [role, setRole] = useState<any>(null)
   const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null)
   const [loading, setLoading] = useState(true)
+  // B65.2: surfaces a read-only banner when account_state='suspended' reaches
+  // the portal (the login gate is the primary stop; this is defense in depth).
+  // No code path produces suspended in B65.2 — banner is visible-only, the
+  // write-disable sweep lands when suspension actually becomes possible.
+  const [accountSuspended, setAccountSuspended] = useState(false)
   const resolvedLogo = useResolvedLogo(typeof window !== 'undefined' ? localStorage.getItem('company_logo') : null)
 
   const [properties, setProperties] = useState<any[]>([])
@@ -150,6 +157,30 @@ export default function CompanyAdminPortal() {
 
     setUser(authUser)
     setRole(roleData)
+
+    // B65.2: account_state gate (spec §3.4). Admin role has no company, so
+    // it skips the gate entirely. For company_admin, fetch the lifecycle
+    // state and route accordingly:
+    //   active      → fall through, normal portal
+    //   configuring → /signup/redeem/verify (finish activation; user stays authed)
+    //   cancelled   → /account-cancelled (signOut + hard redirect)
+    //   suspended   → render dashboard but flip the read-only banner state on
+    if (roleData.role !== 'admin' && roleData.company) {
+      const { data: companyRow } = await supabase
+        .from('companies')
+        .select('account_state')
+        .ilike('name', roleData.company)
+        .maybeSingle()
+      const gate = gateAccountState(companyRow?.account_state as AccountState | null | undefined)
+      if (gate.kind === 'redirect') {
+        if (gate.reason === 'cancelled') await supabase.auth.signOut()
+        window.location.href = gate.href
+        return
+      }
+      if (gate.kind === 'allow_with_banner') {
+        setAccountSuspended(true)
+      }
+    }
 
     let props: any[] = []
     if (roleData.role === 'admin') {
@@ -1500,6 +1531,16 @@ export default function CompanyAdminPortal() {
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       <div style={{ maxWidth:'540px', margin:'0 auto' }}>
+
+        {accountSuspended && (
+          <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px', display:'flex', alignItems:'center', gap:'10px' }}>
+            <span style={{ fontSize:'18px' }}>⚠️</span>
+            <div>
+              <p style={{ color:'#f44336', fontWeight:'bold', fontSize:'13px', margin:'0' }}>Account suspended</p>
+              <p style={{ color:'#fca5a5', fontSize:'12px', margin:'2px 0 0' }}>Your dashboard is in read-only mode. Contact support@shieldmylot.com to reactivate.</p>
+            </div>
+          </div>
+        )}
 
         <div style={{ marginBottom:'16px', textAlign:'center' }}>
           <img src={resolvedLogo} alt={role?.company || 'ShieldMyLot'}

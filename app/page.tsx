@@ -1,6 +1,10 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useResolvedLogo } from './lib/logo'
+// B65.2: tier card data moved to app/lib/tier-display.ts so /signup and the
+// landing page render from the same source. No data changes — same arrays,
+// imported instead of declared inline.
+import { ENFORCEMENT_TIERS, PROPERTY_MANAGEMENT_TIERS } from './lib/tier-display'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -38,46 +42,8 @@ export default function Landing() {
   }
   const labelStyle: React.CSSProperties = { color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }
 
-  const enfTiers = [
-    {
-      name: 'Starter', base: 129, perProp: 15, perDriver: 10,
-      features: ['Up to 3 properties', 'Unlimited violations', 'QR code registration', 'Resident portal', 'Visitor pass system', 'Driver app access', 'Email support'],
-    },
-    {
-      name: 'Growth', base: 149, perProp: 12, perDriver: 8, popular: true,
-      // B55: removed 'Camera scan assist' — plate scanning is available on all tiers,
-      // listing as Growth-only is inaccurate.
-      features: ['Up to 10 properties', 'Everything in Starter', 'Analytics dashboard', 'Bulk CSV upload', 'Dispute management', 'Priority email support'],
-    },
-    {
-      name: 'Legacy', base: 199, perProp: 10, perDriver: 6,
-      // B55: three overpromise corrections — White-label branding → logo upload reality;
-      // Custom integrations → Towbook CSV export (the only integration that exists);
-      // Dedicated account manager → Dedicated escalation path (no staffed AM today).
-      features: ['Unlimited properties', 'Everything in Growth', 'Custom logo on tow tickets and resident pages', 'Advanced analytics', 'Towbook CSV export', 'Dedicated escalation path', 'Priority email support'],
-    },
-    // B55: Enterprise removed as 4th Enforcement tier — replaced with a callout below
-    // the three-tier grid. PM Enterprise remains. tier.enterprise render branches kept
-    // in place as unreachable dead code per Jose's scope guard (deletion deferred to
-    // Phase 2 or a dedicated cleanup commit).
-  ]
-
-  const pmTiers = [
-    {
-      name: 'Essential', base: 129, perProp: 20,
-      features: ['Up to 3 properties', 'Resident portal', 'Visitor pass system', 'QR code registration', 'Manager dashboard', 'Email support'],
-    },
-    {
-      name: 'Professional', base: 199, perProp: 15, popular: true,
-      features: ['Up to 10 properties', 'Everything in Essential', 'Analytics dashboard', 'Registration QR codes', 'Dispute management', 'Priority email support'],
-    },
-    {
-      name: 'Enterprise', base: 279, perProp: 10,
-      // B55: same three overpromise corrections as Enf Legacy — overpromise reasoning
-      // applies regardless of track (no staffed AM, no white-label, no bespoke integrations).
-      features: ['Unlimited properties', 'Everything in Professional', 'Custom logo on tow tickets and resident pages', 'Towbook CSV export', 'Dedicated escalation path', 'Priority email support'],
-    },
-  ]
+  const enfTiers = ENFORCEMENT_TIERS
+  const pmTiers = PROPERTY_MANAGEMENT_TIERS
 
   // B55: testimonials array removed. Section markup also removed below — see
   // "CREDIBILITY SECTION — Phase 2 deliverable" placeholder comment. Do not

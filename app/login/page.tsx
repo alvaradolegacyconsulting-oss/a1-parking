@@ -3,6 +3,9 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import { applyTheme } from '../lib/theme'
 import { useResolvedLogo } from '../lib/logo'
+// B65.2: account_state gate. Login dispatch is the primary stop for non-active
+// states (CA portal entry has the same gate as defense in depth).
+import { gateAccountState, AccountState } from '../lib/account-state'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -77,7 +80,7 @@ export default function Login() {
     if (roleData.role !== 'admin' && roleData.company) {
       const { data: companyData } = await supabase
         .from('companies')
-        .select('id, is_active, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type, theme')
+        .select('id, is_active, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type, theme, account_state')
         .ilike('name', roleData.company)
         .single()
 
@@ -89,6 +92,40 @@ export default function Login() {
           support_phone: companyData.support_phone || null,
           support_email: companyData.support_email || null,
           support_website: companyData.support_website || null,
+        })
+        return
+      }
+
+      // B65.2: account_state gate (spec §3.4). All existing companies were
+      // backfilled to 'active' in B65.1, so no current user hits the non-allow
+      // branches. Wired now so B65.4's atomic activation can produce the
+      // 'configuring' state and have a real landing target.
+      const gate = gateAccountState(companyData?.account_state as AccountState | null | undefined)
+      if (gate.kind === 'redirect') {
+        setLoading(false)
+        if (gate.reason === 'configuring') {
+          // Don't sign out — user must stay authed to finish activation.
+          window.location.href = gate.href
+          return
+        }
+        // 'cancelled' — bounce out of the session and hand off to the
+        // contact-support route.
+        await supabase.auth.signOut()
+        window.location.href = gate.href
+        return
+      }
+      if (gate.kind === 'allow_with_banner') {
+        // 'suspended' — mirror the existing is_active=false UX with a
+        // different message. The CA portal's banner is the secondary layer
+        // for sessions that bypass login.
+        setLoading(false)
+        await supabase.auth.signOut()
+        setSuspendedCompany({
+          display_name: companyData?.display_name || 'Your Company',
+          support_phone: companyData?.support_phone || null,
+          support_email: companyData?.support_email || null,
+          support_website: companyData?.support_website || null,
+          message: 'Your account has been suspended. Please contact support to resolve this.',
         })
         return
       }

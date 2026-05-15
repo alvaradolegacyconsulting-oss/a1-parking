@@ -45,7 +45,14 @@ export default function NavBar() {
   const [companyName, setCompanyName] = useState<string | null>(null)
   const resolvedLogo = useResolvedLogo(companyLogo)
 
-  const hidden = pathname === '/login' || pathname === '/visitor' || pathname === '/visitor-select' || pathname.startsWith('/register')
+  // B65.2: /signup (public placeholder) and /signup/redeem* (B65.3+ auth flow)
+  // are pre-portal surfaces — hide NavBar so authenticated users browsing back
+  // to them don't see their portal nav. /account-cancelled is the gate target
+  // for cancelled accounts; hide nav there too.
+  const hidden = pathname === '/login' || pathname === '/visitor' || pathname === '/visitor-select'
+    || pathname.startsWith('/register')
+    || pathname.startsWith('/signup')
+    || pathname === '/account-cancelled'
 
   useEffect(() => {
     if (hidden) return
