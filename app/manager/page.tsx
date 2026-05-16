@@ -3,6 +3,11 @@ import { useState, useEffect } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
+// B70: PM-track manual plate lookup tab. hasFeature gate hides the tab
+// on non-PM tiers; the pm_plate_lookup RPC enforces role + property
+// scoping server-side regardless.
+import { hasFeature, getCompanyContext } from '../lib/tier'
+import { FEATURE_FLAGS } from '../lib/feature-flags'
 import SupportContact from '../components/SupportContact'
 import CredentialsModal from '../components/CredentialsModal'
 import PostConfirmationEditModal from '../components/PostConfirmationEditModal'
@@ -53,6 +58,12 @@ export default function ManagerPortal() {
   const [auditLoaded, setAuditLoaded] = useState(false)
   const [pendingResidents, setPendingResidents] = useState<any[]>([])
   const [residentNotes, setResidentNotes] = useState<Record<string, string>>({})
+  // B70: Plate Lookup tab state. Distinct name from the Spaces-tab
+  // `plateQuery` further down to avoid the variable collision.
+  const [lookupPlate, setLookupPlate] = useState('')
+  const [lookupBusy, setLookupBusy] = useState(false)
+  const [lookupResult, setLookupResult] = useState<{ result_type: 'resident' | 'visitor' | 'unauthorized'; unit_number: string | null; queriedPlate: string } | null>(null)
+  const [lookupError, setLookupError] = useState('')
   const [managerCompany, setManagerCompany] = useState('')
   const [managerEmail, setManagerEmail] = useState('')
   const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null)
@@ -277,6 +288,40 @@ export default function ManagerPortal() {
     else {
       await logAudit({ action: 'EDIT_SPACE', table_name: 'spaces', record_id: editingSpace.id, new_values: { space_number: editingSpace.space_number, status: editingSpace.status, assigned_to_unit: editingSpace.assigned_to_unit, assigned_to_plate: editingSpace.assigned_to_plate, property: manager.name } })
       setEditingSpace(null); fetchSpaces(manager.name)
+    }
+  }
+
+  // B70: Plate Lookup — calls the SECURITY DEFINER pm_plate_lookup RPC.
+  // RPC handles property scoping + audit write server-side; we just
+  // surface the narrow {result_type, unit_number} response.
+  async function runPlateLookup() {
+    const raw = lookupPlate.trim()
+    if (!raw) { setLookupError('Enter a plate to look up.'); return }
+    setLookupBusy(true)
+    setLookupError('')
+    setLookupResult(null)
+    try {
+      const { data, error } = await supabase.rpc('pm_plate_lookup', { p_plate: raw })
+      if (error) {
+        setLookupError(error.message || 'Lookup failed. Please try again.')
+        return
+      }
+      const result = (data || {}) as Record<string, unknown>
+      const kind = String(result.result_type || '')
+      if (kind !== 'resident' && kind !== 'visitor' && kind !== 'unauthorized') {
+        setLookupError('Unexpected response from server.')
+        return
+      }
+      // Display the normalized plate (uppercase, no separators) so the
+      // user sees exactly what got searched + logged in the audit row.
+      const normalized = normalizePlate(raw)
+      setLookupResult({
+        result_type: kind as 'resident' | 'visitor' | 'unauthorized',
+        unit_number: (result.unit_number as string | null) ?? null,
+        queriedPlate: normalized,
+      })
+    } finally {
+      setLookupBusy(false)
     }
   }
 
@@ -862,6 +907,12 @@ export default function ManagerPortal() {
           </button>
           <button style={tabStyle('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
+          {/* B70: Plate Lookup tab — visible only on PM tiers that have
+              PM_PLATE_LOOKUP enabled. Admin always sees it (parity with
+              other tier-gated surfaces in the codebase). */}
+          {(isAdmin || hasFeature(FEATURE_FLAGS.PM_PLATE_LOOKUP, getCompanyContext()) === true) && (
+            <button style={tabStyle('plate-lookup')} onClick={() => setActiveTab('plate-lookup')}>Plate Lookup</button>
+          )}
           <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
           <button style={tabStyle('disputes')} onClick={() => setActiveTab('disputes')}>
             Disputes{pendingDisputeCount > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingDisputeCount}</span>}
@@ -1631,6 +1682,85 @@ export default function ManagerPortal() {
             </div>
           )
         })()}
+
+        {/* B70: PLATE LOOKUP tab — read-only plate search scoped to the
+            caller's properties. The RPC enforces scoping + audit write
+            server-side; UI just surfaces the minimum-leak response. */}
+        {activeTab === 'plate-lookup' && (
+          <div>
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+              <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0 0 4px' }}>Look up a plate</p>
+              <p style={{ color:'#888', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>
+                Search for a license plate against active residents and visitor passes on your property. Read-only — no enforcement actions from this surface.
+              </p>
+              <div style={{ display:'flex', gap:'8px' }}>
+                <input
+                  value={lookupPlate}
+                  onChange={e => setLookupPlate(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !lookupBusy) runPlateLookup() }}
+                  placeholder="ABC-123 or ABC 123"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  style={{ ...inputStyle, flex:1, fontFamily:'Courier New', textTransform:'uppercase' }}
+                />
+                <button
+                  onClick={runPlateLookup}
+                  disabled={lookupBusy || !lookupPlate.trim()}
+                  style={{ padding:'10px 18px', background: (lookupBusy || !lookupPlate.trim()) ? '#555' : '#C9A227', color: (lookupBusy || !lookupPlate.trim()) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: (lookupBusy || !lookupPlate.trim()) ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
+                  {lookupBusy ? 'Looking up…' : 'Look up'}
+                </button>
+              </div>
+              {lookupError && (
+                <p style={{ color:'#f44336', fontSize:'12px', margin:'10px 0 0' }}>{lookupError}</p>
+              )}
+            </div>
+
+            {lookupResult && lookupResult.result_type === 'resident' && (
+              <div style={{ background:'#0f2218', border:'1px solid #1f5938', borderRadius:'10px', padding:'18px' }}>
+                <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Result for</p>
+                <p style={{ color:'#86efac', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0 0 14px' }}>{lookupResult.queriedPlate}</p>
+                <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+                  <div style={{ width:'40px', height:'40px', borderRadius:'50%', background:'#1a3a1a', border:'1px solid #4caf50', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px' }}>✓</div>
+                  <div>
+                    <p style={{ color:'#4caf50', fontSize:'14px', fontWeight:'bold', margin:'0' }}>Active resident</p>
+                    <p style={{ color:'#aaa', fontSize:'13px', margin:'2px 0 0' }}>Unit {lookupResult.unit_number || '—'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {lookupResult && lookupResult.result_type === 'visitor' && (
+              <div style={{ background:'#1f1a00', border:'1px solid #5a4a00', borderRadius:'10px', padding:'18px' }}>
+                <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Result for</p>
+                <p style={{ color:'#f59e0b', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0 0 14px' }}>{lookupResult.queriedPlate}</p>
+                <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+                  <div style={{ width:'40px', height:'40px', borderRadius:'50%', background:'#3a2a00', border:'1px solid #f59e0b', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px' }}>🎫</div>
+                  <div>
+                    <p style={{ color:'#f59e0b', fontSize:'14px', fontWeight:'bold', margin:'0' }}>Active visitor pass</p>
+                    {lookupResult.unit_number && (
+                      <p style={{ color:'#aaa', fontSize:'13px', margin:'2px 0 0' }}>Visiting Unit {lookupResult.unit_number}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {lookupResult && lookupResult.result_type === 'unauthorized' && (
+              <div style={{ background:'#2a1a1a', border:'1px solid #7a2222', borderRadius:'10px', padding:'18px' }}>
+                <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Result for</p>
+                <p style={{ color:'#f87171', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0 0 14px' }}>{lookupResult.queriedPlate}</p>
+                <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+                  <div style={{ width:'40px', height:'40px', borderRadius:'50%', background:'#3a1a1a', border:'1px solid #f44336', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px' }}>⚠️</div>
+                  <div>
+                    <p style={{ color:'#f44336', fontSize:'14px', fontWeight:'bold', margin:'0' }}>Unauthorized</p>
+                    <p style={{ color:'#888', fontSize:'12px', margin:'2px 0 0' }}>No active resident or visitor pass on your property.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* VISITORS */}
         {activeTab === 'visitors' && (

@@ -48,6 +48,11 @@ export const FEATURE_FLAGS = {
   RESIDENT_PORTAL: 'resident_portal',
   VEHICLE_REGISTRY: 'vehicle_registry',
   MULTIPLE_MANAGERS_PER_PROPERTY: 'multiple_managers_per_property',
+  // B70: PM-only manual plate lookup surface (manager + leasing_agent).
+  // Distinct from AI_PLATE_SCANNING which is enforcement-only. Read-only;
+  // backed by SECURITY DEFINER pm_plate_lookup() RPC for server-enforced
+  // property scoping + atomic audit write.
+  PM_PLATE_LOOKUP: 'pm_plate_lookup',
 
   // ─── Tiered (varying by tier; cross-track unless noted) ─────────────
   LEASING_AGENT_ROLE: 'leasing_agent_role',

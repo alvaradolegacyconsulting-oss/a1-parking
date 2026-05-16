@@ -15,6 +15,8 @@ import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import CredentialsModal from '../components/CredentialsModal'
 import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationReviewScreen'
+// B71: decline-and-proceed interstitial — symmetric to driver portal.
+import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS } from '../components/DeclineReasonModal'
 import PostConfirmationEditModal from '../components/PostConfirmationEditModal'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
@@ -50,6 +52,9 @@ export default function CompanyAdminPortal() {
   const streamRef = useRef<MediaStream | null>(null)
   const [showViolation, setShowViolation] = useState(false)
   const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+  // B71: decline-and-proceed state. Mirrors driver/page.tsx semantics.
+  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor'; detail: string } | null>(null)
+  const [pendingDecline, setPendingDecline] = useState<{ reason: DeclineReason; note: string | null } | null>(null)
   const [photos, setPhotos] = useState<File[]>([])
   const [violationVideo, setViolationVideo] = useState<File|null>(null)
   const [videoDuration, setVideoDuration] = useState<number|null>(null)
@@ -799,7 +804,7 @@ export default function CompanyAdminPortal() {
   async function searchPlate(plateVal?: string) {
     const val = plateVal ?? plate
     if (!val || searching) return
-    setSearching(true); setScanMsg(''); setResult(null); setShowViolation(false); setTicketTarget(null)
+    setSearching(true); setScanMsg(''); setResult(null); setShowViolation(false); setPendingDecline(null); setTicketTarget(null)
     const clean = val.toUpperCase().replace(/\s/g, '').trim()
     const companyPropNames = properties.map(p => (p.name || '').toLowerCase())
 
@@ -876,6 +881,10 @@ export default function CompanyAdminPortal() {
       vehicle_make: violation.vehicle_make || null,
       vehicle_model: violation.vehicle_model || null,
       is_confirmed: false,
+      // B71: authorized-plate override fields.
+      was_authorized_at_time: pendingDecline !== null,
+      decline_reason: pendingDecline?.reason || null,
+      decline_reason_note: pendingDecline?.note || null,
     }]).select().single()
     if (insErr) {
       setSubmitting(false)
@@ -966,6 +975,7 @@ export default function CompanyAdminPortal() {
     setViolationStage('form')
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+    setPendingDecline(null)
     setPhotos([])
     setViolationVideo(null)
     setVideoDuration(null)
@@ -1033,6 +1043,7 @@ export default function CompanyAdminPortal() {
     setReviewViolation(null)
     setViolationStage('form')
     setShowViolation(false)
+    setPendingDecline(null)
   }
 
   // B38: explicit discard from the review screen. Same DELETE as
@@ -1050,6 +1061,7 @@ export default function CompanyAdminPortal() {
     setViolationStage('form')
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+    setPendingDecline(null)
     setPhotos([])
     setViolationVideo(null)
     setVideoDuration(null)
@@ -1750,12 +1762,17 @@ export default function CompanyAdminPortal() {
                   {result.status === 'authorized' && (
                     <>
                       <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'16px', margin:'0 0 12px' }}>✓ AUTHORIZED</p>
-                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Unit</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.unit}</span></div>
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Space</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.space || '—'}</span></div>
                         <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Vehicle</span><br /><span style={{ color:'white', fontSize:'13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
                         <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Property</span><br /><span style={{ color:'#4caf50', fontSize:'13px' }}>{result.data.property}</span></div>
                       </div>
+                      {/* B71: authorized-plate override. Same flow as driver portal. */}
+                      <button onClick={() => setDeclineModal({ authorizedAs:'resident', detail: result.data.unit ? `at Unit ${result.data.unit}` : '' })}
+                        style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                        Issue Violation (location/manner override)
+                      </button>
                     </>
                   )}
                   {result.status === 'expired' && (
@@ -1775,12 +1792,17 @@ export default function CompanyAdminPortal() {
                   {result.status === 'visitor' && (
                     <>
                       <p style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'16px', margin:'0 0 12px' }}>✓ VISITOR PASS ACTIVE</p>
-                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Visiting Unit</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.visiting_unit}</span></div>
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Visitor Name</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.visitor_name || '—'}</span></div>
                         <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Expires</span><br /><span style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'13px' }}>{new Date(result.data.expires_at).toLocaleString()}</span></div>
                       </div>
-                      <p style={{ color:'#f59e0b', fontSize:'11px', margin:'10px 0 0', fontWeight:'bold' }}>Do not tow — active visitor pass</p>
+                      <p style={{ color:'#f59e0b', fontSize:'11px', margin:'0 0 12px', fontWeight:'bold' }}>Do not tow for unauthorized status — active visitor pass.</p>
+                      {/* B71: location/manner override on active visitor pass. */}
+                      <button onClick={() => setDeclineModal({ authorizedAs:'visitor', detail: result.data.visiting_unit ? `visiting Unit ${result.data.visiting_unit}` : '' })}
+                        style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                        Issue Violation (location/manner override)
+                      </button>
                     </>
                   )}
                   {result.status === 'otherproperty' && (
@@ -1812,11 +1834,24 @@ export default function CompanyAdminPortal() {
                     <option value=''>Select property...</option>
                     {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
                   </select>
+                  {/* B71: locked decline-reason banner — symmetric to driver portal. */}
+                  {pendingDecline && (
+                    <div style={{ background:'#1e1800', border:'1px solid #C9A227', borderRadius:'8px', padding:'10px 12px', marginBottom:'12px' }}>
+                      <p style={{ color:'#C9A227', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>Authorized-plate override</p>
+                      <p style={{ color:'#fbbf24', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>
+                        {DECLINE_REASON_LABELS[pendingDecline.reason]}
+                      </p>
+                      {pendingDecline.note && (
+                        <p style={{ color:'#aaa', fontSize:'11px', margin:'4px 0 0', lineHeight:'1.5' }}>“{pendingDecline.note}”</p>
+                      )}
+                    </div>
+                  )}
+
                   <label style={lbl}>Violation Type *</label>
                   <select value={violation.type} onChange={e => setViolation({ ...violation, type: e.target.value })} style={inp}>
                     <option value=''>Select type...</option>
-                    <option>No Parking Permit</option>
-                    <option>Expired Visitor Pass</option>
+                    {!pendingDecline && <option>No Parking Permit</option>}
+                    {!pendingDecline && <option>Expired Visitor Pass</option>}
                     <option>Wrong Space / Unauthorized Space</option>
                     <option>Fire Lane</option>
                     <option>Handicap Zone</option>
@@ -1919,7 +1954,7 @@ export default function CompanyAdminPortal() {
                       style={{ flex:1, padding:'11px', background:submitting ? '#555' : '#991b1b', color:'white', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:submitting ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
                       {submitting ? (uploadingVideo ? `Uploading video... ${uploadProgress}%` : 'Submitting...') : 'Submit Violation'}
                     </button>
-                    <button onClick={() => setShowViolation(false)}
+                    <button onClick={() => { setShowViolation(false); setPendingDecline(null) }}
                       style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                       Cancel
                     </button>
@@ -3072,6 +3107,22 @@ export default function CompanyAdminPortal() {
           if (selectedProperty) fetchViolations(selectedProperty.name)
         }}
       />
+
+      {/* B71: decline-and-proceed interstitial — symmetric to driver portal. */}
+      {declineModal && (
+        <DeclineReasonModal
+          plate={plate}
+          authorizedAs={declineModal.authorizedAs}
+          authorizedDetail={declineModal.detail}
+          onCancel={() => setDeclineModal(null)}
+          onConfirm={(reason, note) => {
+            setPendingDecline({ reason, note })
+            setDeclineModal(null)
+            setViolation(v => ({ ...v, property: selectedProperty?.name || '' }))
+            setShowViolation(true)
+          }}
+        />
+      )}
     </main>
   )
 }

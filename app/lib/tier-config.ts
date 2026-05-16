@@ -60,6 +60,8 @@ const ENF_STARTER: TierConfigShape = {
   [F.RESIDENT_PORTAL]: false,
   [F.VEHICLE_REGISTRY]: false,
   [F.MULTIPLE_MANAGERS_PER_PROPERTY]: false,
+  // B70: PM-only manual plate lookup. Enf has AI_PLATE_SCANNING (above).
+  [F.PM_PLATE_LOOKUP]: false,
 
   // tiered
   [F.LEASING_AGENT_ROLE]: false,
@@ -133,6 +135,8 @@ const PM_ESSENTIAL: TierConfigShape = {
   [F.RESIDENT_PORTAL]: true,
   [F.VEHICLE_REGISTRY]: true,
   [F.MULTIPLE_MANAGERS_PER_PROPERTY]: true,
+  // B70: manual plate lookup, all PM tiers. Inherits to professional + enterprise.
+  [F.PM_PLATE_LOOKUP]: true,
 
   // cross-track core
   [F.RESIDENT_MANAGEMENT]: true,

@@ -9,6 +9,8 @@ import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/lo
 import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationReviewScreen'
 import { getCompanyContext, getLimit } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
+// B71: decline-and-proceed interstitial for authorized-plate overrides.
+import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS } from '../components/DeclineReasonModal'
 
 export default function DriverPortal() {
   const [driver, setDriver] = useState<any>(null)
@@ -39,6 +41,12 @@ export default function DriverPortal() {
   // Resume banner — unconfirmed violations by this driver within 24h
   const [unconfirmedDrafts, setUnconfirmedDrafts] = useState<ReviewViolation[]>([])
   const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+  // B71: when the user clicks Issue Violation against an AUTHORIZED plate,
+  // a modal collects a structured reason before the form opens. The chosen
+  // reason + note are then locked in for the submission (persisted to
+  // violations.decline_reason / decline_reason_note + was_authorized_at_time).
+  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor'; detail: string } | null>(null)
+  const [pendingDecline, setPendingDecline] = useState<{ reason: DeclineReason; note: string | null } | null>(null)
   const [photos, setPhotos] = useState<File[]>([])
   const [violationVideo, setViolationVideo] = useState<File|null>(null)
   const [videoDuration, setVideoDuration] = useState<number|null>(null)
@@ -250,6 +258,7 @@ export default function DriverPortal() {
     setScanMsg('')
     setResult(null)
     setShowViolation(false)
+    setPendingDecline(null)
     setTicketTarget(null)
     const clean = val.toUpperCase().replace(/\s/g, '').trim()
 
@@ -336,6 +345,12 @@ export default function DriverPortal() {
       vehicle_make: violation.vehicle_make || null,
       vehicle_model: violation.vehicle_model || null,
       is_confirmed: false,
+      // B71: authorized-plate override fields. pendingDecline is set
+      // when the user came through the decline-reason interstitial; null
+      // for the standard unauthorized path.
+      was_authorized_at_time: pendingDecline !== null,
+      decline_reason: pendingDecline?.reason || null,
+      decline_reason_note: pendingDecline?.note || null,
     }]).select().single()
     if (insErr) {
       setSubmitting(false)
@@ -438,6 +453,7 @@ export default function DriverPortal() {
     setViolationStage('form')
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+    setPendingDecline(null)
     setPhotos([])
     setViolationVideo(null)
     setVideoDuration(null)
@@ -506,6 +522,7 @@ export default function DriverPortal() {
     setReviewViolation(null)
     setViolationStage('form')
     setShowViolation(false)
+    setPendingDecline(null)
   }
 
   // B38: explicit discard from the review screen. Same DELETE as
@@ -523,6 +540,7 @@ export default function DriverPortal() {
     setViolationStage('form')
     setShowViolation(false)
     setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+    setPendingDecline(null)
     setPhotos([])
     setViolationVideo(null)
     setVideoDuration(null)
@@ -1007,12 +1025,19 @@ export default function DriverPortal() {
                   {result.status === 'authorized' && (
                     <>
                       <p style={{ color: '#4caf50', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>✓ AUTHORIZED</p>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Unit</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.unit}</span></div>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.space || '—'}</span>{result.data._space_notes && <p style={{ color: '#888', fontSize: '11px', fontStyle: 'italic', margin: '2px 0 0' }}>{result.data._space_notes}</p>}</div>
                         <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
                         <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Property</span><br /><span style={{ color: '#4caf50', fontSize: '13px' }}>{result.data.property}</span></div>
                       </div>
+                      {/* B71: authorized vehicles can still be parked illegally
+                          (fire lane, handicap, blocked access). Issue Violation
+                          opens the decline-reason interstitial first. */}
+                      <button onClick={() => setDeclineModal({ authorizedAs: 'resident', detail: result.data.unit ? `at Unit ${result.data.unit}` : '' })}
+                        style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                        Issue Violation (location/manner override)
+                      </button>
                     </>
                   )}
 
@@ -1034,12 +1059,18 @@ export default function DriverPortal() {
                   {result.status === 'visitor' && (
                     <>
                       <p style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>✓ VISITOR PASS ACTIVE</p>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Visiting Unit</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.visiting_unit}</span></div>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Visitor Name</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.visitor_name || '—'}</span></div>
                         <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Expires</span><br /><span style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '13px' }}>{new Date(result.data.expires_at).toLocaleString()}</span></div>
                       </div>
-                      <p style={{ color: '#f59e0b', fontSize: '11px', margin: '10px 0 0', fontWeight: 'bold' }}>Do not tow — active visitor pass</p>
+                      <p style={{ color: '#f59e0b', fontSize: '11px', margin: '0 0 12px', fontWeight: 'bold' }}>Do not tow for unauthorized status — active visitor pass.</p>
+                      {/* B71: visitor passes are an "authorized" state per spec;
+                          location/manner violations (fire lane, etc.) still apply. */}
+                      <button onClick={() => setDeclineModal({ authorizedAs: 'visitor', detail: result.data.visiting_unit ? `visiting Unit ${result.data.visiting_unit}` : '' })}
+                        style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                        Issue Violation (location/manner override)
+                      </button>
                     </>
                   )}
 
@@ -1073,11 +1104,30 @@ export default function DriverPortal() {
                   <label style={lbl}>Property</label>
                   <div style={{ ...inp, color: '#C9A227', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>{violation.property}</div>
 
+                  {/* B71: locked decline-reason banner when the violation was
+                      opened against an authorized plate. Reason was captured
+                      in the modal; driver can't change it from here. */}
+                  {pendingDecline && (
+                    <div style={{ background: '#1e1800', border: '1px solid #C9A227', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px' }}>
+                      <p style={{ color: '#C9A227', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 4px', fontWeight: 'bold' }}>Authorized-plate override</p>
+                      <p style={{ color: '#fbbf24', fontSize: '12px', margin: '0', lineHeight: '1.5' }}>
+                        {DECLINE_REASON_LABELS[pendingDecline.reason]}
+                      </p>
+                      {pendingDecline.note && (
+                        <p style={{ color: '#aaa', fontSize: '11px', margin: '4px 0 0', lineHeight: '1.5' }}>“{pendingDecline.note}”</p>
+                      )}
+                    </div>
+                  )}
+
                   <label style={lbl}>Violation Type *</label>
                   <select value={violation.type} onChange={e => setViolation({ ...violation, type: e.target.value })} style={inp}>
                     <option value=''>Select type...</option>
-                    <option>No Parking Permit</option>
-                    <option>Expired Visitor Pass</option>
+                    {/* B71: when overriding an authorized plate, the
+                        "authorization" types (No Parking Permit / Expired
+                        Visitor Pass) make no sense — the plate IS authorized.
+                        Only location/manner types appear. */}
+                    {!pendingDecline && <option>No Parking Permit</option>}
+                    {!pendingDecline && <option>Expired Visitor Pass</option>}
                     <option>Wrong Space / Unauthorized Space</option>
                     <option>Fire Lane</option>
                     <option>Handicap Zone</option>
@@ -1204,7 +1254,7 @@ export default function DriverPortal() {
                       style={{ flex: 1, padding: '11px', background: submitting ? '#555' : '#991b1b', color: 'white', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: submitting ? 'not-allowed' : 'pointer', fontFamily: 'Arial' }}>
                       {submitting ? (uploadingVideo ? `Uploading video... ${uploadProgress}%` : 'Submitting...') : 'Submit Violation'}
                     </button>
-                    <button onClick={() => setShowViolation(false)}
+                    <button onClick={() => { setShowViolation(false); setPendingDecline(null) }}
                       style={{ padding: '11px 12px', background: '#1e2535', color: '#aaa', fontSize: '12px', border: '1px solid #3a4055', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                       Cancel
                     </button>
@@ -1381,6 +1431,24 @@ export default function DriverPortal() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* B71: decline-and-proceed interstitial. Opens via "Issue Violation"
+          on an authorized scan result; on confirm, locks the chosen reason
+          + note into pendingDecline and opens the existing violation form. */}
+      {declineModal && (
+        <DeclineReasonModal
+          plate={plate}
+          authorizedAs={declineModal.authorizedAs}
+          authorizedDetail={declineModal.detail}
+          onCancel={() => setDeclineModal(null)}
+          onConfirm={(reason, note) => {
+            setPendingDecline({ reason, note })
+            setDeclineModal(null)
+            setViolation(v => ({ ...v, property: selectedProperty }))
+            setShowViolation(true)
+          }}
+        />
       )}
     </main>
   )
