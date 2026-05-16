@@ -57,7 +57,9 @@ export default function Login() {
     setLoading(true)
     setError('')
 
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
+    // B65.4: capture authData so the recovery branch below can read
+    // user_metadata.proposal_code + email_confirmed_at off the signed-in user.
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password })
     if (authError) {
       setLoading(false)
       setError('Invalid email or password. Please try again.')
@@ -71,6 +73,22 @@ export default function Login() {
       .single()
 
     if (!roleData) {
+      // B65.4 recovery path: a user who completed B65.3 signUp + email
+      // verification but never finished activation has NO user_roles row
+      // yet, AND has proposal_code stashed on their auth.users.user_metadata
+      // (set by /signup/redeem at signUp time). Route them back to
+      // /signup/redeem/verify instead of dropping a confusing "No role
+      // assigned" message. Keep them authed — /verify needs the session.
+      const meta = (authData?.user?.user_metadata || {}) as Record<string, unknown>
+      const pendingCode = typeof meta.proposal_code === 'string' && meta.proposal_code.length > 0
+        ? meta.proposal_code
+        : null
+      const emailConfirmed = Boolean(authData?.user?.email_confirmed_at)
+      if (pendingCode && emailConfirmed) {
+        setLoading(false)
+        window.location.href = '/signup/redeem/verify'
+        return
+      }
       setLoading(false)
       setError('No role assigned. Please contact your administrator to get access.')
       await supabase.auth.signOut()

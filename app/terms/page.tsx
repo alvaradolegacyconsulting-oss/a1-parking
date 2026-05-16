@@ -1,5 +1,6 @@
 'use client'
 import { useResolvedLogo } from '../lib/logo'
+import { TOS_DISPLAY_DATE } from '../lib/legal-versions'
 
 export default function Terms() {
   const logoUrl = useResolvedLogo()
@@ -11,7 +12,7 @@ export default function Terms() {
           <img src={logoUrl} alt="ShieldMyLot"
             style={{ width:'64px', height:'64px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 16px' }} />
           <h1 style={{ color:'#C9A227', fontSize:'28px', fontWeight:'bold', margin:'0 0 8px' }}>ShieldMyLot™ — Terms of Service</h1>
-          <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Draft — Pending Legal Review · Last updated: 2026</p>
+          <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Draft — Pending Legal Review · Last updated: {TOS_DISPLAY_DATE}</p>
         </div>
 
         <div style={{ background:'#1a1f2e', border:'1px solid #C9A227', borderRadius:'8px', padding:'16px', marginBottom:'24px' }}>

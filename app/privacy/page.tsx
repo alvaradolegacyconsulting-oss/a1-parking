@@ -1,5 +1,6 @@
 'use client'
 import { useResolvedLogo } from '../lib/logo'
+import { PRIVACY_DISPLAY_DATE } from '../lib/legal-versions'
 
 export default function Privacy() {
   const logoUrl = useResolvedLogo()
@@ -11,7 +12,7 @@ export default function Privacy() {
           <img src={logoUrl} alt="ShieldMyLot"
             style={{ width:'64px', height:'64px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 16px' }} />
           <h1 style={{ color:'#C9A227', fontSize:'28px', fontWeight:'bold', margin:'0 0 8px' }}>ShieldMyLot™ — Privacy Policy</h1>
-          <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Draft — Pending Legal Review · Last updated: 2026</p>
+          <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Draft — Pending Legal Review · Last updated: {PRIVACY_DISPLAY_DATE}</p>
         </div>
 
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'32px' }}>
