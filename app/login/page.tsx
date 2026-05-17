@@ -1,11 +1,14 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
-import { applyTheme } from '../lib/theme'
 import { useResolvedLogo } from '../lib/logo'
 // B65.2: account_state gate. Login dispatch is the primary stop for non-active
 // states (CA portal entry has the same gate as defense in depth).
 import { gateAccountState, AccountState } from '../lib/account-state'
+// B76: shared bootstrap — same helper used by /signup/redeem/verify
+// after activation so the post-activation dashboard isn't stuck with
+// null localStorage + 'Legacy Enforcement' fallback rendering.
+import { bootstrapCompanyContext, CompanyBootstrapRow } from '../lib/company-bootstrap'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -170,61 +173,13 @@ export default function Login() {
         }
       }
 
-      let platformData: any = null
-      if (!companyData?.logo_url || !companyData?.display_name || !companyData?.support_phone || !companyData?.support_email || !companyData?.support_website || !companyData?.theme) {
-        const { data: pd } = await supabase.from('platform_settings').select('*').eq('id', 1).single()
-        platformData = pd
-      }
-      const logo = companyData?.logo_url || platformData?.default_logo_url
-      const displayName = companyData?.display_name
-      const theme = companyData?.theme || platformData?.default_theme || 'gold'
-      const phone = companyData?.support_phone || platformData?.default_support_phone
-      const email2 = companyData?.support_email || platformData?.default_support_email
-      const website = companyData?.support_website || platformData?.default_support_website
-
-      if (logo) localStorage.setItem('company_logo', logo)
-      else localStorage.removeItem('company_logo')
-      if (displayName) localStorage.setItem('company_name', displayName)
-      else localStorage.removeItem('company_name')
-      if (phone) localStorage.setItem('company_support_phone', phone)
-      else localStorage.removeItem('company_support_phone')
-      if (email2) localStorage.setItem('company_support_email', email2)
-      else localStorage.removeItem('company_support_email')
-      if (website) localStorage.setItem('company_support_website', website)
-      else localStorage.removeItem('company_support_website')
-      if (companyData?.tier) localStorage.setItem('company_tier', companyData.tier)
-      else localStorage.removeItem('company_tier')
-      if (companyData?.tier_type) {
-        const canonicalTierType = companyData.tier_type === 'pm' ? 'property_management' : companyData.tier_type
-        localStorage.setItem('company_tier_type', canonicalTierType)
-      } else {
-        localStorage.removeItem('company_tier_type')
-      }
-      localStorage.setItem('company_theme', theme)
-      applyTheme()
-
-      if (companyData?.id) {
-        const { data: pc } = await supabase
-          .from('proposal_codes_summary')
-          .select('id, code, status, feature_overrides, redeemed_at, expires_at, client_name, client_email, notes')
-          .eq('company_id', companyData.id)
-          .eq('status', 'redeemed')
-          .maybeSingle()
-        if (pc) localStorage.setItem('company_proposal_code', JSON.stringify(pc))
-        else localStorage.removeItem('company_proposal_code')
-      } else {
-        localStorage.removeItem('company_proposal_code')
-      }
+      // B76: shared bootstrap. Was an inline block before extraction;
+      // logic is byte-equivalent — same field resolution + platform_settings
+      // fallback fetch + proposal_codes_summary lookup + applyTheme().
+      await bootstrapCompanyContext(companyData as CompanyBootstrapRow)
     } else {
-      localStorage.removeItem('company_logo')
-      localStorage.removeItem('company_name')
-      localStorage.removeItem('company_support_phone')
-      localStorage.removeItem('company_support_email')
-      localStorage.removeItem('company_support_website')
-      localStorage.removeItem('company_tier')
-      localStorage.removeItem('company_tier_type')
-      localStorage.removeItem('company_theme')
-      localStorage.removeItem('company_proposal_code')
+      // Admin path / no company association — helper clears the same 9 keys.
+      await bootstrapCompanyContext(null)
     }
 
     setLoading(false)

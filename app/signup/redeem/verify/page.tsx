@@ -14,6 +14,10 @@ import { useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../../supabase'
 import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE } from '../../../lib/legal-versions'
+// B76: post-activation bootstrap. Without this, /company_admin renders
+// with null localStorage and falls back to the 'Legacy Enforcement'
+// default until the user signs out and back in. See project_b76.
+import { bootstrapCompanyContext, fetchCompanyBootstrapRowById } from '../../../lib/company-bootstrap'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -185,8 +189,19 @@ export default function VerifyLanding() {
       return
     }
 
-    // Success — atomic RPC has already flipped account_state to 'active',
-    // so login dispatch will route cleanly to the dashboard.
+    // B76: bootstrap company-context localStorage before redirecting.
+    // Without this, /company_admin renders with null company_tier /
+    // company_tier_type / theme / proposal_code and falls back to the
+    // 'Legacy Enforcement' default until the user signs out + back in.
+    // The atomic RPC returned the new company_id; fetch the populated
+    // row and hand it to the shared bootstrap helper.
+    const companyId = data as number | string
+    const companyRow = await fetchCompanyBootstrapRowById(companyId)
+    await bootstrapCompanyContext(companyRow)
+
+    // Atomic RPC has already flipped account_state to 'active'; bootstrap
+    // is now populated; the dashboard will render the right tier on first
+    // paint with no logout-and-back-in required.
     window.location.href = '/company_admin'
   }
 
