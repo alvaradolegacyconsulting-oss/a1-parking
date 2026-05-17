@@ -60,8 +60,12 @@ const ENF_STARTER: TierConfigShape = {
   [F.RESIDENT_PORTAL]: false,
   [F.VEHICLE_REGISTRY]: false,
   [F.MULTIPLE_MANAGERS_PER_PROPERTY]: false,
-  // B70: PM-only manual plate lookup. Enf has AI_PLATE_SCANNING (above).
-  [F.PM_PLATE_LOOKUP]: false,
+  // B75 (was B70 PM_PLATE_LOOKUP=false): manual plate lookup is a baseline
+  // utility, not a competitive feature. Available on all enforcement tiers
+  // — gating Starter out would hurt the weakest customers most. Pricing
+  // differentiation lives in AI_PLATE_SCANNING + violation workflow + tow
+  // tickets + evidence capture. Inherits to ENF_GROWTH + ENF_LEGACY.
+  [F.MANAGER_PLATE_LOOKUP]: true,
 
   // tiered
   [F.LEASING_AGENT_ROLE]: false,
@@ -135,8 +139,11 @@ const PM_ESSENTIAL: TierConfigShape = {
   [F.RESIDENT_PORTAL]: true,
   [F.VEHICLE_REGISTRY]: true,
   [F.MULTIPLE_MANAGERS_PER_PROPERTY]: true,
-  // B70: manual plate lookup, all PM tiers. Inherits to professional + enterprise.
-  [F.PM_PLATE_LOOKUP]: true,
+  // B75 (was B70 PM_PLATE_LOOKUP=true): manual plate lookup, all PM tiers.
+  // Renamed for cross-track consistency — same flag is now also true on
+  // every enforcement tier (see ENF_STARTER above). Inherits to
+  // PM_PROFESSIONAL + PM_ENTERPRISE via spread.
+  [F.MANAGER_PLATE_LOOKUP]: true,
 
   // cross-track core
   [F.RESIDENT_MANAGEMENT]: true,

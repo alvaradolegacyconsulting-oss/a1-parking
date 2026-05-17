@@ -48,11 +48,13 @@ export const FEATURE_FLAGS = {
   RESIDENT_PORTAL: 'resident_portal',
   VEHICLE_REGISTRY: 'vehicle_registry',
   MULTIPLE_MANAGERS_PER_PROPERTY: 'multiple_managers_per_property',
-  // B70: PM-only manual plate lookup surface (manager + leasing_agent).
-  // Distinct from AI_PLATE_SCANNING which is enforcement-only. Read-only;
-  // backed by SECURITY DEFINER pm_plate_lookup() RPC for server-enforced
-  // property scoping + atomic audit write.
-  PM_PLATE_LOOKUP: 'pm_plate_lookup',
+  // B75 (was B70 PM_PLATE_LOOKUP): manual plate lookup surface for the
+  // manager portal (manager + leasing_agent roles, all tiers across both
+  // tracks). Distinct from AI_PLATE_SCANNING which stays enforcement-only —
+  // manual lookup is a baseline utility, AI scan is a competitive feature.
+  // Backed by SECURITY DEFINER pm_plate_lookup() RPC (function name kept
+  // for stability; the manager-portal-only feature flag is what got renamed).
+  MANAGER_PLATE_LOOKUP: 'manager_plate_lookup',
 
   // ─── Tiered (varying by tier; cross-track unless noted) ─────────────
   LEASING_AGENT_ROLE: 'leasing_agent_role',

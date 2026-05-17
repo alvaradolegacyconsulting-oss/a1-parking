@@ -3,9 +3,10 @@ import { useState, useEffect } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
-// B70: PM-track manual plate lookup tab. hasFeature gate hides the tab
-// on non-PM tiers; the pm_plate_lookup RPC enforces role + property
-// scoping server-side regardless.
+// B70 → B75: manual plate lookup tab. hasFeature(MANAGER_PLATE_LOOKUP)
+// gates visibility; the pm_plate_lookup RPC enforces role + property
+// scoping server-side regardless. Flag is true on every tier across
+// both tracks (B75 expanded from PM-only).
 import { hasFeature, getCompanyContext } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import SupportContact from '../components/SupportContact'
@@ -907,10 +908,11 @@ export default function ManagerPortal() {
           </button>
           <button style={tabStyle('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
-          {/* B70: Plate Lookup tab — visible only on PM tiers that have
-              PM_PLATE_LOOKUP enabled. Admin always sees it (parity with
-              other tier-gated surfaces in the codebase). */}
-          {(isAdmin || hasFeature(FEATURE_FLAGS.PM_PLATE_LOOKUP, getCompanyContext()) === true) && (
+          {/* B75 (was B70 PM_PLATE_LOOKUP): Plate Lookup tab — visible on
+              every tier across both tracks (manual lookup is a baseline
+              utility). Admin always sees it (parity with other tier-gated
+              surfaces in the codebase). */}
+          {(isAdmin || hasFeature(FEATURE_FLAGS.MANAGER_PLATE_LOOKUP, getCompanyContext()) === true) && (
             <button style={tabStyle('plate-lookup')} onClick={() => setActiveTab('plate-lookup')}>Plate Lookup</button>
           )}
           <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
