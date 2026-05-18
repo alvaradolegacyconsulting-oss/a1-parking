@@ -1,0 +1,212 @@
+-- ════════════════════════════════════════════════════════════════════
+-- B82 — PUBLIC-grant retrofit phase 2
+-- Drafted: May 28, 2026 — NOT YET APPLIED.
+--
+-- ── CONTEXT ─────────────────────────────────────────────────────────
+-- Continuation of named-5 retrofit (4c733d5 + 146d3bc corrective,
+-- applied May 19). May 19 catalog audit identified five additional
+-- user-facing SECURITY DEFINER RPCs worth retrofitting. Three are
+-- migration-defined and ship here. Two are uncaptured production-only
+-- (insert_user_role, get_company_admin_emails) — blocked behind B68
+-- capture-pass, NOT in B82.
+--
+-- ── APPLY DISCIPLINE (CRITICAL — read before applying) ──────────────
+-- 4c733d5 produced a partial-apply state because SQL Editor was
+-- clicked Run on individual statements rather than as a single block.
+-- See feedback_sql_editor_partial_apply.md.
+--
+--   1. Select the ENTIRE file content (Cmd+A).
+--   2. Paste as ONE block into Supabase SQL Editor.
+--   3. Click Run ONCE.
+--   4. Do NOT click Run on individual statements.
+--   5. Do NOT split into multiple SQL Editor sessions.
+--   6. Re-run the post-apply audit query (footer) before declaring
+--      the migration complete — partial-state catches if discipline
+--      slipped.
+--
+-- All REVOKE/GRANT statements are single-line (small arg signatures —
+-- the multi-line gotcha from named-5's create_visitor_pass doesn't
+-- apply here).
+--
+-- ── CALLER-SET RATIONALE (per May 19 named-5 pre-flight Finding 3) ──
+--
+--   • accept_tos()              → authenticated only  *** TIGHTENING ***
+--     Called from /login:53 after signInWithPassword succeeds.
+--     Function body raises 42501 on null auth.jwt() email; PUBLIC +
+--     anon both let anon reach the body. Grant-level gate is earlier
+--     + cheaper.
+--     Migration source: 20260513_rls_completeness_pass.sql:134
+--     Migration-source explicit grant: TO authenticated only.
+--     PRODUCTION STATE (May 28 audit): PUBLIC + anon + authenticated +
+--     postgres + service_role. The anon GRANT did NOT come from the
+--     source migration — landed via Supabase Dashboard default pipeline
+--     or out-of-band Dashboard action. REVOKE FROM PUBLIC alone is
+--     insufficient; REVOKE FROM anon also required to tighten.
+--
+--   • set_must_change_password(TEXT, BOOLEAN) → authenticated only  *** TIGHTENING ***
+--     Called from /admin:425, /manager:541, /company_admin:562,
+--     /change-password:41. Internal role check governs admin-vs-self
+--     update semantics. PUBLIC + anon both let anon reach the function body.
+--     Migration source: 20260512_user_roles_must_change_password.sql:40
+--     Migration-source explicit grant: TO authenticated only.
+--     PRODUCTION STATE (May 28 audit): same drift as accept_tos —
+--     anon explicitly granted in production despite source defining
+--     authenticated-only. REVOKE FROM anon included below.
+--
+--   • get_plate_pass_status(TEXT, TEXT) → anon + authenticated
+--     Called from app/lib/visitor-pass-limit.ts:24, consumed by /visitor
+--     (anon precheck) AND /resident, /manager (authenticated UI).
+--     PUBLIC redundant — existing explicit grant to anon+authenticated
+--     already covers intended callers. Retrofit formalizes existing intent.
+--     Migration source: 20260514_enforce_visitor_pass_limit.sql:101
+--     Existing explicit grant: TO anon, authenticated.
+--
+-- accept_tos + set_must_change_password are the two meaningful
+-- tightenings. get_plate_pass_status formalizes anon+authenticated.
+--
+-- ── PRE-APPLY VERIFICATION (Jose runs in SQL Editor BEFORE applying) ─
+-- P9 discipline — same pattern as named-5:
+--
+--   -- 1. Current grant state on the 3 functions
+--   SELECT p.proname, r.grantee, r.privilege_type
+--   FROM information_schema.routine_privileges r
+--   JOIN pg_proc p ON p.proname = r.routine_name
+--   WHERE r.routine_schema = 'public'
+--     AND r.routine_name IN (
+--       'accept_tos', 'set_must_change_password', 'get_plate_pass_status'
+--     )
+--     AND r.privilege_type = 'EXECUTE'
+--   ORDER BY p.proname, r.grantee;
+--
+--   Expected (matches May 28 production audit; updated from earlier
+--   migration-source-only assumption):
+--     accept_tos              → PUBLIC, anon, authenticated, postgres, service_role
+--     set_must_change_password → PUBLIC, anon, authenticated, postgres, service_role
+--     get_plate_pass_status   → PUBLIC, anon, authenticated, postgres, service_role
+--
+--   The anon grants on accept_tos + set_must_change_password are
+--   Dashboard-pipeline drift from migration source (which defines
+--   TO authenticated only on both). This migration revokes BOTH
+--   PUBLIC and anon on the two tightenings. If the audit on apply
+--   day shows MORE grantees than the May 28 expected set (e.g., a
+--   custom role added via Dashboard), STOP and update the REVOKE
+--   list before applying.
+--
+--   -- 2. Confirm all 3 are SECURITY DEFINER + signatures match
+--   SELECT proname, prosecdef AS is_security_definer,
+--          pg_get_function_arguments(oid) AS args
+--   FROM pg_proc
+--   WHERE pronamespace = 'public'::regnamespace
+--     AND proname IN (
+--       'accept_tos', 'set_must_change_password', 'get_plate_pass_status'
+--     )
+--   ORDER BY proname;
+--
+--   Expected:
+--     accept_tos                  | t | (empty args)
+--     get_plate_pass_status       | t | p_property text, p_plate text
+--     set_must_change_password    | t | p_email text, p_value boolean
+--
+--   If any signature differs, the REVOKE/GRANT arg lists below need
+--   editing before apply.
+--
+--   -- 3. Overload sanity — confirm one row per function name
+--   Same query, looser WHERE. If any function appears with multiple
+--   rows (multiple overloaded signatures), the REVOKE/GRANT below
+--   needs to disambiguate via the exact args.
+-- ════════════════════════════════════════════════════════════════════
+
+BEGIN;
+
+-- ────────────────────────────────────────────────────────────────────
+-- 1. accept_tos() → authenticated ONLY  *** TIGHTENING ***
+-- ────────────────────────────────────────────────────────────────────
+-- Two REVOKEs needed — PUBLIC (Postgres default) AND anon (Dashboard-
+-- pipeline drift from source). Migration source defined TO authenticated
+-- only; production state has explicit anon GRANT that must be removed.
+REVOKE EXECUTE ON FUNCTION public.accept_tos() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.accept_tos() FROM anon;
+GRANT EXECUTE ON FUNCTION public.accept_tos() TO authenticated;
+-- Caller must hold a session (auth.jwt() ->> 'email' resolves only
+-- for authenticated callers).
+
+-- ────────────────────────────────────────────────────────────────────
+-- 2. set_must_change_password(TEXT, BOOLEAN) → authenticated ONLY  *** TIGHTENING ***
+-- ────────────────────────────────────────────────────────────────────
+-- Same drift pattern as accept_tos — REVOKE both PUBLIC and anon.
+REVOKE EXECUTE ON FUNCTION public.set_must_change_password(TEXT, BOOLEAN) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.set_must_change_password(TEXT, BOOLEAN) FROM anon;
+GRANT EXECUTE ON FUNCTION public.set_must_change_password(TEXT, BOOLEAN) TO authenticated;
+-- Admin operations require session.
+
+-- ────────────────────────────────────────────────────────────────────
+-- 3. get_plate_pass_status(TEXT, TEXT) → anon + authenticated
+-- ────────────────────────────────────────────────────────────────────
+REVOKE EXECUTE ON FUNCTION public.get_plate_pass_status(TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_plate_pass_status(TEXT, TEXT) TO anon, authenticated;
+
+COMMIT;
+
+-- ════════════════════════════════════════════════════════════════════
+-- POST-APPLY VERIFICATION
+--
+-- ── A. PUBLIC grant absent on all 3 functions ──────────────────────
+--   SELECT p.proname, r.grantee, r.privilege_type
+--   FROM information_schema.routine_privileges r
+--   JOIN pg_proc p ON p.proname = r.routine_name
+--   WHERE r.routine_schema = 'public'
+--     AND r.routine_name IN (
+--       'accept_tos', 'set_must_change_password', 'get_plate_pass_status'
+--     )
+--     AND r.privilege_type = 'EXECUTE'
+--   ORDER BY p.proname, r.grantee;
+--
+--   Expected post-apply — each function present WITHOUT a PUBLIC row:
+--     accept_tos              → authenticated, postgres, service_role
+--     set_must_change_password → authenticated, postgres, service_role
+--     get_plate_pass_status   → anon, authenticated, postgres, service_role
+--
+-- ── B. Anon smoke — accept_tos rejected at grant level ─────────────
+-- From anon supabase client:
+--   SELECT accept_tos();
+--   -- Expected: 42501 insufficient_privilege (grant-level rejection,
+--   --           NOT the function body's no-authenticated-session RAISE).
+--
+-- ── C. Anon smoke — set_must_change_password rejected at grant level ─
+-- From anon supabase client:
+--   SELECT set_must_change_password('test@example.com', false);
+--   -- Expected: 42501 insufficient_privilege.
+--
+-- ── D. Anon smoke — get_plate_pass_status still works ─────────────
+-- From anon supabase client:
+--   SELECT get_plate_pass_status('Test Property', 'TEST123');
+--   -- Expected: jsonb result (state union — e.g., {"state": "exempt"}
+--   --           or similar). NOT 42501 — anon grant is intact.
+--
+-- ── E. Authenticated smoke — all 3 callable ─────────────────────────
+-- From any authenticated supabase client:
+--   SELECT accept_tos();
+--   -- Expected: no 42501; may RAISE 42501 from function body if the
+--   --           authenticated session has no JWT email (unlikely).
+--   SELECT set_must_change_password(<own-email>, false);
+--   -- Expected: no 42501; succeeds for self-toggle.
+--   SELECT get_plate_pass_status('X', 'Y');
+--   -- Expected: jsonb result.
+--
+-- ── ROLLBACK (if needed) ────────────────────────────────────────────
+-- Re-grants restore the May 28 pre-state byte-for-byte. The two
+-- tightening targets need BOTH PUBLIC and anon re-granted to match
+-- the Dashboard-pipeline drift state. Apply as a single BEGIN/COMMIT
+-- block (same paste discipline).
+--
+--   BEGIN;
+--   GRANT EXECUTE ON FUNCTION public.accept_tos() TO PUBLIC;
+--   GRANT EXECUTE ON FUNCTION public.accept_tos() TO anon;
+--   GRANT EXECUTE ON FUNCTION public.set_must_change_password(TEXT, BOOLEAN) TO PUBLIC;
+--   GRANT EXECUTE ON FUNCTION public.set_must_change_password(TEXT, BOOLEAN) TO anon;
+--   GRANT EXECUTE ON FUNCTION public.get_plate_pass_status(TEXT, TEXT) TO PUBLIC;
+--   COMMIT;
+--
+-- No data state affected. Rollback restores exactly what existed pre-apply.
+-- Supabase point-in-time restore is the nuclear option.
+-- ════════════════════════════════════════════════════════════════════
