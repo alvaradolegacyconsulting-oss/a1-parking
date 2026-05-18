@@ -33,6 +33,17 @@ export type ReviewViolation = {
   video_id?: number | null
   driver_name: string | null
   created_at: string | null
+  // B78 Path A — driver-entered at-scene vehicle fields. Optional for
+  // backward-compatibility with legacy callers; populated by every
+  // setReviewViolation construction site in driver + CA portals so the
+  // post-confirm tow-ticket render (which reads ticketTarget directly
+  // off the in-memory ReviewViolation, NOT from a refetch) has the
+  // values it needs. Type predates B32 (when the columns were added
+  // to violations); was never extended until smoke surfaced the gap.
+  vehicle_color?: string | null
+  vehicle_make?: string | null
+  vehicle_model?: string | null
+  vehicle_year?: number | null
 }
 
 type Props = {

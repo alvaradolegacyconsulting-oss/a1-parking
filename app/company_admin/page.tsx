@@ -936,6 +936,11 @@ export default function CompanyAdminPortal() {
       video_id: insertedVideoId,
       driver_name: newV.driver_name,
       created_at: newV.created_at,
+      // B78 Path A — mirrors driver portal.
+      vehicle_color: newV.vehicle_color,
+      vehicle_make: newV.vehicle_make,
+      vehicle_model: newV.vehicle_model,
+      vehicle_year: newV.vehicle_year,
     })
     setViolationStage('review')
   }
@@ -943,8 +948,9 @@ export default function CompanyAdminPortal() {
   // C1: re-query the violation after a soft-delete on the review screen.
   async function refetchReviewViolation() {
     if (!reviewViolation) return
+    // B78 Path A: SELECT widened + ReviewViolation construction carries vehicle_*.
     const { data, error } = await supabase.from('violations')
-      .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
+      .select('id, plate, violation_type, property, location, notes, video_url, driver_name, created_at, vehicle_color, vehicle_make, vehicle_model, vehicle_year, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('id', reviewViolation.id)
       .single()
     if (error || !data) { console.error('[refetchReviewViolation] failed:', error?.message); return }
@@ -960,6 +966,10 @@ export default function CompanyAdminPortal() {
       video_url: activeVideos[0]?.video_url ?? null,
       video_id: activeVideos[0]?.id ?? null,
       driver_name: data.driver_name, created_at: data.created_at,
+      vehicle_color: data.vehicle_color,
+      vehicle_make: data.vehicle_make,
+      vehicle_model: data.vehicle_model,
+      vehicle_year: data.vehicle_year,
     })
   }
 
@@ -1005,8 +1015,9 @@ export default function CompanyAdminPortal() {
   async function loadUnconfirmedDrafts() {
     if (!role?.email) { setUnconfirmedDrafts([]); return }
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    // B78 Path A: SELECT widened + draft array carries vehicle_*.
     const { data } = await supabase.from('violations')
-      .select('id, plate, violation_type, property, location, notes, driver_name, created_at, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
+      .select('id, plate, violation_type, property, location, notes, driver_name, created_at, vehicle_color, vehicle_make, vehicle_model, vehicle_year, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', false)
       .ilike('driver_name', role.email)
       .gte('created_at', since)
@@ -1024,6 +1035,10 @@ export default function CompanyAdminPortal() {
         video_url: activeVideos[0]?.video_url ?? null,
         video_id: activeVideos[0]?.id ?? null,
         driver_name: v.driver_name, created_at: v.created_at,
+        vehicle_color: v.vehicle_color,
+        vehicle_make: v.vehicle_make,
+        vehicle_model: v.vehicle_model,
+        vehicle_year: v.vehicle_year,
       }
     }) as ReviewViolation[]
     setUnconfirmedDrafts(drafts)
