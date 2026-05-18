@@ -40,7 +40,7 @@ export default function DriverPortal() {
   const [reviewBusy, setReviewBusy] = useState(false)
   // Resume banner — unconfirmed violations by this driver within 24h
   const [unconfirmedDrafts, setUnconfirmedDrafts] = useState<ReviewViolation[]>([])
-  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '', vehicle_year: '' })
   // B71: when the user clicks Issue Violation against an AUTHORIZED plate,
   // a modal collects a structured reason before the form opens. The chosen
   // reason + note are then locked in for the submission (persisted to
@@ -344,6 +344,9 @@ export default function DriverPortal() {
       vehicle_color: violation.vehicle_color || null,
       vehicle_make: violation.vehicle_make || null,
       vehicle_model: violation.vehicle_model || null,
+      // B78: optional year capture. Empty string + NaN coalesce to null;
+      // SMALLINT range guards anything plausible a driver could type.
+      vehicle_year: violation.vehicle_year ? (parseInt(violation.vehicle_year) || null) : null,
       is_confirmed: false,
       // B71: authorized-plate override fields. pendingDecline is set
       // when the user came through the decline-reason interstitial; null
@@ -452,7 +455,7 @@ export default function DriverPortal() {
     setReviewViolation(null)
     setViolationStage('form')
     setShowViolation(false)
-    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '', vehicle_year: '' })
     setPendingDecline(null)
     setPhotos([])
     setViolationVideo(null)
@@ -539,7 +542,7 @@ export default function DriverPortal() {
     setReviewViolation(null)
     setViolationStage('form')
     setShowViolation(false)
-    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '', vehicle_year: '' })
     setPendingDecline(null)
     setPhotos([])
     setViolationVideo(null)
@@ -621,8 +624,10 @@ export default function DriverPortal() {
       ``,
       `VEHICLE`,
       `Plate: ${v.plate}`,
-      `Vehicle: ${[v.year, v.color, v.make, v.model].filter(Boolean).join(' ') || '—'}`,
-      `VIN: ${vin || v.vin || '—'}`,
+      // B78: pull driver-entered scene values (Family 2). Order matches the
+      // HTML render: Year first, then Make/Model/Color. Graceful omission of
+      // null fields via filter(Boolean) — same pattern as the HTML template.
+      `Vehicle: ${[v.vehicle_year, v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join(' ') || '—'}`,
       ``,
       `VIOLATION`,
       `Type: ${v.violation_type || '—'}`,
@@ -685,10 +690,8 @@ export default function DriverPortal() {
         <div class="g2">
           <div class="f"><label>License Plate</label><span class="plate">${v.plate}</span></div>
           <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
-          <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
-          <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
-          <div class="f"><label>VIN</label><span>${vin || v.vin || '—'}</span></div>
-          ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f"><label>Vehicle Description</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
+          ${v.vehicle_year ? `<div class="f"><label>Year</label><span>${v.vehicle_year}</span></div>` : ''}
+          ${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).length ? `<div class="f"><label>Make / Model / Color</label><span>${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join('  ·  ')}</span></div>` : ''}
         </div>
       </div>
       <div class="sec">
@@ -1248,6 +1251,9 @@ export default function DriverPortal() {
 
                   <label style={lbl}>Vehicle Model (optional)</label>
                   <input value={violation.vehicle_model} onChange={e => setViolation({ ...violation, vehicle_model: e.target.value })} placeholder="e.g. Camry, Civic" style={inp} />
+
+                  <label style={lbl}>Vehicle Year (optional)</label>
+                  <input type="number" min={1900} max={new Date().getFullYear() + 1} step={1} value={violation.vehicle_year} onChange={e => setViolation({ ...violation, vehicle_year: e.target.value })} placeholder="e.g. 2020" style={inp} />
 
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button onClick={submitViolation} disabled={submitting}

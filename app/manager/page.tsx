@@ -701,10 +701,8 @@ export default function ManagerPortal() {
       <div class="sec"><div class="sh">Vehicle Information</div><div class="g2">
         <div class="f"><label>License Plate</label><span class="plate">${v.plate}</span></div>
         <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
-        <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
-        <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
-        <div class="f"><label>VIN</label><span>${v.vin || '—'}</span></div>
-        ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f" style="grid-column:span 2"><label>Color / Make / Model (at scene)</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
+        ${v.vehicle_year ? `<div class="f"><label>Year</label><span>${v.vehicle_year}</span></div>` : ''}
+        ${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).length ? `<div class="f"><label>Make / Model / Color</label><span>${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join('  ·  ')}</span></div>` : ''}
       </div></div>
       <div class="sec"><div class="sh">Violation</div><div class="g2">
         <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>

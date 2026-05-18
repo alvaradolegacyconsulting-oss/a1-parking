@@ -77,13 +77,16 @@ export default function History() {
     }
     setExportMsg(`Exporting ${towRecords.length} tow record${towRecords.length !== 1 ? 's' : ''}...`)
     setTimeout(() => setExportMsg(''), 4000)
-    const headers = ['Date','Time','Plate','State','Color','Make','Model','Violation Type','Location','Property','Storage Facility','Storage Address','Storage Phone','Tow Fee','Driver Name','Driver License','Notes']
+    // B78: vehicle_year added between State and Color so the CSV stays in
+    // sync with the rendered tow ticket (Year is its own slot above the
+    // Make/Model/Color line after the Design X collapse).
+    const headers = ['Date','Time','Plate','State','Year','Color','Make','Model','Violation Type','Location','Property','Storage Facility','Storage Address','Storage Phone','Tow Fee','Driver Name','Driver License','Notes']
     const rows = towRecords.map(v => {
       const d = new Date(v.created_at)
       const date = d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' })
       const time = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12: true })
       return [
-        date, time, v.plate, v.state || '', v.vehicle_color || '', v.vehicle_make || '', v.vehicle_model || '',
+        date, time, v.plate, v.state || '', v.vehicle_year || '', v.vehicle_color || '', v.vehicle_make || '', v.vehicle_model || '',
         v.violation_type || '', v.location || '', v.property || '',
         v.tow_storage_name || '', v.tow_storage_address || '', v.tow_storage_phone || '',
         v.tow_fee || '', v.driver_name || '', v.driver_license || '', v.notes || '',

@@ -51,7 +51,7 @@ export default function CompanyAdminPortal() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [showViolation, setShowViolation] = useState(false)
-  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+  const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '', vehicle_year: '' })
   // B71: decline-and-proceed state. Mirrors driver/page.tsx semantics.
   const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor'; detail: string } | null>(null)
   const [pendingDecline, setPendingDecline] = useState<{ reason: DeclineReason; note: string | null } | null>(null)
@@ -880,6 +880,8 @@ export default function CompanyAdminPortal() {
       vehicle_color: violation.vehicle_color || null,
       vehicle_make: violation.vehicle_make || null,
       vehicle_model: violation.vehicle_model || null,
+      // B78: optional year capture. Mirrors driver portal.
+      vehicle_year: violation.vehicle_year ? (parseInt(violation.vehicle_year) || null) : null,
       is_confirmed: false,
       // B71: authorized-plate override fields.
       was_authorized_at_time: pendingDecline !== null,
@@ -974,7 +976,7 @@ export default function CompanyAdminPortal() {
     setReviewViolation(null)
     setViolationStage('form')
     setShowViolation(false)
-    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '', vehicle_year: '' })
     setPendingDecline(null)
     setPhotos([])
     setViolationVideo(null)
@@ -1060,7 +1062,7 @@ export default function CompanyAdminPortal() {
     setReviewViolation(null)
     setViolationStage('form')
     setShowViolation(false)
-    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '' })
+    setViolation({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '', vehicle_year: '' })
     setPendingDecline(null)
     setPhotos([])
     setViolationVideo(null)
@@ -1118,13 +1120,14 @@ export default function CompanyAdminPortal() {
     }
     setExportMsg(`Exporting ${towRecords.length} tow record${towRecords.length !== 1 ? 's' : ''}...`)
     setTimeout(() => setExportMsg(''), 4000)
-    const headers = ['Date','Time','Plate','State','Color','Make','Model','Violation Type','Location','Property','Storage Facility','Storage Address','Storage Phone','Tow Fee','Driver Name','Driver License','Notes']
+    // B78: vehicle_year added between State and Color (mirrors history CSV).
+    const headers = ['Date','Time','Plate','State','Year','Color','Make','Model','Violation Type','Location','Property','Storage Facility','Storage Address','Storage Phone','Tow Fee','Driver Name','Driver License','Notes']
     const rows = towRecords.map((v: any) => {
       const d = new Date(v.created_at)
       const date = d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' })
       const time = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12: true })
       return [
-        date, time, v.plate, v.state || '', v.vehicle_color || '', v.vehicle_make || '', v.vehicle_model || '',
+        date, time, v.plate, v.state || '', v.vehicle_year || '', v.vehicle_color || '', v.vehicle_make || '', v.vehicle_model || '',
         v.violation_type || '', v.location || '', v.property || '',
         v.tow_storage_name || '', v.tow_storage_address || '', v.tow_storage_phone || '',
         v.tow_fee || '', v.driver_name || '', v.driver_license || '', v.notes || '',
@@ -1259,10 +1262,8 @@ export default function CompanyAdminPortal() {
       <div class="sec"><div class="sh">Vehicle Information</div><div class="g2">
         <div class="f"><label>License Plate</label><span class="plate">${v.plate}</span></div>
         <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
-        <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
-        <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
-        <div class="f"><label>VIN</label><span>${v.vin || '—'}</span></div>
-        ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f"><label>Vehicle Description</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
+        ${v.vehicle_year ? `<div class="f"><label>Year</label><span>${v.vehicle_year}</span></div>` : ''}
+        ${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).length ? `<div class="f"><label>Make / Model / Color</label><span>${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join('  ·  ')}</span></div>` : ''}
       </div></div>
       <div class="sec"><div class="sh">Violation</div><div class="g2">
         <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
@@ -1306,8 +1307,11 @@ export default function CompanyAdminPortal() {
       `Date/Time: ${new Date(v.created_at).toLocaleString()}`,
       `Ticket #: ${String(v.id).substring(0, 8).toUpperCase()}`,
       ``,`VEHICLE`,`Plate: ${v.plate}`,
-      `Vehicle: ${[v.year, v.color, v.make, v.model].filter(Boolean).join(' ') || '—'}`,
-      `VIN: ${vin || v.vin || '—'}`,``,`VIOLATION`,
+      // B78: Family-2 source + graceful omission, matches the HTML template
+      // above. VIN line removed (never captured; the `vin` identifier wasn't
+      // even a state var in CA portal — line was a latent ReferenceError).
+      `Vehicle: ${[v.vehicle_year, v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join(' ') || '—'}`,
+      ``,`VIOLATION`,
       `Type: ${v.violation_type || '—'}`,`Location: ${v.location || '—'}`,
       `Property: ${v.property || '—'}`,`Notes: ${v.notes || 'None'}`,
       ``,`STORAGE / IMPOUND`,`Facility: ${storage?.name || '—'}`,
@@ -1352,10 +1356,8 @@ export default function CompanyAdminPortal() {
       <div class="sec"><div class="sh">Vehicle Information</div><div class="g2">
         <div class="f"><label>License Plate</label><span class="plate">${v.plate}</span></div>
         <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
-        <div class="f"><label>Year / Make / Model</label><span>${[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</span></div>
-        <div class="f"><label>Color</label><span>${v.color || '—'}</span></div>
-        <div class="f"><label>VIN</label><span>${vin || v.vin || '—'}</span></div>
-        ${v.vehicle_color || v.vehicle_make || v.vehicle_model ? `<div class="f"><label>Vehicle Description</label><span>${[v.vehicle_color, v.vehicle_make, v.vehicle_model].filter(Boolean).join('  ·  ')}</span></div>` : ''}
+        ${v.vehicle_year ? `<div class="f"><label>Year</label><span>${v.vehicle_year}</span></div>` : ''}
+        ${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).length ? `<div class="f"><label>Make / Model / Color</label><span>${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join('  ·  ')}</span></div>` : ''}
       </div></div>
       <div class="sec"><div class="sh">Violation</div><div class="g2">
         <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
@@ -1870,6 +1872,8 @@ export default function CompanyAdminPortal() {
                   <input value={violation.vehicle_make} onChange={e => setViolation({ ...violation, vehicle_make: e.target.value })} placeholder="e.g. Toyota, Honda" style={inp} />
                   <label style={lbl}>Vehicle Model (optional)</label>
                   <input value={violation.vehicle_model} onChange={e => setViolation({ ...violation, vehicle_model: e.target.value })} placeholder="e.g. Camry, Civic" style={inp} />
+                  <label style={lbl}>Vehicle Year (optional)</label>
+                  <input type="number" min={1900} max={new Date().getFullYear() + 1} step={1} value={violation.vehicle_year} onChange={e => setViolation({ ...violation, vehicle_year: e.target.value })} placeholder="e.g. 2020" style={inp} />
                   {(() => {
                     // B42: photo count cap from tier. -1 = unlimited.
                     // Fallback: Starter (3) when localStorage tier is empty — same
