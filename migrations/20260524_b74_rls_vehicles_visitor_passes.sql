@@ -1,87 +1,98 @@
 -- ════════════════════════════════════════════════════════════════════
--- B74 — RLS hardening on vehicles + visitor_passes
--- Drafted: May 24, 2026 — NOT YET APPLIED.
+-- B74 — RLS hardening on vehicles + visitor_passes (SURGICAL REVISION)
+-- Drafted: May 19, 2026 — NOT YET APPLIED.
 --
--- B70 surfaced (Finding 2) that vehicles and visitor_passes had NO RLS
--- policies. B70 closed the immediate plate-lookup gap via the
--- SECURITY DEFINER pm_plate_lookup RPC (Path C) and explicitly deferred
--- full RLS hardening (Path B) as B74. This migration is that work.
+-- ── REVISION CONTEXT ────────────────────────────────────────────────
+-- Original B74 migration (commit cd76be5) was scoped on the premise
+-- that vehicles + visitor_passes had NO RLS policies. Pre-apply
+-- verification on May 19 revealed both tables already have a full
+-- policy set, established (likely) in the May 13 B40+B43 RLS pass.
+-- The false premise propagated from B70's Finding 2 through B74's
+-- pre-flight to within minutes of the apply step.
+--
+-- The original B70 pre-flight assertion ("neither table has RLS")
+-- was wrong. The pre-apply verification caught it. Stop-before-DB (P4)
+-- worked as designed. P9 candidate (query before inferring) gets
+-- another recurrence — formal adoption pending.
+--
+-- ── ACTUAL B74 SCOPE (what's left to do) ────────────────────────────
+-- After auditing existing policies against B74's design intent, only
+-- three real changes remain:
+--
+--   1. Two anon-direct policies exist that constitute privacy leaks:
+--        • public_read_active_vehicles  USING (is_active = true)
+--          → anon can enumerate the entire active-vehicle registry
+--        • public_insert_passes  WITH CHECK (true)
+--          → anon can INSERT arbitrary visitor pass rows
+--      Both must be DROPped. The /visitor anon flow gets repointed
+--      to two new SECURITY DEFINER RPCs (PART 1).
+--
+--   2. resident_own_vehicles + resident_own_passes are property-scoped
+--      only (today a resident at property X can read every vehicle
+--      and pass at X, not just their own unit). Tightened to
+--      (property, unit) / (property, visiting_unit) tuple-IN matching.
+--      Also: resident_own_passes is SELECT-only today; broaden to
+--      FOR ALL so residents can issue passes for their own unit via
+--      authenticated path (was previously routed through the
+--      public_insert_passes anon backdoor — which we're killing).
+--
+--   3. manager_own_passes checks role='manager' only, leaving
+--      leasing_agents unable to read visitor_passes via RLS.
+--      (Note: manager_own_vehicles ALREADY includes leasing_agent,
+--      so the gap exists only on visitor_passes.)
+--      Tightened to manager + leasing_agent.
+--
+-- ── WHAT IS NOT CHANGING ────────────────────────────────────────────
+--   • admin_all_vehicles, admin_all_passes — already correct
+--   • company_admin_own_vehicles, company_admin_own_passes — already correct
+--   • manager_own_vehicles — already correct (includes leasing_agent)
+--   • driver_read_vehicles, driver_read_passes — SELECT-only is correct;
+--     drivers don't have any code paths that INSERT to either table
+--   • RLS is already ENABLED on both tables (no ALTER TABLE needed)
 --
 -- ── ATOMIC SHIP STRATEGY ────────────────────────────────────────────
--- Single migration file in three sections. The anon-path swap on
--- /visitor (vehicles SELECT → check_resident_plate RPC, visitor_passes
--- INSERT → create_visitor_pass RPC) ships in the SAME git commit. Both
--- the SQL and the TS edit must apply together — a partial state where
--- only one side landed would break the public visitor pass flow.
+-- Single transaction. The /visitor page TS swap (vehicles SELECT →
+-- check_resident_plate RPC, visitor_passes INSERT → create_visitor_pass
+-- RPC) ships in the SAME commit. Both must apply together.
 --
--- ── PARTS ───────────────────────────────────────────────────────────
---   PART 1 — Two new SECURITY DEFINER RPCs:
---             check_resident_plate(p_plate, p_property) → boolean
---             create_visitor_pass(p_plate, p_visitor_name,
---                                 p_visiting_unit, p_property,
---                                 p_vehicle_desc, p_duration_hours) → bigint
---   PART 2 — vehicles RLS: ENABLE + 5 policies
---   PART 3 — visitor_passes RLS: ENABLE + 4 policies (no driver — driver
---             access goes through pm_plate_lookup RPC which is SECURITY
---             DEFINER and bypasses RLS)
---
--- ── KEY DECISIONS (LOCKED PRE-FLIGHT) ───────────────────────────────
---   • Path B (RPCs) chosen over Path A (open anon policies) for the
---     /visitor anon paths. Anon-direct SELECT on vehicles would leak the
---     entire active-vehicle registry to any anon caller; even narrowed
---     by is_active = true, row visibility is a privacy regression.
---     RPCs make the minimum-leak contract explicit at the API level.
---   • leasing_agent included alongside manager in policies via
---     `get_my_role() IN ('manager','leasing_agent')`. B40 violations
---     RLS only checks role='manager', leaving leasing_agents
---     unable to read violations via RLS. That's a B40 gap; closed
---     forward in B74. Backfill to B40 filed as B80.
---   • Resident policies use TUPLE-IN matching on (property, unit) /
---     (property, visiting_unit) rather than two independent subqueries.
---     Forward-compatible with a future residents table refactor that
---     allows one user to have multiple residents rows (roommate /
---     family-member multi-residency Phase 2 case).
---   • Field-level write enforcement on resident vehicle UPDATE stays
---     client-side at resident/page.tsx:222-224 (residents can only
---     edit cosmetic descriptors). RLS cannot enforce field-level
---     UPDATE without column-privilege machinery.
---
--- ── RESIDENT MOVED-UNIT BEHAVIOR (noted for posterity) ──────────────
--- Resident vehicle access is implicitly unit-scoped via the (property,
--- unit) tuple-IN. If a resident moves units, they LOSE access to
--- vehicle history at their old unit on next query. Almost certainly
--- the desired behavior (moved residents shouldn't keep issuing visitor
--- passes against their old unit), but documenting here so future
--- investigation doesn't mis-classify it as a bug.
+-- The TS edits in app/visitor/page.tsx from commit cd76be5 are CORRECT
+-- and stay as-is. This file replaces the migration only.
 --
 -- ── PRE-APPLY VERIFICATION (run in SQL Editor BEFORE applying) ──────
--- 1. Column shape sanity (P9):
---   SELECT column_name, data_type, is_nullable
---   FROM information_schema.columns
---   WHERE table_schema='public' AND table_name='vehicles'
---   ORDER BY ordinal_position;
---   -- Expected: property=text, unit=text, plate=text, is_active=bool,
---   --           status=text, id=bigint (or similar). No property_id FK.
+-- Already performed May 19 — recorded outcomes:
+--   • Column shapes: vehicles.property = text, visitor_passes.property = text  ✅
+--   • RLS enabled on both: rowsecurity = true on both  ✅
+--   • Existing policies (12 total) audited and matched against B74 intent  ✅
+--   • user_roles.role values: literal 'leasing_agent' confirmed  ✅
 --
---   SELECT column_name, data_type, is_nullable
---   FROM information_schema.columns
---   WHERE table_schema='public' AND table_name='visitor_passes'
---   ORDER BY ordinal_position;
---   -- Expected: property=text, visiting_unit=text (nullable), plate=text,
---   --           is_active=bool, expires_at=timestamptz, etc.
+-- ── ORPHAN-RESIDENT AUDIT (Finding 2 from revision pre-flight) ──────
+-- The resident policy tightening below uses a tuple-IN against the
+-- residents table. Any user_roles row with role='resident' that has
+-- no matching residents row will silently LOSE visitor-pass INSERT
+-- capability post-apply (previously worked via the dropped anon
+-- public_insert_passes policy backdoor).
 --
--- 2. No existing RLS to clobber:
---   SELECT polname FROM pg_policy
---   WHERE polrelid IN ('vehicles'::regclass, 'visitor_passes'::regclass);
---   -- Expected: 0 rows. If anything returns, STOP and investigate before
---   --           applying this migration.
+-- Verification query (run BEFORE applying):
+--   SELECT ur.email, ur.company, ur.property
+--   FROM user_roles ur
+--   LEFT JOIN residents r ON r.email ILIKE ur.email
+--   WHERE ur.role = 'resident' AND r.email IS NULL
+--   ORDER BY ur.email;
+--   -- Expected post-cleanup: 0 rows. If any return, decide per row:
+--   --   (a) backfill residents row, OR
+--   --   (b) delete user_roles + auth.users row if test fixture
 --
--- 3. user_roles role values that exist (sanity for leasing_agent gate):
---   SELECT DISTINCT role FROM user_roles ORDER BY role;
---   -- Expected: admin / company_admin / driver / manager / leasing_agent
---   --           / resident. If leasing_agent value differs (e.g.,
---   --           'leasing-agent' or 'leasingAgent'), update policy expressions.
---
+-- Recorded outcome on May 19 — 2 orphan rows surfaced:
+--   • bayouresident@bayou.com (Demo Towing LLC)
+--   • jasonsmith2@email.com (Demo Towing LLC)
+-- Both were May 14 test fixtures with no residents row, never used in
+-- production. Cleaned up via SQL Editor:
+--   DELETE FROM user_roles WHERE email IN ('bayouresident@bayou.com',
+--                                          'jasonsmith2@email.com');
+--   DELETE FROM auth.users WHERE email IN ('bayouresident@bayou.com',
+--                                          'jasonsmith2@email.com');
+-- Re-verification clean: 7 active residents, all paired with residents
+-- rows. No production users affected.
 -- ════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -89,17 +100,13 @@ BEGIN;
 -- ════════════════════════════════════════════════════════════════════
 -- PART 1 — SECURITY DEFINER RPCs for the anon /visitor paths
 -- ════════════════════════════════════════════════════════════════════
--- Defined first so any future RLS expression that references them
--- (none today) sees them in scope. Both are GRANTed to anon +
--- authenticated. Both SECURITY DEFINER so they bypass the RLS policies
--- in PART 2/3.
+-- Replaces the anon-direct SELECT on vehicles and the anon-direct
+-- INSERT on visitor_passes that the dropped policies in PART 2 + PART 3
+-- previously enabled. Both GRANTed to anon + authenticated.
 
 -- ── check_resident_plate(p_plate, p_property) ─────────────────────
--- Boolean lookup used by /visitor BEFORE the visitor pass form
--- submission. Question being answered: "Is this plate already an
--- active resident at this property?" — if yes, the visitor form
--- redirects them to "you don't need a visitor pass." Returns boolean
--- only. No row data leaks; row count of vehicles is not enumerable.
+-- Boolean lookup used by /visitor BEFORE submit. Returns true/false
+-- only — no row data leaks, no enumeration possible.
 CREATE OR REPLACE FUNCTION public.check_resident_plate(
   p_plate     TEXT,
   p_property  TEXT
@@ -119,7 +126,7 @@ BEGIN
     RETURN FALSE;
   END IF;
 
-  -- Same normalization pattern as pm_plate_lookup (B70).
+  -- Same normalization as pm_plate_lookup (B70).
   v_normalized := upper(regexp_replace(p_plate, '[^A-Za-z0-9]', '', 'g'));
   IF length(v_normalized) = 0 THEN
     RETURN FALSE;
@@ -138,17 +145,11 @@ GRANT EXECUTE ON FUNCTION public.check_resident_plate(TEXT, TEXT)
   TO anon, authenticated;
 
 -- ── create_visitor_pass(...) ──────────────────────────────────────
--- Anon INSERT path for the public QR-code visitor pass flow. Mirrors
--- the shape that /visitor/page.tsx currently writes directly. The
--- enforce_visitor_pass_limit trigger fires on the internal INSERT and
--- raises 23514 if the per-plate concurrent limit is exceeded — the
--- caller catches the RAISE via supabase-js error.
---
--- Audit log INSERT (VISITOR_TOS_ACCEPTED) moved INTO this RPC for
--- atomicity. The previous /visitor flow did INSERT into visitor_passes
--- and then a second anon INSERT into audit_logs — if audit_logs ever
--- gets RLS (separate work), this RPC continues to function under
--- SECURITY DEFINER.
+-- Anon INSERT path for /visitor. enforce_visitor_pass_limit trigger
+-- still fires on the internal INSERT and raises 23514 if the per-plate
+-- concurrent limit is exceeded — error bubbles to caller via supabase-js.
+-- Audit log INSERT is included for atomicity (was a separate anon
+-- INSERT in /visitor; moved here so the pass + log are inseparable).
 CREATE OR REPLACE FUNCTION public.create_visitor_pass(
   p_plate            TEXT,
   p_visitor_name     TEXT,
@@ -167,7 +168,6 @@ DECLARE
   v_pass_id    BIGINT;
   v_expires    TIMESTAMPTZ;
 BEGIN
-  -- Input sanity (matches minimum form-side validation).
   IF p_plate IS NULL OR length(trim(p_plate)) = 0 THEN
     RAISE EXCEPTION 'plate required' USING ERRCODE = 'check_violation';
   END IF;
@@ -185,8 +185,6 @@ BEGIN
 
   v_expires := now() + (p_duration_hours || ' hours')::INTERVAL;
 
-  -- The enforce_visitor_pass_limit trigger (May 14) fires here; raises
-  -- 23514 if per-plate concurrent limit exceeded. Error bubbles up.
   INSERT INTO visitor_passes (
     plate, visitor_name, visiting_unit, property,
     vehicle_desc, duration_hours, created_at, expires_at, is_active
@@ -196,8 +194,6 @@ BEGIN
   )
   RETURNING id INTO v_pass_id;
 
-  -- Atomic audit log (was a separate anon INSERT in /visitor; now
-  -- bundled here so the pass + log are inseparable).
   INSERT INTO audit_logs (action, table_name, new_values)
   VALUES (
     'VISITOR_TOS_ACCEPTED',
@@ -213,72 +209,28 @@ GRANT EXECUTE ON FUNCTION public.create_visitor_pass(TEXT, TEXT, TEXT, TEXT, TEX
   TO anon, authenticated;
 
 -- ════════════════════════════════════════════════════════════════════
--- PART 2 — vehicles RLS
+-- PART 2 — vehicles: drop the anon leak, tighten resident scoping
 -- ════════════════════════════════════════════════════════════════════
--- Five policies, mirroring B40 violations pattern except:
---   • manager policy includes leasing_agent (closes B40 gap; see B80)
---   • resident policy uses tuple-IN matching on (property, unit) for
---     multi-residency forward-compat
---   • resident policy is FOR ALL (not SELECT-only like B40 violations)
---     because residents legitimately INSERT and UPDATE their own vehicles
---   • driver policy is FOR ALL (matches B40 driver_own_violations shape;
---     drivers don't currently INSERT vehicles, but FOR ALL keeps the
---     pattern uniform and doesn't grant new client capability — there
---     are no driver-side INSERT call sites)
+-- All other vehicles policies (admin_all_vehicles, company_admin_own_vehicles,
+-- driver_read_vehicles, manager_own_vehicles) are CORRECT AS-IS and not
+-- touched.
 
-ALTER TABLE vehicles ENABLE ROW LEVEL SECURITY;
+-- ── Drop the anon enumeration leak ──────────────────────────────
+-- USING (is_active = true) lets any anon caller SELECT every active
+-- vehicle row in the database. Replaced by check_resident_plate RPC.
+DROP POLICY IF EXISTS "public_read_active_vehicles" ON vehicles;
 
--- ── 1. admin_all_vehicles ────────────────────────────────────────
-DROP POLICY IF EXISTS "admin_all_vehicles" ON vehicles;
-CREATE POLICY "admin_all_vehicles" ON vehicles
-  FOR ALL TO authenticated
-  USING (get_my_role() = 'admin'::text);
-
--- ── 2. company_admin_own_vehicles ───────────────────────────────
-DROP POLICY IF EXISTS "company_admin_own_vehicles" ON vehicles;
-CREATE POLICY "company_admin_own_vehicles" ON vehicles
-  FOR ALL TO authenticated
-  USING (
-    (get_my_role() = 'company_admin'::text)
-    AND (property IN (
-      SELECT properties.name FROM properties
-      WHERE (properties.company ~~* get_my_company())
-    ))
-  );
-
--- ── 3. driver_own_vehicles ──────────────────────────────────────
--- Company-scoped (NOT property-assignment-scoped). Matches B40
--- driver_own_violations shape. Drivers read vehicles via plate
--- lookup during scan + may need cross-property visibility within
--- their company; the driver/page.tsx code filters client-side by
--- selectedProperty.
-DROP POLICY IF EXISTS "driver_own_vehicles" ON vehicles;
-CREATE POLICY "driver_own_vehicles" ON vehicles
-  FOR ALL TO authenticated
-  USING (
-    (get_my_role() = 'driver'::text)
-    AND (property IN (
-      SELECT properties.name FROM properties
-      WHERE (properties.company ~~* get_my_company())
-    ))
-  );
-
--- ── 4. manager_own_vehicles (includes leasing_agent) ───────────
--- DIVERGENCE FROM B40: includes leasing_agent. B80 filed as backfill.
-DROP POLICY IF EXISTS "manager_own_vehicles" ON vehicles;
-CREATE POLICY "manager_own_vehicles" ON vehicles
-  FOR ALL TO authenticated
-  USING (
-    (get_my_role() = ANY (ARRAY['manager'::text, 'leasing_agent'::text]))
-    AND (property ~~* ANY (get_my_properties()))
-  );
-
--- ── 5. resident_own_vehicles ────────────────────────────────────
--- Tuple-IN on (property, unit) per the multi-residency forward-compat
--- refinement. FOR ALL so residents can INSERT new vehicle requests
--- (status=pending, is_active=false) and UPDATE cosmetic descriptors.
--- WITH CHECK matches USING — INSERTs and UPDATEs must keep the row
--- within the resident's own (property, unit) tuple.
+-- ── Tighten resident_own_vehicles to (property, unit) tuple-IN ──
+-- Existing policy is property-scoped only. New shape uses tuple-IN
+-- matching so residents only see vehicles tied to their specific
+-- (property, unit) pair. Forward-compatible with future
+-- multi-residency refactor.
+--
+-- WITH CHECK is omitted — Postgres defaults WITH CHECK to USING when
+-- omitted on FOR ALL policies. Matches the B40 capture-pass byte
+-- convention (all FOR ALL policies in production have polwithcheck =
+-- NULL). Resident INSERTs/UPDATEs are still gated by USING via the
+-- WITH-CHECK-defaults-to-USING rule.
 DROP POLICY IF EXISTS "resident_own_vehicles" ON vehicles;
 CREATE POLICY "resident_own_vehicles" ON vehicles
   FOR ALL TO authenticated
@@ -288,72 +240,51 @@ CREATE POLICY "resident_own_vehicles" ON vehicles
       SELECT residents.property, residents.unit FROM residents
       WHERE residents.email ~~* (auth.jwt() ->> 'email'::text)
     ))
-  )
-  WITH CHECK (
-    (get_my_role() = 'resident'::text)
-    AND ((property, unit) IN (
-      SELECT residents.property, residents.unit FROM residents
-      WHERE residents.email ~~* (auth.jwt() ->> 'email'::text)
-    ))
   );
 
 -- ════════════════════════════════════════════════════════════════════
--- PART 3 — visitor_passes RLS
+-- PART 3 — visitor_passes: drop the anon leak, leasing_agent + tuple-IN
 -- ════════════════════════════════════════════════════════════════════
--- Four policies (admin / company_admin / manager+leasing_agent /
--- resident). NO driver policy — drivers don't read visitor_passes
--- directly today; the pm_plate_lookup RPC (B70, SECURITY DEFINER)
--- handles their visitor-pass lookups internally. NO anon policy —
--- the anon INSERT path goes through create_visitor_pass RPC (PART 1).
---
--- Resident policy uses tuple-IN on (property, visiting_unit) → matches
--- residents.(property, unit). Same multi-residency forward-compat.
+-- All other visitor_passes policies (admin_all_passes,
+-- company_admin_own_passes, driver_read_passes) are correct AS-IS and
+-- not touched.
 
-ALTER TABLE visitor_passes ENABLE ROW LEVEL SECURITY;
+-- ── Drop the anon free-INSERT leak ──────────────────────────────
+-- WITH CHECK (true) lets any anon caller INSERT arbitrary rows into
+-- visitor_passes. The enforce_visitor_pass_limit trigger provided
+-- some protection but no scoping. Replaced by create_visitor_pass RPC.
+DROP POLICY IF EXISTS "public_insert_passes" ON visitor_passes;
 
--- ── 1. admin_all_visitor_passes ─────────────────────────────────
-DROP POLICY IF EXISTS "admin_all_visitor_passes" ON visitor_passes;
-CREATE POLICY "admin_all_visitor_passes" ON visitor_passes
-  FOR ALL TO authenticated
-  USING (get_my_role() = 'admin'::text);
-
--- ── 2. company_admin_own_visitor_passes ────────────────────────
-DROP POLICY IF EXISTS "company_admin_own_visitor_passes" ON visitor_passes;
-CREATE POLICY "company_admin_own_visitor_passes" ON visitor_passes
-  FOR ALL TO authenticated
-  USING (
-    (get_my_role() = 'company_admin'::text)
-    AND (property IN (
-      SELECT properties.name FROM properties
-      WHERE (properties.company ~~* get_my_company())
-    ))
-  );
-
--- ── 3. manager_own_visitor_passes (includes leasing_agent) ─────
-DROP POLICY IF EXISTS "manager_own_visitor_passes" ON visitor_passes;
-CREATE POLICY "manager_own_visitor_passes" ON visitor_passes
+-- ── manager_own_passes: add leasing_agent ───────────────────────
+-- Existing policy checks role='manager' only, leaving leasing_agents
+-- unable to access visitor_passes via RLS. (Note: manager_own_vehicles
+-- ALREADY includes leasing_agent — gap exists only on this one policy.)
+DROP POLICY IF EXISTS "manager_own_passes" ON visitor_passes;
+CREATE POLICY "manager_own_passes" ON visitor_passes
   FOR ALL TO authenticated
   USING (
     (get_my_role() = ANY (ARRAY['manager'::text, 'leasing_agent'::text]))
     AND (property ~~* ANY (get_my_properties()))
   );
 
--- ── 4. resident_own_visitor_passes ─────────────────────────────
--- Tuple-IN on (property, visiting_unit) matched against
--- residents.(property, unit). visiting_unit IS the unit the visitor
--- is visiting — for resident-issued passes, this equals the resident's
--- own unit.
-DROP POLICY IF EXISTS "resident_own_visitor_passes" ON visitor_passes;
-CREATE POLICY "resident_own_visitor_passes" ON visitor_passes
+-- ── resident_own_passes: tuple-IN + broaden to FOR ALL ──────────
+-- Two changes:
+--   1. Property-only → (property, visiting_unit) tuple-IN matching
+--      residents.(property, unit). Same multi-residency forward-compat
+--      as resident_own_vehicles.
+--   2. SELECT-only → FOR ALL. Residents need to INSERT visitor passes
+--      for their own unit through the authenticated path; the
+--      public_insert_passes anon backdoor (being dropped) was the
+--      previous mechanism.
+--
+-- WITH CHECK omitted (defaults to USING) — matches B40 byte convention.
+-- The broadening is intentional: residents now INSERT through the
+-- authenticated path, gated by the same (property, visiting_unit)
+-- tuple-IN that USING enforces.
+DROP POLICY IF EXISTS "resident_own_passes" ON visitor_passes;
+CREATE POLICY "resident_own_passes" ON visitor_passes
   FOR ALL TO authenticated
   USING (
-    (get_my_role() = 'resident'::text)
-    AND ((property, visiting_unit) IN (
-      SELECT residents.property, residents.unit FROM residents
-      WHERE residents.email ~~* (auth.jwt() ->> 'email'::text)
-    ))
-  )
-  WITH CHECK (
     (get_my_role() = 'resident'::text)
     AND ((property, visiting_unit) IN (
       SELECT residents.property, residents.unit FROM residents
@@ -369,50 +300,44 @@ COMMIT;
 -- ── A. vehicles policy inventory ────────────────────────────────────
 --   SELECT polname, polcmd FROM pg_policy
 --   WHERE polrelid = 'vehicles'::regclass ORDER BY polname;
---   -- Expected 5 rows (polcmd: *=ALL):
---   --   admin_all_vehicles              *
---   --   company_admin_own_vehicles      *
---   --   driver_own_vehicles             *
---   --   manager_own_vehicles            *
---   --   resident_own_vehicles           *
+--   -- Expected 5 rows:
+--   --   admin_all_vehicles              *  (ALL)
+--   --   company_admin_own_vehicles      *  (ALL)
+--   --   driver_read_vehicles            r  (SELECT)  ← unchanged
+--   --   manager_own_vehicles            *  (ALL)
+--   --   resident_own_vehicles           *  (ALL)
+--   -- public_read_active_vehicles MUST NOT appear (dropped).
 --
--- ── B. vehicles policy USING expressions ────────────────────────────
---   SELECT polname, pg_get_expr(polqual, polrelid) AS using_expr
---   FROM pg_policy WHERE polrelid = 'vehicles'::regclass
---   ORDER BY polname;
---   -- Each using_expr should match the body of the corresponding
---   -- CREATE POLICY statement above.
---
--- ── C. visitor_passes policy inventory ──────────────────────────────
+-- ── B. visitor_passes policy inventory ──────────────────────────────
 --   SELECT polname, polcmd FROM pg_policy
 --   WHERE polrelid = 'visitor_passes'::regclass ORDER BY polname;
---   -- Expected 4 rows (all polcmd=*):
---   --   admin_all_visitor_passes        *
---   --   company_admin_own_visitor_passes  *
---   --   manager_own_visitor_passes      *
---   --   resident_own_visitor_passes     *
+--   -- Expected 5 rows:
+--   --   admin_all_passes                *  (ALL)
+--   --   company_admin_own_passes        *  (ALL)
+--   --   driver_read_passes              r  (SELECT)  ← unchanged
+--   --   manager_own_passes              *  (ALL)
+--   --   resident_own_passes             *  (ALL)
+--   -- public_insert_passes MUST NOT appear (dropped).
 --
--- ── D. visitor_passes policy USING expressions ──────────────────────
+-- ── C. Updated USING expressions ────────────────────────────────────
 --   SELECT polname, pg_get_expr(polqual, polrelid) AS using_expr
---   FROM pg_policy WHERE polrelid = 'visitor_passes'::regclass
---   ORDER BY polname;
+--   FROM pg_policy
+--   WHERE polrelid = 'vehicles'::regclass AND polname = 'resident_own_vehicles';
+--   -- Expected: contains "(property, unit) IN (SELECT ..."
 --
--- ── E. RLS enabled on both tables ───────────────────────────────────
+--   SELECT polname, pg_get_expr(polqual, polrelid) AS using_expr
+--   FROM pg_policy
+--   WHERE polrelid = 'visitor_passes'::regclass
+--     AND polname IN ('manager_own_passes', 'resident_own_passes');
+--   -- manager_own_passes USING expr contains "ANY (ARRAY['manager'::text, 'leasing_agent'::text])"
+--   -- resident_own_passes USING expr contains "(property, visiting_unit) IN (SELECT ..."
+--
+-- ── D. RLS still enabled on both tables ─────────────────────────────
 --   SELECT relname, relrowsecurity FROM pg_class
 --   WHERE relname IN ('vehicles', 'visitor_passes');
---   -- Expected: both relrowsecurity = TRUE
+--   -- Expected: both relrowsecurity = TRUE (unchanged from pre-state)
 --
--- ── F. Column shape sanity (P9 — post-apply confirmation) ───────────
---   SELECT 'vehicles.property' AS field, data_type
---   FROM information_schema.columns
---   WHERE table_schema='public' AND table_name='vehicles' AND column_name='property'
---   UNION ALL
---   SELECT 'visitor_passes.property', data_type
---   FROM information_schema.columns
---   WHERE table_schema='public' AND table_name='visitor_passes' AND column_name='property';
---   -- Expected: both 'text'
---
--- ── G. RPC functions exist + SECURITY DEFINER + correct GRANTs ──────
+-- ── E. RPC functions exist + SECURITY DEFINER + correct GRANTs ──────
 --   SELECT proname, prosecdef AS is_security_definer, provolatile
 --   FROM pg_proc
 --   WHERE pronamespace = 'public'::regnamespace
@@ -420,7 +345,7 @@ COMMIT;
 --   ORDER BY proname;
 --   -- Expected:
 --   --   check_resident_plate    t   s   (s = STABLE)
---   --   create_visitor_pass     t   v   (v = VOLATILE — writes)
+--   --   create_visitor_pass     t   v   (v = VOLATILE)
 --
 --   SELECT routine_name, grantee
 --   FROM information_schema.routine_privileges
@@ -430,73 +355,84 @@ COMMIT;
 --   ORDER BY routine_name, grantee;
 --   -- Expected: each routine appears with grantee IN ('anon', 'authenticated').
 --
--- ── H. Anon smoke 1 — check_resident_plate returns boolean ──────────
--- As anon (run from supabase JS client in an anon session, OR via
--- impersonated anon role in SQL Editor):
+-- ── F. Anon smoke 1 — check_resident_plate ──────────────────────────
+-- From anon Supabase client:
 --   SELECT check_resident_plate('TEST-PLATE-FAKE', 'Test Property');
---   -- Expected: false (or true if a real test plate exists at that property)
+--   -- Expected: false
 --
--- ── I. Anon smoke 2 — create_visitor_pass returns BIGINT ────────────
--- DESTRUCTIVE — only run in dev/staging.
---   SELECT create_visitor_pass(
---     'TESTVPLATE',
---     'Smoke Test Visitor',
---     'A-101',
---     'Test Property',     -- must exist or trigger may complain
---     'White sedan',
---     2
---   );
---   -- Expected: BIGINT (new visitor_passes.id). Verify post-call:
---   --   • visitor_passes row exists with normalized plate + expires_at
---   --   • audit_logs row exists with action='VISITOR_TOS_ACCEPTED'
---
--- ── J. Anon SELECT on vehicles returns zero rows (RLS blocks) ───────
--- As anon:
+-- ── G. Anon smoke 2 — direct SELECT on vehicles returns 0 ───────────
+-- From anon Supabase client:
 --   SELECT count(*) FROM vehicles;
---   -- Expected: 0. RLS allows no anon read access (no anon policy
---   -- exists; PART 2's policies are TO authenticated only).
+--   -- Expected: 0 (no anon policy exists now; previously returned
+--   --             every active vehicle via public_read_active_vehicles)
 --
--- ── K. Anon SELECT on visitor_passes returns zero rows ──────────────
--- As anon:
---   SELECT count(*) FROM visitor_passes;
---   -- Expected: 0. Same reason as J.
+-- ── H. Anon smoke 3 — direct INSERT on visitor_passes fails ─────────
+-- From anon Supabase client:
+--   INSERT INTO visitor_passes (plate, property, duration_hours)
+--   VALUES ('XYZ', 'Some Property', 4);
+--   -- Expected: PERMISSION DENIED (no anon policy exists now)
 --
--- ── POST-APPLY SMOKE CHECKLIST (Finding 6) ──────────────────────────
--- 1. As resident — fetchVehicles returns own unit's rows only
--- 2. As resident — INSERT new vehicle succeeds; INSERT with wrong unit fails
--- 3. As manager — fetchVehicles on assigned property returns rows;
---    on unassigned property returns zero
--- 4. As leasing_agent (if test rows exist) — same as manager
--- 5. As driver — plate lookup at scanPlate returns rows for own company's
---    properties; fails on other company's
--- 6. As anon (incognito on /visitor) — plate precheck works (RPC);
---    direct .from('vehicles') would return zero
--- 7. As anon (incognito on /visitor) — visitor pass submit works (RPC);
---    direct .from('visitor_passes').insert(...) would fail
--- 8. As admin — bulk update on property completes (admin FOR ALL covers it)
+-- ── I. Anon smoke 4 — create_visitor_pass succeeds ──────────────────
+-- DESTRUCTIVE — only run in dev/staging:
+--   SELECT create_visitor_pass(
+--     'TESTVPLATE', 'Smoke Visitor', 'A-101',
+--     'Test Property', 'White sedan', 2
+--   );
+--   -- Expected: BIGINT (new visitor_passes.id), audit log row created
 --
--- ── ROLLBACK (if needed — TWO-STEP) ─────────────────────────────────
--- Step 1 (CODE): revert the /visitor page to use direct .from() calls.
---   This MUST precede the DB rollback — if the RPCs get dropped while
---   the live code still calls .rpc(), the visitor flow breaks.
--- Step 2 (DB): run the following in SQL Editor:
+-- ── POST-APPLY SMOKE CHECKLIST ──────────────────────────────────────
+-- 1. As resident — fetchVehicles returns own (property, unit) rows only
+-- 2. As resident — INSERT new vehicle for own (property, unit) succeeds;
+--    INSERT with wrong unit fails (tuple-IN blocks)
+-- 3. As resident — INSERT visitor pass via authenticated portal for own
+--    (property, unit) succeeds (validates broaden-to-FOR-ALL on
+--    resident_own_passes)
+-- 4. As manager — fetchVehicles + visitor_passes on assigned property
+--    return rows; unassigned property returns zero
+-- 5. As leasing_agent (if test rows exist) — same as manager on BOTH
+--    tables (vehicles already worked; visitor_passes is the fix)
+-- 6. As driver — plate lookup at scanPlate returns rows for own
+--    company's properties; fails on other company's
+-- 7. As anon (incognito /visitor) — plate precheck works (RPC);
+--    direct .from('vehicles') returns zero
+-- 8. As anon (incognito /visitor) — visitor pass submit works (RPC);
+--    direct .from('visitor_passes').insert(...) fails
+-- 9. As admin — bulk update on property completes (admin FOR ALL covers it)
+--
+-- ── ROLLBACK (TWO-STEP) ─────────────────────────────────────────────
+-- Step 1 (CODE): revert /visitor page to direct .from() calls.
+-- Step 2 (DB):
 --
 --   BEGIN;
---   DROP POLICY IF EXISTS admin_all_vehicles ON vehicles;
---   DROP POLICY IF EXISTS company_admin_own_vehicles ON vehicles;
---   DROP POLICY IF EXISTS driver_own_vehicles ON vehicles;
---   DROP POLICY IF EXISTS manager_own_vehicles ON vehicles;
---   DROP POLICY IF EXISTS resident_own_vehicles ON vehicles;
---   ALTER TABLE vehicles DISABLE ROW LEVEL SECURITY;
---   DROP POLICY IF EXISTS admin_all_visitor_passes ON visitor_passes;
---   DROP POLICY IF EXISTS company_admin_own_visitor_passes ON visitor_passes;
---   DROP POLICY IF EXISTS manager_own_visitor_passes ON visitor_passes;
---   DROP POLICY IF EXISTS resident_own_visitor_passes ON visitor_passes;
---   ALTER TABLE visitor_passes DISABLE ROW LEVEL SECURITY;
+--   -- Restore the dropped anon policies (recreates the privacy leaks
+--   -- temporarily until code rollback completes)
+--   CREATE POLICY "public_read_active_vehicles" ON vehicles
+--     FOR SELECT USING (is_active = true);
+--   CREATE POLICY "public_insert_passes" ON visitor_passes
+--     FOR INSERT WITH CHECK (true);
+--   -- Restore loose resident scoping
+--   DROP POLICY IF EXISTS "resident_own_vehicles" ON vehicles;
+--   CREATE POLICY "resident_own_vehicles" ON vehicles
+--     FOR ALL TO authenticated
+--     USING ((get_my_role() = 'resident'::text)
+--            AND (property IN (SELECT residents.property FROM residents
+--                              WHERE residents.email ~~* (auth.jwt() ->> 'email'::text))));
+--   DROP POLICY IF EXISTS "resident_own_passes" ON visitor_passes;
+--   CREATE POLICY "resident_own_passes" ON visitor_passes
+--     FOR SELECT TO authenticated
+--     USING ((get_my_role() = 'resident'::text)
+--            AND (property IN (SELECT residents.property FROM residents
+--                              WHERE residents.email ~~* (auth.jwt() ->> 'email'::text))));
+--   -- Restore manager-only on visitor_passes (removes leasing_agent)
+--   DROP POLICY IF EXISTS "manager_own_passes" ON visitor_passes;
+--   CREATE POLICY "manager_own_passes" ON visitor_passes
+--     FOR ALL TO authenticated
+--     USING ((get_my_role() = 'manager'::text)
+--            AND (property ~~* ANY (get_my_properties())));
+--   -- Drop the RPCs
 --   DROP FUNCTION IF EXISTS public.check_resident_plate(TEXT, TEXT);
 --   DROP FUNCTION IF EXISTS public.create_visitor_pass(TEXT, TEXT, TEXT, TEXT, TEXT, INTEGER);
 --   COMMIT;
 --
--- Supabase point-in-time restore is the nuclear option if anything else
--- goes wrong.
+-- Supabase point-in-time restore is the nuclear option.
 -- ════════════════════════════════════════════════════════════════════
