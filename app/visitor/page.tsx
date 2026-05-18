@@ -75,44 +75,36 @@ function VisitorForm() {
 
     const plate = normalizePlate(form.plate)
 
+    // B74: anon precheck swapped from direct vehicles SELECT to the
+    // SECURITY DEFINER check_resident_plate RPC. The vehicles table
+    // now has RLS enabled with no anon policy — direct .from() would
+    // return zero rows. The RPC returns a minimum-leak boolean (no row
+    // visibility, no count enumeration).
     if (propertyName !== 'Managed Property') {
-      const { data: existing } = await supabase
-        .from('vehicles')
-        .select('id')
-        .ilike('plate', plate)
-        .ilike('property', propertyName)
-        .eq('is_active', true)
-        .limit(1)
+      const { data: isResident } = await supabase
+        .rpc('check_resident_plate', { p_plate: plate, p_property: propertyName })
 
-      if (existing && existing.length > 0) {
+      if (isResident === true) {
         setLoading(false)
         setPlateError('This plate is already registered to a resident at this property and does not need a visitor pass.')
         return
       }
-
     }
     // B19: per-plate-concurrent-active enforcement runs in the DB trigger
-    // (enforce_visitor_pass_limit). The UI counter above this submit
-    // disables the button when at_limit; submit-time errors are caught
-    // below via parseLimitTriggerError.
+    // (enforce_visitor_pass_limit) — fires inside create_visitor_pass.
+    // Submit-time errors are caught below via parseLimitTriggerError.
 
-    const now = new Date()
-    const expires = new Date()
-    expires.setHours(expires.getHours() + parseInt(form.duration))
-
-    const { error } = await supabase
-      .from('visitor_passes')
-      .insert([{
-        plate,
-        visitor_name: form.name,
-        visiting_unit: form.unit,
-        property: propertyName,
-        vehicle_desc: form.vehicle_desc,
-        duration_hours: parseInt(form.duration),
-        created_at: now.toISOString(),
-        expires_at: expires.toISOString(),
-        is_active: true
-      }])
+    // B74: anon INSERT swapped to SECURITY DEFINER create_visitor_pass RPC.
+    // RPC also writes the VISITOR_TOS_ACCEPTED audit_logs row atomically
+    // (previously a separate anon INSERT on audit_logs).
+    const { error } = await supabase.rpc('create_visitor_pass', {
+      p_plate: plate,
+      p_visitor_name: form.name,
+      p_visiting_unit: form.unit,
+      p_property: propertyName,
+      p_vehicle_desc: form.vehicle_desc,
+      p_duration_hours: parseInt(form.duration),
+    })
 
     setLoading(false)
     if (error) {
@@ -124,7 +116,6 @@ function VisitorForm() {
       }
       return
     }
-    await supabase.from('audit_logs').insert([{ action: 'VISITOR_TOS_ACCEPTED', table_name: 'visitor_passes', new_values: { plate, property: propertyName } }])
     setStep('success')
   }
 
