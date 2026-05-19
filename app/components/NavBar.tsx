@@ -5,6 +5,9 @@ import { supabase } from '../supabase'
 import { applyTheme, getThemeColor } from '../lib/theme'
 import { useResolvedLogo } from '../lib/logo'
 
+// B85: Help link appended as last item across every role. Help center is
+// public (no auth required for the help pages themselves), but the NavBar
+// link is visible to authenticated users too as a navigation aid.
 const NAV_LINKS: Record<string, { label: string; href: string }[]> = {
   admin: [
     { label: 'Home', href: '/' },
@@ -15,21 +18,27 @@ const NAV_LINKS: Record<string, { label: string; href: string }[]> = {
     { label: 'Admin', href: '/admin' },
     { label: 'Proposals', href: '/admin/proposal-codes' },
     { label: 'QR Codes', href: '/qr' },
+    { label: 'Help', href: '/help' },
   ],
   company_admin: [
     { label: 'Dashboard', href: '/company_admin' },
+    { label: 'Help', href: '/help' },
   ],
   manager: [
     { label: 'Dashboard', href: '/manager' },
+    { label: 'Help', href: '/help' },
   ],
   driver: [
     { label: 'Driver Portal', href: '/driver' },
+    { label: 'Help', href: '/help' },
   ],
   resident: [
     { label: 'My Account', href: '/resident' },
+    { label: 'Help', href: '/help' },
   ],
   leasing_agent: [
     { label: 'Dashboard', href: '/manager' },
+    { label: 'Help', href: '/help' },
   ],
 }
 

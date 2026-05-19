@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/validate-help-links.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -12,6 +13,9 @@
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.105.0",
     "@types/papaparse": "^5.5.2",
+    "flexsearch": "^0.8.212",
+    "gray-matter": "^4.0.3",
+    "marked": "^18.0.4",
     "next": "16.2.4",
     "papaparse": "^5.5.3",
     "qrcode.react": "^4.2.0",
