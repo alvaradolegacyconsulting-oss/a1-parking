@@ -28,8 +28,14 @@ export function generateStaticParams(): Params[] {
   return getAllSlugs().map((slug) => ({ slug }))
 }
 
-export function generateMetadata({ params }: { params: Params }): Metadata {
-  const doc = getDocBySlug(params.slug)
+// Next 16: params is a Promise. generateMetadata and the page component
+// both receive Promise<Params> and must await. (The previous sync-params
+// shape was a Next 14 convention and produced silent 404s — build succeeded
+// because SSG still called the function, but runtime reads of params.slug
+// resolved to undefined and tripped notFound().)
+export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
+  const { slug } = await params
+  const doc = getDocBySlug(slug)
   if (!doc) return { title: 'Not found · ShieldMyLot Help' }
   const fm = doc.frontmatter
   const description = doc.body
@@ -144,8 +150,9 @@ function ArticleJsonLd({ title, description, slug, lastUpdated, category }: { ti
   )
 }
 
-export default function HelpDocPage({ params }: { params: Params }) {
-  const doc = getDocBySlug(params.slug)
+export default async function HelpDocPage({ params }: { params: Promise<Params> }) {
+  const { slug } = await params
+  const doc = getDocBySlug(slug)
   if (!doc) notFound()
 
   const fm = doc.frontmatter
