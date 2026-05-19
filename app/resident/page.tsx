@@ -249,14 +249,6 @@ export default function ResidentPortal() {
 
   async function requestVehicle() {
     if (!newVehicle.plate) { alert('Plate is required'); return }
-    const { data: existingVehicles } = await supabase
-      .from('vehicles').select('id')
-      .eq('unit', resident.unit).ilike('property', resident.property)
-      .in('status', ['active', 'pending'])
-    if (existingVehicles && existingVehicles.length >= 2) {
-      setRequestMsg('Maximum of 2 vehicles allowed per resident at initial registration. To add an additional vehicle beyond this limit, please contact your Property Manager directly.')
-      return
-    }
     const normalizedPlate = normalizePlate(newVehicle.plate)
     const { error } = await supabase.from('vehicles').insert([{
       plate: normalizedPlate,
