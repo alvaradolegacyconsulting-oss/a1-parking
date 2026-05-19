@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/validate-help-links.mjs",
+    "prebuild": "node scripts/validate-help-links.mjs && node scripts/build-help-search-index.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

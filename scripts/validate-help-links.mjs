@@ -80,6 +80,17 @@ for (const doc of docs) {
   }
 }
 
+// ── 2b. Video frontmatter slug, if present, must match filename-derived slug ─
+// Filename is the authoritative slug source (matches help-docs convention).
+// Surfaces drift if a video author edits the frontmatter slug without
+// renaming the file.
+for (const video of videos) {
+  const fmSlug = video.frontmatter.slug
+  if (typeof fmSlug === 'string' && fmSlug !== video.slug) {
+    errors.push(`${video.filename}: frontmatter slug "${fmSlug}" does not match filename-derived slug "${video.slug}"`)
+  }
+}
+
 // ── 3. frontmatter related_docs[] on videos → must resolve to doc slugs ─
 for (const video of videos) {
   const rd = video.frontmatter.related_docs ?? []

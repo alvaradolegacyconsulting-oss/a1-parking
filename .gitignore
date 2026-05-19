@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# B85 Phase 2: build-time generated artifacts
+# Regenerated on every `npm run prebuild` from docs/help/*.md.
+# Committing risks drift from source if a doc is edited without rebuild.
+/public/help-search-index.json
+
+# Test output artifacts from earlier sessions; never B85 scope.
+/output/

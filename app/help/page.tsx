@@ -1,27 +1,21 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { getAllDocs, getCategories } from '../lib/help-docs'
+import HelpSearchInput from './HelpSearchInput'
+import HelpDocGrid, { type GridDoc } from './HelpDocGrid'
 
 // B85: help center index. Server component; statically generated.
-// Category filter via ?category= query param — index-page filter,
-// not a separate route (locked B85 decision).
-//
-// Role-aware sort (Jose's locked decision) is DEFERRED to session 2.
-// Default sort: category order (Getting Started → Enforcement → PM →
-// Shared → Compliance) then filename order within category. Anonymous
-// users get this default; logged-in role-aware reorder lands in the
-// follow-up polish pass.
-//
-// Search input rendered but UI wiring (flexsearch lazy-load) also
-// deferred to session 2. Stub renders the input; future commit wires
-// the index fetch + result render.
+// Category filter via ?category= query param (locked: filter, not
+// separate routes). Doc grid + role-aware sort live in HelpDocGrid
+// client component; search input is HelpSearchInput client component
+// with lazy flexsearch index load on first focus.
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
-const CARD_BG = 'rgba(255,255,255,0.02)'
 const BORDER = 'rgba(255,255,255,0.06)'
 const TEXT = '#e2e8f0'
 const MUTED = '#64748b'
+const CARD_BG = 'rgba(255,255,255,0.02)'
 
 export const metadata: Metadata = {
   title: 'Help Center · ShieldMyLot',
@@ -36,26 +30,7 @@ export const metadata: Metadata = {
 
 type SearchParams = { category?: string }
 
-function AudienceBadge({ role }: { role: string }) {
-  const label = role.replace(/_/g, ' ')
-  return (
-    <span style={{ display: 'inline-block', background: 'rgba(255,255,255,0.04)', border: `1px solid ${BORDER}`, color: '#94a3b8', fontSize: 10, padding: '1px 7px', borderRadius: 10, marginRight: 4, textTransform: 'capitalize' }}>
-      {label}
-    </span>
-  )
-}
-
-function TierBadge({ tier }: { tier: string }) {
-  if (tier === 'any') return null
-  return (
-    <span style={{ display: 'inline-block', background: 'rgba(201,162,39,0.12)', border: `1px solid rgba(201,162,39,0.5)`, color: GOLD, fontSize: 10, padding: '1px 7px', borderRadius: 10, marginRight: 4, fontWeight: 600 }}>
-      {tier}
-    </span>
-  )
-}
-
 export default async function HelpIndexPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  // Next 16: searchParams is a Promise. Await it.
   const params = await searchParams
   const activeCategory = params.category ?? null
 
@@ -65,12 +40,15 @@ export default async function HelpIndexPage({ searchParams }: { searchParams: Pr
     ? allDocs.filter((d) => d.frontmatter.category === activeCategory)
     : allDocs
 
-  // Group visible docs by category for rendering
-  const groupedDocs: Record<string, typeof allDocs> = {}
-  for (const cat of allCategories) {
-    const group = visibleDocs.filter((d) => d.frontmatter.category === cat)
-    if (group.length > 0) groupedDocs[cat] = group
-  }
+  // Slim serialization for client component (no body, no html, no fs handles).
+  const gridDocs: GridDoc[] = visibleDocs.map((d) => ({
+    slug: d.slug,
+    title: d.frontmatter.title,
+    category: d.frontmatter.category,
+    audience: d.frontmatter.audience ?? [],
+    tier_required: d.frontmatter.tier_required,
+    last_updated: d.frontmatter.last_updated,
+  }))
 
   return (
     <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'system-ui, Arial, sans-serif', padding: '40px 24px 64px' }}>
@@ -88,21 +66,24 @@ export default async function HelpIndexPage({ searchParams }: { searchParams: Pr
           </p>
         </header>
 
-        {/* Search input — UI placeholder; flexsearch lazy-load wiring lands in B85 session 2.
-            Renders as a non-functional input today; styled to fit the surface so the polish
-            pass slot it without layout shift. */}
-        <div style={{ marginBottom: 32 }}>
-          <input
-            type="search"
-            placeholder="Search help docs… (coming soon)"
-            aria-label="Search help docs"
-            disabled
+        {/* Search — lazy-loads flexsearch + index on first focus */}
+        <div style={{ marginBottom: 28 }}>
+          <HelpSearchInput />
+        </div>
+
+        {/* Video library teaser link */}
+        <div style={{ marginBottom: 28 }}>
+          <Link
+            href="/help/videos"
             style={{
-              width: '100%', background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10,
-              padding: '12px 16px', color: TEXT, fontSize: 14, fontFamily: 'inherit', outline: 'none',
-              opacity: 0.55, cursor: 'not-allowed',
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              background: 'rgba(201,162,39,0.06)', border: '1px solid rgba(201,162,39,0.3)',
+              color: GOLD, fontSize: 13, fontWeight: 600, textDecoration: 'none',
+              padding: '8px 14px', borderRadius: 999,
             }}
-          />
+          >
+            🎬 Watch video walkthroughs →
+          </Link>
         </div>
 
         {/* Category filter chips */}
@@ -139,37 +120,12 @@ export default async function HelpIndexPage({ searchParams }: { searchParams: Pr
           })}
         </div>
 
-        {/* Doc grid by category */}
-        {Object.entries(groupedDocs).map(([cat, docs]) => (
-          <section key={cat} style={{ marginBottom: 36 }}>
-            <h2 style={{ color: TEXT, fontSize: 18, fontWeight: 700, margin: '0 0 14px' }}>{cat}</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-              {docs.map((d) => (
-                <Link
-                  key={d.slug}
-                  href={`/help/${d.slug}`}
-                  style={{
-                    display: 'block', background: CARD_BG, border: `1px solid ${BORDER}`,
-                    borderRadius: 12, padding: '18px 18px 16px', textDecoration: 'none',
-                  }}
-                >
-                  <h3 style={{ color: TEXT, fontSize: 15, fontWeight: 700, margin: '0 0 8px' }}>{d.frontmatter.title}</h3>
-                  <div style={{ marginBottom: 10 }}>
-                    <TierBadge tier={d.frontmatter.tier_required} />
-                    {d.frontmatter.audience?.slice(0, 4).map((a) => <AudienceBadge key={a} role={a} />)}
-                  </div>
-                  <p style={{ color: MUTED, fontSize: 11, margin: 0 }}>Last updated: {d.frontmatter.last_updated}</p>
-                </Link>
-              ))}
-            </div>
-          </section>
-        ))}
-
-        {visibleDocs.length === 0 && (
-          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 12, padding: '24px 28px', textAlign: 'center' }}>
-            <p style={{ color: MUTED, fontSize: 14, margin: 0 }}>No docs in this category yet.</p>
-          </div>
-        )}
+        {/* Docs grid (client component handles role-aware reorder post-hydration) */}
+        <HelpDocGrid
+          docs={gridDocs}
+          categories={allCategories}
+          activeCategory={activeCategory}
+        />
 
         <footer style={{ marginTop: 48, paddingTop: 24, borderTop: `1px solid ${BORDER}`, color: MUTED, fontSize: 12, textAlign: 'center' }}>
           Can&apos;t find what you&apos;re looking for?{' '}
