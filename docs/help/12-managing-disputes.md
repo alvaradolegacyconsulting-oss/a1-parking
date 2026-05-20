@@ -3,7 +3,7 @@ title: "Managing Disputes"
 category: "Shared"
 audience: ["resident", "manager", "company_admin"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["submitting-violations", "tow-tickets-and-evidence", "texas-chapter-2308"]
 ---
 
@@ -43,8 +43,6 @@ You'll see:
 - Photos and any video evidence
 - The submitting driver's name
 
-[Screenshot: Resident violation card with View Details and File Dispute buttons]
-
 Take a careful look at the photos and video. Sometimes the evidence resolves the question — either confirming the violation was correct or revealing the error.
 
 ### Step 2: File the dispute
@@ -57,8 +55,6 @@ You'll be asked:
 - **Supporting documentation** — Optional photos or documents that support your case
 
 **Be specific.** "I didn't do anything wrong" is harder to evaluate than "I have a valid permit displayed on the windshield; here's a photo of it." Specifics help managers resolve disputes faster and more accurately.
-
-[Screenshot: Dispute filing form with reason dropdown, explanation field, and file upload area]
 
 ### Step 3: Submit and wait for response
 
@@ -129,8 +125,6 @@ In the dispute, click **Respond**. Fill in:
 - **Next steps** — If applicable, what the resident should do (e.g., "Tow fee refund will be processed within 5 business days")
 
 **Important: write the response as if it will be read by a third party** (a court, a property owner, the resident's attorney). Professional, neutral, evidence-based responses serve everyone better than emotional ones.
-
-[Screenshot: Dispute response form with outcome dropdown, reasoning text area, and next steps field]
 
 ### Step 4: Submit
 

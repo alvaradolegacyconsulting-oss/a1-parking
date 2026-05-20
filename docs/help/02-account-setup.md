@@ -3,7 +3,7 @@ title: "Account Setup"
 category: "Getting Started"
 audience: ["company_admin"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["signup-and-first-login", "understanding-your-tier", "account-security"]
 ---
 
@@ -39,8 +39,6 @@ Each of these takes 1-3 minutes.
 ## Complete your company profile
 
 In the Company Admin portal, find the **Settings** or **Manage** tab (depending on your view).
-
-[Screenshot: Company Admin portal with Settings/Manage tab highlighted]
 
 Fill in or verify these fields:
 
@@ -81,8 +79,6 @@ To upload:
 2. Click **Choose File** or drag and drop
 3. Preview the result
 4. Click **Save**
-
-[Screenshot: Logo upload section showing current logo preview and replace button]
 
 If your logo doesn't look right (cropped, blurry, wrong color), try a higher-resolution version. The platform doesn't auto-enhance.
 
@@ -130,8 +126,6 @@ See [Provisioning Drivers](../enforcement-track/05-provisioning-drivers.md) for 
 ## Verify your tier and limits
 
 Click the **Plan** tab to confirm your tier is set correctly.
-
-[Screenshot: Plan tab showing tier name, limits panel, and feature flags]
 
 What to verify:
 - **Tier name** matches what you signed up for (Starter / Growth / Legacy for Enforcement, or Essential / Professional / Enterprise for Property Management)

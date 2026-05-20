@@ -3,7 +3,7 @@ title: "Submitting Violations"
 category: "Enforcement Track"
 audience: ["driver", "company_admin", "manager"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["adding-properties", "tow-tickets-and-evidence", "managing-disputes"]
 ---
 
@@ -38,8 +38,6 @@ ShieldMyLot uses a two-step submission: **Form → Review → Confirm**. The rea
 ### Step 1: Open the violation form
 
 In the Driver portal, tap **Add Violation** (or **Submit New Violation** depending on the view).
-
-[Screenshot: Driver portal home with Add Violation button highlighted]
 
 ### Step 2: Select the property
 
@@ -80,8 +78,6 @@ Photos are evidence. They are also your strongest protection against disputes.
 
 If you try to attach more photos than your tier allows, you'll see an error message. You can remove individual photos with the X button before submitting.
 
-[Screenshot: Photo attachment area showing thumbnails with X buttons, tier limit indicator]
-
 ### Step 5: Attach video (optional)
 
 A short video can settle disputes that photos alone can't. Walk around the vehicle while narrating ("Vehicle parked in fire lane, signage visible to my left, plate ABC1234, time stamp 11:35pm December 12").
@@ -110,8 +106,6 @@ When the upload completes, you'll see the review screen.
 
 This is the most important screen in the workflow. Once you confirm, the violation becomes official and is visible to managers, residents, and potentially used in legal proceedings.
 
-[Screenshot: Review screen with violation details, photo grid, and three buttons at bottom: Edit, Discard, Confirm & Submit]
-
 ### What to verify
 
 - **Plate is correct** — Compare against the vehicle. Even one wrong character will hand the violation to the wrong owner.
@@ -137,11 +131,7 @@ The review screen has a 24-hour expiration. If you close the app or lose your co
 
 When you log back in, you'll see a banner at the top of your portal:
 
-[Screenshot: Yellow banner with "1 unfinished violation — Review oldest | Discard all"]
-
 If you have multiple drafts:
-
-[Screenshot: Expanded resume banner with per-draft Review and Discard buttons, plus "Discard all" footer]
 
 Use the per-draft Review button to return to that draft's review screen. Use Discard to remove specific drafts. Use "Discard all" to clean everything out if your drafts are stale.
 

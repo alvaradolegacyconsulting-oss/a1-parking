@@ -3,7 +3,7 @@ title: "Adding Properties"
 category: "Enforcement Track"
 audience: ["company_admin", "manager"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["provisioning-drivers", "submitting-violations", "understanding-your-tier"]
 ---
 
@@ -36,15 +36,11 @@ If you don't have signed authorization yet, don't add the property. Towing a veh
 
 In the Company Admin portal, click the **Manage** tab.
 
-[Screenshot: Company Admin portal with Manage tab highlighted in the navigation]
-
 ### Step 2: Click "+ Add Property"
 
 If you're under your tier's property limit, you'll see a gold "+ Add Property" button. Click it.
 
 If you're already at your tier's limit, you'll see an upgrade prompt instead. See [Understanding Your Tier](../getting-started/03-understanding-your-tier.md) for upgrade information.
-
-[Screenshot: Manage tab showing the + Add Property button with current property count visible]
 
 ### Step 3: Fill in the property form
 
@@ -66,8 +62,6 @@ If you're already at your tier's limit, you'll see an upgrade prompt instead. Se
 ### Step 4: Save
 
 Click **Save**. The property is added immediately and visible to all managers and drivers in your company.
-
-[Screenshot: Property form filled out with required fields, save button highlighted]
 
 ---
 

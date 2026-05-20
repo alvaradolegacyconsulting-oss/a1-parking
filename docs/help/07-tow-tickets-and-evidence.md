@@ -3,7 +3,7 @@ title: "Tow Tickets and Evidence"
 category: "Enforcement Track"
 audience: ["driver", "manager", "company_admin"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["submitting-violations", "managing-disputes", "understanding-your-tier"]
 ---
 
@@ -45,8 +45,6 @@ In the tow ticket modal:
 4. Click **Generate Ticket**
 
 The platform produces a printable ticket. Print it from the modal or save as PDF if you have a wireless printer in your truck.
-
-[Screenshot: Tow ticket modal with violation summary, storage facility selector, and Generate Ticket button]
 
 ### Reprinting a ticket
 
@@ -168,8 +166,6 @@ This feature is available on:
 3. Click **Export to Towbook CSV**
 4. Save the CSV file
 5. Import into Towbook through their standard import workflow
-
-[Screenshot: Violations tab with filters set and Towbook CSV export button highlighted]
 
 ### What's included
 

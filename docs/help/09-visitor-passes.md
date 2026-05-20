@@ -3,7 +3,7 @@ title: "Visitor Passes"
 category: "Property Management Track"
 audience: ["manager", "leasing_agent", "resident", "company_admin"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["property-management-overview", "resident-management", "resident-self-registration"]
 ---
 
@@ -93,8 +93,6 @@ For visits longer than the max (e.g., a week-long stay with family), the residen
 ### Step 1: Open the manager portal
 
 Navigate to the **Visitor Passes** tab.
-
-[Screenshot: Manager portal Visitor Passes tab with active passes list and + Issue Pass button]
 
 ### Step 2: Click "+ Issue Pass"
 

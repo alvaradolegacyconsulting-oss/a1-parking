@@ -3,7 +3,7 @@ title: "Provisioning Drivers"
 category: "Enforcement Track"
 audience: ["company_admin"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["adding-properties", "submitting-violations", "understanding-your-tier"]
 ---
 
@@ -53,8 +53,6 @@ If you have a custom pricing arrangement with ShieldMyLot, your effective limit 
 
 In the Company Admin portal, click the **Manage** tab. Find the Drivers section.
 
-[Screenshot: Manage tab with Drivers section highlighted, showing current driver count]
-
 ### Step 2: Click "+ Add Driver"
 
 If you're under your tier's driver limit, the gold "+ Add Driver" button is active. Click it.
@@ -76,8 +74,6 @@ If you're at your tier's limit, you'll see an upgrade prompt. You can either dea
 ### Step 4: Save and capture the temporary password
 
 When you click **Save**, the platform creates the driver account and generates a temporary password. **The temporary password is displayed once on the success screen.**
-
-[Screenshot: Driver creation success screen showing temporary password with copy button]
 
 **Important: copy the temporary password before closing this screen.** You'll need to give it to the driver. If you close the screen without copying it, you'll need to reset their password from their account record.
 

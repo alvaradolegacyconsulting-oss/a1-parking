@@ -3,7 +3,7 @@ title: "Resident Self-Registration"
 category: "Shared"
 audience: ["resident", "manager", "leasing_agent"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["resident-management", "account-security", "managing-disputes"]
 ---
 
@@ -41,8 +41,6 @@ If you can't find the QR code, ask your property manager or leasing office direc
 
 Open your phone's camera and point it at the QR code. A link should pop up — tap it to open in your browser.
 
-[Screenshot: Phone camera scanning a QR code with the link preview visible]
-
 The link takes you to the registration form for your specific property. Your property is already filled in — you don't need to know the property's name or address.
 
 ### Step 3: Fill in your information
@@ -67,8 +65,6 @@ For each vehicle:
 - **Make** — Toyota, Honda, Ford, etc.
 - **Model** — Camry, Civic, F-150, etc.
 - **Year** (optional)
-
-[Screenshot: Registration form with personal info section, password field, and two vehicle entry blocks]
 
 ### Step 4: Submit
 

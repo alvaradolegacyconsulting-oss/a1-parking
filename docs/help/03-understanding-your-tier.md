@@ -3,7 +3,7 @@ title: "Understanding Your Tier"
 category: "Getting Started"
 audience: ["company_admin", "manager"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["account-setup", "billing-and-tier-changes", "adding-properties"]
 ---
 
@@ -38,8 +38,6 @@ You're on one of these tiers:
 ## Reading the Plan tab
 
 The **Plan** tab in your Company Admin portal shows everything about your subscription in one place.
-
-[Screenshot: Plan tab with tier name, limits panel, feature flags, and usage indicators]
 
 You'll see four main sections:
 
@@ -94,8 +92,6 @@ ShieldMyLot enforces limits in two ways:
 ### Hard stops (most limits)
 
 When you try to create a resource beyond your limit, the **+ Add** button is replaced with an upgrade prompt.
-
-[Screenshot: Disabled + Add Property button with "Upgrade to add more properties" message]
 
 You can't add the resource until you either:
 - Deactivate an existing resource (frees up the slot)

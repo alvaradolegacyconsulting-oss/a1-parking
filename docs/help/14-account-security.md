@@ -3,7 +3,7 @@ title: "Account Security"
 category: "Shared"
 audience: ["company_admin", "manager", "leasing_agent", "driver", "resident"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["signup-and-first-login", "support-and-contact"]
 ---
 
@@ -58,8 +58,6 @@ You can change your password anytime:
 3. Click **Change Password**
 4. Enter your current password and your new password twice
 5. Save
-
-[Screenshot: Password change form with current, new, and confirm password fields]
 
 After saving, you stay logged in on the current device. Other devices may require a fresh login.
 

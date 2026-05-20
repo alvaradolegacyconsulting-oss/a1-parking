@@ -3,7 +3,7 @@ title: "Signup and First Login"
 category: "Getting Started"
 audience: ["company_admin", "manager", "leasing_agent", "driver", "resident"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["account-setup", "understanding-your-tier", "account-security"]
 ---
 
@@ -33,15 +33,11 @@ Once you have your email and temporary password, log in at:
 
 **https://www.shieldmylot.com/login**
 
-[Screenshot: Login page with email and password fields, ShieldMyLot logo prominent]
-
 Enter your email and the temporary password from your welcome email.
 
 ### Forced password change
 
 On your first login, you'll be required to change your temporary password before you can access the rest of the platform. This is a security measure — temporary passwords are intended for one-time use only.
-
-[Screenshot: Password change form with current password, new password, and confirm new password fields]
 
 **Password requirements:**
 - Minimum 8 characters

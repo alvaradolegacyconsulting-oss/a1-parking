@@ -3,7 +3,7 @@ title: "Resident Management"
 category: "Property Management Track"
 audience: ["manager", "leasing_agent", "company_admin"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-20"
 related: ["resident-self-registration", "visitor-passes", "property-management-overview"]
 ---
 
@@ -83,8 +83,6 @@ If a resident can't self-register (no smartphone, walk-in registration, accessib
 ### Step 3: Save
 
 The system creates the account and generates a temporary password. **The temporary password is shown once on the success screen — copy it before closing.**
-
-[Screenshot: Add Resident success screen showing temporary password with copy button]
 
 ### Step 4: Communicate the temp password to the resident
 
