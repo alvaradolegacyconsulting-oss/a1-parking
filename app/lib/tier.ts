@@ -154,6 +154,13 @@ export function getUpgradePrompt(
 
   for (let i = currentIdx + 1; i < ladder.length; i++) {
     const candidate = ladder[i]
+    // B89: skip candidates with no published price (contact-sales tiers
+    // like Enforcement Premium). They have entries in TIER_LADDER and
+    // TIER_DISPLAY_NAME but are deliberately absent from TIER_PRICING —
+    // surfacing them as a "$0/mo" upgrade target would be garbage. Sales-
+    // driven contact path lives outside this self-serve upgrade prompt.
+    const price = TIER_PRICING[tt]?.[candidate]
+    if (price === undefined) continue
     const value = tierMap?.[candidate]?.[flag]
     let qualifies = false
     if (isNumericFlag(flag)) {
@@ -164,7 +171,6 @@ export function getUpgradePrompt(
       qualifies = value === true
     }
     if (qualifies) {
-      const price = TIER_PRICING[tt]?.[candidate] ?? 0
       const display = TIER_DISPLAY_NAME[tt]?.[candidate] ?? candidate
       const message = isNumericFlag(flag)
         ? `Upgrade to ${display} ($${price}/mo) to expand this limit.`

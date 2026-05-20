@@ -12,7 +12,9 @@
 import { FEATURE_FLAGS, FeatureFlag } from './feature-flags'
 
 export type TierType = 'enforcement' | 'property_management'
-export type EnforcementTier = 'starter' | 'growth' | 'legacy'
+// B89: 'premium' is the contact-sales tier; not self-serve-creatable
+// from the admin Add Company UI but available via the proposal-code path.
+export type EnforcementTier = 'starter' | 'growth' | 'legacy' | 'premium'
 export type PropertyManagementTier = 'essential' | 'professional' | 'enterprise'
 export type Tier = EnforcementTier | PropertyManagementTier
 
@@ -117,6 +119,15 @@ const ENF_LEGACY: TierConfigShape = {
   [F.DEDICATED_ACCOUNT_MANAGER]: true,
 }
 
+// Enforcement: premium ─────────────────────────────────────────────────
+// B89: contact-sales tier. Capability floor identical to Legacy; per-customer
+// adjustments happen via proposal_codes.feature_overrides (existing pattern,
+// not a new mechanism). Pricing is bespoke — deliberately omitted from
+// TIER_PRICING; getUpgradePrompt() skips Premium as an upgrade target.
+const ENF_PREMIUM: TierConfigShape = {
+  ...ENF_LEGACY,
+}
+
 // PM: essential ────────────────────────────────────────────────────────
 const PM_ESSENTIAL: TierConfigShape = {
   [F.MAX_PROPERTIES]: 3,
@@ -209,6 +220,7 @@ export const TIER_CONFIG: Record<TierType, Record<string, TierConfigShape>> = {
     starter: ENF_STARTER,
     growth: ENF_GROWTH,
     legacy: ENF_LEGACY,
+    premium: ENF_PREMIUM,
   },
   property_management: {
     essential: PM_ESSENTIAL,
@@ -221,17 +233,25 @@ export const TIER_CONFIG: Record<TierType, Record<string, TierConfigShape>> = {
 // separate from TIER_CONFIG so feature flags stay free of dollar amounts.
 // Matches Pricing v2 (May 8, 2026). If pricing changes, also update the
 // landing page tiers in app/page.tsx.
+//
+// B89: Premium is intentionally OMITTED from enforcement here. Contact-sales
+// tiers have bespoke pricing, not a published number. getUpgradePrompt()
+// guards against undefined TIER_PRICING entries by skipping such tiers as
+// upgrade targets — see app/lib/tier.ts:155-167.
 export const TIER_PRICING: Record<TierType, Record<string, number>> = {
   enforcement: { starter: 129, growth: 149, legacy: 199 },
   property_management: { essential: 129, professional: 199, enterprise: 279 },
 }
 
+// B89: 'premium' appended to enforcement ladder above Legacy. getUpgradePrompt()
+// walks the ladder up from currentTier; the TIER_PRICING guard ensures Premium
+// is silently skipped rather than surfaced as a "$0/mo" garbage upgrade prompt.
 export const TIER_LADDER: Record<TierType, Tier[]> = {
-  enforcement: ['starter', 'growth', 'legacy'],
+  enforcement: ['starter', 'growth', 'legacy', 'premium'],
   property_management: ['essential', 'professional', 'enterprise'],
 }
 
 export const TIER_DISPLAY_NAME: Record<TierType, Record<string, string>> = {
-  enforcement: { starter: 'Starter', growth: 'Growth', legacy: 'Legacy' },
+  enforcement: { starter: 'Starter', growth: 'Growth', legacy: 'Legacy', premium: 'Premium' },
   property_management: { essential: 'Essential', professional: 'Professional', enterprise: 'Enterprise' },
 }

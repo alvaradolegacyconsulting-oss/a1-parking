@@ -29,7 +29,7 @@ const STATUS_BADGE: Record<Status, { bg: string; fg: string; border: string; lab
 }
 
 const TIER_LABEL: Record<string, string> = {
-  starter: 'Starter', growth: 'Growth', legacy: 'Legacy',
+  starter: 'Starter', growth: 'Growth', legacy: 'Legacy', premium: 'Premium',
   essential: 'Essential', professional: 'Professional', enterprise: 'Enterprise',
 }
 

@@ -10,14 +10,19 @@ export type TierTrack = 'enforcement' | 'pm'
 
 export type TierDisplay = {
   name: string
-  base: number
-  perProp: number
+  // base + perProp are optional because contact-sales tiers (enterprise:
+  // true) don't have published prices — the `tier.enterprise ?` render
+  // branch in app/page.tsx renders "Let's talk" without reading these
+  // fields. Non-contact-sales tiers (the existing six) all set them.
+  base?: number
+  perProp?: number
   perDriver?: number
   popular?: boolean
-  // Legacy attributes from earlier landing-page iterations. Kept on the type
-  // because dead-code render branches in app/page.tsx still reference them.
-  // No current tier sets `enterprise: true` or `badge`; deletion deferred to
-  // a dedicated landing-page cleanup commit per B62 scope guard.
+  // B89 (was B55-era legacy): `enterprise: true` triggers the contact-sales
+  // render branch (no published price, "Let's talk" headline, "Contact us →"
+  // CTA). Currently used by Enforcement Premium. PM Enterprise is NOT a
+  // contact-sales card — it has real pricing and does not set this flag.
+  // `badge` is unused today but kept for forward-compat per the B62 scope guard.
   enterprise?: boolean
   badge?: string
   features: string[]
@@ -39,8 +44,16 @@ export const ENFORCEMENT_TIERS: TierDisplay[] = [
     name: 'Legacy', base: 199, perProp: 10, perDriver: 6,
     features: ['Unlimited properties', 'Everything in Growth', 'Custom logo on tow tickets and resident pages', 'Advanced analytics', 'Towbook CSV export', 'Dedicated escalation path', 'Priority email support'],
   },
-  // B55 removed Enterprise as a 4th Enf tier — replaced by the Enterprise-scale
-  // callout below the pricing grid on the landing page.
+  {
+    // B89: Premium — 4th Enforcement tier; contact-sales (no published
+    // price). Renders via the existing `tier.enterprise: true` branch in
+    // app/page.tsx (the dead-code path B55 left in place when Enterprise
+    // was removed as a 4th tier). `base` / `perProp` deliberately omitted —
+    // not rendered for this branch. PM Enterprise has real published pricing
+    // and does NOT use this flag.
+    name: 'Premium', enterprise: true,
+    features: ['Everything in Legacy', 'Custom pricing for unusual operations', 'Dedicated account contact', 'Custom onboarding'],
+  },
 ]
 
 export const PROPERTY_MANAGEMENT_TIERS: TierDisplay[] = [

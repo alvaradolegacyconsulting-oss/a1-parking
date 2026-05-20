@@ -44,7 +44,10 @@ const inp: React.CSSProperties = {
 }
 const lbl: React.CSSProperties = { color: '#aaa', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em' }
 
-const ENFORCEMENT_TIERS = ['starter', 'growth', 'legacy'] as const
+// B89: 'premium' available via proposal-code creation (sales path).
+// NOT in admin Add Company dropdown — Premium is proposal-code-only,
+// not self-serve-creatable from the platform's Add Company UI.
+const ENFORCEMENT_TIERS = ['starter', 'growth', 'legacy', 'premium'] as const
 const PM_TIERS = ['essential', 'professional', 'enterprise'] as const
 
 export default function NewProposalCode() {

@@ -289,7 +289,7 @@ export default function ProposalCodeDetail() {
   const status = eff!
   const badge = STATUS_BADGE[status]
   const tierOptions = tierType === 'enforcement'
-    ? ['starter', 'growth', 'legacy']
+    ? ['starter', 'growth', 'legacy', 'premium']  // B89: Premium available on enforcement track
     : ['essential', 'professional', 'enterprise']
 
   const btnGold: React.CSSProperties = { padding: '10px 14px', background: '#C9A227', color: '#0f1117', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }

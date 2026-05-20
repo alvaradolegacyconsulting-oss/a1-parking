@@ -351,21 +351,10 @@ export default function Landing() {
               </div>
             ))}
           </div>
-          {/* B55: Enterprise-scale enforcement callout — replaces removed 4th Enforcement
-              tier. PM Enterprise stays as its own tier in pmTiers; this callout only
-              appears under the Enforcement track. */}
-          {activeTrack === 'enforcement' && (
-            <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 24, marginTop: 28, textAlign: 'center' }}>
-              <h4 style={{ color: GOLD, fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>Enterprise-scale operations?</h4>
-              <p style={{ color: MUTED, fontSize: 14, margin: '0 0 14px', lineHeight: 1.6 }}>
-                For unusually large enforcement operations (15+ properties, 25+ drivers, or multi-region needs), contact us for custom pricing and account structure.
-              </p>
-              <a href="mailto:support@shieldmylot.com?subject=ShieldMyLot Enterprise Inquiry"
-                style={{ color: GOLD, fontSize: 14, fontWeight: 600, textDecoration: 'none' }}>
-                Contact us for enterprise pricing →
-              </a>
-            </div>
-          )}
+          {/* B89: B55 callout removed. Premium is now a 4th tier card in
+              ENFORCEMENT_TIERS rendered via the tier.enterprise: true branch
+              above (the dead branch B55 left in place). PM Enterprise stays
+              as a real-pricing tier and does NOT use that branch. */}
           <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 28 }}>
             Annual billing available — save 2 months. 14-day money-back guarantee on all plans.
           </p>
