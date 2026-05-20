@@ -123,6 +123,6 @@ Sharing accounts breaks the audit trail (we won't know who took which action) an
 ## Next steps
 
 - **Company Admins:** Continue to [Account Setup](02-account-setup.md)
-- **Everyone else:** Find the doc that matches your role using the [Help Center index](../README.md)
+- **Everyone else:** Find the doc that matches your role from the [Help Center index](/help)
 
 If you run into anything not covered here, email support@shieldmylot.com.

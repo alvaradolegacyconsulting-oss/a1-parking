@@ -7,6 +7,10 @@ import fs from 'fs'
 import path from 'path'
 import matter from 'gray-matter'
 import { Marked } from 'marked'
+// B93: shared link transformer — renderer + validator pull from one source.
+// .mjs to keep cross-runtime friction down (TS server component here AND
+// .mjs build-time validator both import this file).
+import { transformHelpLink, slugFromFilename as sharedSlugFromFilename } from './help-link-transformer.mjs'
 
 export type HelpDocFrontmatter = {
   title: string
@@ -58,6 +62,18 @@ const marked = new Marked({
       const id = slugifyHeading(stripped)
       return `<h${depth} id="${id}">${text}</h${depth}>\n`
     },
+    // B93: normalize cross-doc href shapes to /help/<slug> at render time.
+    // Source markdown uses ../<category>/NN-slug.md (legacy categorized
+    // design) but the production route surface is flat /help/<slug>. The
+    // transformer in app/lib/help-link-transformer.mjs handles the mapping;
+    // both this renderer AND scripts/validate-help-links.mjs import it so
+    // there's one source of truth.
+    link({ href, title, tokens }) {
+      const text = this.parser.parseInline(tokens)
+      const transformedHref = transformHelpLink(href)
+      const titleAttr = title ? ` title="${title.replace(/"/g, '&quot;')}"` : ''
+      return `<a href="${transformedHref}"${titleAttr}>${text}</a>`
+    },
   },
 })
 
@@ -66,11 +82,10 @@ const DOCS_DIR = path.join(process.cwd(), 'docs', 'help')
 
 let cache: HelpDoc[] | null = null
 
-function slugFromFilename(filename: string): string {
-  // 03-understanding-your-tier.md → understanding-your-tier
-  // Per locked B85 decision: filename-based slugs, strip leading digits + dash.
-  return filename.replace(/^\d+-/, '').replace(/\.md$/, '')
-}
+// Re-export the shared slug derivation under the local name so existing
+// call sites (getAllDocs below) keep working without renaming. Source of
+// truth lives in app/lib/help-link-transformer.mjs — see B93 commit.
+const slugFromFilename = sharedSlugFromFilename
 
 export function getAllDocs(): HelpDoc[] {
   if (cache) return cache
