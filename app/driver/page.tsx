@@ -289,7 +289,13 @@ export default function DriverPortal() {
           .ilike('space_number', expiredVeh.space).ilike('property', selectedProperty).single()
         spaceNotes = sd?.location_notes || null
       }
-      setSearching(false); setResult({ status: 'expired', data: { ...expiredVeh, _space_notes: spaceNotes } }); return
+      // B84: distinguish pending/declined from legacy-deactivated. Previously
+      // all is_active=false rows rendered as "permit expired" regardless of
+      // vehicles.status — confusing for newly-registered residents.
+      const resultStatus = expiredVeh.status === 'pending' ? 'pending'
+        : expiredVeh.status === 'declined' ? 'declined'
+        : 'expired'
+      setSearching(false); setResult({ status: resultStatus, data: { ...expiredVeh, _space_notes: spaceNotes } }); return
     }
 
     const { data: pass } = await supabase.from('visitor_passes').select('*')
@@ -1064,9 +1070,13 @@ export default function DriverPortal() {
                     </>
                   )}
 
-                  {result.status === 'expired' && (
+                  {(result.status === 'pending' || result.status === 'declined' || result.status === 'expired') && (
                     <>
-                      <p style={{ color: '#ff9800', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>⚠ PERMIT EXPIRED</p>
+                      <p style={{ color: '#ff9800', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>
+                        {result.status === 'pending' ? 'AWAITING MANAGER APPROVAL'
+                          : result.status === 'declined' ? 'REGISTRATION DECLINED'
+                          : '⚠ PERMIT EXPIRED'}
+                      </p>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Unit</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.unit}</span></div>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.space || '—'}</span>{result.data._space_notes && <p style={{ color: '#888', fontSize: '11px', fontStyle: 'italic', margin: '2px 0 0' }}>{result.data._space_notes}</p>}</div>

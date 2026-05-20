@@ -512,13 +512,9 @@ export default function Landing() {
             </div>
             <div>
               <p style={{ color: TEXT, fontSize: 13, fontWeight: 600, margin: '0 0 12px' }}>Support</p>
-              {/* B55: Help Center + Video Guides currently route to mailto fallback —
-                  no broken-link experience while docs/videos don't exist yet.
-                  TODO: When B50 help docs ship to /help route, update Help Center href to /help.
-                  When HeyGen Creator videos ship, update Video Guides href to the video library. */}
               {[
-                ['Help Center', 'mailto:support@shieldmylot.com?subject=ShieldMyLot Help Inquiry'],
-                ['Video Guides', 'mailto:support@shieldmylot.com?subject=ShieldMyLot Help Inquiry'],
+                ['Help Center', '/help'],
+                ['Video Guides', '/help/videos'],
                 ['Contact', '#contact'],
               ].map(([label, href]) => (
                 <a key={label} href={href} style={{ display: 'block', color: MUTED, fontSize: 13, textDecoration: 'none', marginBottom: 8 }}>{label}</a>
