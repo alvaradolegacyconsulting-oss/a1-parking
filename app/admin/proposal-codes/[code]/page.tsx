@@ -19,6 +19,7 @@ type ProposalRow = {
   custom_base_fee: number | null
   custom_per_property_fee: number | null
   custom_per_driver_fee: number | null
+  lock_in_duration: number | null
   feature_overrides: Record<string, boolean | number> | null
   notes: string | null
   status: Status
@@ -31,6 +32,18 @@ type ProposalRow = {
   revoke_reason: string | null
   pdf_url: string | null
   company_id: number | null
+}
+
+// B66.2b commit 2 — proposal-code Stripe Price rows attached at issue time.
+type StripePriceRow = {
+  id: number
+  stripe_price_id: string
+  stripe_product_id: string
+  line_item: 'base' | 'per_property' | 'per_driver'
+  cycle: 'monthly' | 'annual'
+  unit_amount_cents: number
+  mode: 'test' | 'live'
+  lookup_key: string | null
 }
 
 type Company = { id: number; name: string; tier?: string | null; tier_type?: string | null }
@@ -100,8 +113,14 @@ export default function ProposalCodeDetail() {
   const [customBaseFee, setCustomBaseFee] = useState<string>('')
   const [customPerProperty, setCustomPerProperty] = useState<string>('')
   const [customPerDriver, setCustomPerDriver] = useState<string>('')
+  const [lockInMonths, setLockInMonths] = useState<string>('')
   const [overridesText, setOverridesText] = useState<string>('')
   const [notes, setNotes] = useState<string>('')
+
+  // B66.2b commit 2 — Stripe Prices attached at issue time + mode banner state.
+  const [stripePrices, setStripePrices] = useState<StripePriceRow[]>([])
+  const [stripeMode, setStripeMode] = useState<'test' | 'live' | null>(null)
+  const [issueConfirmOpen, setIssueConfirmOpen] = useState(false)
 
   // Apply-to-company modal
   const [applyOpen, setApplyOpen] = useState(false)
@@ -147,9 +166,38 @@ export default function ProposalCodeDetail() {
     setCustomBaseFee(r.custom_base_fee != null ? String(r.custom_base_fee) : '')
     setCustomPerProperty(r.custom_per_property_fee != null ? String(r.custom_per_property_fee) : '')
     setCustomPerDriver(r.custom_per_driver_fee != null ? String(r.custom_per_driver_fee) : '')
+    setLockInMonths(r.lock_in_duration != null ? String(r.lock_in_duration) : '')
     setOverridesText(r.feature_overrides && Object.keys(r.feature_overrides).length ? JSON.stringify(r.feature_overrides, null, 2) : '')
     setNotes(r.notes || '')
+
+    // B66.2b commit 2: fetch attached Stripe Prices (issued+ rows only;
+    // draft rows have none because Stripe creation happens at Issue
+    // time). RLS admin-all on stripe_prices permits this read.
+    if (r.status !== 'draft') {
+      const { data: pricesData } = await supabase
+        .from('stripe_prices')
+        .select('id, stripe_price_id, stripe_product_id, line_item, cycle, unit_amount_cents, mode, lookup_key')
+        .eq('proposal_code_id', r.id)
+        .eq('is_active', true)
+        .order('line_item')
+      setStripePrices((pricesData as StripePriceRow[]) || [])
+    } else {
+      setStripePrices([])
+    }
   }
+
+  // B66.2b commit 2: fetch STRIPE_MODE for the issue-time banner. Runs
+  // once on mount, independent of the proposal_codes row. Failure leaves
+  // stripeMode = null and the banner renders an "unconfigured" warning
+  // rather than a misleading 'test'/'live' chip.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/admin/stripe-mode')
+      .then(r => r.ok ? r.json() : null)
+      .then(body => { if (!cancelled && body?.mode) setStripeMode(body.mode) })
+      .catch(() => { /* leave null; banner will show unconfigured */ })
+    return () => { cancelled = true }
+  }, [])
 
   const eff: Status | null = row ? effectiveStatus(row) : null
   const isDraft = eff === 'draft'
@@ -164,9 +212,15 @@ export default function ProposalCodeDetail() {
     : 0
   const baseDefault = TIER_PRICING[tierType]?.[tier] ?? 0
 
+  // B66.2b commit 2: lock-in validation mirrors the new/ form +
+  // proposal_codes_lock_in_duration_valid CHECK (NULL OR 1-36).
+  const lockInOk = lockInMonths === ''
+    || (/^\d+$/.test(lockInMonths) && parseInt(lockInMonths, 10) >= 1 && parseInt(lockInMonths, 10) <= 36)
+
   async function saveDraft() {
     if (!row || !isDraft) return
     if (!overrideValidation.valid) { setMsg(overrideValidation.error); return }
+    if (!lockInOk) { setMsg('Lock-in must be 1-36 months or blank.'); return }
     setMsg(''); setBusy(true)
     const { error } = await supabase
       .from('proposal_codes')
@@ -181,6 +235,7 @@ export default function ProposalCodeDetail() {
         custom_per_driver_fee: tierType === 'enforcement'
           ? (customPerDriver === '' ? null : Number(customPerDriver))
           : null,
+        lock_in_duration: lockInMonths === '' ? null : parseInt(lockInMonths, 10),
         feature_overrides: overrideValidation.value,
         notes: notes.trim() || null,
       })
@@ -201,20 +256,33 @@ export default function ProposalCodeDetail() {
     router.push('/admin/proposal-codes')
   }
 
-  async function issueCode() {
+  // B66.2b commit 2: gate Issue behind the warn-confirmation modal. The
+  // modal lists out-of-range pricing warnings + the Stripe Price creation
+  // preview (or the Premium manual-invoice note) and surfaces the current
+  // STRIPE_MODE. Replaces the prior browser confirm() for a more
+  // deliberate friction point at the moment the code becomes immutable.
+  function openIssueConfirm() {
     if (!row || !isDraft) return
     if (!overrideValidation.valid) { setMsg(overrideValidation.error); return }
-    if (!confirm('Issue this code? Status will transition to issued and the code becomes immutable. PDF generation is currently manual — see docs/hand-gen-pdf.md.')) return
+    if (!lockInOk) { setMsg('Lock-in must be 1-36 months or blank.'); return }
+    setIssueConfirmOpen(true)
+  }
+
+  async function issueCode() {
+    if (!row || !isDraft) return
+    setIssueConfirmOpen(false)
     setBusy(true)
     setMsg('Issuing…')
     const res = await fetch(`/api/proposal-codes/${row.id}/issue`, { method: 'POST' })
     setBusy(false)
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
-      setMsg('Issue failed: ' + (body.error || res.statusText))
+      const stageNote = body.stage ? ` (stage: ${body.stage})` : ''
+      setMsg('Issue failed: ' + (body.error || res.statusText) + stageNote)
       return
     }
-    setMsg('Code issued. PDF generation pending — see docs/hand-gen-pdf.md to create and upload the PDF.')
+    const body = await res.json().catch(() => ({}))
+    setMsg(body.message || 'Code issued. PDF generation pending — see docs/hand-gen-pdf.md.')
     await load()
   }
 
@@ -247,12 +315,26 @@ export default function ProposalCodeDetail() {
   async function applyToCompany() {
     if (!row || !selectedCompanyId) return
     setBusy(true)
-    const { error } = await supabase
+    // B66.2b commit 2: tag the company with acquisition_channel to keep
+    // the manual admin-side redemption path consistent with the
+    // redeem_proposal_code() RPC (which already sets this column). Same
+    // intent surfaces self-serve vs proposal_code provenance for B66.5+
+    // dunning + welcome-email branching.
+    const { error: applyErr } = await supabase
       .from('proposal_codes')
       .update({ company_id: Number(selectedCompanyId), status: 'redeemed', redeemed_at: new Date().toISOString() })
       .eq('id', row.id)
+    if (applyErr) {
+      setBusy(false)
+      setMsg('Apply failed: ' + applyErr.message)
+      return
+    }
+    const { error: companyErr } = await supabase
+      .from('companies')
+      .update({ acquisition_channel: 'proposal_code' })
+      .eq('id', Number(selectedCompanyId))
     setBusy(false)
-    if (error) { setMsg('Apply failed: ' + error.message); return }
+    if (companyErr) { setMsg('Code applied but company.acquisition_channel update failed: ' + companyErr.message); return }
     setApplyOpen(false)
     setSelectedCompanyId('')
     await load()
@@ -382,6 +464,14 @@ export default function ProposalCodeDetail() {
                 </>
               )}
 
+              <label style={lbl}>Lock-in Duration (months, optional)</label>
+              <input type="number" min={1} max={36} step={1} value={lockInMonths}
+                onChange={e => setLockInMonths(e.target.value)}
+                placeholder="Leave blank for no lock-in (range 1-36)" style={inp} />
+              {!lockInOk && lockInMonths !== '' && (
+                <p style={{ color: '#f44336', fontSize: '11px', margin: '-10px 0 14px' }}>Lock-in must be a whole number between 1 and 36 months.</p>
+              )}
+
               <label style={lbl}>Feature Overrides (JSON)</label>
               <textarea value={overridesText} onChange={e => setOverridesText(e.target.value)}
                 placeholder='{"max_properties": 50, "advanced_analytics": true}'
@@ -416,6 +506,37 @@ export default function ProposalCodeDetail() {
                   <>{' · '}Per Driver: {row.custom_per_driver_fee != null ? `$${row.custom_per_driver_fee}` : <span style={{ color: '#555' }}>tier default</span>}</>
                 )}
               </p>
+
+              <label style={lbl}>Lock-in</label>
+              <p style={ro}>
+                {row.lock_in_duration != null
+                  ? `${row.lock_in_duration} month${row.lock_in_duration === 1 ? '' : 's'}`
+                  : <span style={{ color: '#555' }}>no lock-in</span>}
+              </p>
+
+              {/* B66.2b commit 2 — Stripe Prices created at Issue time.
+                  Empty for Premium codes (manual invoice path) and for
+                  any pre-B66.2b row issued before this commit shipped. */}
+              <label style={lbl}>Stripe Prices</label>
+              {row.base_tier === 'premium' ? (
+                <p style={{ ...ro, color: '#fbbf24' }}>Premium tier — manual invoice path; no Stripe Prices created.</p>
+              ) : stripePrices.length === 0 ? (
+                <p style={{ ...ro, color: '#555' }}>(none attached — pre-B66.2b code or Stripe step skipped)</p>
+              ) : (
+                <div style={{ ...ro, background: '#0f1117', border: '1px solid #2a2f3d', borderRadius: '6px', padding: '8px 10px', fontFamily: 'Courier New', fontSize: '11px' }}>
+                  <div style={{ color: '#888', marginBottom: '6px' }}>
+                    mode={stripePrices[0]?.mode || '?'} · {stripePrices.length} price{stripePrices.length === 1 ? '' : 's'}
+                  </div>
+                  {stripePrices.map(sp => (
+                    <div key={sp.id} style={{ color: '#aaa', lineHeight: 1.55 }}>
+                      <span style={{ color: '#C9A227' }}>{sp.line_item}</span>
+                      {' '}— ${(sp.unit_amount_cents / 100).toFixed(2)}/{sp.cycle === 'monthly' ? 'mo' : 'yr'}
+                      {' · '}<span style={{ color: '#888' }}>{sp.stripe_price_id}</span>
+                      {' → '}<span style={{ color: '#555' }}>{sp.stripe_product_id}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <label style={lbl}>Feature Overrides</label>
               <pre style={{ ...ro, background: '#0f1117', border: '1px solid #2a2f3d', borderRadius: '6px', padding: '8px 10px', fontFamily: 'Courier New', fontSize: '11px', overflow: 'auto' }}>
@@ -460,9 +581,35 @@ export default function ProposalCodeDetail() {
         {/* Action bar — varies by status */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           {isDraft && (<>
-            <button onClick={saveDraft} disabled={busy || !overrideValidation.valid} style={{ ...btnGold, opacity: busy || !overrideValidation.valid ? 0.5 : 1 }}>Save Draft</button>
-            <button onClick={issueCode} disabled={busy} style={btnGold}>Issue Code</button>
+            <button onClick={saveDraft} disabled={busy || !overrideValidation.valid || !lockInOk} style={{ ...btnGold, opacity: busy || !overrideValidation.valid || !lockInOk ? 0.5 : 1 }}>Save Draft</button>
+            <button onClick={openIssueConfirm} disabled={busy} style={btnGold}>Issue Code</button>
             <button onClick={() => setDeleteOpen(true)} style={btnDanger}>Delete Draft</button>
+            {/* B66.2b commit 2 — mode chip surfaces STRIPE_MODE at the
+                moment the admin sees the Issue button. Color shifts
+                from amber (TEST) to red (LIVE) so the visual contrast
+                is a deliberate friction point against accidental live-
+                mode issuance. */}
+            {stripeMode && (
+              <span style={{
+                alignSelf: 'center', marginLeft: '4px',
+                padding: '6px 10px', fontSize: '10px', fontWeight: 'bold',
+                letterSpacing: '0.08em', textTransform: 'uppercase',
+                borderRadius: '14px',
+                background: stripeMode === 'live' ? '#3a1a1a' : '#2a1f0a',
+                color: stripeMode === 'live' ? '#f44336' : '#fbbf24',
+                border: `1px solid ${stripeMode === 'live' ? '#b71c1c' : '#a16207'}`,
+              }}>MODE: {stripeMode}</span>
+            )}
+            {stripeMode === null && (
+              <span style={{
+                alignSelf: 'center', marginLeft: '4px',
+                padding: '6px 10px', fontSize: '10px', fontWeight: 'bold',
+                letterSpacing: '0.08em', textTransform: 'uppercase',
+                borderRadius: '14px',
+                background: '#3a1a1a', color: '#f44336',
+                border: '1px solid #b71c1c',
+              }} title="STRIPE_MODE not configured — Issue will fail">MODE: ?</span>
+            )}
           </>)}
           {status === 'issued' && (<>
             <button onClick={viewPdf} disabled={!row.pdf_url} style={{ ...btnGhost, opacity: row.pdf_url ? 1 : 0.5, cursor: row.pdf_url ? 'pointer' : 'not-allowed' }}>
@@ -526,6 +673,87 @@ export default function ProposalCodeDetail() {
             </div>
           </div>
         )}
+
+        {/* B66.2b commit 2 — Issue confirmation modal. Replaces the prior
+            browser confirm() for a more deliberate friction point: shows
+            STRIPE_MODE, range warnings (informational — admin discretion),
+            and the Stripe-Price-creation preview (or the Premium manual-
+            invoice note). Confirm fires the issue route POST. */}
+        {issueConfirmOpen && row && (() => {
+          const isPremium = row.base_tier === 'premium'
+          const warnings: string[] = []
+          if (!isPremium) {
+            if (row.custom_base_fee != null) {
+              if (row.custom_base_fee < 50) warnings.push(`Base $${row.custom_base_fee}/mo is below typical $50 floor`)
+              if (row.custom_base_fee > 2000) warnings.push(`Base $${row.custom_base_fee}/mo is above typical $2000 ceiling`)
+            }
+            if (row.custom_per_property_fee != null) {
+              if (row.custom_per_property_fee > 50) warnings.push(`Per-property $${row.custom_per_property_fee}/mo is above typical $50 ceiling`)
+            }
+            if (row.custom_per_driver_fee != null) {
+              if (row.custom_per_driver_fee < 1) warnings.push(`Per-driver $${row.custom_per_driver_fee}/mo is below typical $1 floor`)
+              if (row.custom_per_driver_fee > 30) warnings.push(`Per-driver $${row.custom_per_driver_fee}/mo is above typical $30 ceiling`)
+            }
+          }
+          const expectedPriceCount = row.base_tier_type === 'enforcement' ? 3 : 2
+          const modeUnknownBlocksIssue = !isPremium && stripeMode === null
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+              <div style={{ background: '#161b26', border: '1px solid #C9A227', borderRadius: '12px', padding: '24px', width: '500px', maxWidth: '90%' }}>
+                <h2 style={{ color: '#C9A227', fontSize: '16px', fontWeight: 'bold', margin: '0 0 12px' }}>Issue Code: <span style={{ fontFamily: 'Courier New' }}>{row.code}</span></h2>
+                <p style={{ color: '#aaa', fontSize: '12px', margin: '0 0 14px', lineHeight: 1.6 }}>
+                  Status will transition to <strong>issued</strong> and the code becomes immutable. PDF generation remains manual (hand-gen workflow).
+                </p>
+
+                {isPremium ? (
+                  <div style={{ background: '#2a1f0a', border: '1px solid #a16207', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px' }}>
+                    <p style={{ color: '#fbbf24', fontSize: '12px', margin: 0, lineHeight: 1.6 }}>
+                      <strong>Premium tier — manual invoice path.</strong> No Stripe Prices will be created. The code will be issued and can be applied to a company; billing happens off-platform.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Mode chip */}
+                    {stripeMode === 'test' && (
+                      <div style={{ background: '#2a1f0a', border: '1px solid #a16207', borderRadius: '6px', padding: '8px 10px', marginBottom: '12px' }}>
+                        <p style={{ color: '#fbbf24', fontSize: '11px', margin: 0, fontWeight: 'bold' }}>MODE: TEST · Stripe Prices will be created in sandbox</p>
+                      </div>
+                    )}
+                    {stripeMode === 'live' && (
+                      <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: '6px', padding: '8px 10px', marginBottom: '12px' }}>
+                        <p style={{ color: '#f44336', fontSize: '11px', margin: 0, fontWeight: 'bold' }}>MODE: LIVE · Stripe Prices will be created on the production account. Proceed only if intended.</p>
+                      </div>
+                    )}
+                    {modeUnknownBlocksIssue && (
+                      <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: '6px', padding: '8px 10px', marginBottom: '12px' }}>
+                        <p style={{ color: '#f44336', fontSize: '11px', margin: 0, fontWeight: 'bold' }}>STRIPE_MODE not configured — Issue will fail. Set STRIPE_MODE on Vercel before proceeding.</p>
+                      </div>
+                    )}
+
+                    {warnings.length > 0 && (
+                      <div style={{ background: '#2a1f0a', border: '1px solid #a16207', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px' }}>
+                        <p style={{ color: '#fbbf24', fontSize: '11px', fontWeight: 'bold', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pricing range warnings ({warnings.length})</p>
+                        <ul style={{ color: '#aaa', fontSize: '11px', margin: '0', paddingLeft: '16px', lineHeight: 1.55 }}>
+                          {warnings.map((w, i) => <li key={i}>{w}</li>)}
+                        </ul>
+                        <p style={{ color: '#888', fontSize: '10px', margin: '6px 0 0' }}>Informational only — admin discretion (e.g., A1&apos;s $1/property is intentional).</p>
+                      </div>
+                    )}
+
+                    <p style={{ color: '#aaa', fontSize: '12px', margin: '0 0 14px', lineHeight: 1.6 }}>
+                      <strong>{expectedPriceCount} Stripe Prices</strong> will be created (or recovered, on retry) in <code style={{ color: '#C9A227' }}>{stripeMode || '?'}</code> mode, backed by the standard catalog Products for {row.base_tier_type} / {row.base_tier}.
+                    </p>
+                  </>
+                )}
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={issueCode} disabled={busy || modeUnknownBlocksIssue} style={{ ...btnGold, flex: 1, opacity: busy || modeUnknownBlocksIssue ? 0.5 : 1 }}>Confirm Issue</button>
+                  <button onClick={() => setIssueConfirmOpen(false)} style={btnGhost}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Delete-draft confirm */}
         {deleteOpen && (

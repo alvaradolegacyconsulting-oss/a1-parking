@@ -66,6 +66,7 @@ export default function NewProposalCode() {
   const [customBaseFee, setCustomBaseFee] = useState<string>('')
   const [customPerProperty, setCustomPerProperty] = useState<string>('')
   const [customPerDriver, setCustomPerDriver] = useState<string>('')
+  const [lockInMonths, setLockInMonths] = useState<string>('')
   const [overridesText, setOverridesText] = useState<string>('')
   const [notes, setNotes] = useState<string>('')
 
@@ -115,8 +116,13 @@ export default function NewProposalCode() {
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)
   const expiresOk = Number.isInteger(expiresInDays) && expiresInDays >= 1 && expiresInDays <= 365
   const numOk = (s: string) => s === '' || (!isNaN(Number(s)) && Number(s) >= 0)
+  // lock_in_duration: optional; if present, integer in 1-36. CHECK constraint
+  // at proposal_codes_lock_in_duration_valid (B66.2b commit 1) enforces the same.
+  const lockInOk = lockInMonths === ''
+    || (/^\d+$/.test(lockInMonths) && parseInt(lockInMonths, 10) >= 1 && parseInt(lockInMonths, 10) <= 36)
   const allOk = prefixOk && clientName.trim() && emailOk && expiresOk
     && numOk(customBaseFee) && numOk(customPerProperty) && numOk(customPerDriver)
+    && lockInOk
     && overrideValidation.valid
 
   async function submit() {
@@ -138,6 +144,7 @@ export default function NewProposalCode() {
       custom_per_driver_fee: tierType === 'enforcement'
         ? (customPerDriver === '' ? null : Number(customPerDriver))
         : null,
+      lock_in_duration: lockInMonths === '' ? null : parseInt(lockInMonths, 10),
       feature_overrides: overrideValidation.value,
       notes: notes.trim() || null,
       status: 'draft',
@@ -256,6 +263,14 @@ export default function NewProposalCode() {
                 onChange={e => setCustomPerDriver(e.target.value)}
                 placeholder={`Default: $${perDriverDefault}`} style={inp} />
             </>
+          )}
+
+          <label style={lbl}>Lock-in Duration (months, optional)</label>
+          <input type="number" min={1} max={36} step={1} value={lockInMonths}
+            onChange={e => setLockInMonths(e.target.value)}
+            placeholder="Leave blank for no lock-in (range 1-36)" style={inp} />
+          {!lockInOk && lockInMonths !== '' && (
+            <p style={{ color: '#f44336', fontSize: '11px', margin: '-10px 0 14px' }}>Lock-in must be a whole number between 1 and 36 months.</p>
           )}
 
           <p style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }}>
