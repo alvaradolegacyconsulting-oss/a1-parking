@@ -34,7 +34,7 @@ export async function middleware(request: NextRequest) {
   // for anon traffic at middleware before the page renders — exactly the B65
   // production blocker (2026-05-20) that prompted /signup + /account-cancelled
   // being added below.
-  const publicPaths = ['/login', '/visitor', '/visitor-select', '/register', '/change-password', '/terms', '/privacy', '/signup', '/account-cancelled', '/help', '/api/help-feedback', '/api/stripe/webhook']
+  const publicPaths = ['/login', '/visitor', '/visitor-select', '/register', '/change-password', '/terms', '/privacy', '/signup', '/account-cancelled', '/help', '/api/help-feedback', '/api/stripe/webhook', '/forgot-password', '/reset-password']
   const isPublic = pathname === '/' || publicPaths.some(path => pathname.startsWith(path))
 
   // Not logged in — redirect to login

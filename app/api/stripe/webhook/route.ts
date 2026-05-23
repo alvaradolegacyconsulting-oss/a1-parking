@@ -4,6 +4,7 @@ import Stripe from 'stripe'
 import { getStripe } from '../../../lib/stripe'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { getStripeBillingEnabled } from '../../../lib/platform-flags'
+import { handleCheckoutSessionCompleted } from '../../../lib/stripe-event-handlers'
 
 // B66.1 — Stripe webhook endpoint scaffold.
 //
@@ -143,5 +144,42 @@ export async function POST(request: Request): Promise<NextResponse> {
     eventType: event.type,
     mode,
   })
+
+  // ── B66.3 inline event-type routing ─────────────────────────────────
+  // Single handler dispatched here today (checkout.session.completed →
+  // creates the self-serve company). Per Jose's B66.5+ refactor note:
+  // each handler is self-contained in app/lib/stripe-event-handlers.ts
+  // so the future out-of-band processor can lift the dispatch logic
+  // wholesale (just swap `await handleX(event)` for
+  // `await enqueue(event)` here; processor calls the same handlers).
+  // Failures are logged + acked 200 OK (consistent with B66.1's fail-
+  // closed posture against Stripe retry storms); processed state is
+  // recorded on stripe_events for B66.5+ recovery/replay.
+  if (event.type === 'checkout.session.completed') {
+    const result = await handleCheckoutSessionCompleted(event)
+    if (result.ok) {
+      await supabase
+        .from('stripe_events')
+        .update({ processed: true, processed_at: new Date().toISOString() })
+        .eq('stripe_event_id', event.id)
+      console.log('[stripe webhook] checkout.session.completed processed', {
+        eventId: event.id, companyId: result.companyId,
+      })
+      return NextResponse.json({ received: true, processed: true, companyId: result.companyId })
+    } else {
+      await supabase
+        .from('stripe_events')
+        .update({ process_error: result.reason, process_attempts: 1 })
+        .eq('stripe_event_id', event.id)
+      console.error('[stripe webhook] checkout.session.completed FAILED', {
+        eventId: event.id, reason: result.reason,
+      })
+      // 200 OK despite handler failure — event is persisted with error
+      // state for B66.5+ replay/manual reconciliation. Returning 5xx
+      // would trigger Stripe retry storms, which compounds the problem.
+      return NextResponse.json({ received: true, processed: false, reason: 'handler_error', error: result.reason })
+    }
+  }
+
   return NextResponse.json({ received: true, processed: false, reason: 'persisted' })
 }

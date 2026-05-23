@@ -76,20 +76,30 @@ export default function Login() {
       .single()
 
     if (!roleData) {
-      // B65.4 recovery path: a user who completed B65.3 signUp + email
-      // verification but never finished activation has NO user_roles row
-      // yet, AND has proposal_code stashed on their auth.users.user_metadata
-      // (set by /signup/redeem at signUp time). Route them back to
-      // /signup/redeem/verify instead of dropping a confusing "No role
-      // assigned" message. Keep them authed — /verify needs the session.
+      // Mid-state recovery: a user who completed signUp + email
+      // verification but never finished activation has NO user_roles
+      // row yet. Two flavors:
+      //   • B65.4 proposal-code path: user_metadata.proposal_code set
+      //     → continue to /signup/redeem/verify
+      //   • B66.3 self-serve path: user_metadata.intended_tier set
+      //     → continue to /signup/verify (which knows how to resume
+      //       the attest + Checkout flow)
+      // Keep the user authenticated in both branches — both /verify
+      // pages need the session for their PKCE-driven state.
       const meta = (authData?.user?.user_metadata || {}) as Record<string, unknown>
+      const emailConfirmed = Boolean(authData?.user?.email_confirmed_at)
       const pendingCode = typeof meta.proposal_code === 'string' && meta.proposal_code.length > 0
         ? meta.proposal_code
         : null
-      const emailConfirmed = Boolean(authData?.user?.email_confirmed_at)
+      const pendingTier = meta.intended_tier && typeof meta.intended_tier === 'object'
       if (pendingCode && emailConfirmed) {
         setLoading(false)
         window.location.href = '/signup/redeem/verify'
+        return
+      }
+      if (pendingTier && emailConfirmed) {
+        setLoading(false)
+        window.location.href = '/signup/verify'
         return
       }
       setLoading(false)
@@ -246,6 +256,12 @@ export default function Login() {
               placeholder="••••••••"
               style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px 12px', fontSize:'13px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none', boxSizing:'border-box' }}
             />
+          </div>
+
+          <div style={{ textAlign: 'right', marginBottom: 14 }}>
+            <a href="/forgot-password" style={{ color: '#C9A227', fontSize: 12, textDecoration: 'none' }}>
+              Forgot password?
+            </a>
           </div>
 
           <button

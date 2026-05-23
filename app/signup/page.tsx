@@ -1,19 +1,23 @@
 'use client'
-// B65.2: public /signup placeholder. Self-serve Stripe-paid signup is
-// deferred to B66 — this page lives as a "we're working on it, leave your
-// info" surface so the marketing-side CTAs have a target.
+// B66.3 — self-serve signup tier picker form. Replaces the B65.2
+// placeholder. Renders the "Coming soon" placeholder branch when the
+// platform_settings dormancy flags are off (stripe_billing_enabled OR
+// public_signup_open false); renders the form when both are true.
+// Flag flip is a launch-day decision; pre-launch UAT can flip them
+// briefly to exercise the path then flip back.
 //
-// Customers WITH a negotiated proposal code go through /signup/redeem
-// (built in B65.3+). This page deliberately does NOT link to /signup/redeem;
-// proposal codes are distributed via PDF + email by the admin, not advertised
-// here.
-//
-// Email capture reuses the existing mailto: contact mechanism from the
-// landing page (sendContact equivalent). No backend write — the form opens
-// the user's mail client with a pre-filled message.
+// Flow Shape 1 (verify-first): collects tier + counts + company name +
+// email + password + Texas attestation on this page → calls auth.signUp
+// with intended_tier in user_metadata → user receives email → clicks
+// link → /signup/verify resumes the flow.
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { supabase } from '../supabase'
 import { ENFORCEMENT_TIERS, PROPERTY_MANAGEMENT_TIERS, TierTrack, TierDisplay } from '../lib/tier-display'
+import { TIER_CONFIG, TIER_PRICING } from '../lib/tier-config'
+import { FEATURE_FLAGS } from '../lib/feature-flags'
+import { TEXAS_ATTESTATION_VERSION, TEXAS_ATTESTATION_TEXT } from '../lib/legal-versions'
+import { validatePassword } from '../lib/password-rules'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -22,145 +26,384 @@ const BORDER = 'rgba(255,255,255,0.06)'
 const TEXT = '#e2e8f0'
 const MUTED = '#64748b'
 
-export default function SignupPlaceholder() {
-  const [activeTrack, setActiveTrack] = useState<TierTrack>('enforcement')
-  const [contact, setContact] = useState({ name: '', email: '', company: '' })
+// tier-display uses 'pm', tier-config uses 'property_management'. Map.
+function trackKey(t: TierTrack): 'enforcement' | 'property_management' {
+  return t === 'enforcement' ? 'enforcement' : 'property_management'
+}
 
-  function sendInterest() {
-    const trackLabel = activeTrack === 'enforcement' ? 'Enforcement' : 'Property Management'
-    const subject = encodeURIComponent(`[Self-serve signup interest] ${contact.company || contact.name}`)
-    const body = encodeURIComponent(
-      `Name: ${contact.name}\nEmail: ${contact.email}\nCompany: ${contact.company}\nTrack: ${trackLabel}\n\n` +
-      `Interest in self-serve signup. Please reach out when it launches.`
-    )
-    window.location.href = `mailto:support@shieldmylot.com?subject=${subject}&body=${body}`
+// Premium is contact-sales (B89); never appears in the self-serve picker.
+function selfServeTiers(t: TierTrack): TierDisplay[] {
+  const all = t === 'enforcement' ? ENFORCEMENT_TIERS : PROPERTY_MANAGEMENT_TIERS
+  return all.filter(tier => !tier.enterprise)  // contact-sales render branch flag
+}
+
+function tierSlug(name: string): string {
+  return name.toLowerCase()
+}
+
+type DormancyState = { kind: 'loading' } | { kind: 'closed' } | { kind: 'open' }
+type Submission =
+  | { kind: 'editing' }
+  | { kind: 'submitting' }
+  | { kind: 'sent'; email: string }
+  | { kind: 'already_registered' }
+  | { kind: 'error'; message: string }
+
+export default function SignupTierPicker() {
+  // ── Dormancy gate ────────────────────────────────────────────────
+  const [dormancy, setDormancy] = useState<DormancyState>({ kind: 'loading' })
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/signup/dormancy')
+      .then(r => r.ok ? r.json() : { open: false })
+      .then(body => { if (!cancelled) setDormancy({ kind: body.open ? 'open' : 'closed' }) })
+      .catch(() => { if (!cancelled) setDormancy({ kind: 'closed' }) })
+    return () => { cancelled = true }
+  }, [])
+
+  // ── Form state ───────────────────────────────────────────────────
+  const [track, setTrack] = useState<TierTrack>('enforcement')
+  const [tier, setTier] = useState<string>('legacy')
+  const [cycle, setCycle] = useState<'monthly' | 'annual'>('monthly')
+  const [propertyCount, setPropertyCount] = useState<string>('1')
+  const [driverCount, setDriverCount] = useState<string>('1')
+  const [companyName, setCompanyName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [attestChecked, setAttestChecked] = useState(false)
+  const [submission, setSubmission] = useState<Submission>({ kind: 'editing' })
+
+  const tiers = useMemo(() => selfServeTiers(track), [track])
+  useEffect(() => {
+    // Reset tier when track changes to avoid carrying a stale tier across tracks.
+    setTier(tierSlug(tiers[0]?.name || 'legacy'))
+    if (track === 'pm') setDriverCount('0')
+  }, [track, tiers])
+
+  // ── Pricing preview (display source: TIER_PRICING + tier-display) ─
+  // Authoritative prices used for the actual Stripe Checkout line items
+  // come from stripe_prices.unit_amount_cents (server-side). This is
+  // for the in-form preview only; admin-edited platform_settings might
+  // drift slightly from tier-display.ts numbers between launches.
+  const tk = trackKey(track)
+  const selectedTier = tiers.find(t => tierSlug(t.name) === tier)
+  const baseMonthly = TIER_PRICING[tk]?.[tier] ?? selectedTier?.base ?? 0
+  const perPropMonthly = selectedTier?.perProp ?? 0
+  const perDriverMonthly = selectedTier?.perDriver ?? 0
+
+  const pCount = Math.max(0, parseInt(propertyCount, 10) || 0)
+  const dCount = track === 'enforcement' ? Math.max(0, parseInt(driverCount, 10) || 0) : 0
+  const monthlyTotal = baseMonthly + (perPropMonthly * pCount) + (perDriverMonthly * dCount)
+  const annualTotal = monthlyTotal * 10  // ~17% discount (matches B66.2a multiplier)
+  const totalThisCycle = cycle === 'monthly' ? monthlyTotal : annualTotal
+
+  // ── Tier limit guardrails ────────────────────────────────────────
+  const tierCfg = TIER_CONFIG[tk]?.[tier]
+  const maxProperties = (tierCfg?.[FEATURE_FLAGS.MAX_PROPERTIES] as number) ?? -1
+  const maxDrivers = (tierCfg?.[FEATURE_FLAGS.MAX_DRIVERS] as number) ?? -1
+  const propertyLimitReached = maxProperties !== -1 && pCount > maxProperties
+  const driverLimitReached = track === 'enforcement' && maxDrivers !== -1 && dCount > maxDrivers
+
+  // ── Validation ───────────────────────────────────────────────────
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  const passwordErr = validatePassword(password)
+  const propertyCountOk = pCount >= 1 && !propertyLimitReached
+  const driverCountOk = track === 'pm' || (dCount >= 1 && !driverLimitReached)
+  const companyNameOk = companyName.trim().length > 0
+  const allOk = companyNameOk && emailOk && !passwordErr && propertyCountOk && driverCountOk && attestChecked
+
+  // ── Submit ────────────────────────────────────────────────────────
+  async function submit() {
+    if (!allOk) return
+    setSubmission({ kind: 'submitting' })
+    const trimmedEmail = email.trim().toLowerCase()
+    const intendedTier = {
+      track: tk,
+      tier,
+      cycle,
+      property_count: pCount,
+      driver_count: dCount,
+      company_name: companyName.trim(),
+    }
+    const emailRedirectTo = typeof window === 'undefined'
+      ? 'https://shieldmylot.com/signup/verify'
+      : `${window.location.origin}/signup/verify`
+
+    const { data, error } = await supabase.auth.signUp({
+      email: trimmedEmail,
+      password,
+      options: {
+        emailRedirectTo,
+        // intended_tier rides in user_metadata (mirrors B65's
+        // proposal_code pattern). /signup/verify reads this to render
+        // the tier summary + drive the create-checkout-session call.
+        // attestation_version is also stashed so /signup/verify can
+        // call /api/signup/attest with the right version.
+        data: {
+          intended_tier: intendedTier,
+          attestation_version: TEXAS_ATTESTATION_VERSION,
+          acquisition_channel: 'self_serve',
+        },
+      },
+    })
+
+    if (error) {
+      setSubmission({ kind: 'error', message: error.message || 'Sign-up failed. Please try again.' })
+      return
+    }
+    // B65 pattern: empty identities array means email is already confirmed
+    // (anti-enumeration). Surface a friendly non-leaking message.
+    if (data.user?.identities && data.user.identities.length === 0) {
+      setSubmission({ kind: 'already_registered' })
+      return
+    }
+    setSubmission({ kind: 'sent', email: trimmedEmail })
   }
 
-  const tiers: TierDisplay[] = activeTrack === 'enforcement' ? ENFORCEMENT_TIERS : PROPERTY_MANAGEMENT_TIERS
+  // ── Render: dormancy placeholder (unchanged B65.2 messaging) ─────
+  if (dormancy.kind === 'loading') {
+    return (
+      <main style={{ minHeight: '100vh', background: BG, color: MUTED, fontFamily: 'system-ui, Arial, sans-serif', padding: 48, textAlign: 'center' }}>
+        Loading…
+      </main>
+    )
+  }
+  if (dormancy.kind === 'closed') {
+    return <SignupClosedPlaceholder />
+  }
 
+  // ── Render: submission state branches ────────────────────────────
+  if (submission.kind === 'sent') {
+    return <CheckYourEmail email={submission.email} />
+  }
+  if (submission.kind === 'already_registered') {
+    return <AlreadyRegistered />
+  }
+
+  // ── Render: tier picker form (dormancy open + editing/submitting/error) ─
   const inputStyle: React.CSSProperties = {
     background: '#0a0d14', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
     padding: '12px 16px', color: '#fff', width: '100%', fontSize: 14,
-    marginBottom: 12, boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit',
+    boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit',
   }
-  const labelStyle: React.CSSProperties = { color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }
-
-  const canSubmit = contact.name.trim().length > 0 && contact.email.trim().length > 0
+  const labelStyle: React.CSSProperties = { color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6, marginTop: 14 }
 
   return (
-    <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'system-ui, Arial, sans-serif' }}>
+    <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'system-ui, Arial, sans-serif', padding: '48px 24px' }}>
+      <div style={{ maxWidth: 720, margin: '0 auto' }}>
 
-      {/* HERO */}
-      <section style={{ padding: '80px 24px 56px' }}>
-        <div style={{ maxWidth: 880, margin: '0 auto', textAlign: 'center' }}>
-          <div style={{ display: 'inline-block', background: 'rgba(201,162,39,0.10)', border: `1px solid rgba(201,162,39,0.4)`, color: GOLD, fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '6px 14px', borderRadius: 999, marginBottom: 20 }}>
-            Coming soon
-          </div>
-          <h1 style={{ fontSize: 42, fontWeight: 800, margin: '0 0 16px', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
-            Self-serve signup is launching soon
-          </h1>
-          <p style={{ color: '#94a3b8', fontSize: 17, lineHeight: 1.6, margin: '0 auto 8px', maxWidth: 640 }}>
-            We&apos;re finishing the self-serve onboarding flow now. Leave your details below and we&apos;ll reach out personally when it&apos;s ready — or sooner if you&apos;d like to start now.
-          </p>
-          <p style={{ color: MUTED, fontSize: 14, margin: '0 auto', maxWidth: 640 }}>
-            Already have a proposal code from us? Use the link in your proposal email to activate your account.
-          </p>
-          <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '20px auto 0' }} />
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <h1 style={{ fontSize: 32, fontWeight: 800, margin: '0 0 8px', letterSpacing: '-0.02em' }}>Sign up for ShieldMyLot</h1>
+          <p style={{ color: MUTED, fontSize: 14, margin: 0 }}>Texas parking enforcement &amp; property management</p>
+          <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '14px auto 0' }} />
         </div>
-      </section>
 
-      {/* PRICING (preview of what self-serve will offer) */}
-      <section style={{ padding: '24px 24px 80px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <h2 style={{ fontSize: 30, fontWeight: 700, margin: '0 0 10px', letterSpacing: '-0.02em' }}>What you&apos;ll get</h2>
-            <p style={{ color: MUTED, fontSize: 15, margin: '0 0 24px' }}>Pricing at launch — base fee + per-property + per-driver.</p>
-            <div style={{ display: 'inline-flex', background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 4 }}>
-              <button onClick={() => setActiveTrack('enforcement')}
-                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'enforcement' ? GOLD : 'transparent', color: activeTrack === 'enforcement' ? '#0a0d14' : MUTED }}>
-                Enforcement
+        {/* TRACK SELECTOR */}
+        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>1. Choose your track</p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['enforcement', 'pm'] as const).map(t => (
+              <button key={t}
+                onClick={() => setTrack(t)}
+                style={{
+                  flex: 1, padding: '12px 16px', borderRadius: 10, border: track === t ? `2px solid ${GOLD}` : `1px solid ${BORDER}`,
+                  background: track === t ? 'rgba(201,162,39,0.10)' : 'transparent',
+                  color: track === t ? GOLD : TEXT, fontWeight: 600, fontSize: 14, cursor: 'pointer',
+                }}>
+                {t === 'enforcement' ? 'Enforcement' : 'Property Management'}
               </button>
-              <button onClick={() => setActiveTrack('pm')}
-                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'pm' ? GOLD : 'transparent', color: activeTrack === 'pm' ? '#0a0d14' : MUTED }}>
-                Property Management
-              </button>
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24 }}>
-            {tiers.map((tier, i) => (
-              <div key={i} style={{ background: tier.popular ? 'rgba(201,162,39,0.08)' : CARD_BG, border: `1px solid ${tier.popular ? 'rgba(201,162,39,0.5)' : BORDER}`, borderRadius: 20, padding: 32, position: 'relative', boxShadow: tier.popular ? '0 0 0 1px rgba(201,162,39,0.25), 0 8px 32px rgba(201,162,39,0.06)' : 'none' }}>
-                {tier.popular && (
-                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, background: GOLD, color: '#0a0d14', fontSize: 11, fontWeight: 700, padding: '6px 12px', borderTopLeftRadius: 20, borderTopRightRadius: 20, letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'center' }}>
-                    ★ Most Popular
-                  </div>
-                )}
-                <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: `${tier.popular ? '14px' : '0'} 0 6px` }}>{activeTrack === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</p>
-                <h3 style={{ color: TEXT, fontSize: 22, fontWeight: 700, margin: '0 0 16px' }}>{tier.name}</h3>
-                <div style={{ marginBottom: 8 }}>
-                  <span style={{ color: GOLD, fontSize: 32, fontWeight: 800 }}>${tier.base}</span>
-                  <span style={{ color: MUTED, fontSize: 14 }}>/mo base</span>
-                </div>
-                <p style={{ color: MUTED, fontSize: 12, margin: '0 0 4px' }}>+ ${tier.perProp}/mo per property</p>
-                {tier.perDriver
-                  ? <p style={{ color: MUTED, fontSize: 12, margin: '0 0 20px' }}>+ ${tier.perDriver}/mo per driver</p>
-                  : <div style={{ marginBottom: 20 }} />}
-                <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 18 }}>
-                  {tier.features.map((f, j) => (
-                    <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-                      <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 1 }}>✓</span>
-                      <span style={{ color: '#94a3b8', fontSize: 14 }}>{f}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
             ))}
           </div>
-          <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 24 }}>
-            Final pricing may shift slightly at launch. Founding Member pricing is locked once you onboard.
+        </div>
+
+        {/* TIER CARDS */}
+        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>2. Choose your tier</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+            {tiers.map((t) => {
+              const slug = tierSlug(t.name)
+              const selected = tier === slug
+              return (
+                <button key={slug}
+                  onClick={() => setTier(slug)}
+                  style={{
+                    textAlign: 'left', padding: 14, borderRadius: 10,
+                    border: selected ? `2px solid ${GOLD}` : `1px solid ${BORDER}`,
+                    background: selected ? 'rgba(201,162,39,0.10)' : 'transparent',
+                    color: TEXT, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>
+                  <div style={{ color: selected ? GOLD : TEXT, fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{t.name}</div>
+                  <div style={{ color: MUTED, fontSize: 12 }}>${t.base}/mo base</div>
+                  <div style={{ color: MUTED, fontSize: 11 }}>+ ${t.perProp}/property{t.perDriver ? ` + $${t.perDriver}/driver` : ''}</div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* CYCLE TOGGLE */}
+        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>3. Billing cycle</p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['monthly', 'annual'] as const).map(c => (
+              <button key={c}
+                onClick={() => setCycle(c)}
+                style={{
+                  flex: 1, padding: '10px 14px', borderRadius: 10,
+                  border: cycle === c ? `2px solid ${GOLD}` : `1px solid ${BORDER}`,
+                  background: cycle === c ? 'rgba(201,162,39,0.10)' : 'transparent',
+                  color: cycle === c ? GOLD : TEXT, fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                }}>
+                {c === 'monthly' ? 'Monthly' : 'Annual (~17% off)'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* COUNTS */}
+        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>4. Initial counts</p>
+          <div style={{ display: 'grid', gridTemplateColumns: track === 'enforcement' ? '1fr 1fr' : '1fr', gap: 12 }}>
+            <div>
+              <label style={labelStyle}>Properties{maxProperties !== -1 && ` (max ${maxProperties} on ${selectedTier?.name})`}</label>
+              <input type="number" min={1} max={maxProperties === -1 ? undefined : maxProperties} value={propertyCount}
+                onChange={e => setPropertyCount(e.target.value)} style={inputStyle} />
+              {propertyLimitReached && (
+                <p style={{ color: '#f44336', fontSize: 11, margin: '6px 0 0' }}>Exceeds {selectedTier?.name} limit ({maxProperties}). Upgrade tier or reduce.</p>
+              )}
+            </div>
+            {track === 'enforcement' && (
+              <div>
+                <label style={labelStyle}>Drivers{maxDrivers !== -1 && ` (max ${maxDrivers})`}</label>
+                <input type="number" min={1} max={maxDrivers === -1 ? undefined : maxDrivers} value={driverCount}
+                  onChange={e => setDriverCount(e.target.value)} style={inputStyle} />
+                {driverLimitReached && (
+                  <p style={{ color: '#f44336', fontSize: 11, margin: '6px 0 0' }}>Exceeds {selectedTier?.name} limit ({maxDrivers}).</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* COMPANY + ACCOUNT */}
+        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>5. Account details</p>
+          <label style={labelStyle}>Company name</label>
+          <input type="text" value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Acme Towing LLC" style={inputStyle} />
+          <label style={labelStyle}>Email</label>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" style={inputStyle} />
+          {email && !emailOk && <p style={{ color: '#f44336', fontSize: 11, margin: '4px 0 0' }}>Enter a valid email address.</p>}
+          <label style={labelStyle}>Password</label>
+          <input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 8 characters" style={inputStyle} />
+          {password && passwordErr && <p style={{ color: '#f44336', fontSize: 11, margin: '4px 0 0' }}>{passwordErr}</p>}
+        </div>
+
+        {/* ATTESTATION */}
+        <div style={{ background: 'rgba(201,162,39,0.06)', border: `1px solid rgba(201,162,39,0.35)`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>6. Texas operations attestation</p>
+          <div style={{ background: '#0a0d14', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 14, marginBottom: 12, fontSize: 13, color: '#94a3b8', whiteSpace: 'pre-line', lineHeight: 1.6 }}>
+            {TEXAS_ATTESTATION_TEXT}
+          </div>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+            <input type="checkbox" checked={attestChecked} onChange={e => setAttestChecked(e.target.checked)} style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer' }} />
+            <span style={{ color: TEXT, fontSize: 13, lineHeight: 1.5 }}>I attest to the above (required to continue).</span>
+          </label>
+        </div>
+
+        {/* COST PREVIEW */}
+        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 20, marginBottom: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+            <span style={{ color: MUTED, fontSize: 13 }}>Estimated {cycle === 'monthly' ? 'monthly' : 'annual'} cost</span>
+            <span style={{ color: GOLD, fontSize: 26, fontWeight: 800 }}>${totalThisCycle.toFixed(2)}</span>
+          </div>
+          <p style={{ color: MUTED, fontSize: 11, margin: 0 }}>
+            ${baseMonthly}/mo base + ${perPropMonthly}/property × {pCount}
+            {track === 'enforcement' && ` + $${perDriverMonthly}/driver × ${dCount}`}
+            {cycle === 'annual' && ' × 10 months (annual prepay)'}
           </p>
         </div>
-      </section>
 
-      {/* INTEREST FORM */}
-      <section id="notify" style={{ background: 'rgba(255,255,255,0.025)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '64px 24px' }}>
-        <div style={{ maxWidth: 560, margin: '0 auto' }}>
-          <div style={{ textAlign: 'center', marginBottom: 28 }}>
-            <h2 style={{ fontSize: 26, fontWeight: 700, margin: '0 0 10px', letterSpacing: '-0.02em' }}>Get notified at launch</h2>
-            <p style={{ color: MUTED, fontSize: 14, margin: 0 }}>
-              We&apos;ll email you the moment self-serve signup goes live. No spam, ever.
-            </p>
+        {/* SUBMIT */}
+        {submission.kind === 'error' && (
+          <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
+            <p style={{ color: '#f44336', fontSize: 13, margin: 0 }}>{submission.message}</p>
           </div>
-          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 28 }}>
-            <label style={labelStyle}>Your name</label>
-            <input style={inputStyle} value={contact.name} onChange={e => setContact({ ...contact, name: e.target.value })} placeholder="Jane Operator" />
-            <label style={labelStyle}>Email</label>
-            <input type="email" style={inputStyle} value={contact.email} onChange={e => setContact({ ...contact, email: e.target.value })} placeholder="jane@example.com" />
-            <label style={labelStyle}>Company (optional)</label>
-            <input style={inputStyle} value={contact.company} onChange={e => setContact({ ...contact, company: e.target.value })} placeholder="A1 Towing & Recovery" />
-            <button
-              onClick={sendInterest}
-              disabled={!canSubmit}
-              style={{ width: '100%', background: canSubmit ? GOLD : '#1e2535', color: canSubmit ? '#0a0d14' : '#555', fontWeight: 700, fontSize: 15, padding: '14px', border: 'none', borderRadius: 10, cursor: canSubmit ? 'pointer' : 'not-allowed', marginTop: 8 }}
-            >
-              Notify me at launch
-            </button>
-            <p style={{ color: MUTED, fontSize: 12, margin: '14px 0 0', textAlign: 'center', lineHeight: 1.5 }}>
-              Submitting opens your mail client with a pre-filled message to support@shieldmylot.com.
-            </p>
-          </div>
-          <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 24 }}>
-            Want to talk now? <a href="/#contact" style={{ color: GOLD, textDecoration: 'none' }}>Use the contact form on the main site →</a>
-          </p>
-        </div>
-      </section>
+        )}
+        <button onClick={submit} disabled={!allOk || submission.kind === 'submitting'}
+          style={{
+            width: '100%', padding: '16px', background: !allOk || submission.kind === 'submitting' ? '#1e2535' : GOLD,
+            color: !allOk || submission.kind === 'submitting' ? '#555' : '#0a0d14',
+            fontWeight: 700, fontSize: 15, border: 'none', borderRadius: 10,
+            cursor: !allOk || submission.kind === 'submitting' ? 'not-allowed' : 'pointer',
+          }}>
+          {submission.kind === 'submitting' ? 'Sending verification email…' : 'Continue → Verify email'}
+        </button>
+        <p style={{ color: MUTED, fontSize: 12, textAlign: 'center', margin: '14px 0 0' }}>
+          We&apos;ll email you a verification link before charging anything. No payment is collected on this page.
+        </p>
 
-      {/* FOOTER */}
-      <footer style={{ borderTop: `1px solid ${BORDER}`, padding: '32px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
-          <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>© 2026 ShieldMyLot™ · A product of Alvarado Legacy Consulting LLC · All rights reserved</p>
+      </div>
+    </main>
+  )
+}
+
+// ── Sub-components ───────────────────────────────────────────────────
+
+function SignupClosedPlaceholder() {
+  // Mirrors B65.2 messaging for the dormant state. When dormancy flags
+  // flip on at launch day, this branch stops rendering and the form
+  // takes over.
+  return (
+    <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'system-ui, Arial, sans-serif', padding: '80px 24px', textAlign: 'center' }}>
+      <div style={{ maxWidth: 540, margin: '0 auto' }}>
+        <div style={{ display: 'inline-block', background: 'rgba(201,162,39,0.10)', border: `1px solid rgba(201,162,39,0.4)`, color: GOLD, fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '6px 14px', borderRadius: 999, marginBottom: 20 }}>
+          Coming soon
         </div>
-      </footer>
+        <h1 style={{ fontSize: 36, fontWeight: 800, margin: '0 0 14px', letterSpacing: '-0.02em' }}>Self-serve signup is launching soon</h1>
+        <p style={{ color: '#94a3b8', fontSize: 16, lineHeight: 1.6, margin: '0 0 12px' }}>
+          We&apos;re finishing the self-serve onboarding flow now. Check back shortly, or contact us if you&apos;d like to start sooner.
+        </p>
+        <p style={{ color: MUTED, fontSize: 14, margin: 0 }}>
+          Already have a proposal code? Use the link in your proposal email to activate your account.
+        </p>
+        <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '24px auto 0' }} />
+        <a href="mailto:support@shieldmylot.com" style={{ display: 'inline-block', marginTop: 24, color: GOLD, fontSize: 14, textDecoration: 'none' }}>Contact support →</a>
+      </div>
+    </main>
+  )
+}
+
+function CheckYourEmail({ email }: { email: string }) {
+  return (
+    <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'system-ui, Arial, sans-serif', padding: '80px 24px' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px', fontSize: 28 }}>📧</div>
+        <h1 style={{ fontSize: 26, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.01em' }}>Check your email</h1>
+        <p style={{ color: '#94a3b8', fontSize: 15, lineHeight: 1.6, margin: '0 0 6px' }}>
+          We sent a verification link to <strong style={{ color: TEXT, wordBreak: 'break-all' }}>{email}</strong>.
+        </p>
+        <p style={{ color: MUTED, fontSize: 14, margin: '0 0 24px' }}>
+          Click the link to continue with payment. The link is valid for 24 hours.
+        </p>
+        <p style={{ color: MUTED, fontSize: 12 }}>
+          Wrong email? <a href="/signup" style={{ color: GOLD, textDecoration: 'none' }}>Start over</a>
+        </p>
+      </div>
+    </main>
+  )
+}
+
+function AlreadyRegistered() {
+  return (
+    <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'system-ui, Arial, sans-serif', padding: '80px 24px' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 12px' }}>That email is already registered</h1>
+        <p style={{ color: '#94a3b8', fontSize: 15, lineHeight: 1.6, margin: '0 0 24px' }}>
+          If you forgot your password, <a href="/forgot-password" style={{ color: GOLD, textDecoration: 'none' }}>reset it here</a>.
+          Otherwise, <a href="/login" style={{ color: GOLD, textDecoration: 'none' }}>sign in</a>.
+        </p>
+      </div>
     </main>
   )
 }
