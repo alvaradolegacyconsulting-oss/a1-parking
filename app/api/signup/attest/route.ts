@@ -1,38 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
-import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
-import { TEXAS_ATTESTATION_VERSION } from '../../../lib/legal-versions'
+import {
+  TEXAS_ATTESTATION_VERSION,
+  TOS_VERSION,
+  PRIVACY_VERSION,
+} from '../../../lib/legal-versions'
 
-// B66.3 + B95 — Texas attestation INSERT (Option D from pre-flight).
-// Called from /signup/verify immediately after the PKCE exchange
-// completes (user is authenticated by then). Records the attestation
-// row BEFORE the user clicks "Continue to Checkout" — preserves the
-// "moment of intent" semantics without requiring a SECURITY DEFINER
-// RPC or schema change.
+// B118 — multi-document consent capture at signup time.
 //
-// ── DEVIATION FROM PRE-FLIGHT OPTION A ──────────────────────────────
-// Pre-flight Option A had attestation INSERT at form-submit time
-// (immediately after supabase.auth.signUp returns). At implementation,
-// that's not possible: Supabase email confirmation is ON, so signUp
-// returns NO session — the user isn't authenticated. tos_acceptances
-// RLS doesn't permit client-side INSERTs (only redeem_proposal_code()
-// SECURITY DEFINER writes today). Alternatives all required schema
-// changes or anon-callable RPCs with spoofing risk; Option D records
-// at /signup/verify after PKCE auth, which is still pre-Checkout,
-// still pre-payment, and authenticated.
+// Called from /signup/verify immediately after the PKCE exchange
+// completes (user is authenticated by then). Records ToS + Privacy +
+// Texas attestation rows in tos_acceptances AND stamps user_roles
+// version columns — atomically, via the accept_signup_consents()
+// SECURITY DEFINER RPC (B118 commit 1 migration).
+//
+// ── HISTORY ─────────────────────────────────────────────────────────
+// B66.3 (initial): wrote ONE row (texas_attestation only). Self-serve
+//   subscribers only consented to Texas terms; ToS + Privacy were
+//   never captured at moment-of-purchase. Identified as launch
+//   blocker (B118).
+// B118 (this commit): switches from inline 3-INSERTs (counter-proposal
+//   E.1 alternative) to a single RPC call. Atomicity guaranteed by
+//   the RPC's transaction. The RPC handles per-document idempotency
+//   via SELECT-then-INSERT internally (counter-proposal E.2) AND
+//   stamps user_roles.tos_accepted_at + tos_accepted_version +
+//   privacy_accepted_version so the version-aware /login modal
+//   (commit 3) suppresses correctly for B118-signed-up users.
 //
 // ── SECURITY MODEL ──────────────────────────────────────────────────
-// • Requires an authenticated session (cookie-bound supabase client
-//   via createSupabaseServerClient → auth.getUser()). Verified user
-//   is one whose email is confirmed.
-// • Uses the AUTHENTICATED user's id from session — never accepts
-//   user_id from the request body (no parameter spoofing surface).
-// • Service-role client for the INSERT (bypasses RLS — tos_acceptances
-//   has no client-side INSERT policy).
-// • Idempotent: re-running for the same (user_id, document_type)
-//   returns existing row id rather than inserting a duplicate. Future
-//   re-attest at wording bump will use a different version string so
-//   the dedup key may evolve.
+// • Requires authenticated session (cookie-bound supabase client via
+//   createSupabaseServerClient → auth.getUser()). Verified user is
+//   one whose email is confirmed.
+// • Uses the AUTHENTICATED user's session for the RPC call — never
+//   accepts user_id from the request body (the RPC reads auth.uid()
+//   internally; no parameter spoofing surface).
+// • RPC is SECURITY DEFINER with GRANT EXECUTE TO authenticated only
+//   (REVOKE FROM PUBLIC, anon per B118 commit 1 PART 6).
+// • The route uses the authenticated session client to invoke the RPC
+//   (not service-role) — RPC's SECURITY DEFINER context handles the
+//   tos_acceptances + user_roles writes that RLS would otherwise
+//   block.
 
 export const runtime = 'nodejs'
 
@@ -46,47 +53,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'email not verified' }, { status: 403 })
   }
 
-  const service = createSupabaseServiceClient()
-
-  // Idempotency probe — re-call after page refresh shouldn't duplicate.
-  const { data: existing, error: probeErr } = await service
-    .from('tos_acceptances')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('document_type', 'texas_attestation')
-    .eq('attestation_version', TEXAS_ATTESTATION_VERSION)
-    .maybeSingle()
-  if (probeErr) {
-    return NextResponse.json({ error: 'probe failed: ' + probeErr.message }, { status: 500 })
-  }
-  if (existing) {
-    return NextResponse.json({ id: existing.id, action: 'recovered' })
-  }
-
   // ip_address: best-effort from the request headers. Behind Vercel,
   // x-forwarded-for has the original client IP as the first entry.
   const xff = req.headers.get('x-forwarded-for')
   const ipAddress = xff ? xff.split(',')[0]?.trim() || null : null
   const userAgent = req.headers.get('user-agent')
 
-  const { data: inserted, error: insertErr } = await service
-    .from('tos_acceptances')
-    .insert({
-      user_id: user.id,
-      document_type: 'texas_attestation',
-      attestation_version: TEXAS_ATTESTATION_VERSION,
-      tos_version: null,
-      privacy_version: null,
-      ip_address: ipAddress,
-      user_agent: userAgent,
-      // company_id remains NULL — company doesn't exist yet (created
-      // later by checkout.session.completed webhook).
-    })
-    .select('id')
-    .single()
-  if (insertErr) {
-    return NextResponse.json({ error: 'insert failed: ' + insertErr.message }, { status: 500 })
+  // Server-side version pins are the source of truth — never trust
+  // user_metadata version strings (a sophisticated caller could spoof
+  // them at signup to record consent against an old/fake version).
+  // The form ships these from legal-versions.ts; the route validates
+  // by using the same import.
+  const { error: rpcErr } = await supabase.rpc('accept_signup_consents', {
+    p_attestation_version: TEXAS_ATTESTATION_VERSION,
+    p_tos_version: TOS_VERSION,
+    p_privacy_version: PRIVACY_VERSION,
+    p_ip_address: ipAddress,
+    p_user_agent: userAgent,
+  })
+
+  if (rpcErr) {
+    return NextResponse.json(
+      { error: 'accept_signup_consents RPC failed: ' + rpcErr.message },
+      { status: 500 }
+    )
   }
 
-  return NextResponse.json({ id: inserted.id, action: 'created' })
+  return NextResponse.json({ ok: true })
 }

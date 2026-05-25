@@ -16,7 +16,12 @@ import { supabase } from '../supabase'
 import { ENFORCEMENT_TIERS, PROPERTY_MANAGEMENT_TIERS, TierTrack, TierDisplay } from '../lib/tier-display'
 import { TIER_CONFIG, TIER_PRICING } from '../lib/tier-config'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
-import { TEXAS_ATTESTATION_VERSION, TEXAS_ATTESTATION_TEXT } from '../lib/legal-versions'
+import {
+  TEXAS_ATTESTATION_VERSION,
+  TEXAS_ATTESTATION_TEXT,
+  TOS_VERSION,
+  PRIVACY_VERSION,
+} from '../lib/legal-versions'
 import { validatePassword } from '../lib/password-rules'
 
 const GOLD = '#C9A227'
@@ -72,6 +77,8 @@ export default function SignupTierPicker() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [attestChecked, setAttestChecked] = useState(false)
+  const [tosChecked, setTosChecked] = useState(false)
+  const [privacyChecked, setPrivacyChecked] = useState(false)
   const [submission, setSubmission] = useState<Submission>({ kind: 'editing' })
 
   const tiers = useMemo(() => selfServeTiers(track), [track])
@@ -111,7 +118,8 @@ export default function SignupTierPicker() {
   const propertyCountOk = pCount >= 1 && !propertyLimitReached
   const driverCountOk = track === 'pm' || (dCount >= 1 && !driverLimitReached)
   const companyNameOk = companyName.trim().length > 0
-  const allOk = companyNameOk && emailOk && !passwordErr && propertyCountOk && driverCountOk && attestChecked
+  const allOk = companyNameOk && emailOk && !passwordErr && propertyCountOk && driverCountOk
+    && attestChecked && tosChecked && privacyChecked
 
   // ── Submit ────────────────────────────────────────────────────────
   async function submit() {
@@ -138,11 +146,15 @@ export default function SignupTierPicker() {
         // intended_tier rides in user_metadata (mirrors B65's
         // proposal_code pattern). /signup/verify reads this to render
         // the tier summary + drive the create-checkout-session call.
-        // attestation_version is also stashed so /signup/verify can
-        // call /api/signup/attest with the right version.
+        // All 3 consent versions stashed alongside so /signup/verify
+        // can call /api/signup/attest with the exact version strings
+        // the user saw + checked at form-submit time (per B118 multi-
+        // doc consent capture).
         data: {
           intended_tier: intendedTier,
           attestation_version: TEXAS_ATTESTATION_VERSION,
+          tos_version: TOS_VERSION,
+          privacy_version: PRIVACY_VERSION,
           acquisition_channel: 'self_serve',
         },
       },
@@ -299,15 +311,34 @@ export default function SignupTierPicker() {
           {password && passwordErr && <p style={{ color: '#f44336', fontSize: 11, margin: '4px 0 0' }}>{passwordErr}</p>}
         </div>
 
-        {/* ATTESTATION */}
+        {/* LEGAL ACCEPTANCE — Texas attestation + ToS + Privacy in one section
+            per B118 counter-proposal A.3. All 3 required to enable submit.
+            Links open new tab (target="_blank" rel="noopener noreferrer") so
+            the user can review without losing form state. */}
         <div style={{ background: 'rgba(201,162,39,0.06)', border: `1px solid rgba(201,162,39,0.35)`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
-          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>6. Texas operations attestation</p>
-          <div style={{ background: '#0a0d14', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 14, marginBottom: 12, fontSize: 13, color: '#94a3b8', whiteSpace: 'pre-line', lineHeight: 1.6 }}>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>6. Legal acceptance</p>
+          <div style={{ background: '#0a0d14', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 14, marginBottom: 14, fontSize: 13, color: '#94a3b8', whiteSpace: 'pre-line', lineHeight: 1.6 }}>
             {TEXAS_ATTESTATION_TEXT}
           </div>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
             <input type="checkbox" checked={attestChecked} onChange={e => setAttestChecked(e.target.checked)} style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer' }} />
-            <span style={{ color: TEXT, fontSize: 13, lineHeight: 1.5 }}>I attest to the above (required to continue).</span>
+            <span style={{ color: TEXT, fontSize: 13, lineHeight: 1.5 }}>I attest to the Texas operations terms above (required).</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
+            <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)} style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer' }} />
+            <span style={{ color: TEXT, fontSize: 13, lineHeight: 1.5 }}>
+              I have read and agree to the{' '}
+              <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: GOLD, textDecoration: 'underline' }}>Terms of Service</a>
+              {' '}(required).
+            </span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+            <input type="checkbox" checked={privacyChecked} onChange={e => setPrivacyChecked(e.target.checked)} style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer' }} />
+            <span style={{ color: TEXT, fontSize: 13, lineHeight: 1.5 }}>
+              I have read and agree to the{' '}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: GOLD, textDecoration: 'underline' }}>Privacy Policy</a>
+              {' '}(required).
+            </span>
           </label>
         </div>
 
