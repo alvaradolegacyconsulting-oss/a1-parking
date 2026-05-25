@@ -34,6 +34,12 @@ export type HandlerResult =
   | { ok: true; companyId: number }
   | { ok: false; reason: string }
 
+// B66.4 — simpler shape for sync-only handlers (no companyId to return;
+// the row already existed at event time).
+export type SyncResult =
+  | { ok: true }
+  | { ok: false; reason: string }
+
 export async function handleCheckoutSessionCompleted(
   event: Stripe.CheckoutSessionCompletedEvent,
 ): Promise<HandlerResult> {
@@ -154,4 +160,183 @@ export async function handleCheckoutSessionCompleted(
   // cleanup concern, not a webhook failure.
 
   return { ok: true, companyId }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// B66.4 handlers — Stripe Customer Portal sync
+// ════════════════════════════════════════════════════════════════════
+// Three handlers covering the Portal-driven change surface:
+//   • customer.subscription.updated  — sync subscription state changes
+//   • customer.subscription.deleted  — flip account_state to cancelled
+//   • customer.updated               — sync billing address changes
+//
+// Common shape: look up companies row by stripe_subscription_id (or
+// stripe_customer_id for the customer event); if no match, log + ack
+// success (Stripe sub doesn't belong to us — likely an account that
+// pre-dates B66.3 or was deleted in Stripe without webhook follow-up).
+// All writes are idempotent UPDATEs. Event ordering doesn't matter at
+// our scale; the final state of any sequence is the same regardless
+// of arrival order.
+
+/**
+ * customer.subscription.updated handler.
+ *
+ * **This handler fires on more than admin-triggered events.** Stripe
+ * sends customer.subscription.updated on invoice payment success/failure
+ * as well — status transitions active ↔ past_due ↔ unpaid happen here
+ * during normal billing cycles, not just during admin actions in the
+ * Customer Portal. The handler treats all writes as idempotent UPDATEs
+ * so this is by design — subscription_status will see writes during
+ * normal billing cycles. B66.5 dunning logic will read these writes
+ * downstream (e.g., scan for subscription_status='past_due' rows to
+ * surface a billing-failed banner).
+ */
+export async function handleSubscriptionUpdated(
+  event: Stripe.CustomerSubscriptionUpdatedEvent,
+): Promise<SyncResult> {
+  const sub = event.data.object
+  const supabase = createSupabaseServiceClient()
+
+  // Find the companies row this subscription belongs to.
+  const { data: company, error: lookupErr } = await supabase
+    .from('companies')
+    .select('id, stripe_subscription_id, subscription_status')
+    .eq('stripe_subscription_id', sub.id)
+    .maybeSingle()
+  if (lookupErr) {
+    return { ok: false, reason: `companies lookup failed for sub ${sub.id}: ${lookupErr.message}` }
+  }
+  if (!company) {
+    // Unknown subscription — likely a pre-B66.3 account or a Stripe-side
+    // sub created out-of-band. Log + ack; not our row to update.
+    console.warn('[stripe-event-handlers] subscription.updated for unknown subscription_id', { subId: sub.id })
+    return { ok: true }
+  }
+
+  // current_period_end lives on items (per-item period support landed in
+  // a recent API version — the Subscription-level field was removed).
+  // All our items share the same cycle (created together by /api/signup/
+  // create-checkout-session), so reading items.data[0] is sufficient.
+  // Stripe sends Unix seconds; convert to ISO for TIMESTAMPTZ.
+  const firstItem = sub.items?.data?.[0]
+  const currentPeriodEndIso = firstItem?.current_period_end
+    ? new Date(firstItem.current_period_end * 1000).toISOString()
+    : null
+
+  const { error: updErr } = await supabase
+    .from('companies')
+    .update({
+      subscription_status: sub.status,
+      current_period_end: currentPeriodEndIso,
+      cancel_at_period_end: sub.cancel_at_period_end,
+    })
+    .eq('id', company.id)
+  if (updErr) {
+    return { ok: false, reason: `companies UPDATE failed for sub ${sub.id}: ${updErr.message}` }
+  }
+
+  return { ok: true }
+}
+
+/**
+ * customer.subscription.deleted handler.
+ *
+ * Fires when a subscription is truly removed in Stripe — typically after
+ * the period_end date if cancel_at_period_end=true was set earlier, OR
+ * immediately if an admin deletes the subscription directly. Two-step
+ * cancellation flow: the cancel-scheduled state arrives first via
+ * subscription.updated (cancel_at_period_end=true, status=active); the
+ * actual delete arrives later via this handler (status=canceled).
+ *
+ * Flips companies.account_state to 'cancelled' (British spelling per the
+ * existing companies_account_state_valid CHECK). The 90-day reactivation
+ * window (Cluster 7.8) is enforced at /login dispatch via
+ * gateAccountState; no separate state needed.
+ */
+export async function handleSubscriptionDeleted(
+  event: Stripe.CustomerSubscriptionDeletedEvent,
+): Promise<SyncResult> {
+  const sub = event.data.object
+  const supabase = createSupabaseServiceClient()
+
+  const { data: company, error: lookupErr } = await supabase
+    .from('companies')
+    .select('id')
+    .eq('stripe_subscription_id', sub.id)
+    .maybeSingle()
+  if (lookupErr) {
+    return { ok: false, reason: `companies lookup failed for sub ${sub.id}: ${lookupErr.message}` }
+  }
+  if (!company) {
+    console.warn('[stripe-event-handlers] subscription.deleted for unknown subscription_id', { subId: sub.id })
+    return { ok: true }
+  }
+
+  const { error: updErr } = await supabase
+    .from('companies')
+    .update({
+      account_state: 'cancelled',
+      subscription_status: 'canceled',  // Stripe's spelling on the status field
+      cancel_at_period_end: false,       // No longer pending — already deleted
+    })
+    .eq('id', company.id)
+  if (updErr) {
+    return { ok: false, reason: `companies UPDATE failed for sub ${sub.id}: ${updErr.message}` }
+  }
+
+  return { ok: true }
+}
+
+/**
+ * customer.updated handler.
+ *
+ * Fires when the customer record changes in Stripe — including billing
+ * address edits made via the Customer Portal. Syncs the address into
+ * companies for B110 Texas tax jurisdiction lookups and customer-
+ * facing invoice display.
+ *
+ * Does NOT sync customer.name → companies.name. companies.name is the
+ * internal identity used by RLS via get_my_company() + audit logs +
+ * user_roles.company foreign-key-ish matching; renaming via Stripe-side
+ * customer.name update could break a lot. Customer-facing invoice
+ * display name lives on Stripe's customer.name; ShieldMyLot's internal
+ * identity stays stable.
+ */
+export async function handleCustomerUpdated(
+  event: Stripe.CustomerUpdatedEvent,
+): Promise<SyncResult> {
+  const customer = event.data.object
+  const supabase = createSupabaseServiceClient()
+
+  const { data: company, error: lookupErr } = await supabase
+    .from('companies')
+    .select('id')
+    .eq('stripe_customer_id', customer.id)
+    .maybeSingle()
+  if (lookupErr) {
+    return { ok: false, reason: `companies lookup failed for customer ${customer.id}: ${lookupErr.message}` }
+  }
+  if (!company) {
+    console.warn('[stripe-event-handlers] customer.updated for unknown customer_id', { customerId: customer.id })
+    return { ok: true }
+  }
+
+  // Address may be null on the customer (Stripe permits no-address customers).
+  // Sync the 5 fields atomically; missing sub-fields → NULL in DB.
+  const addr = customer.address
+  const { error: updErr } = await supabase
+    .from('companies')
+    .update({
+      address:             addr?.line1 ?? null,
+      billing_city:        addr?.city ?? null,
+      billing_state:       addr?.state ?? null,
+      billing_postal_code: addr?.postal_code ?? null,
+      billing_country:     addr?.country ?? null,
+    })
+    .eq('id', company.id)
+  if (updErr) {
+    return { ok: false, reason: `companies UPDATE failed for customer ${customer.id}: ${updErr.message}` }
+  }
+
+  return { ok: true }
 }

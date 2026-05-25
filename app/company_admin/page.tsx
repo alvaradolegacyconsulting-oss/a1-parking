@@ -39,6 +39,24 @@ export default function CompanyAdminPortal() {
   const [stats, setStats] = useState({ total_vehicles: 0, violations_today: 0, violations_week: 0, active_passes: 0 })
   const [activeTab, setActiveTab] = useState('overview')
 
+  // B66.4 — Billing tab state. billingData populated on tab activate
+  // (loadBillingData); portalLoading guards the "Manage Billing" button.
+  const [billingData, setBillingData] = useState<{
+    stripe_customer_id: string | null
+    stripe_subscription_id: string | null
+    subscription_status: string | null
+    current_period_end: string | null
+    cancel_at_period_end: boolean | null
+    address: string | null
+    billing_city: string | null
+    billing_state: string | null
+    billing_postal_code: string | null
+    billing_country: string | null
+  } | null>(null)
+  const [billingLoading, setBillingLoading] = useState(false)
+  const [portalLoading, setPortalLoading] = useState(false)
+  const [portalError, setPortalError] = useState<string>('')
+
   const [plate, setPlate] = useState('')
   const [result, setResult] = useState<any>(null)
   const [searching, setSearching] = useState(false)
@@ -137,6 +155,22 @@ export default function CompanyAdminPortal() {
 
   useEffect(() => { loadUser() }, [])
   useEffect(() => { if (activeTab === 'analytics') fetchCAAnalytics() }, [activeTab, analyticsRange])
+
+  // B66.4 — Billing tab data loader. Fires on tab activate; also re-
+  // fires when the user returns from Stripe Portal (?from=portal in
+  // the URL) so post-Portal changes surface immediately.
+  useEffect(() => { if (activeTab === 'billing') loadBillingData() }, [activeTab])
+
+  // B66.4 — URL-param tab restore for the Stripe Portal return-trip.
+  // /api/billing/portal-session sets return_url to
+  // /company_admin?tab=billing&from=portal so the customer lands back
+  // on the Billing tab after making changes (vs the default Overview).
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const tabParam = params.get('tab')
+    if (tabParam === 'billing') setActiveTab('billing')
+  }, [])
   // Phase 2a: Plan tab is standalone — fetches its own counts on activation
   // rather than depending on Manage tab's lifecycle.
   useEffect(() => { if (activeTab === 'plan') loadPlanData() }, [activeTab, selectedProperty])
@@ -293,6 +327,59 @@ export default function CompanyAdminPortal() {
     )
     setCompanyAuditLogs(filtered)
     setAuditLoaded(true)
+  }
+
+  // B66.4 — Billing tab loader. Reads the companies row for the
+  // current user's company; populates billingData. Uses the same
+  // ilike(name, company) match that the auth-gate at line 174 uses.
+  async function loadBillingData() {
+    setBillingLoading(true)
+    setPortalError('')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.email) { setBillingLoading(false); return }
+    const { data: roleRow } = await supabase
+      .from('user_roles')
+      .select('company')
+      .ilike('email', user.email)
+      .single()
+    if (!roleRow?.company) { setBillingLoading(false); return }
+    const { data: companyRow, error } = await supabase
+      .from('companies')
+      .select('stripe_customer_id, stripe_subscription_id, subscription_status, current_period_end, cancel_at_period_end, address, billing_city, billing_state, billing_postal_code, billing_country')
+      .ilike('name', roleRow.company)
+      .single()
+    setBillingLoading(false)
+    if (error || !companyRow) return
+    setBillingData(companyRow)
+  }
+
+  // B66.4 — opens Stripe Customer Portal session. POSTs to the
+  // /api/billing/portal-session route, which returns { url } on
+  // success; we redirect the same tab. Pre-flight ask D.3 + D.4:
+  // disabled button + spinner while loading; error inline if
+  // creation fails (don't 500 the page).
+  async function openBillingPortal() {
+    setPortalLoading(true)
+    setPortalError('')
+    try {
+      const res = await fetch('/api/billing/portal-session', { method: 'POST' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setPortalError(body.error || `Couldn't open the billing portal (HTTP ${res.status}).`)
+        setPortalLoading(false)
+        return
+      }
+      const body = await res.json()
+      if (!body.url) {
+        setPortalError('Portal session created but no URL returned.')
+        setPortalLoading(false)
+        return
+      }
+      window.location.href = body.url
+    } catch (e) {
+      setPortalError('Network error opening billing portal: ' + (e as Error).message)
+      setPortalLoading(false)
+    }
   }
 
   async function loadManageData() {
@@ -1716,6 +1803,7 @@ export default function CompanyAdminPortal() {
             <button style={tab('analytics')} onClick={() => setActiveTab('analytics')}>Analytics</button>
           )}
           <button style={tab('plan')} onClick={() => setActiveTab('plan')}>Plan</button>
+          <button style={tab('billing')} onClick={() => setActiveTab('billing')}>Billing</button>
         </div>
 
         {/* ── OVERVIEW ── */}
@@ -3044,6 +3132,93 @@ export default function CompanyAdminPortal() {
             </div>
           )
         })()}
+
+        {/* ── BILLING (B66.4) ── */}
+        {activeTab === 'billing' && (
+          <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 12, padding: 24, marginTop: 16 }}>
+            <h2 style={{ color: '#C9A227', fontSize: 18, fontWeight: 700, margin: '0 0 16px' }}>Billing</h2>
+
+            {billingLoading && (
+              <p style={{ color: '#888', fontSize: 13, margin: 0 }}>Loading…</p>
+            )}
+
+            {!billingLoading && billingData && !billingData.stripe_customer_id && (
+              <div style={{ background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, padding: 16 }}>
+                <p style={{ color: '#94a3b8', fontSize: 13, margin: '0 0 6px', lineHeight: 1.6 }}>
+                  Your account is on a custom billing arrangement (no Stripe subscription).
+                </p>
+                <p style={{ color: '#64748b', fontSize: 12, margin: 0 }}>
+                  Contact <a href="mailto:support@shieldmylot.com" style={{ color: '#C9A227', textDecoration: 'none' }}>support@shieldmylot.com</a> to update billing details.
+                </p>
+              </div>
+            )}
+
+            {!billingLoading && billingData && billingData.stripe_customer_id && (
+              <>
+                {/* Subscription summary */}
+                <div style={{ background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                  <p style={{ color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>Subscription</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 16, rowGap: 8, fontSize: 13 }}>
+                    <span style={{ color: '#64748b' }}>Status:</span>
+                    <span style={{ color: '#e2e8f0' }}>
+                      {billingData.subscription_status
+                        ? billingData.subscription_status.charAt(0).toUpperCase() + billingData.subscription_status.slice(1).replace('_', ' ')
+                        : <span style={{ color: '#64748b' }}>(pending first sync)</span>}
+                    </span>
+                    <span style={{ color: '#64748b' }}>Next billing:</span>
+                    <span style={{ color: '#e2e8f0' }}>
+                      {billingData.current_period_end
+                        ? new Date(billingData.current_period_end).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                        : <span style={{ color: '#64748b' }}>—</span>}
+                    </span>
+                    <span style={{ color: '#64748b' }}>Cancel scheduled:</span>
+                    <span style={{ color: billingData.cancel_at_period_end ? '#fbbf24' : '#e2e8f0' }}>
+                      {billingData.cancel_at_period_end ? 'Yes — ends on next billing date' : 'No'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Manage Billing button */}
+                <button onClick={openBillingPortal} disabled={portalLoading}
+                  style={{
+                    width: '100%', padding: '14px', fontWeight: 700, fontSize: 14,
+                    background: portalLoading ? '#3a4055' : '#C9A227',
+                    color: portalLoading ? '#888' : '#0f1117',
+                    border: 'none', borderRadius: 10,
+                    cursor: portalLoading ? 'not-allowed' : 'pointer',
+                  }}>
+                  {portalLoading ? 'Opening Stripe portal…' : 'Manage Billing'}
+                </button>
+                <p style={{ color: '#64748b', fontSize: 12, margin: '10px 0 0', lineHeight: 1.6 }}>
+                  Update payment methods, view invoices, update billing address, cancel subscription. You&apos;ll be redirected to Stripe&apos;s secure portal and returned here when done.
+                </p>
+                {portalError && (
+                  <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, padding: '10px 14px', marginTop: 12 }}>
+                    <p style={{ color: '#f44336', fontSize: 12, margin: 0 }}>{portalError}</p>
+                  </div>
+                )}
+
+                {/* Billing address (read-only; edits via Portal) */}
+                <div style={{ background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, padding: 16, marginTop: 16 }}>
+                  <p style={{ color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>Billing Address</p>
+                  {(billingData.address || billingData.billing_city || billingData.billing_state) ? (
+                    <div style={{ color: '#e2e8f0', fontSize: 13, lineHeight: 1.6 }}>
+                      {billingData.address && <div>{billingData.address}</div>}
+                      <div>
+                        {[billingData.billing_city, billingData.billing_state, billingData.billing_postal_code].filter(Boolean).join(', ')}
+                      </div>
+                      {billingData.billing_country && <div>{billingData.billing_country}</div>}
+                    </div>
+                  ) : (
+                    <p style={{ color: '#64748b', fontSize: 13, margin: 0 }}>
+                      No billing address on file. Add one via Manage Billing.
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
         </>)}
 
         <div style={{ marginTop: 24 }}>

@@ -4,7 +4,13 @@ import Stripe from 'stripe'
 import { getStripe } from '../../../lib/stripe'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { getStripeBillingEnabled } from '../../../lib/platform-flags'
-import { handleCheckoutSessionCompleted } from '../../../lib/stripe-event-handlers'
+import {
+  handleCheckoutSessionCompleted,
+  handleSubscriptionUpdated,
+  handleSubscriptionDeleted,
+  handleCustomerUpdated,
+  type SyncResult,
+} from '../../../lib/stripe-event-handlers'
 
 // B66.1 — Stripe webhook endpoint scaffold.
 //
@@ -178,6 +184,41 @@ export async function POST(request: Request): Promise<NextResponse> {
       // state for B66.5+ replay/manual reconciliation. Returning 5xx
       // would trigger Stripe retry storms, which compounds the problem.
       return NextResponse.json({ received: true, processed: false, reason: 'handler_error', error: result.reason })
+    }
+  }
+
+  // ── B66.4 Customer Portal sync handlers ─────────────────────────────
+  // Three event types fire from Portal-driven changes:
+  //   customer.subscription.updated   — subscription state sync
+  //   customer.subscription.deleted   — flip account_state to cancelled
+  //   customer.updated                — billing address sync
+  // Common shape — different from checkout-session-completed only in that
+  // the result type is SyncResult (no companyId field), so the success
+  // response doesn't carry one. Same fail-closed posture for handler
+  // errors (200 OK + persisted error state for replay).
+  let syncResult: SyncResult | null = null
+  if (event.type === 'customer.subscription.updated') {
+    syncResult = await handleSubscriptionUpdated(event)
+  } else if (event.type === 'customer.subscription.deleted') {
+    syncResult = await handleSubscriptionDeleted(event)
+  } else if (event.type === 'customer.updated') {
+    syncResult = await handleCustomerUpdated(event)
+  }
+  if (syncResult) {
+    if (syncResult.ok) {
+      await supabase
+        .from('stripe_events')
+        .update({ processed: true, processed_at: new Date().toISOString() })
+        .eq('stripe_event_id', event.id)
+      console.log('[stripe webhook] ' + event.type + ' processed', { eventId: event.id })
+      return NextResponse.json({ received: true, processed: true })
+    } else {
+      await supabase
+        .from('stripe_events')
+        .update({ process_error: syncResult.reason, process_attempts: 1 })
+        .eq('stripe_event_id', event.id)
+      console.error('[stripe webhook] ' + event.type + ' FAILED', { eventId: event.id, reason: syncResult.reason })
+      return NextResponse.json({ received: true, processed: false, reason: 'handler_error', error: syncResult.reason })
     }
   }
 
