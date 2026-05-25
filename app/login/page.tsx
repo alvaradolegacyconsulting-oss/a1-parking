@@ -9,6 +9,8 @@ import { gateAccountState, AccountState } from '../lib/account-state'
 // after activation so the post-activation dashboard isn't stuck with
 // null localStorage + 'Legacy Enforcement' fallback rendering.
 import { bootstrapCompanyContext, CompanyBootstrapRow } from '../lib/company-bootstrap'
+// B118: version-aware modal predicate + accept_tos(versions) call.
+import { TOS_VERSION, PRIVACY_VERSION } from '../lib/legal-versions'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -20,8 +22,8 @@ export default function Login() {
   const [companyName, setCompanyName] = useState<string | null>(null)
   const resolvedLogo = useResolvedLogo(companyLogo)
   const [showTosModal, setShowTosModal] = useState(false)
-  const [tosScrolled, setTosScrolled] = useState(false)
   const [tosChecked, setTosChecked] = useState(false)
+  const [privacyChecked, setPrivacyChecked] = useState(false)
   const [tosLoading, setTosLoading] = useState(false)
   const [pendingRole, setPendingRole] = useState('')
   const [pendingEmail, setPendingEmail] = useState('')
@@ -46,13 +48,26 @@ export default function Login() {
   async function acceptTos() {
     setTosLoading(true)
     const now = new Date().toISOString()
-    // accept_tos() RPC is SECURITY DEFINER — bypasses the missing
-    // user_roles self-UPDATE policy. Graceful degrade: if it fails,
-    // log and continue. The user re-sees the ToS modal next login,
-    // which is not catastrophic.
-    const { error: tosErr } = await supabase.rpc('accept_tos')
+    // B118: version-aware accept_tos call. RPC atomically writes
+    // tos_acceptances rows (tos + privacy) + stamps user_roles
+    // tos_accepted_at + tos_accepted_version + privacy_accepted_version
+    // — so the modal correctly suppresses on subsequent logins until
+    // either TOS_VERSION or PRIVACY_VERSION bumps (at which point it
+    // re-fires per the predicate at line ~205).
+    //
+    // SECURITY DEFINER + GRANT TO authenticated only. Graceful degrade
+    // preserved: if RPC fails, log and continue — user re-sees modal
+    // next login, which is not catastrophic.
+    const { error: tosErr } = await supabase.rpc('accept_tos', {
+      p_tos_version: TOS_VERSION,
+      p_privacy_version: PRIVACY_VERSION,
+    })
     if (tosErr) console.error('accept_tos RPC failed:', tosErr)
-    await supabase.from('audit_logs').insert([{ action: 'TOS_ACCEPTED', table_name: 'user_roles', new_values: { email: pendingEmail, accepted_at: now } }])
+    await supabase.from('audit_logs').insert([{
+      action: 'TOS_ACCEPTED',
+      table_name: 'user_roles',
+      new_values: { email: pendingEmail, accepted_at: now, tos_version: TOS_VERSION, privacy_version: PRIVACY_VERSION },
+    }])
     redirectByRole(pendingRole, pendingForcePwReset)
   }
 
@@ -202,7 +217,17 @@ export default function Login() {
     const dbForce = roleData.must_change_password === true
     const forcePwReset = metaForce || dbForce
 
-    if (!roleData.tos_accepted_at) {
+    // B118: version-aware modal predicate. Modal fires when:
+    //   • User has never consented (legacy blanket-existence check), OR
+    //   • Stored tos_accepted_version is missing/stale vs current TOS_VERSION, OR
+    //   • Stored privacy_accepted_version is missing/stale vs current PRIVACY_VERSION
+    // This correctly re-fires on doc version bumps + fires for B113
+    // bulk-uploaded users + suppresses for B118-signed-up users whose
+    // accept_signup_consents() RPC populated all three columns at signup.
+    const needsConsent = !roleData.tos_accepted_at
+      || roleData.tos_accepted_version !== TOS_VERSION
+      || roleData.privacy_accepted_version !== PRIVACY_VERSION
+    if (needsConsent) {
       setPendingRole(roleData.role)
       setPendingEmail(email.trim())
       setPendingForcePwReset(forcePwReset)
@@ -332,27 +357,36 @@ export default function Login() {
       {showTosModal && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
           <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'16px', padding:'28px', maxWidth:'480px', width:'100%', display:'flex', flexDirection:'column' }}>
-            <h2 style={{ color:'#C9A227', fontSize:'20px', fontWeight:'bold', margin:'0 0 16px', textAlign:'center' }}>Terms of Service</h2>
-            <div
-              onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop <= el.clientHeight + 10) setTosScrolled(true) }}
-              style={{ overflowY:'scroll', maxHeight:'300px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'16px', marginBottom:'16px', fontSize:'13px', lineHeight:'1.7', color:'#aaa' }}
-            >
-              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>1. Platform Use</strong><br />ShieldMyLot™ is a parking management platform provided by Alvarado Legacy Consulting LLC for authorized users only. Unauthorized access or use is strictly prohibited.</p>
-              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>2. User Responsibilities</strong><br />Users are responsible for the accuracy of all data entered. Towing decisions are made by licensed operators, not the platform. You must not enter false or misleading information.</p>
-              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>3. Data Collection</strong><br />We collect email, vehicle, and activity data to provide the service. All data is stored securely and used solely for parking management purposes.</p>
-              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>4. Founding Member Pricing</strong><br />Subscribers onboarded prior to public launch are designated &apos;Founding Members&apos; and are entitled to the pricing in effect at the time of their initial subscription for the lifetime of their continuous subscription. Founding Member pricing does not transfer to new entities or business successors. Founding Member status is documented in writing by Provider and is non-revocable except for material breach of these Terms.</p>
-              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>5. Limitation of Liability</strong><br />Alvarado Legacy Consulting LLC is not liable for towing decisions, wrongful tow claims, or errors resulting from inaccurate data entry by platform users. The platform is provided as a management aid only.</p>
-              <p style={{ margin:'0 0 14px' }}><strong style={{ color:'#C9A227' }}>6. Governing Law</strong><br />These terms are governed by the laws of the State of Texas. Any disputes shall be resolved in a court of competent jurisdiction in Texas.</p>
-              <p style={{ margin:'0' }}><strong style={{ color:'#C9A227' }}>7. Contact</strong><br />Questions about ShieldMyLot? Contact support@shieldmylot.com.</p>
-            </div>
-            {!tosScrolled && <p style={{ color:'#555', fontSize:'11px', textAlign:'center', margin:'0 0 12px' }}>↓ Scroll to the bottom to enable the checkbox</p>}
-            <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', cursor: tosScrolled ? 'pointer' : 'default', marginBottom:'16px' }}>
-              <input type="checkbox" checked={tosChecked} disabled={!tosScrolled} onChange={e => setTosChecked(e.target.checked)}
-                style={{ marginTop:'2px', accentColor:'#C9A227', cursor: tosScrolled ? 'pointer' : 'not-allowed' }} />
-              <span style={{ color: tosScrolled ? '#aaa' : '#555', fontSize:'13px', lineHeight:'1.5' }}>I have read and agree to the Terms of Service</span>
+            <h2 style={{ color:'#C9A227', fontSize:'20px', fontWeight:'bold', margin:'0 0 12px', textAlign:'center' }}>Terms of Service &amp; Privacy Policy</h2>
+            {/* B118: replaced the inline scroll-to-bottom ToS prose with a
+                link-out pattern matching /signup commit 2. The user reviews
+                each document in a new tab (full text lives at /terms and
+                /privacy — single source of truth) and checks both boxes
+                to acknowledge. Same legal effect (clickwrap with
+                affirmative action); cleaner maintenance when wording bumps. */}
+            <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 18px', textAlign:'center' }}>
+              Please review and agree to both documents to continue.
+            </p>
+            <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', cursor:'pointer', marginBottom:'10px' }}>
+              <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
+                style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer' }} />
+              <span style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.5' }}>
+                I have read and agree to the{' '}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color:'#C9A227', textDecoration:'underline' }}>Terms of Service</a>
+                .
+              </span>
             </label>
-            <button onClick={acceptTos} disabled={!tosChecked || tosLoading}
-              style={{ width:'100%', padding:'13px', background: !tosChecked ? '#555' : '#C9A227', color: !tosChecked ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: !tosChecked ? 'not-allowed' : 'pointer' }}>
+            <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', cursor:'pointer', marginBottom:'16px' }}>
+              <input type="checkbox" checked={privacyChecked} onChange={e => setPrivacyChecked(e.target.checked)}
+                style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer' }} />
+              <span style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.5' }}>
+                I have read and agree to the{' '}
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color:'#C9A227', textDecoration:'underline' }}>Privacy Policy</a>
+                .
+              </span>
+            </label>
+            <button onClick={acceptTos} disabled={!tosChecked || !privacyChecked || tosLoading}
+              style={{ width:'100%', padding:'13px', background: (!tosChecked || !privacyChecked) ? '#555' : '#C9A227', color: (!tosChecked || !privacyChecked) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!tosChecked || !privacyChecked) ? 'not-allowed' : 'pointer' }}>
               {tosLoading ? 'Please wait...' : 'Continue'}
             </button>
           </div>
