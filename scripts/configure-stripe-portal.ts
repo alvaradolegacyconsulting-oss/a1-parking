@@ -99,11 +99,17 @@ async function main() {
         subscription_cancel: {
           enabled: true,
           mode: 'at_period_end',
-          // Stripe SDK type requires `options` array even when disabled.
-          // The reason prompt stays suppressed at runtime via enabled=false;
-          // options exist only to satisfy the type. If we later enable the
-          // prompt, expand this array to the customer-facing reason set.
-          cancellation_reason: { enabled: false, options: ['other'] },
+          // Stripe SDK type requires `options` array even when disabled,
+          // AND Stripe's API runtime enforces a minimum of 2 values
+          // (not type-visible — caught at create-time with "You must
+          // specify at least 2 values for ...cancellation_reason.options").
+          // The reason prompt stays suppressed at runtime via
+          // enabled=false; specific values don't affect UX. If we later
+          // enable the prompt, expand this array to the customer-facing
+          // reason set (Stripe accepts: 'too_expensive', 'missing_features',
+          // 'switched_service', 'unused', 'customer_service', 'too_complex',
+          // 'low_quality', 'other').
+          cancellation_reason: { enabled: false, options: ['other', 'unused'] },
         },
         subscription_update: { enabled: false },
         // subscription_pause was removed from the Portal config schema in
