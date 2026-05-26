@@ -69,6 +69,15 @@ export const FEATURE_FLAGS = {
   API_ACCESS_READ_ONLY: 'api_access_read_only',
   VIDEO_UPLOADS_LIMITED: 'video_uploads_limited',
   VIDEO_UPLOADS_FULL: 'video_uploads_full',
+
+  // B113: bulk-upload UI in /company_admin. Boolean flag (NOT in
+  // NUMERIC_FLAGS); per-tier values in tier-config.ts. Locked matrix:
+  // ENF Starter false / Growth true / Legacy true / Premium true;
+  // PM Essential false / Professional true / Enterprise true.
+  // Residents are non-billable (no MAX_RESIDENTS cap); 500-row per-
+  // upload cap in /api/billing/bulk-invite (commit 2) is the only
+  // guardrail for residents. Drivers get the full 3-layer cap.
+  BULK_UPLOAD: 'bulk_upload',
 } as const
 
 export type FeatureFlag = typeof FEATURE_FLAGS[keyof typeof FEATURE_FLAGS]

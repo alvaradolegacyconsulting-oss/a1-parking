@@ -80,6 +80,11 @@ const ENF_STARTER: TierConfigShape = {
   [F.VIDEO_UPLOADS_FULL]: false,
   [F.PRIORITY_SUPPORT]: false,
   [F.DEDICATED_ACCOUNT_MANAGER]: false,
+
+  // B113: bulk-upload UI. Base = false on Starter (gated upgrade
+  // nudge surfaces "Available in Growth and Legacy"). Per-tier
+  // overrides in Growth + Legacy. Premium inherits Legacy's true.
+  [F.BULK_UPLOAD]: false,
 }
 
 // Enforcement: growth ──────────────────────────────────────────────────
@@ -97,6 +102,9 @@ const ENF_GROWTH: TierConfigShape = {
   [F.CUSTOM_DATE_RANGE_EXPORTS]: true,
   [F.TOWBOOK_CSV_EXPORT]: true,
   [F.VIDEO_UPLOADS_LIMITED]: true,
+
+  // B113: bulk-upload UI enabled. Inherited by Legacy + Premium via spread.
+  [F.BULK_UPLOAD]: true,
 }
 
 // Enforcement: legacy ──────────────────────────────────────────────────
@@ -189,6 +197,12 @@ const PM_ESSENTIAL: TierConfigShape = {
   [F.ADVANCED_PDF_REPORTS]: false,
   [F.PRIORITY_SUPPORT]: false,
   [F.DEDICATED_ACCOUNT_MANAGER]: false,
+
+  // B113: bulk-upload UI. Base = false on Essential (gated upgrade
+  // nudge surfaces "Available in Professional and Enterprise"). Per-
+  // tier override in Professional. Enterprise inherits Professional's
+  // true via spread.
+  [F.BULK_UPLOAD]: false,
 }
 
 // PM: professional ─────────────────────────────────────────────────────
@@ -201,6 +215,9 @@ const PM_PROFESSIONAL: TierConfigShape = {
   [F.LEASING_AGENT_ROLE]: true,
   [F.ADVANCED_ANALYTICS]: true,
   [F.CUSTOM_DATE_RANGE_EXPORTS]: true,
+
+  // B113: bulk-upload UI enabled. Inherited by Enterprise via spread.
+  [F.BULK_UPLOAD]: true,
 }
 
 // PM: enterprise ───────────────────────────────────────────────────────
