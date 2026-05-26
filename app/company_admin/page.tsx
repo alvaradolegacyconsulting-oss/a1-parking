@@ -1804,6 +1804,15 @@ export default function CompanyAdminPortal() {
           )}
           <button style={tab('plan')} onClick={() => setActiveTab('plan')}>Plan</button>
           <button style={tab('billing')} onClick={() => setActiveTab('billing')}>Billing</button>
+          {/* B113: Bulk Upload nav. Tier-gated (Growth+/Professional+) via
+              hasFeature; navigates to the standalone /company_admin/bulk-upload
+              page rather than setting a tab (the upload flow is a heavier
+              interaction that doesn't fit the always-visible tab content
+              pattern). Locked at greenlight per Jose's "separate page"
+              recommendation. */}
+          {hasFeature(FEATURE_FLAGS.BULK_UPLOAD, getCompanyContext()) === true && (
+            <button style={tab('')} onClick={() => { window.location.href = '/company_admin/bulk-upload' }}>Bulk Upload</button>
+          )}
         </div>
 
         {/* ── OVERVIEW ── */}
