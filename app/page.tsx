@@ -76,7 +76,7 @@ export default function Landing() {
             "@context": "https://schema.org",
             "@type": "Service",
             "name": "ShieldMyLot™",
-            "description": "Texas-only parking enforcement platform built around Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
+            "description": "Texas-only parking enforcement platform modeled around Texas Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
             "provider": {
               "@type": "Organization",
               "name": "Alvarado Legacy Consulting LLC",
@@ -120,7 +120,7 @@ export default function Landing() {
         </h1>
         <div style={{ width: 60, height: 2, background: GOLD, margin: '0 auto 28px', opacity: 0.7 }} />
         <p style={{ fontSize: 18, color: MUTED, maxWidth: 620, margin: '0 auto 44px', lineHeight: 1.7 }}>
-          Resident registration, visitor passes, violation tracking, and tow ticketing — designed specifically for Texas Chapter 2308 compliance. Built for towing companies and property managers.
+          Resident registration, visitor passes, violation tracking, and tow ticketing — built for Texas operators working under Chapter 2308. For towing companies and property managers.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <a href="#contact" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Request Access →</a>
@@ -148,7 +148,7 @@ export default function Landing() {
                 {[
                   'Mobile-friendly violation submission with photo and video evidence',
                   'Plate scanning and exempt plate cross-reference',
-                  'Tow ticket generation that meets Texas Chapter 2308 requirements',
+                  'Tow ticket generation modeled around Texas Chapter 2308 requirements',
                   'Towbook CSV export (Growth+ tiers)',
                   'Full audit trails for dispute defense',
                 ].map((item, i) => (
@@ -384,12 +384,12 @@ export default function Landing() {
             </div>
             {/* Block 2 — Texas focus */}
             <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 32 }}>
-              <h3 style={{ color: TEXT, fontSize: 18, fontWeight: 700, margin: '0 0 14px' }}>Designed for Texas Chapter 2308 compliance</h3>
+              <h3 style={{ color: TEXT, fontSize: 18, fontWeight: 700, margin: '0 0 14px' }}>Designed around Chapter 2308 workflows</h3>
               <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 14px' }}>
-                Every feature in ShieldMyLot is shaped by Texas Occupations Code Chapter 2308 — the Texas Towing and Booting Act.
+                ShieldMyLot is shaped by the realities of Texas towing operations under Texas Occupations Code Chapter 2308 — the Texas Towing and Booting Act.
               </p>
               <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 14px' }}>
-                From tow ticket content requirements to evidence retention timelines to dispute workflows, the platform is built around the law rather than retrofitted to comply with it after the fact.
+                From tow ticket content fields to evidence capture to dispute workflows, the platform is modeled around how the work actually happens under Texas law. Operator compliance with Chapter 2308 remains your responsibility; ShieldMyLot is the operational support layer.
               </p>
               <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: 0 }}>
                 Operating outside Texas? ShieldMyLot isn&apos;t the right fit for you yet — we focus on doing one state exceptionally well rather than many states adequately.

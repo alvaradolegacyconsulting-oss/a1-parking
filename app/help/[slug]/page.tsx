@@ -186,7 +186,7 @@ export default async function HelpDocPage({ params }: { params: Promise<Params> 
                 ⚠ Notice — Structural Framework Only
               </p>
               <p style={{ color: '#fef3c7', fontSize: 14, lineHeight: 1.65, margin: 0 }}>
-                This document references Texas Transportation Code Chapter 2308 and related compliance topics. It is provided as a structural framework for ShieldMyLot platform users only — it is NOT legal advice, has NOT been reviewed by an attorney, and does NOT substitute for licensed legal counsel on any specific situation. Towing operations involve significant liability; consult a Texas-licensed attorney for legal questions.
+                This document references Texas Occupations Code Chapter 2308 and related operational topics. It is provided as a structural framework for ShieldMyLot platform users only — it is NOT legal advice, has NOT been reviewed by an attorney, and does NOT substitute for licensed legal counsel on any specific situation. Compliance with Chapter 2308 is the operator&apos;s responsibility; the platform provides operational support, not compliance certification. Towing operations involve significant liability; consult a Texas-licensed attorney for legal questions.
               </p>
             </div>
           )}

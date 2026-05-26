@@ -14,12 +14,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  // B62.4: Texas-first positioning + Chapter 2308 specificity in title + desc.
-  title: "ShieldMyLot™ — Texas Parking Enforcement Platform | Chapter 2308 Compliance",
-  description: "Texas-only parking enforcement platform built around Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
+  // B62.4 / B119: Texas-first positioning. B119 softened "Chapter 2308 Compliance"
+  // claim language to "modeled around Texas Chapter 2308" — describes design
+  // intent, not compliance outcome (compliance is the operator's responsibility).
+  title: "ShieldMyLot™ — Texas Parking Enforcement Platform",
+  description: "Texas-only parking enforcement platform modeled around Texas Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
   openGraph: {
     title: "ShieldMyLot — Texas Parking Enforcement Platform",
-    description: "Texas-only parking enforcement platform built around Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
+    description: "Texas-only parking enforcement platform modeled around Texas Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
     url: "https://shieldmylot.com",
     siteName: "ShieldMyLot",
     type: "website",
@@ -27,7 +29,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "ShieldMyLot — Texas Parking Enforcement Platform",
-    description: "Texas-only parking enforcement platform built around Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
+    description: "Texas-only parking enforcement platform modeled around Texas Chapter 2308. Resident registration, visitor passes, violation tracking, and tow ticketing for towing companies and property managers.",
   },
 };
 

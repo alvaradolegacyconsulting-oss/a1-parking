@@ -154,7 +154,7 @@ Regardless of tier, every customer gets:
 
 - **Full audit trails** — Every action is logged
 - **Soft-delete with audit** for evidence (photos, videos) — Enforcement only
-- **Texas Chapter 2308 compliance features** — Required regardless of tier
+- **Texas Chapter 2308 workflow features** — Available regardless of tier (compliance with the law remains the operator's responsibility)
 - **Customer data security** — Same encryption, same access controls
 - **Dispute workflow** — Resident dispute filing and manager response
 - **Mobile-friendly portals** — All roles can use their portal on phone, tablet, or computer

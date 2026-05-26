@@ -214,7 +214,7 @@ export function renderProposalPdfHtml(p: ProposalForPdf, opts: { logoUrl: string
 
   <div class="ftr">
     Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™ · support@shieldmylot.com<br/>
-    Texas Transportation Code Chapter 2308 compliant · Licensed for Texas operations
+    Modeled around Texas Occupations Code Chapter 2308 · Licensed for Texas operations
   </div>
 </body>
 </html>`

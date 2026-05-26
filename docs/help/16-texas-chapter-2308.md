@@ -1,14 +1,14 @@
 ---
-title: "Texas Chapter 2308 Compliance Reference"
+title: "Texas Chapter 2308 — Operational Reference"
 category: "Compliance"
 audience: ["company_admin", "manager"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-05-26"
 related: ["adding-properties", "submitting-violations", "tow-tickets-and-evidence", "managing-disputes"]
 attorney_review_required: true
 ---
 
-# Texas Chapter 2308 Compliance Reference
+# Texas Chapter 2308 — Operational Reference
 
 > **NOTICE — UNDER ATTORNEY REVIEW**
 >
@@ -21,6 +21,8 @@ attorney_review_required: true
 ## What this document is (and isn't)
 
 This is a **plain-English operational reference** that maps Texas Chapter 2308 (the Texas Towing and Booting Act) obligations to your day-to-day use of ShieldMyLot™. It's intended to help you understand what the law expects of you and how the platform supports those obligations.
+
+**Compliance with Chapter 2308 is your responsibility, not the platform's.** ShieldMyLot is modeled around Chapter 2308 workflows — the tow ticket fields, evidence capture, dispute paths, and audit trails reflect how the law expects the work to happen. But the platform does NOT certify compliance, does NOT verify your signage, does NOT confirm your authorization agreements are legally sufficient, and does NOT substitute for licensed legal counsel. The operator (your towing company or property management firm) is the regulated party under Chapter 2308; ShieldMyLot is the operational support layer.
 
 **This is not legal advice.** ShieldMyLot is not a law firm. For specific legal questions — especially before making significant decisions about enforcement practices, disputes, or compliance gaps — consult a Texas attorney specializing in property and tow law.
 
@@ -203,9 +205,9 @@ Chapter 2308 violations can result in significant penalties.
 
 ---
 
-## How ShieldMyLot helps you comply
+## How ShieldMyLot supports your Chapter 2308 workflows
 
-Concrete platform features that support Chapter 2308 compliance:
+Concrete platform features modeled around Chapter 2308 operational requirements (these are operational supports — compliance remains the operator's responsibility):
 
 **Property authorization tracking**
 - Property records include towing authorization metadata (expiration dates, notes)
