@@ -4,13 +4,7 @@ import Stripe from 'stripe'
 import { getStripe } from '../../../lib/stripe'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { getStripeBillingEnabled } from '../../../lib/platform-flags'
-import {
-  handleCheckoutSessionCompleted,
-  handleSubscriptionUpdated,
-  handleSubscriptionDeleted,
-  handleCustomerUpdated,
-  type SyncResult,
-} from '../../../lib/stripe-event-handlers'
+import { dispatch } from '../../../lib/stripe-event-handlers'
 
 // B66.1 — Stripe webhook endpoint scaffold.
 //
@@ -151,76 +145,95 @@ export async function POST(request: Request): Promise<NextResponse> {
     mode,
   })
 
-  // ── B66.3 inline event-type routing ─────────────────────────────────
-  // Single handler dispatched here today (checkout.session.completed →
-  // creates the self-serve company). Per Jose's B66.5+ refactor note:
-  // each handler is self-contained in app/lib/stripe-event-handlers.ts
-  // so the future out-of-band processor can lift the dispatch logic
-  // wholesale (just swap `await handleX(event)` for
-  // `await enqueue(event)` here; processor calls the same handlers).
-  // Failures are logged + acked 200 OK (consistent with B66.1's fail-
-  // closed posture against Stripe retry storms); processed state is
-  // recorded on stripe_events for B66.5+ recovery/replay.
-  if (event.type === 'checkout.session.completed') {
-    const result = await handleCheckoutSessionCompleted(event)
-    if (result.ok) {
-      await supabase
-        .from('stripe_events')
-        .update({ processed: true, processed_at: new Date().toISOString() })
-        .eq('stripe_event_id', event.id)
-      console.log('[stripe webhook] checkout.session.completed processed', {
-        eventId: event.id, companyId: result.companyId,
+  // ── B66.5 dispatch refactor — switch via centralized map ────────────
+  // The dispatch map (app/lib/stripe-event-handlers/index.ts) is the
+  // single source of truth for "which event types we handle." Adding a
+  // new handler = adding one map entry + one file in that directory.
+  //
+  // Three terminal result variants are handled below:
+  //   • ok + skipped — handler ran cleanly but no state change required
+  //     (unknown subscription, account_state already in target state,
+  //     idempotent re-delivery). Sets processed=true +
+  //     process_skip_reason. Distinct from failure.
+  //   • ok (HandlerResult or SyncResult) — handler made the state change.
+  //     Sets processed=true.
+  //   • !ok — handler failure. Sets process_error + process_attempts=1.
+  //     Returns 200 OK despite failure (B66.1 fail-closed; no retry storms).
+  //
+  // When event.type has no dispatch entry: sets processed=true +
+  // process_skip_reason='no_handler_for_event_type'. Replaces the prior
+  // soft-drift where unhandled events sat at processed=false forever.
+  const handler = dispatch[event.type]
+  const nowIso = new Date().toISOString()
+
+  if (!handler) {
+    await supabase
+      .from('stripe_events')
+      .update({
+        processed: true,
+        processed_at: nowIso,
+        process_skip_reason: 'no_handler_for_event_type',
       })
-      return NextResponse.json({ received: true, processed: true, companyId: result.companyId })
-    } else {
-      await supabase
-        .from('stripe_events')
-        .update({ process_error: result.reason, process_attempts: 1 })
-        .eq('stripe_event_id', event.id)
-      console.error('[stripe webhook] checkout.session.completed FAILED', {
-        eventId: event.id, reason: result.reason,
-      })
-      // 200 OK despite handler failure — event is persisted with error
-      // state for B66.5+ replay/manual reconciliation. Returning 5xx
-      // would trigger Stripe retry storms, which compounds the problem.
-      return NextResponse.json({ received: true, processed: false, reason: 'handler_error', error: result.reason })
-    }
+      .eq('stripe_event_id', event.id)
+    console.log('[stripe webhook] no handler for event type — skipped', {
+      eventId: event.id, eventType: event.type,
+    })
+    return NextResponse.json({
+      received: true, processed: true, skipped: true,
+      reason: 'no_handler_for_event_type',
+    })
   }
 
-  // ── B66.4 Customer Portal sync handlers ─────────────────────────────
-  // Three event types fire from Portal-driven changes:
-  //   customer.subscription.updated   — subscription state sync
-  //   customer.subscription.deleted   — flip account_state to cancelled
-  //   customer.updated                — billing address sync
-  // Common shape — different from checkout-session-completed only in that
-  // the result type is SyncResult (no companyId field), so the success
-  // response doesn't carry one. Same fail-closed posture for handler
-  // errors (200 OK + persisted error state for replay).
-  let syncResult: SyncResult | null = null
-  if (event.type === 'customer.subscription.updated') {
-    syncResult = await handleSubscriptionUpdated(event)
-  } else if (event.type === 'customer.subscription.deleted') {
-    syncResult = await handleSubscriptionDeleted(event)
-  } else if (event.type === 'customer.updated') {
-    syncResult = await handleCustomerUpdated(event)
-  }
-  if (syncResult) {
-    if (syncResult.ok) {
-      await supabase
-        .from('stripe_events')
-        .update({ processed: true, processed_at: new Date().toISOString() })
-        .eq('stripe_event_id', event.id)
-      console.log('[stripe webhook] ' + event.type + ' processed', { eventId: event.id })
-      return NextResponse.json({ received: true, processed: true })
-    } else {
-      await supabase
-        .from('stripe_events')
-        .update({ process_error: syncResult.reason, process_attempts: 1 })
-        .eq('stripe_event_id', event.id)
-      console.error('[stripe webhook] ' + event.type + ' FAILED', { eventId: event.id, reason: syncResult.reason })
-      return NextResponse.json({ received: true, processed: false, reason: 'handler_error', error: syncResult.reason })
-    }
+  const result = await handler(event)
+
+  if (!result.ok) {
+    // process_attempts hard-coded to 1 under the current synchronous
+    // fail-closed pattern: the route handles each event exactly once and
+    // does not retry. When the B66.5+ out-of-band processor arrives, it
+    // will increment process_attempts on each retry pass + clear
+    // process_error on eventual success.
+    await supabase
+      .from('stripe_events')
+      .update({ process_error: result.reason, process_attempts: 1 })
+      .eq('stripe_event_id', event.id)
+    console.error('[stripe webhook] ' + event.type + ' FAILED', {
+      eventId: event.id, reason: result.reason,
+    })
+    return NextResponse.json({
+      received: true, processed: false,
+      reason: 'handler_error', error: result.reason,
+    })
   }
 
-  return NextResponse.json({ received: true, processed: false, reason: 'persisted' })
+  // ok branch — distinguish SkipResult (no state change) from
+  // HandlerResult/SyncResult ok (state changed).
+  if ('skipped' in result && result.skipped) {
+    await supabase
+      .from('stripe_events')
+      .update({
+        processed: true,
+        processed_at: nowIso,
+        process_skip_reason: result.reason,
+      })
+      .eq('stripe_event_id', event.id)
+    console.log('[stripe webhook] ' + event.type + ' skipped by handler', {
+      eventId: event.id, reason: result.reason,
+    })
+    return NextResponse.json({
+      received: true, processed: true, skipped: true,
+      reason: result.reason,
+    })
+  }
+
+  // HandlerResult ok (with companyId) or SyncResult ok.
+  await supabase
+    .from('stripe_events')
+    .update({ processed: true, processed_at: nowIso })
+    .eq('stripe_event_id', event.id)
+  console.log('[stripe webhook] ' + event.type + ' processed', { eventId: event.id })
+  const companyId = 'companyId' in result ? result.companyId : undefined
+  return NextResponse.json({
+    received: true, processed: true,
+    ...(companyId !== undefined && { companyId }),
+  })
 }
