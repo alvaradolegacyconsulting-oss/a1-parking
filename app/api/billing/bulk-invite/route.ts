@@ -199,20 +199,9 @@ export async function POST(req: NextRequest) {
   for (const row of validated.rows) {
     try {
       // 8a. Invite — service-role required (Auth admin API)
-      const inviteResponse = await service.auth.admin.inviteUserByEmail(row.email, {
+      const { error: inviteErr } = await service.auth.admin.inviteUserByEmail(row.email, {
         redirectTo: inviteRedirect,
       })
-      // [F6-DIAG] TEMPORARY — F6 diagnostic logging only. PAIRED REVERT COMMIT
-      // FOLLOWS DATA CAPTURE. Logs env var prefix/length (NOT full key) +
-      // full inviteResponse payload to compare Vercel runtime context vs
-      // local diagnostic context. Remove after one diagnostic smoke run.
-      console.log('[F6-DIAG]', JSON.stringify({
-        url: process.env.NEXT_PUBLIC_SUPABASE_URL,
-        keyPrefix: process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 12),
-        keyLength: process.env.SUPABASE_SERVICE_ROLE_KEY?.length,
-        inviteResponse,
-      }))
-      const inviteErr = inviteResponse.error
       if (inviteErr) {
         // "User already registered" is a common idempotent case for re-runs.
         // Don't continue past this — the auth user must exist for the
