@@ -1809,9 +1809,20 @@ export default function CompanyAdminPortal() {
               page rather than setting a tab (the upload flow is a heavier
               interaction that doesn't fit the always-visible tab content
               pattern). Locked at greenlight per Jose's "separate page"
-              recommendation. */}
+              recommendation.
+              B122: styled as a navigation link (gold outline + arrow) rather
+              than tab('') which always rendered as a permanently-inactive
+              tab and read as "disabled" beside real tab toggles. */}
           {hasFeature(FEATURE_FLAGS.BULK_UPLOAD, getCompanyContext()) === true && (
-            <button style={tab('')} onClick={() => { window.location.href = '/company_admin/bulk-upload' }}>Bulk Upload</button>
+            <button
+              onClick={() => { window.location.href = '/company_admin/bulk-upload' }}
+              style={{
+                flex: 1, padding: '8px', border: '1px solid #C9A227', borderRadius: '6px',
+                cursor: 'pointer', fontWeight: 'bold', fontSize: '11px',
+                background: 'transparent', color: '#C9A227', fontFamily: 'Arial, sans-serif',
+              }}>
+              Bulk Upload →
+            </button>
           )}
         </div>
 

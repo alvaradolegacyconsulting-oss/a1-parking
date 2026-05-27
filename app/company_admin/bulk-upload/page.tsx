@@ -102,10 +102,17 @@ export default function BulkUploadPage() {
         if (!cancelled) setLoad({ kind: 'tier_gated', tier: companyRow.tier })
         return
       }
-      if (!cancelled) setLoad({
-        kind: 'ready',
-        ctx: { tier: companyRow.tier, tier_type: tt, company: roleRow.company, has_bulk_upload: true, pm_track: tt === 'property_management' },
-      })
+      const pm_track = tt === 'property_management'
+      if (!cancelled) {
+        setLoad({
+          kind: 'ready',
+          ctx: { tier: companyRow.tier, tier_type: tt, company: roleRow.company, has_bulk_upload: true, pm_track },
+        })
+        // B130 — PM track has no drivers entity at all (Cluster 2.1). Switch
+        // initial selection away from the 'driver' default before any UI
+        // affordance for it could appear.
+        if (pm_track) setEntity('resident')
+      }
     })()
     return () => { cancelled = true }
   }, [])
@@ -117,6 +124,19 @@ export default function BulkUploadPage() {
     setFileName('')
     setSubmit({ kind: 'idle' })
   }, [entity])
+
+  // B127 — clear-file affordance after a submission completes so the
+  // user can run another batch without reloading the page. Mirrors the
+  // entity-change reset above plus clears the native <input type=file>
+  // value so re-selecting the same filename re-fires onChange.
+  function resetForAnotherUpload() {
+    setParsedRows([])
+    setRowErrors([])
+    setFileName('')
+    setSubmit({ kind: 'idle' })
+    const el = document.querySelector<HTMLInputElement>('input[type=file]')
+    if (el) el.value = ''
+  }
 
   // ── Template download ────────────────────────────────────────────
   function downloadTemplate() {
@@ -218,10 +238,13 @@ export default function BulkUploadPage() {
 
   // ── load.kind === 'ready' ────────────────────────────────────────
   const ctx = load.ctx
-  const entityOptions: Array<{ value: EntityType; label: string; disabled: boolean; disabledReason?: string }> = [
-    { value: 'driver', label: 'Drivers', disabled: ctx.pm_track, disabledReason: 'Not available on Property Management track' },
-    { value: 'resident', label: 'Residents', disabled: false },
-  ]
+  // B130 — PM track sees Residents only (no Drivers entity exists for them).
+  const entityOptions: Array<{ value: EntityType; label: string }> = ctx.pm_track
+    ? [{ value: 'resident', label: 'Residents' }]
+    : [
+        { value: 'driver', label: 'Drivers' },
+        { value: 'resident', label: 'Residents' },
+      ]
 
   const submitDisabled = parsedRows.length === 0
     || rowErrors.length > 0
@@ -245,18 +268,15 @@ export default function BulkUploadPage() {
         <div style={{ display: 'flex', gap: 8 }}>
           {entityOptions.map(opt => (
             <button key={opt.value}
-              onClick={() => !opt.disabled && setEntity(opt.value)}
-              disabled={opt.disabled}
-              title={opt.disabledReason}
+              onClick={() => setEntity(opt.value)}
               style={{
                 flex: 1, padding: '12px 16px', borderRadius: 8,
                 border: entity === opt.value ? `2px solid ${GOLD}` : `1px solid ${BORDER}`,
-                background: opt.disabled ? '#1a1f2e' : (entity === opt.value ? 'rgba(201,162,39,0.10)' : 'transparent'),
-                color: opt.disabled ? '#555' : (entity === opt.value ? GOLD : TEXT),
-                fontWeight: 600, fontSize: 14, cursor: opt.disabled ? 'not-allowed' : 'pointer',
+                background: entity === opt.value ? 'rgba(201,162,39,0.10)' : 'transparent',
+                color: entity === opt.value ? GOLD : TEXT,
+                fontWeight: 600, fontSize: 14, cursor: 'pointer',
               }}>
               {opt.label}
-              {opt.disabled && <div style={{ fontSize: 10, fontWeight: 400, marginTop: 4, color: '#555' }}>{opt.disabledReason}</div>}
             </button>
           ))}
         </div>
@@ -294,7 +314,16 @@ export default function BulkUploadPage() {
       {parsedRows.length > 0 && (
         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
           <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 10 }}>4. Preview &amp; validation</label>
-          {rowErrors.length === 0 ? (
+          {/* B126 — when the file exceeds the 500-row cap, suppress the
+              green "Ready to submit" message even if rows individually
+              validate clean; the cap is itself a blocking error and the
+              submit button is disabled. The file-picker section above
+              already shows the cap-exceeded notice. */}
+          {parsedRows.length > MAX_UPLOAD_ROWS ? (
+            <p style={{ color: '#f44336', fontSize: 13, margin: '0 0 10px' }}>
+              {parsedRows.length} rows exceeds the {MAX_UPLOAD_ROWS}-row per-upload limit. Split into smaller batches.
+            </p>
+          ) : rowErrors.length === 0 ? (
             <p style={{ color: '#86efac', fontSize: 13, margin: '0 0 10px' }}>
               ✓ {parsedRows.length} rows validated. Ready to submit.
             </p>
@@ -343,6 +372,10 @@ export default function BulkUploadPage() {
               ))}
             </ul>
           )}
+          <button onClick={resetForAnotherUpload}
+            style={{ marginTop: 12, padding: '8px 14px', background: 'transparent', color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+            Clear file &amp; try again
+          </button>
         </div>
       )}
       {submit.kind === 'done' && (
@@ -355,7 +388,7 @@ export default function BulkUploadPage() {
             Each successful user has received an invite email + must set their password on first login.
           </p>
           {submit.failed > 0 && (
-            <div style={{ background: '#0a0d14', border: `1px solid ${BORDER}`, borderRadius: 6, padding: 10, fontSize: 11 }}>
+            <div style={{ background: '#0a0d14', border: `1px solid ${BORDER}`, borderRadius: 6, padding: 10, fontSize: 11, marginBottom: 12 }}>
               <p style={{ color: GOLD, margin: '0 0 6px', fontWeight: 700 }}>Failed rows:</p>
               {submit.results.filter(r => r.status === 'error').slice(0, 50).map((r, i) => (
                 <div key={i} style={{ color: '#94a3b8', marginBottom: 3 }}>
@@ -364,6 +397,11 @@ export default function BulkUploadPage() {
               ))}
             </div>
           )}
+          {/* B127 — let the user start another upload without reloading. */}
+          <button onClick={resetForAnotherUpload}
+            style={{ padding: '8px 14px', background: 'transparent', color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+            Upload another file
+          </button>
         </div>
       )}
 
