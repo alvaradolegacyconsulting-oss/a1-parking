@@ -1,9 +1,8 @@
 import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
+import { PAST_DUE_GRACE_MS } from '../dunning-config'
 import type { SyncResult, SkipResult } from './types'
-
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * invoice.payment_failed handler — B66.5 commit 2.
@@ -52,7 +51,7 @@ export async function handleInvoicePaymentFailed(
   }
 
   const nowIso = new Date().toISOString()
-  const graceIso = new Date(Date.now() + SEVEN_DAYS_MS).toISOString()
+  const graceIso = new Date(Date.now() + PAST_DUE_GRACE_MS).toISOString()
 
   const { error: updErr } = await supabase
     .from('companies')

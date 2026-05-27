@@ -1,6 +1,7 @@
 import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
+import { PAST_DUE_GRACE_MS } from '../dunning-config'
 import type { SyncResult, SkipResult } from './types'
 
 /**
@@ -75,7 +76,7 @@ export async function handleSubscriptionUpdated(
   // succeeded, so the webhook ack is honest.
   if (sub.status === 'unpaid' && company.past_due_since === null) {
     const nowIso = new Date().toISOString()
-    const graceIso = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+    const graceIso = new Date(Date.now() + PAST_DUE_GRACE_MS).toISOString()
     const { error: populateErr } = await supabase
       .from('companies')
       .update({
