@@ -6,6 +6,7 @@ import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature } from '../lib/tier'
+import { TIER_DISPLAY_NAME, type TierType } from '../lib/tier-config'
 // B65.2: account_state gate (spec §3.4) — defense in depth with login dispatch.
 import { gateAccountState, AccountState } from '../lib/account-state'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
@@ -2980,11 +2981,37 @@ export default function CompanyAdminPortal() {
 
         {/* ── PLAN (Phase 2a) ── */}
         {activeTab === 'plan' && (() => {
+          // B140 Item 2 — empty-localStorage detection. getCompanyContext()
+          // returns a 'legacy'/'enforcement' fallback when localStorage
+          // keys are missing (deliberate — refactoring that fallback is
+          // [[project-b77-tier-fallback-source-of-truth-refactor]] scope).
+          // Without this check, the Plan tab would surface a misleading
+          // "Current Plan: Legacy" for any customer whose bootstrap
+          // hasn't fired. After B140 Item 1, this should only trigger
+          // in genuine edge cases (browser localStorage cleared, race
+          // condition, etc.) — the CTA gives the user a one-click
+          // recovery path via /login re-bootstrap.
+          const hasBootstrappedTier = typeof window !== 'undefined' && !!localStorage.getItem('company_tier')
+          if (!hasBootstrappedTier) {
+            return (
+              <div>
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'24px', textAlign:'center' }}>
+                  <p style={{ color:'#aaa', fontSize:'13px', margin:'0 0 14px' }}>Loading your plan info…</p>
+                  <button onClick={() => { window.location.href = '/login' }}
+                    style={{ padding:'10px 18px', background:'transparent', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', fontSize:'12px', fontWeight:'bold' as const, cursor:'pointer' }}>
+                    Refresh account info
+                  </button>
+                </div>
+              </div>
+            )
+          }
+
           const ctx = getCompanyContext()
-          const tierLabels: Record<string, string> = ctx.tier_type === 'property_management'
-            ? { essential: 'Essential', professional: 'Professional', enterprise: 'Enterprise' }
-            : { starter: 'Starter', growth: 'Growth', legacy: 'Legacy' }
-          const tierLabel = tierLabels[String(ctx.tier)] || String(ctx.tier)
+          // B140 Item 3 — use canonical TIER_DISPLAY_NAME mapping from
+          // tier-config (closes the drift surface where the prior inline
+          // map missed B89 Part 1's 'premium' tier addition).
+          const tierTypeKey = ((ctx.tier_type as string) || 'enforcement') as TierType
+          const tierLabel = TIER_DISPLAY_NAME[tierTypeKey]?.[String(ctx.tier)] || String(ctx.tier)
           const isEnf = ctx.tier_type === 'enforcement'
           const isPM = ctx.tier_type === 'property_management'
 

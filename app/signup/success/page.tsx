@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../../supabase'
+import { bootstrapCompanyContext, type CompanyBootstrapRow } from '../../lib/company-bootstrap'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -49,10 +50,38 @@ export default function SignupSuccess() {
       // role row with lowercase email.
       const { data: roleRow } = await supabase
         .from('user_roles')
-        .select('role')
+        .select('role, company')
         .ilike('email', user.email!)
         .maybeSingle()
       if (roleRow) {
+        // B140 Item 1 — populate company-context localStorage from the
+        // just-created companies row BEFORE redirecting to /company_admin.
+        // Without this, the dashboard renders with empty localStorage —
+        // header badge missing + Plan tab fallback to misleading default
+        // (B123 D.1 finding: self-serve subscribers see the wrong tier
+        // badge until they manually sign out + back in).
+        //
+        // The user_roles row guarantees the companies row exists (B66.3
+        // Option A invariant — user_roles is the LAST insert in the
+        // webhook transaction). On the unexpected "companies missing OR
+        // multi-match" case, log + skip bootstrap + proceed to redirect:
+        // the B140 Item 2 Plan tab empty-localStorage check shows the
+        // "Refresh account info" CTA as a one-click recovery path.
+        if (roleRow.company) {
+          try {
+            const { data: companyRow } = await supabase
+              .from('companies')
+              .select('id, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type, theme')
+              .eq('name', roleRow.company)
+              .single()
+            await bootstrapCompanyContext(companyRow as CompanyBootstrapRow | null)
+          } catch (err) {
+            console.error('[signup-success] bootstrap fetch failed; redirecting without bootstrap', {
+              company: roleRow.company,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
         setStatus({ kind: 'redirecting' })
         // Tiny delay so the success state flashes briefly (UX feedback).
         setTimeout(() => { window.location.href = '/company_admin' }, 400)
