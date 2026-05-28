@@ -1,0 +1,179 @@
+-- ════════════════════════════════════════════════════════════════════
+-- B66.5 commit 4.1 (Foundation) — dunning email dedup timestamps
+-- Drafted: 2026-05-28 — NOT YET APPLIED.
+--
+-- Foundation schema for the dunning email layer (commit 4.2). Six new
+-- nullable TIMESTAMPTZ columns on `companies`, one per email stage in
+-- the dunning lifecycle. Each column records WHEN that stage's email
+-- was sent (NULL = not yet sent).
+--
+-- Dedup pattern (locked at pre-flight as Pattern A): cron sweep + webhook
+-- handler check `WHERE dunning_dayN_sent_at IS NULL` before firing the
+-- corresponding email; UPDATE the timestamp on successful send. Recovery
+-- (invoice.payment_succeeded) clears all 4 dunning_day*_sent_at columns
+-- so a future relapse re-fires the sequence cleanly. Cancellation is
+-- terminal (one-shot send).
+--
+-- ── COLUMN INVENTORY ────────────────────────────────────────────────
+--   dunning_day0_sent_at         — invoice.payment_failed webhook fires
+--                                  Day 0 informational email
+--   dunning_day3_sent_at         — cron Day 3 past-due reminder
+--   dunning_day5_sent_at         — cron Day 5 suspension warning
+--   dunning_day7_sent_at         — cron Day 7 suspension notice
+--                                  (fires concurrent with past_due→
+--                                  suspended state transition)
+--   dunning_recovery_sent_at     — invoice.payment_succeeded webhook
+--                                  fires recovery confirmation email
+--                                  IF account was past_due or suspended
+--   dunning_cancellation_sent_at — cron suspended→cancelled transition
+--                                  fires cancellation notice email
+--
+-- ── AUDIT-PASS DISCIPLINE (pre-flight 2026-05-28 confirmed clean) ───
+-- Per feedback_audit_pass_must_query_production_schema: 5 AP queries
+-- run against production BEFORE writing this migration. All returned
+-- expected results — no drift, no conflicting state. Notably:
+--   • AP.A: 0 rows for all 6 target column names (net-new additions)
+--   • AP.B: 4 existing CHECK constraints unchanged; none reference
+--     dunning_* (no constraint surgery needed)
+--   • AP.C: 0 pre-existing columns with `dunning*` prefix
+--   • AP.D: 5-companies baseline confirmed (VQ.F target)
+--   • AP.E: companies_updated_at trigger present + active (VQ.G target)
+--
+-- ── DELIBERATELY OUT OF SCOPE ────────────────────────────────────────
+-- • No partial indexes today. Cron sweep is N=5 companies; sequential
+--   IS NULL checks on the dedup columns are sub-millisecond. Revisit
+--   if production volume crosses ~1000 companies.
+-- • No CHECK constraints on the new columns. NULL is the meaningful
+--   "not yet sent" state; any TIMESTAMPTZ value is valid (no need for
+--   "not future-dated" or similar guards).
+-- • Reading or writing these columns is commit 4.2 scope; commit 4.1
+--   is schema-only. Columns are inert until commit 4.2 webhook +
+--   cron logic lands.
+--
+-- ── APPLY DISCIPLINE ────────────────────────────────────────────────
+-- SINGLE-PASTE SINGLE-RUN. Paste this entire file as ONE block in the
+-- Supabase SQL Editor, click Run ONCE. BEGIN/COMMIT atomic — any
+-- statement failing rolls back all 6 ADD COLUMNs. All DDL idempotent
+-- via ADD COLUMN IF NOT EXISTS. Safe to re-apply.
+-- ════════════════════════════════════════════════════════════════════
+
+BEGIN;
+
+-- ════════════════════════════════════════════════════════════════════
+-- PART 1 — Six dunning email dedup timestamp columns on companies
+-- ════════════════════════════════════════════════════════════════════
+-- All nullable. NULL = email not yet sent for this stage. Populated by
+-- commit 4.2 webhook handlers + cron sweep code.
+
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS dunning_day0_sent_at         TIMESTAMPTZ;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS dunning_day3_sent_at         TIMESTAMPTZ;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS dunning_day5_sent_at         TIMESTAMPTZ;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS dunning_day7_sent_at         TIMESTAMPTZ;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS dunning_recovery_sent_at     TIMESTAMPTZ;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS dunning_cancellation_sent_at TIMESTAMPTZ;
+
+COMMIT;
+
+-- ════════════════════════════════════════════════════════════════════
+-- VERIFICATION QUERIES A-G (run after migration applies)
+-- ════════════════════════════════════════════════════════════════════
+-- Paste each query into the SQL Editor and confirm the expected output.
+-- A failed verification means the migration didn't fully apply (or
+-- something else drifted) — investigate before claiming 4.1 shipped.
+--
+-- ── VQ.A — All 6 columns present with correct types + nullability
+--   SELECT column_name, data_type, is_nullable, column_default
+--   FROM information_schema.columns
+--   WHERE table_schema = 'public' AND table_name = 'companies'
+--     AND column_name IN (
+--       'dunning_day0_sent_at',
+--       'dunning_day3_sent_at',
+--       'dunning_day5_sent_at',
+--       'dunning_day7_sent_at',
+--       'dunning_recovery_sent_at',
+--       'dunning_cancellation_sent_at'
+--     )
+--   ORDER BY column_name;
+--   -- Expected: 6 rows. All data_type='timestamp with time zone'.
+--   -- All is_nullable='YES'. All column_default=NULL (no default).
+--
+-- ── VQ.B — Baseline NULL state across all rows
+-- Every existing row should have NULL across all 6 new columns. Any
+-- non-NULL value would indicate a prior migration populated these
+-- (unexpected per AP.C clean result; investigate if so).
+--
+--   SELECT
+--     COUNT(*) FILTER (WHERE dunning_day0_sent_at IS NOT NULL)         AS day0_set,
+--     COUNT(*) FILTER (WHERE dunning_day3_sent_at IS NOT NULL)         AS day3_set,
+--     COUNT(*) FILTER (WHERE dunning_day5_sent_at IS NOT NULL)         AS day5_set,
+--     COUNT(*) FILTER (WHERE dunning_day7_sent_at IS NOT NULL)         AS day7_set,
+--     COUNT(*) FILTER (WHERE dunning_recovery_sent_at IS NOT NULL)     AS recovery_set,
+--     COUNT(*) FILTER (WHERE dunning_cancellation_sent_at IS NOT NULL) AS cancel_set,
+--     COUNT(*)                                                          AS total_rows
+--   FROM companies;
+--   -- Expected: all 6 "_set" columns return 0. total_rows = 5 (matches VQ.F).
+--
+-- ── VQ.C — No CHECK constraint conflicts
+-- Confirm the existing 4 CHECKs on companies are unchanged and none
+-- now reference any of the new columns.
+--
+--   SELECT conname, pg_get_constraintdef(oid) AS def
+--   FROM pg_constraint
+--   WHERE conrelid = 'public.companies'::regclass AND contype = 'c'
+--   ORDER BY conname;
+--   -- Expected: 4 rows (account_state_valid, acquisition_channel_valid,
+--   -- subscription_status_valid, tier_type_valid). No row references
+--   -- dunning_* columns.
+--
+-- ── VQ.D — No naming conflicts with existing columns
+-- Defensive: confirm no OTHER columns near our name space appeared
+-- unexpectedly (e.g., from a concurrent migration).
+--
+--   SELECT column_name
+--   FROM information_schema.columns
+--   WHERE table_schema = 'public' AND table_name = 'companies'
+--     AND column_name LIKE 'dunning%'
+--   ORDER BY column_name;
+--   -- Expected: exactly 6 rows, matching VQ.A list.
+--
+-- ── VQ.E — Index reads still clean (no new indexes expected)
+-- Confirm no partial index was accidentally created on the new columns
+-- (we intentionally don't index them at N=5 scale). List all companies
+-- indexes and confirm count + names unchanged from post-commit-1
+-- baseline (~3-5 indexes: PK + foreign-key indexes + B66.5 commit 1's
+-- companies_past_due_grace_idx + companies_suspension_grace_idx).
+--
+--   SELECT indexname, indexdef
+--   FROM pg_indexes
+--   WHERE schemaname = 'public' AND tablename = 'companies'
+--   ORDER BY indexname;
+--   -- Expected: same set as post-commit-1 (no new dunning_* indexes).
+--
+-- ── VQ.F — Row count unchanged (no data loss)
+--   SELECT COUNT(*) AS companies_row_count FROM companies;
+--   -- Expected: 5 (matches AP.D baseline + commit 1 VQ.F).
+--
+-- ── VQ.G — updated_at trigger continues firing on UPDATE
+-- The new columns inherit the existing companies_set_updated_at trigger
+-- behavior — any UPDATE that touches the row bumps updated_at. Verify
+-- via a no-op UPDATE that uses one of the new columns explicitly.
+--
+--   WITH before_snap AS (
+--     SELECT id, updated_at AS before_ts FROM companies ORDER BY id LIMIT 1
+--   ),
+--   touched AS (
+--     UPDATE companies
+--        SET dunning_day0_sent_at = dunning_day0_sent_at
+--      WHERE id = (SELECT id FROM before_snap)
+--     RETURNING id, updated_at AS after_ts
+--   )
+--   SELECT before_snap.before_ts, touched.after_ts,
+--          touched.after_ts > before_snap.before_ts AS trigger_fired
+--   FROM before_snap, touched;
+--   -- Expected: trigger_fired = true. (Self-assignment of NULL to NULL
+--   -- still counts as an UPDATE in Postgres; trigger fires.)
+--
+-- ── SAFETY ──────────────────────────────────────────────────────────
+-- All DDL idempotent via ADD COLUMN IF NOT EXISTS. BEGIN/COMMIT atomic
+-- — any failure rolls back all 6 PARTs. Safe to re-apply.
+-- ════════════════════════════════════════════════════════════════════
