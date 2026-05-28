@@ -36,6 +36,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   console.log('[resend-smoke] inbound request received')
 
+  // B66.5 commit 4.2 — force_fail hook for failure-path smoke (H.5 lock).
+  // Bypasses the sendEmail() call entirely and returns a synthetic
+  // failure shape matching the wrapper's SendEmailResult discriminated
+  // union. Lets us exercise the cron/handler failure handling without
+  // gaming Stripe webhook delivery or breaking the Resend API call.
+  const forceFail = request.nextUrl.searchParams.get('force_fail') === 'true'
+  if (forceFail) {
+    console.error('[resend-smoke] force_fail=true — returning synthetic failure')
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'forced failure (force_fail=true query param)',
+        timestamp: new Date().toISOString(),
+      },
+      { status: 500 },
+    )
+  }
+
   const result = await sendEmail({
     to: 'alvaradolegacyconsulting@gmail.com',
     from: 'noreply@mail.shieldmylot.com',

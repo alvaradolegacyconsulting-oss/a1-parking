@@ -15,3 +15,11 @@ import 'server-only'
 
 export const PAST_DUE_GRACE_MS   = 7 * 24 * 60 * 60 * 1000  // 7 days
 export const SUSPENSION_GRACE_MS = 7 * 24 * 60 * 60 * 1000  // 7 days
+
+// B66.5 commit 4.2 — Day 3 + Day 5 email scan thresholds. Used by
+// app/api/cron/dunning/route.ts to compute "past_due_since <= NOW() - N"
+// predicates for the Day 3 + Day 5 dunning email scans. Co-located here
+// so future day-threshold tweaks (e.g., adding a Day 6 scan or shifting
+// to Day 4 / Day 6) touch one file, not two.
+export const DUNNING_DAY_3_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000  // 3 days
+export const DUNNING_DAY_5_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000  // 5 days

@@ -1,6 +1,7 @@
 import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
+import { sendDunningRecovery, type DunningCompany } from '../dunning-emails'
 import type { SyncResult, SkipResult } from './types'
 
 /**
@@ -36,9 +37,12 @@ export async function handleInvoicePaymentSucceeded(
     return { ok: true, skipped: true, reason: 'invoice has no customer' }
   }
 
+  // Extended SELECT (commit 4.2) — adds name + display_name + tier +
+  // tier_type for sendDunningRecovery's DunningCompany shape +
+  // dunning_recovery_sent_at for the dedup gate.
   const { data: company, error: lookupErr } = await supabase
     .from('companies')
-    .select('id, account_state')
+    .select('id, account_state, name, display_name, tier, tier_type, dunning_recovery_sent_at')
     .eq('stripe_customer_id', customerId)
     .maybeSingle()
   if (lookupErr) {
@@ -58,6 +62,14 @@ export async function handleInvoicePaymentSucceeded(
   const previousState = company.account_state
 
   // RECOVERY — clear all dunning timestamps, flip back to active.
+  //
+  // commit 4.2 extension: also clear the 6 dunning_*_sent_at dedup
+  // columns so a future relapse re-fires the email sequence cleanly
+  // (Pattern A recovery semantics per the locked greenlight).
+  // dunning_cancellation_sent_at is included for completeness even
+  // though the cancelled state is technically terminal — a recovery
+  // arriving here means we're back to active, and we want the sequence
+  // armed for any future relapse.
   const { error: updErr } = await supabase
     .from('companies')
     .update({
@@ -66,16 +78,25 @@ export async function handleInvoicePaymentSucceeded(
       past_due_grace_until: null,
       suspension_since: null,
       suspension_grace_until: null,
+      dunning_day0_sent_at: null,
+      dunning_day3_sent_at: null,
+      dunning_day5_sent_at: null,
+      dunning_day7_sent_at: null,
+      dunning_recovery_sent_at: null,
+      dunning_cancellation_sent_at: null,
     })
     .eq('id', company.id)
   if (updErr) {
     return { ok: false, reason: `companies UPDATE failed for ${company.id}: ${updErr.message}` }
   }
 
-  // Verify-after-write — F6 discipline.
+  // Verify-after-write — F6 discipline. Extended to 11 columns: the
+  // original 5 (account_state + 4 grace timestamps) + the 6 dunning
+  // dedup columns. All 6 dedup columns must verify as NULL post-clear
+  // so the next relapse sequence fires from a clean slate.
   const { data: verifyRow, error: verifyErr } = await supabase
     .from('companies')
-    .select('account_state, past_due_since, past_due_grace_until, suspension_since, suspension_grace_until')
+    .select('account_state, past_due_since, past_due_grace_until, suspension_since, suspension_grace_until, dunning_day0_sent_at, dunning_day3_sent_at, dunning_day5_sent_at, dunning_day7_sent_at, dunning_recovery_sent_at, dunning_cancellation_sent_at')
     .eq('id', company.id)
     .maybeSingle()
   if (verifyErr || !verifyRow) {
@@ -85,7 +106,13 @@ export async function handleInvoicePaymentSucceeded(
     || verifyRow.past_due_since !== null
     || verifyRow.past_due_grace_until !== null
     || verifyRow.suspension_since !== null
-    || verifyRow.suspension_grace_until !== null) {
+    || verifyRow.suspension_grace_until !== null
+    || verifyRow.dunning_day0_sent_at !== null
+    || verifyRow.dunning_day3_sent_at !== null
+    || verifyRow.dunning_day5_sent_at !== null
+    || verifyRow.dunning_day7_sent_at !== null
+    || verifyRow.dunning_recovery_sent_at !== null
+    || verifyRow.dunning_cancellation_sent_at !== null) {
     return {
       ok: false,
       reason: `verify-after-write mismatch for ${company.id}: ${JSON.stringify(verifyRow)}`,
@@ -107,6 +134,33 @@ export async function handleInvoicePaymentSucceeded(
       stripe_customer_id: customerId,
     },
   })
+
+  // B66.5 commit 4.2 — Recovery email send.
+  //
+  // Pattern Y per locked greenlight: email send happens AFTER the DB
+  // writes commit. Send failures are non-blocking (H.4 fail-soft).
+  //
+  // alreadySent gate: passes false because we just cleared
+  // dunning_recovery_sent_at in the UPDATE above. The dedup gate in
+  // dispatchStage is belt-and-suspenders for any future code path that
+  // reaches this handler without the clear.
+  //
+  // Recovery fires on BOTH automatic retry success AND manual Portal
+  // pay (H.3 lock): single template covers both paths.
+  const dunningCompany: DunningCompany = {
+    id: company.id as number,
+    name: String(company.name ?? ''),
+    display_name: (company.display_name as string | null) ?? null,
+    tier: (company.tier as string | null) ?? null,
+    tier_type: (company.tier_type as string | null) ?? null,
+  }
+  try {
+    await sendDunningRecovery(dunningCompany, /* alreadySent */ false, invoice.id ?? null, previousState)
+  } catch (e) {
+    console.error('[invoice-payment-succeeded] recovery email orchestration threw', {
+      companyId: company.id, error: e instanceof Error ? e.message : String(e),
+    })
+  }
 
   return { ok: true }
 }

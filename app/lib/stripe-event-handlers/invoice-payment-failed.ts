@@ -2,6 +2,7 @@ import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
 import { PAST_DUE_GRACE_MS } from '../dunning-config'
+import { sendDunningDay0, type DunningCompany } from '../dunning-emails'
 import type { SyncResult, SkipResult } from './types'
 
 /**
@@ -31,9 +32,13 @@ export async function handleInvoicePaymentFailed(
     return { ok: true, skipped: true, reason: 'invoice has no customer (likely a non-subscription invoice)' }
   }
 
+  // Extended SELECT (commit 4.2) — adds name + display_name + tier +
+  // tier_type for sendDunningDay0's DunningCompany shape. past_due_since
+  // is no longer strictly needed by this handler but kept for parity
+  // with the original commit 2 select-list (no behavior cost).
   const { data: company, error: lookupErr } = await supabase
     .from('companies')
-    .select('id, account_state, past_due_since')
+    .select('id, account_state, past_due_since, name, display_name, tier, tier_type')
     .eq('stripe_customer_id', customerId)
     .maybeSingle()
   if (lookupErr) {
@@ -101,6 +106,36 @@ export async function handleInvoicePaymentFailed(
       stripe_customer_id: customerId,
     },
   })
+
+  // B66.5 commit 4.2 — Day 0 email send.
+  //
+  // Pattern Y per locked greenlight: email send happens AFTER the DB
+  // writes commit. Send failures are non-blocking (H.4 fail-soft);
+  // the handler returns ok regardless of email outcome.
+  //
+  // alreadySent gate: this handler only reaches here when account_state
+  // was 'active' (the state-skip arm at line 49-51 catches re-fires).
+  // So the Day 0 dedup column is also implicitly NULL — passing false
+  // here is the explicit pairing. If we ever change the state-skip
+  // logic upstream, the dunning-emails dedup gate still catches
+  // duplicates inside dispatchStage.
+  const dunningCompany: DunningCompany = {
+    id: company.id as number,
+    name: String(company.name ?? ''),
+    display_name: (company.display_name as string | null) ?? null,
+    tier: (company.tier as string | null) ?? null,
+    tier_type: (company.tier_type as string | null) ?? null,
+  }
+  try {
+    await sendDunningDay0(dunningCompany, /* alreadySent */ false, 'webhook', invoice.id ?? null)
+  } catch (e) {
+    console.error('[invoice-payment-failed] day0 email orchestration threw', {
+      companyId: company.id, error: e instanceof Error ? e.message : String(e),
+    })
+    // Non-blocking — return ok. Email failure already logged + audited
+    // inside dispatchStage; this catch covers the rare case where the
+    // orchestration itself throws (vs returning a SendStageResult).
+  }
 
   return { ok: true }
 }

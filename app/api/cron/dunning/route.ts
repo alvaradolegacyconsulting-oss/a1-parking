@@ -3,7 +3,20 @@ import { NextResponse, type NextRequest } from 'next/server'
 import type Stripe from 'stripe'
 import { getStripe } from '../../../lib/stripe'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
-import { SUSPENSION_GRACE_MS } from '../../../lib/dunning-config'
+import {
+  SUSPENSION_GRACE_MS,
+  DUNNING_DAY_3_THRESHOLD_MS,
+  DUNNING_DAY_5_THRESHOLD_MS,
+} from '../../../lib/dunning-config'
+import {
+  sendDunningDay3,
+  sendDunningDay5,
+  sendDunningDay7,
+  sendDunningCancellation,
+  type DunningCompany,
+} from '../../../lib/dunning-emails'
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
 // B66.5 commit 3 — hourly dunning cron.
 //
@@ -72,6 +85,16 @@ interface SweepSummary {
     verify_mismatches: number
     stripe_cancel_failures: number
   }
+  // B66.5 commit 4.2 — email send counts per stage. Day 3 + Day 5 are
+  // standalone scans (separate from state-transition sweeps); Day 7 +
+  // Cancellation are inlined into Sweep 1 + Sweep 2 respectively (one
+  // email per state transition).
+  emails: {
+    day3:         { candidates: number; sent: number; failed: number; skipped_dedup: number; no_recipients: number }
+    day5:         { candidates: number; sent: number; failed: number; skipped_dedup: number; no_recipients: number }
+    day7:         { sent: number; failed: number; no_recipients: number }
+    cancellation: { sent: number; failed: number; no_recipients: number }
+  }
 }
 
 // Stripe SDK error shape — `code` lives directly on the StripeError
@@ -97,6 +120,119 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const summary: SweepSummary = {
     past_due_to_suspended: { candidates: 0, transitioned: 0, errors: 0, verify_mismatches: 0 },
     suspended_to_cancelled: { candidates: 0, transitioned: 0, errors: 0, verify_mismatches: 0, stripe_cancel_failures: 0 },
+    emails: {
+      day3:         { candidates: 0, sent: 0, failed: 0, skipped_dedup: 0, no_recipients: 0 },
+      day5:         { candidates: 0, sent: 0, failed: 0, skipped_dedup: 0, no_recipients: 0 },
+      day7:         { sent: 0, failed: 0, no_recipients: 0 },
+      cancellation: { sent: 0, failed: 0, no_recipients: 0 },
+    },
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // B66.5 commit 4.2 — Day 3 + Day 5 email scans (BEFORE state sweeps)
+  // ══════════════════════════════════════════════════════════════════
+  // Pure email scans — no state change. Iterate past_due rows where the
+  // relevant threshold passed AND the corresponding dedup column is NULL.
+  // Day 7 + Cancellation emails are NOT here — they're inlined into the
+  // state-transition sweeps below so they fire atomic with the transition
+  // (per pre-flight section D recommendation).
+
+  // Compute days remaining until suspension from past_due_grace_until.
+  // Floors at 0 — if grace already expired (cron lag), Day 5 email still
+  // says "0 days" rather than a negative.
+  function daysRemainingUntilSuspension(graceUntilIso: string | null): number {
+    if (!graceUntilIso) return 0
+    const ms = new Date(graceUntilIso).getTime() - Date.now()
+    return Math.max(0, Math.ceil(ms / ONE_DAY_MS))
+  }
+
+  // Map a SendStageResult into summary counter updates. recipients_sent>0
+  // counts as "sent" for the stage; recipients_failed>0 counts as "failed"
+  // (a stage where some CAs succeeded + some failed counts as BOTH sent
+  // AND failed — operator can see partial-delivery state in the summary).
+  function recordEmailResult(
+    bucket: { candidates: number; sent: number; failed: number; skipped_dedup: number; no_recipients: number },
+    result: { recipients_attempted: number; recipients_sent: number; recipients_failed: number; skipped_dedup: boolean },
+  ): void {
+    bucket.candidates++
+    if (result.skipped_dedup) {
+      bucket.skipped_dedup++
+      return
+    }
+    if (result.recipients_attempted === 0) {
+      bucket.no_recipients++
+      return
+    }
+    if (result.recipients_sent > 0) bucket.sent++
+    if (result.recipients_failed > 0) bucket.failed++
+  }
+
+  // ── Day 3 scan ─────────────────────────────────────────────────────
+  const day3ThresholdIso = new Date(Date.now() - DUNNING_DAY_3_THRESHOLD_MS).toISOString()
+  const { data: day3Rows, error: day3LookupErr } = await supabase
+    .from('companies')
+    .select('id, name, display_name, tier, tier_type, past_due_grace_until')
+    .eq('account_state', 'past_due')
+    .lte('past_due_since', day3ThresholdIso)
+    .is('dunning_day3_sent_at', null)
+
+  if (day3LookupErr) {
+    console.error('[cron-dunning] day3 scan lookup failed', { error: day3LookupErr.message })
+    // Continue — Day 3 scan failure shouldn't block the state-transition
+    // sweeps below. Summary records 0 candidates for Day 3.
+  } else {
+    for (const row of day3Rows ?? []) {
+      try {
+        const company: DunningCompany = {
+          id: row.id as number,
+          name: String(row.name ?? ''),
+          display_name: (row.display_name as string | null) ?? null,
+          tier: (row.tier as string | null) ?? null,
+          tier_type: (row.tier_type as string | null) ?? null,
+        }
+        const daysRemaining = daysRemainingUntilSuspension(row.past_due_grace_until as string | null)
+        const result = await sendDunningDay3(company, /* alreadySent */ false, daysRemaining)
+        recordEmailResult(summary.emails.day3, result)
+      } catch (e) {
+        console.error('[cron-dunning] day3 row processing exception', {
+          companyId: row.id, error: e instanceof Error ? e.message : String(e),
+        })
+        summary.emails.day3.failed++
+      }
+    }
+  }
+
+  // ── Day 5 scan ─────────────────────────────────────────────────────
+  const day5ThresholdIso = new Date(Date.now() - DUNNING_DAY_5_THRESHOLD_MS).toISOString()
+  const { data: day5Rows, error: day5LookupErr } = await supabase
+    .from('companies')
+    .select('id, name, display_name, tier, tier_type, past_due_grace_until')
+    .eq('account_state', 'past_due')
+    .lte('past_due_since', day5ThresholdIso)
+    .is('dunning_day5_sent_at', null)
+
+  if (day5LookupErr) {
+    console.error('[cron-dunning] day5 scan lookup failed', { error: day5LookupErr.message })
+  } else {
+    for (const row of day5Rows ?? []) {
+      try {
+        const company: DunningCompany = {
+          id: row.id as number,
+          name: String(row.name ?? ''),
+          display_name: (row.display_name as string | null) ?? null,
+          tier: (row.tier as string | null) ?? null,
+          tier_type: (row.tier_type as string | null) ?? null,
+        }
+        const daysRemaining = daysRemainingUntilSuspension(row.past_due_grace_until as string | null)
+        const result = await sendDunningDay5(company, /* alreadySent */ false, daysRemaining)
+        recordEmailResult(summary.emails.day5, result)
+      } catch (e) {
+        console.error('[cron-dunning] day5 row processing exception', {
+          companyId: row.id, error: e instanceof Error ? e.message : String(e),
+        })
+        summary.emails.day5.failed++
+      }
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -107,9 +243,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // index predicate so planner uses the partial index directly.
 
   const sweepStartIso = new Date().toISOString()
+  // SELECT extended (commit 4.2) — adds name + display_name + tier +
+  // tier_type for inline Day 7 email send after successful transition.
   const { data: pastDueRows, error: pdLookupErr } = await supabase
     .from('companies')
-    .select('id, past_due_grace_until')
+    .select('id, past_due_grace_until, name, display_name, tier, tier_type')
     .eq('account_state', 'past_due')
     .lte('past_due_grace_until', sweepStartIso)
 
@@ -188,6 +326,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       })
 
       summary.past_due_to_suspended.transitioned++
+
+      // B66.5 commit 4.2 — Day 7 email send, atomic with the state
+      // transition above. alreadySent=false because the row just
+      // transitioned (Day 7 fires once per past_due → suspended event).
+      // The dunning_day7_sent_at dedup gate inside dispatchStage is
+      // belt-and-suspenders for any future code path that re-enters
+      // this branch.
+      const dunningCompany: DunningCompany = {
+        id: row.id as number,
+        name: String(row.name ?? ''),
+        display_name: (row.display_name as string | null) ?? null,
+        tier: (row.tier as string | null) ?? null,
+        tier_type: (row.tier_type as string | null) ?? null,
+      }
+      try {
+        const result = await sendDunningDay7(dunningCompany, /* alreadySent */ false)
+        if (result.skipped_dedup || result.recipients_attempted === 0) {
+          summary.emails.day7.no_recipients++
+        }
+        if (result.recipients_sent > 0) summary.emails.day7.sent++
+        if (result.recipients_failed > 0) summary.emails.day7.failed++
+      } catch (e) {
+        console.error('[cron-dunning] day7 email orchestration threw', {
+          companyId: row.id, error: e instanceof Error ? e.message : String(e),
+        })
+        summary.emails.day7.failed++
+      }
     } catch (e) {
       console.error('[cron-dunning] past_due→suspended row processing exception', {
         companyId: row.id, error: (e as Error).message,
@@ -203,9 +368,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // PART 5; WHERE account_state = 'suspended'). Each row: API-DELETE-
   // first (Decision A) then local UPDATE + verify + audit.
 
+  // SELECT extended (commit 4.2) — adds name + display_name + tier +
+  // tier_type for inline Cancellation email send after successful cancel.
   const { data: suspendedRows, error: suspLookupErr } = await supabase
     .from('companies')
-    .select('id, stripe_subscription_id, suspension_grace_until')
+    .select('id, stripe_subscription_id, suspension_grace_until, name, display_name, tier, tier_type')
     .eq('account_state', 'suspended')
     .lte('suspension_grace_until', new Date().toISOString())
 
@@ -369,6 +536,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       })
 
       summary.suspended_to_cancelled.transitioned++
+
+      // B66.5 commit 4.2 — Cancellation email send, atomic with the
+      // state transition. Fires once per suspended → cancelled event.
+      const cancelCompany: DunningCompany = {
+        id: row.id as number,
+        name: String(row.name ?? ''),
+        display_name: (row.display_name as string | null) ?? null,
+        tier: (row.tier as string | null) ?? null,
+        tier_type: (row.tier_type as string | null) ?? null,
+      }
+      try {
+        const result = await sendDunningCancellation(
+          cancelCompany,
+          /* alreadySent */ false,
+          row.stripe_subscription_id as string | null,
+        )
+        if (result.skipped_dedup || result.recipients_attempted === 0) {
+          summary.emails.cancellation.no_recipients++
+        }
+        if (result.recipients_sent > 0) summary.emails.cancellation.sent++
+        if (result.recipients_failed > 0) summary.emails.cancellation.failed++
+      } catch (e) {
+        console.error('[cron-dunning] cancellation email orchestration threw', {
+          companyId: row.id, error: e instanceof Error ? e.message : String(e),
+        })
+        summary.emails.cancellation.failed++
+      }
     } catch (e) {
       console.error('[cron-dunning] suspended→cancelled row processing exception', {
         companyId: row.id, error: (e as Error).message,
