@@ -99,15 +99,50 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── 3. Tier-gate ──────────────────────────────────────────────────
+  // ── 3. Tier-gate + B66.5 c4.3 account_state guard ─────────────────
+  // SELECT extended to include account_state for the dunning lifecycle
+  // guard. Past_due → warn but allow (per Q5 lock: CAs may be onboarding
+  // new residents/drivers during the same window they're sorting payment
+  // issues; blocking creates operational friction). Suspended/cancelled
+  // → block with informative message.
   const { data: companyData, error: companyErr } = await supabase
     .from('companies')
-    .select('tier, tier_type')
+    .select('tier, tier_type, account_state')
     .ilike('name', roleRow.company)
     .single()
   if (companyErr || !companyData) {
     return NextResponse.json({ error: 'company not found' }, { status: 404 })
   }
+
+  // B66.5 commit 4.3: account_state guard. Suspended + cancelled block;
+  // past_due warns but continues. Active/configuring fall through normally.
+  const warnings: string[] = []
+  if (companyData.account_state === 'suspended') {
+    return NextResponse.json(
+      {
+        error: 'Bulk upload is unavailable while your account is suspended. ' +
+               'Update payment method to restore access.',
+      },
+      { status: 403 }
+    )
+  }
+  if (companyData.account_state === 'cancelled') {
+    return NextResponse.json(
+      {
+        error: 'Bulk upload is unavailable on cancelled accounts. To restore the ' +
+               'account, contact support@shieldmylot.com within 30 days of cancellation.',
+      },
+      { status: 403 }
+    )
+  }
+  if (companyData.account_state === 'past_due') {
+    warnings.push(
+      'Your account is past due. New invites will still be sent, but service ' +
+      'may be interrupted if payment is not resolved.'
+    )
+    // Continue to invite flow
+  }
+
   const tierType = companyData.tier_type as 'enforcement' | 'property_management'
   const tierCfg = TIER_CONFIG[tierType]?.[companyData.tier]
   if (!tierCfg) {
@@ -315,5 +350,9 @@ export async function POST(req: NextRequest) {
     successful: results.filter(r => r.status === 'success').length,
     failed: results.filter(r => r.status === 'error').length,
     results,
+    // B66.5 commit 4.3: optional warnings array (populated when account_state
+    // is past_due — invites went out but customer should resolve billing).
+    // Client UI surfaces in amber state per the bulk-upload page handler.
+    ...(warnings.length > 0 && { warnings }),
   })
 }

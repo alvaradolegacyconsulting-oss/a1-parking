@@ -11,11 +11,16 @@ import { getCompanyContext, getLimit } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 // B71: decline-and-proceed interstitial for authorized-plate overrides.
 import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS } from '../components/DeclineReasonModal'
+// B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
+import { evaluatePortalGate } from '../lib/portal-account-gate'
+import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
 
 export default function DriverPortal() {
   const [driver, setDriver] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // B66.5 commit 4.3: past_due banner state (null = no banner; populated = render).
+  const [pastDueBanner, setPastDueBanner] = useState<PastDueBannerProps | null>(null)
 
   // Plate lookup
   const [plate, setPlate] = useState('')
@@ -103,6 +108,16 @@ export default function DriverPortal() {
       name: user.email, email: user.email,
       assigned_properties: ['All'], operator_license: 'N/A', company: 'A1 Wrecker, LLC'
     }
+
+    // B66.5 commit 4.3: account-state gate. Past_due → banner; suspended →
+    // redirect to /account-suspended; cancelled → redirect to /account-
+    // cancelled; null companies row → fail-closed redirect to /account-
+    // cancelled. Driver portal gets same gating as other portals per Q6
+    // lock — clean mental model, revisit fast-follow if A1 raises friction.
+    const gateResult = await evaluatePortalGate(d.company)
+    if (gateResult.redirected) return
+    if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
+
     setDriver(d)
     const assignableProps = (d.assigned_properties || []).filter((p: string) => p !== 'All')
     if (assignableProps.length === 1) setSelectedProperty(assignableProps[0])
@@ -877,6 +892,9 @@ export default function DriverPortal() {
   return (
     <main style={{ minHeight: '100vh', background: '#0f1117', fontFamily: 'Arial, sans-serif', padding: '20px' }}>
       <div style={{ maxWidth: '520px', margin: '0 auto' }}>
+
+        {/* B66.5 commit 4.3: past_due banner (rendered when company in past_due state) */}
+        {pastDueBanner && <PastDueBanner {...pastDueBanner} />}
 
         {/* Header */}
         <div style={{ marginBottom: '16px', textAlign: 'center' }}>

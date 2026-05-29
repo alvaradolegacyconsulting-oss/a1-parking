@@ -17,11 +17,16 @@ import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+// B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
+import { evaluatePortalGate } from '../lib/portal-account-gate'
+import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
 
 export default function ManagerPortal() {
   const [manager, setManager] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // B66.5 commit 4.3: past_due banner state.
+  const [pastDueBanner, setPastDueBanner] = useState<PastDueBannerProps | null>(null)
   const [activeTab, setActiveTab] = useState('overview')
   const [vehicles, setVehicles] = useState<any[]>([])
   const [violations, setViolations] = useState<any[]>([])
@@ -118,6 +123,17 @@ export default function ManagerPortal() {
       setError('No role assigned. Contact your administrator.')
       setLoading(false)
       return
+    }
+
+    // B66.5 commit 4.3: account-state gate. Skip for admin (no company
+    // association). Manager/leasing_agent roles get gated by their
+    // company's state per the Q6 lock (same gating as driver portal).
+    if (roleData.role === 'manager' || roleData.role === 'leasing_agent') {
+      if (roleData.company) {
+        const gateResult = await evaluatePortalGate(roleData.company)
+        if (gateResult.redirected) return
+        if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
+      }
     }
 
     if (roleData.role === 'admin') {
@@ -818,6 +834,9 @@ export default function ManagerPortal() {
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       <div style={{ maxWidth:'600px', margin:'0 auto' }}>
+
+        {/* B66.5 commit 4.3: past_due banner */}
+        {pastDueBanner && <PastDueBanner {...pastDueBanner} />}
 
         <div style={{ marginBottom:'16px', textAlign:'center' }}>
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{managerCompany || 'ShieldMyLot'}</h1>

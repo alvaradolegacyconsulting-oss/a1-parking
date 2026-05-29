@@ -6,6 +6,9 @@ import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
+// B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
+import { evaluatePortalGate } from '../lib/portal-account-gate'
+import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
 
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
@@ -13,6 +16,8 @@ export default function ResidentPortal() {
   const [passes, setPasses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // B66.5 commit 4.3: past_due banner state.
+  const [pastDueBanner, setPastDueBanner] = useState<PastDueBannerProps | null>(null)
   const [activeTab, setActiveTab] = useState('info')
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState<any>({})
@@ -75,10 +80,19 @@ export default function ResidentPortal() {
       .ilike('email', user.email!)
       .single()
 
-    setLoading(false)
     if (error || !data) {
+      setLoading(false)
       setError('Your resident account was not found. Please contact your property manager.')
     } else {
+      // B66.5 commit 4.3: account-state gate. Resident gets same gating
+      // as other portals per Q6 lock (past_due banner + suspended/
+      // cancelled redirect). data.company sourced from residents row.
+      if (data.company) {
+        const gateResult = await evaluatePortalGate(data.company)
+        if (gateResult.redirected) return
+        if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
+      }
+      setLoading(false)
       setResident(data)
       setEditForm(data)
       fetchVehicles(data.unit, data.property)
@@ -398,6 +412,9 @@ export default function ResidentPortal() {
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       <div style={{ maxWidth:'500px', margin:'0 auto' }}>
+
+        {/* B66.5 commit 4.3: past_due banner */}
+        {pastDueBanner && <PastDueBanner {...pastDueBanner} />}
 
         <div style={{ marginBottom:'20px', textAlign:'center' }}>
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{companyName || 'ShieldMyLot'}</h1>

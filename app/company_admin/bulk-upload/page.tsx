@@ -57,7 +57,7 @@ type LoadState =
 type SubmitState =
   | { kind: 'idle' }
   | { kind: 'submitting' }
-  | { kind: 'done'; total: number; successful: number; failed: number; results: Array<{ email: string; status: string; error?: string }> }
+  | { kind: 'done'; total: number; successful: number; failed: number; results: Array<{ email: string; status: string; error?: string }>; warnings?: string[] }
   | { kind: 'failed'; message: string; row_errors?: RowError[] }
 
 export default function BulkUploadPage() {
@@ -206,6 +206,8 @@ export default function BulkUploadPage() {
       successful: body.successful,
       failed: body.failed,
       results: body.results,
+      // B66.5 commit 4.3: surface past_due warnings if present.
+      warnings: Array.isArray(body.warnings) ? body.warnings as string[] : undefined,
     })
   }
 
@@ -387,6 +389,14 @@ export default function BulkUploadPage() {
           <p style={{ color: MUTED, fontSize: 12, margin: '0 0 10px' }}>
             Each successful user has received an invite email + must set their password on first login.
           </p>
+          {/* B66.5 commit 4.3: account_state warnings (e.g., past_due) */}
+          {submit.warnings && submit.warnings.length > 0 && (
+            <div style={{ background: '#3a2a08', border: '1px solid #f59e0b', borderRadius: 6, padding: 10, fontSize: 12, marginBottom: 12 }}>
+              {submit.warnings.map((w, i) => (
+                <p key={i} style={{ color: '#fbbf24', margin: i === 0 ? 0 : '6px 0 0', lineHeight: 1.5 }}>⚠ {w}</p>
+              ))}
+            </div>
+          )}
           {submit.failed > 0 && (
             <div style={{ background: '#0a0d14', border: `1px solid ${BORDER}`, borderRadius: 6, padding: 10, fontSize: 11, marginBottom: 12 }}>
               <p style={{ color: GOLD, margin: '0 0 6px', fontWeight: 700 }}>Failed rows:</p>
