@@ -154,8 +154,18 @@ function buildAddresses(): LogicalAddress[] {
   return addrs
 }
 
+// B66.9: bump to v2 — new Prices carry `tax_behavior='exclusive'` so
+// the TX Sales Tax Rate (created via scripts/create-stripe-tax-rate.ts)
+// can be attached via Checkout's default_tax_rates and rendered as a
+// separate line on customer invoices (subtotal + tax line + total).
+// Old v1 Prices (no tax_behavior set) are archived per Q2 lock —
+// existing B66.5 test subscriptions continue referencing them; new
+// checkouts use v2. Bump to v3+ in the future if Price contract
+// changes again (currency, billing scheme, etc.).
+const PRICE_LOOKUP_VERSION = 'v2'
+
 function formatLookupKey(a: LogicalAddress): string {
-  return `sml.${a.tier_track}.${a.tier_name}.${a.line_item}.${a.cycle}`
+  return `sml.${a.tier_track}.${a.tier_name}.${a.line_item}.${a.cycle}.${PRICE_LOOKUP_VERSION}`
 }
 
 function formatProductName(a: LogicalAddress): string {
@@ -236,9 +246,15 @@ async function main() {
     const amountCents = unitAmountCents(monthlyDollars, addr.cycle)
 
     // 1. DB existence probe — composite UNIQUE is the script's idempotency key.
+    // B66.9: SELECT widened to pull lookup_key so we can distinguish:
+    //   • DB row's lookup_key === target (v2)  → true skip (no migration)
+    //   • DB row's lookup_key !== target       → migration path (UPDATE in
+    //                                            place with new v2 ID, archive
+    //                                            old Price)
+    //   • No DB row                            → fresh INSERT (original path)
     const { data: existing, error: selErr } = await supabase
       .from('stripe_prices')
-      .select('id, stripe_price_id')
+      .select('id, stripe_price_id, lookup_key')
       .eq('tier_track', addr.tier_track)
       .eq('tier_name', addr.tier_name)
       .eq('line_item', addr.line_item)
@@ -249,10 +265,15 @@ async function main() {
       console.error(`[create-stripe-prices] DB select failed for ${lookupKey}: ${selErr.message}`)
       process.exit(1)
     }
-    if (existing) {
+    if (existing && existing.lookup_key === lookupKey) {
       skipped++
       console.log(`  SKIP    ${lookupKey} (DB row id=${existing.id}, price=${existing.stripe_price_id})`)
       continue
+    }
+    const isMigration = existing !== null
+    const oldStripePriceId = existing?.stripe_price_id as string | undefined
+    if (isMigration) {
+      console.log(`  MIGRATE ${lookupKey} (from ${existing.lookup_key}, archiving old price ${oldStripePriceId})`)
     }
 
     // 2. Stripe lookup_key probe (active Prices only — deactivated Prices
@@ -295,18 +316,24 @@ async function main() {
         productIdByGroup.set(groupKey, productId)
       }
 
-      // 4. Create the Price.
+      // 4. Create the Price. B66.9: tax_behavior='exclusive' so the TX
+      //    Sales Tax Rate (default_tax_rates on Checkout) renders as a
+      //    separate line on customer invoices. tax_behavior is immutable
+      //    post-creation; setting it here means new Prices carry the
+      //    correct semantic from birth (no later patching possible).
       const price = await stripe.prices.create({
         product: productId,
         unit_amount: amountCents,
         currency: 'usd',
         recurring: { interval: addr.cycle === 'monthly' ? 'month' : 'year' },
         lookup_key: lookupKey,
+        tax_behavior: 'exclusive',
         metadata: {
           tier_track: addr.tier_track,
           tier_name: addr.tier_name,
           line_item: addr.line_item,
           cycle: addr.cycle,
+          lookup_version: PRICE_LOOKUP_VERSION,
         },
       })
       stripePriceId = price.id
@@ -315,27 +342,62 @@ async function main() {
       created++
     }
 
-    // 5. Insert the DB row. If this fails after Stripe creation, the
-    //    next run recovers the orphaned Stripe Price via lookup_key probe.
-    const { error: insErr } = await supabase
-      .from('stripe_prices')
-      .insert({
-        stripe_price_id: stripePriceId,
-        stripe_product_id: stripeProductId,
-        tier_track: addr.tier_track,
-        tier_name: addr.tier_name,
-        line_item: addr.line_item,
-        cycle: addr.cycle,
-        unit_amount_cents: amountCents,
-        mode,
-        lookup_key: lookupKey,
-        is_active: true,
-      })
-    if (insErr) {
-      console.error(`[create-stripe-prices] DB insert failed for ${lookupKey}: ${insErr.message}`)
-      console.error(`  Stripe Price ${stripePriceId} was ${action === 'create' ? 'created' : 'recovered'} but DB row missing.`)
-      console.error(`  Re-run the script to recover via the lookup_key probe.`)
-      process.exit(1)
+    // 5. DB write — INSERT for fresh rows, UPDATE for v1→v2 migration.
+    //    Composite UNIQUE blocks duplicate INSERTs (tier_track, tier_name,
+    //    line_item, cycle, mode). For migration we UPDATE the row in place
+    //    to replace v1 stripe_price_id + lookup_key with v2 values.
+    if (isMigration) {
+      const { error: updErr } = await supabase
+        .from('stripe_prices')
+        .update({
+          stripe_price_id: stripePriceId,
+          stripe_product_id: stripeProductId,
+          lookup_key: lookupKey,
+          unit_amount_cents: amountCents,
+        })
+        .eq('id', existing!.id)
+      if (updErr) {
+        console.error(`[create-stripe-prices] DB update failed for ${lookupKey}: ${updErr.message}`)
+        console.error(`  Stripe Price ${stripePriceId} was ${action === 'create' ? 'created' : 'recovered'} but DB row not updated.`)
+        console.error(`  Re-run the script to re-attempt migration.`)
+        process.exit(1)
+      }
+
+      // Archive the old v1 Price per Q2 lock ("Old Prices archived, not
+      // deleted"). Existing test subscriptions continue referencing the
+      // archived Price (Stripe-side); new checkouts use the v2 ID we just
+      // wrote to DB. Non-fatal on archival failure — DB is the source of
+      // truth for "which Price do new checkouts use"; an unarchived old
+      // Price is just clutter, not a correctness issue.
+      if (oldStripePriceId && oldStripePriceId !== stripePriceId) {
+        try {
+          await stripe.prices.update(oldStripePriceId, { active: false })
+          console.log(`  ARCHIVE old price ${oldStripePriceId} (active=false)`)
+        } catch (e) {
+          console.error(`  WARN: failed to archive old price ${oldStripePriceId}: ${(e as Error).message}`)
+        }
+      }
+    } else {
+      const { error: insErr } = await supabase
+        .from('stripe_prices')
+        .insert({
+          stripe_price_id: stripePriceId,
+          stripe_product_id: stripeProductId,
+          tier_track: addr.tier_track,
+          tier_name: addr.tier_name,
+          line_item: addr.line_item,
+          cycle: addr.cycle,
+          unit_amount_cents: amountCents,
+          mode,
+          lookup_key: lookupKey,
+          is_active: true,
+        })
+      if (insErr) {
+        console.error(`[create-stripe-prices] DB insert failed for ${lookupKey}: ${insErr.message}`)
+        console.error(`  Stripe Price ${stripePriceId} was ${action === 'create' ? 'created' : 'recovered'} but DB row missing.`)
+        console.error(`  Re-run the script to recover via the lookup_key probe.`)
+        process.exit(1)
+      }
     }
 
     const tag = action === 'create' ? 'CREATE ' : 'RECOVER'

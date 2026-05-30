@@ -127,6 +127,23 @@ export async function POST() {
   const stripe = getStripe()
   const origin = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
 
+  // B66.9: Texas Sales Tax Rate ID resolution (Pattern B — fixed-rate
+  // jurisdiction-based tax). 6.6% effective rate created via
+  // scripts/create-stripe-tax-rate.ts and stored in Vercel env per mode.
+  // Fails closed: if the env var is missing, refuse to checkout rather
+  // than silently undercharge. Pre-launch this should always be set;
+  // missing env var means the operator skipped Vercel setup.
+  const stripeMode = process.env.STRIPE_MODE === 'live' ? 'live' : 'test'
+  const taxRateEnvVar = stripeMode === 'live' ? 'STRIPE_LIVE_TX_TAX_RATE_ID' : 'STRIPE_TEST_TX_TAX_RATE_ID'
+  const taxRateId = process.env[taxRateEnvVar]
+  if (!taxRateId) {
+    console.error(`[create-checkout-session] missing ${taxRateEnvVar} — refusing to checkout without TX tax rate configured`)
+    return NextResponse.json(
+      { error: 'Tax configuration missing. Contact support.' },
+      { status: 500 }
+    )
+  }
+
   try {
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
@@ -134,11 +151,22 @@ export async function POST() {
       line_items: lineItems,
       success_url: `${origin}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/signup/cancelled`,
+      // B66.9: collect billing address at checkout for audit + cleaner
+      // customer records. customer_update.address: 'auto' persists the
+      // collected address to the Stripe customer record (otherwise it
+      // lives only on the one invoice from this Checkout). Both fields
+      // needed — see B66.9 Step 7 finding (the second-field gotcha).
+      billing_address_collection: 'required',
+      customer_update: { address: 'auto' },
       metadata: {
         supabase_user_id: user.id,
         intended_tier_json: JSON.stringify(intended),
       },
       subscription_data: {
+        // B66.9: default_tax_rates attaches the TX Sales Tax Rate to the
+        // subscription. Tax computed by Stripe (6.6% × line subtotal,
+        // rendered as a separate line on every recurring invoice).
+        default_tax_rates: [taxRateId],
         metadata: {
           supabase_user_id: user.id,
           company_name: intended.company_name,
