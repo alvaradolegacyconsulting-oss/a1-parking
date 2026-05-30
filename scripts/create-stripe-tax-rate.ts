@@ -136,8 +136,16 @@ async function main() {
   console.log(`✓ CREATED — TaxRate id: ${created.id}`)
 
   // Verify-after-write (F6 discipline per B66.5 lesson). Retrieve back
-  // + assert display_name + description landed. Silent field truncation
-  // or drop by Stripe would defeat the audit-clarity Q1 move.
+  // + assert display_name + description + percentage landed. Silent
+  // field truncation or drop by Stripe would defeat the audit-clarity
+  // Q1 move.
+  //
+  // NOT asserted but worth manual Dashboard eyeball post-create:
+  //   country, state, jurisdiction — these are IMMUTABLE on a TaxRate
+  //   (Stripe doesn't allow patching them). A wrong value = recreate-
+  //   and-archive, not patch. So the cost of a silent-mismatch on these
+  //   is high; manual confirmation in Dashboard before any subscription
+  //   is built on the rate is the discipline. (Smoke A includes this.)
   console.log('[create-stripe-tax-rate] verifying display_name + description landed...')
   const verify = await stripe.taxRates.retrieve(created.id)
 

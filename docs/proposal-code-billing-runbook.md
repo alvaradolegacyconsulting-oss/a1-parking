@@ -55,15 +55,13 @@ For one-off charges (setup fees, custom invoices) to proposal-code customers:
 
 ---
 
-## Why there's no platform-level backstop (and why that's OK)
+## Why there's no platform-level backstop
 
-Stripe Dashboard check (B66.9 ship): **no account-level default tax rate exists for manual (Pattern B) rates.** The only account-level automatic option is Stripe Tax (`automatic_tax`) = Pattern A, location-sourced. That's deliberately NOT used per B66.9's lock (would zero-rate non-Texas subscribers of a Texas-delivered service).
+**No account-level default exists for manual tax rates. Do NOT enable Stripe Tax (Settings → Tax) — it is Pattern A, location-sourced, and would zero-rate out-of-state subscribers of our Texas-delivered service. Explicit per-subscription attach is the only mechanism.**
 
-This means explicit-attach discipline IS the only protection. There is no "human forgets, system catches it" fallback for manually-created subscriptions.
+The operating plan keeps the manual path closed: proposal codes are not issued pre-launch. A1 (only near-term proposal-code customer) is billed offline until B66.7, then migrated onto the system via B66.7's auto-creation path which injects `default_tax_rates` in code. So the manual-Dashboard tax path is not expected to be exercised at all pre-B66.7.
 
-**Why that's acceptable:** the operating plan keeps the manual path closed entirely. Proposal codes are not issued pre-launch. A1 (only near-term proposal-code customer) is billed offline until B66.7, then migrated onto the system via B66.7's auto-creation path which injects `default_tax_rates` in code. So the manual-Dashboard tax path is not expected to be exercised at all pre-B66.7.
-
-This runbook exists for the belt-and-suspenders case: if an emergency requires manually creating a proposal-code Subscription in the Dashboard before B66.7 ships, this is the explicit-attach procedure.
+This runbook exists for the belt-and-suspenders case: if an emergency requires manually creating a proposal-code Subscription in the Dashboard before B66.7 ships, the steps above are the explicit-attach procedure.
 
 ---
 
@@ -71,7 +69,7 @@ This runbook exists for the belt-and-suspenders case: if an emergency requires m
 
 - When B66.7 (proposal-code → Stripe Subscription auto-creation) ships → much of this runbook becomes obsolete; tax application will be code-driven for proposal-code customers too. Mark sections "DEPRECATED" rather than deleting, so the institutional pattern remains visible.
 - If the TX Sales Tax Rate is rotated (e.g., regulatory rate change) → update the lookup procedure section above.
-- If the account-level default behavior changes → update the "Account-level default" section.
+- If Stripe ever introduces an account-level default for manual rates (Pattern B) → update the "Why there's no platform-level backstop" section to reflect the new option. (Today: Stripe's only account-level automation is `automatic_tax` = Pattern A, which we explicitly DO NOT use.)
 
 ---
 
