@@ -88,7 +88,8 @@ export default function ResidentPortal() {
       // as other portals per Q6 lock (past_due banner + suspended/
       // cancelled redirect). data.company sourced from residents row.
       if (data.company) {
-        const gateResult = await evaluatePortalGate(data.company)
+        // B66.5.1: pass role for role-gated CTA rendering in PastDueBanner.
+        const gateResult = await evaluatePortalGate(data.company, 'resident')
         if (gateResult.redirected) return
         if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
       }

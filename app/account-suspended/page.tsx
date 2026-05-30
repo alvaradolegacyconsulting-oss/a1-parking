@@ -31,7 +31,18 @@ type LoadState =
   | { kind: 'loading' }
   | { kind: 'unauthenticated' }
   | { kind: 'no_company' }
-  | { kind: 'ready'; company: CompanyState; daysRemaining: number | null }
+  | {
+      kind: 'ready'
+      company: CompanyState
+      daysRemaining: number | null
+      userRole: string
+      // B66.5.1: resolved CA email for the non-CA mailto fallback in the
+      // "How to restore access" section. undefined when company has no
+      // CA (orphan edge case) — page falls back to support@shieldmylot.com.
+      caEmail: string | undefined
+    }
+
+const SUPPORT_FALLBACK_EMAIL = 'support@shieldmylot.com'
 
 export default function AccountSuspended() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
@@ -44,9 +55,10 @@ export default function AccountSuspended() {
         if (!cancelled) setState({ kind: 'unauthenticated' })
         return
       }
+      // B66.5.1: SELECT extended to include role for role-gated CTA rendering.
       const { data: roleRow } = await supabase
         .from('user_roles')
-        .select('company')
+        .select('role, company')
         .ilike('email', user.email)
         .maybeSingle()
       if (!roleRow?.company) {
@@ -62,6 +74,20 @@ export default function AccountSuspended() {
         if (!cancelled) setState({ kind: 'no_company' })
         return
       }
+      // B66.5.1: CA email lookup for non-CA mailto fallback. Skip for CA + admin
+      // viewers (they see the Update Payment CTA + don't need the mailto).
+      let caEmail: string | undefined
+      if (roleRow.role !== 'company_admin' && roleRow.role !== 'admin') {
+        const { data: caRow } = await supabase
+          .from('user_roles')
+          .select('email')
+          .ilike('company', companyRow.name)
+          .eq('role', 'company_admin')
+          .order('email', { ascending: true })
+          .limit(1)
+          .maybeSingle()
+        caEmail = caRow?.email as string | undefined
+      }
       const daysRemaining = companyRow.suspension_grace_until
         ? Math.max(0, Math.ceil(
             (new Date(companyRow.suspension_grace_until).getTime() - Date.now()) /
@@ -73,6 +99,8 @@ export default function AccountSuspended() {
           kind: 'ready',
           company: companyRow as CompanyState,
           daysRemaining,
+          userRole: roleRow.role as string,
+          caEmail,
         })
       }
     })()
@@ -141,27 +169,43 @@ export default function AccountSuspended() {
           </ul>
         </div>
 
+        {/* B66.5.1: role-gated "How to restore access" section. CA + admin
+            see the Update Payment CTA; non-CA roles see a mailto to the CA
+            (fallback to support@shieldmylot.com when company has no CA). */}
         <div style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.7, margin: '0 0 18px' }}>
           <div style={{ fontWeight: 700, color: GOLD, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
             How to restore access
           </div>
-          <a href="/company_admin?tab=billing"
-            style={{
-              display: 'inline-block',
-              background: GOLD,
-              color: '#0a0d14',
-              fontWeight: 700,
-              fontSize: 14,
-              padding: '11px 22px',
-              borderRadius: 10,
-              textDecoration: 'none',
-              marginBottom: 10,
-            }}>
-            Update payment →
-          </a>
-          <p style={{ color: '#94a3b8', fontSize: 12, margin: '8px 0 0', lineHeight: 1.6 }}>
-            Once payment clears, all portal access is restored automatically.
-          </p>
+          {state.kind === 'ready' && (state.userRole === 'company_admin' || state.userRole === 'admin') ? (
+            <>
+              <a href="/company_admin?tab=billing"
+                style={{
+                  display: 'inline-block',
+                  background: GOLD,
+                  color: '#0a0d14',
+                  fontWeight: 700,
+                  fontSize: 14,
+                  padding: '11px 22px',
+                  borderRadius: 10,
+                  textDecoration: 'none',
+                  marginBottom: 10,
+                }}>
+                Update payment →
+              </a>
+              <p style={{ color: '#94a3b8', fontSize: 12, margin: '8px 0 0', lineHeight: 1.6 }}>
+                Once payment clears, all portal access is restored automatically.
+              </p>
+            </>
+          ) : (
+            <p style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.7, margin: 0 }}>
+              Your company administrator can restore portal access by updating payment.
+              Please contact them at{' '}
+              <a href={`mailto:${state.kind === 'ready' && state.caEmail ? state.caEmail : SUPPORT_FALLBACK_EMAIL}?subject=ShieldMyLot%20account%20suspended`}
+                style={{ color: GOLD, textDecoration: 'none', borderBottom: `1px solid ${GOLD}` }}>
+                {state.kind === 'ready' && state.caEmail ? state.caEmail : SUPPORT_FALLBACK_EMAIL}
+              </a>.
+            </p>
+          )}
         </div>
 
         <p style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.6, margin: '20px 0 0', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 16 }}>

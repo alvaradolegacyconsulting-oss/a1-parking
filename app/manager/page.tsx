@@ -130,7 +130,9 @@ export default function ManagerPortal() {
     // company's state per the Q6 lock (same gating as driver portal).
     if (roleData.role === 'manager' || roleData.role === 'leasing_agent') {
       if (roleData.company) {
-        const gateResult = await evaluatePortalGate(roleData.company)
+        // B66.5.1: pass role for role-gated CTA rendering in PastDueBanner.
+        // manager + leasing_agent both → non-CA copy (only CA + admin see Update Payment).
+        const gateResult = await evaluatePortalGate(roleData.company, roleData.role)
         if (gateResult.redirected) return
         if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
       }

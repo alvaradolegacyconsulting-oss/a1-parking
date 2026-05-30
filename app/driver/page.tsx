@@ -109,12 +109,10 @@ export default function DriverPortal() {
       assigned_properties: ['All'], operator_license: 'N/A', company: 'A1 Wrecker, LLC'
     }
 
-    // B66.5 commit 4.3: account-state gate. Past_due → banner; suspended →
-    // redirect to /account-suspended; cancelled → redirect to /account-
-    // cancelled; null companies row → fail-closed redirect to /account-
-    // cancelled. Driver portal gets same gating as other portals per Q6
-    // lock — clean mental model, revisit fast-follow if A1 raises friction.
-    const gateResult = await evaluatePortalGate(d.company)
+    // B66.5 commit 4.3 + B66.5.1: account-state gate with userRole threaded
+    // for role-aware CTA rendering in PastDueBanner. Driver role → banner
+    // shows informational copy + CA mailto (not Update Payment button).
+    const gateResult = await evaluatePortalGate(d.company, 'driver')
     if (gateResult.redirected) return
     if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
 

@@ -32,13 +32,25 @@ export interface PastDueBannerProps {
   daysRemainingUntilSuspension: number
   updatePaymentUrl: string
   companyId: string | number
+  // B66.5.1: role-gated CTA. CA + admin see the Update Payment button;
+  // non-CA roles (manager/leasing_agent/driver/resident) see informational
+  // copy with CA email mailto link instead. Per Q1 lock — 'admin' (Jose's
+  // super-admin singleton) also sees CTA to keep super-admin testing flows
+  // working. Per Q3 lock — caEmail falls back to support@shieldmylot.com
+  // when company has no CA (orphan edge case).
+  userRole?: string
+  caEmail?: string  // resolved CA email; falls back to support@shieldmylot.com
 }
+
+const SUPPORT_FALLBACK_EMAIL = 'support@shieldmylot.com'
 
 export default function PastDueBanner({
   companyName,
   daysRemainingUntilSuspension,
   updatePaymentUrl,
   companyId,
+  userRole,
+  caEmail,
 }: PastDueBannerProps) {
   const storageKey = `pastDueBannerDismissed_${companyId}`
   const [dismissed, setDismissed] = useState(false)
@@ -88,31 +100,51 @@ export default function PastDueBanner({
         }}>
           Payment past due
         </div>
-        <div style={{
-          color: '#e2e8f0',
-          fontSize: 13,
-          lineHeight: 1.5,
-          marginBottom: 10,
-        }}>
-          {companyName}&apos;s ShieldMyLot subscription payment hasn&apos;t gone
-          through yet. Your account will be suspended in <strong>{daysLabel}</strong>
-          {' '}if payment isn&apos;t resolved.
-        </div>
-        <a
-          href={updatePaymentUrl}
-          style={{
-            display: 'inline-block',
-            background: GOLD,
-            color: '#0a0d14',
-            fontWeight: 700,
-            fontSize: 13,
-            padding: '8px 16px',
-            borderRadius: 6,
-            textDecoration: 'none',
-          }}
-        >
-          Update payment →
-        </a>
+        {/* B66.5.1: body copy differs by role. CA sees full company-context
+            framing; non-CA sees nudge-toward-administrator framing. */}
+        {(userRole === 'company_admin' || userRole === 'admin') ? (
+          <div style={{ color: '#e2e8f0', fontSize: 13, lineHeight: 1.5, marginBottom: 10 }}>
+            {companyName}&apos;s ShieldMyLot subscription payment hasn&apos;t gone
+            through yet. Your account will be suspended in <strong>{daysLabel}</strong>
+            {' '}if payment isn&apos;t resolved.
+          </div>
+        ) : (
+          <div style={{ color: '#e2e8f0', fontSize: 13, lineHeight: 1.5, marginBottom: 10 }}>
+            Your account will be suspended in <strong>{daysLabel}</strong> if payment
+            isn&apos;t resolved. Please contact your company administrator to update payment.
+          </div>
+        )}
+        {/* B66.5.1: CTA differs by role. CA + admin → Update payment button;
+            non-CA → mailto link to CA (falls back to support@shieldmylot.com). */}
+        {(userRole === 'company_admin' || userRole === 'admin') ? (
+          <a href={updatePaymentUrl}
+            style={{
+              display: 'inline-block',
+              background: GOLD,
+              color: '#0a0d14',
+              fontWeight: 700,
+              fontSize: 13,
+              padding: '8px 16px',
+              borderRadius: 6,
+              textDecoration: 'none',
+            }}
+          >
+            Update payment →
+          </a>
+        ) : (
+          <a href={`mailto:${caEmail || SUPPORT_FALLBACK_EMAIL}?subject=ShieldMyLot%20account%20past%20due`}
+            style={{
+              display: 'inline-block',
+              color: GOLD,
+              fontWeight: 600,
+              fontSize: 13,
+              textDecoration: 'none',
+              borderBottom: `1px solid ${GOLD}`,
+            }}
+          >
+            {caEmail || SUPPORT_FALLBACK_EMAIL} →
+          </a>
+        )}
       </div>
       <button
         onClick={onClose}

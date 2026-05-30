@@ -48,8 +48,15 @@ export type PortalGateResult =
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
 const UPDATE_PAYMENT_URL = `${APP_URL}/company_admin?tab=billing`
 
+// B66.5.1: userRole threaded through so PastDueBanner can role-gate
+// the Update Payment CTA (CA + admin see button; non-CA see CA mailto).
+// CA email resolved here via a single lookup so the helper centralizes
+// the dunning UI surface infra (each portal would otherwise duplicate
+// the SELECT). Fallback to undefined when no CA found — banner handles
+// the support@ fallback inline.
 export async function evaluatePortalGate(
   companyName: string,
+  userRole?: string,
 ): Promise<PortalGateResult> {
   const { data: companyRow } = await supabase
     .from('companies')
@@ -95,6 +102,23 @@ export async function evaluatePortalGate(
 
     const displayName = companyRow.display_name ?? companyRow.name
 
+    // B66.5.1: resolve CA email for the non-CA mailto fallback. Defensive
+    // lookup — single CA per company is canonical (multi-CA uses first
+    // by email order); orphan companies (zero CAs) leave caEmail undefined
+    // and the banner's support@shieldmylot.com fallback kicks in.
+    let caEmail: string | undefined
+    if (userRole && userRole !== 'company_admin' && userRole !== 'admin') {
+      const { data: caRow } = await supabase
+        .from('user_roles')
+        .select('email')
+        .ilike('company', companyRow.name)
+        .eq('role', 'company_admin')
+        .order('email', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      caEmail = caRow?.email as string | undefined
+    }
+
     return {
       redirected: false,
       pastDueBanner: {
@@ -102,6 +126,8 @@ export async function evaluatePortalGate(
         daysRemainingUntilSuspension: daysRemaining,
         updatePaymentUrl: UPDATE_PAYMENT_URL,
         companyId: companyRow.id,
+        userRole,
+        caEmail,
       },
     }
   }

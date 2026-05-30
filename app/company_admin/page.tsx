@@ -37,6 +37,12 @@ export default function CompanyAdminPortal() {
   // renders for. See [[project-b66-5-commit-4-2-closure]] sibling
   // [[project-b66-5-commit-4-3-closure]] for the timeline.
   const [pastDueBanner, setPastDueBanner] = useState<PastDueBannerProps | null>(null)
+  // B66.5.1: track current company's account_state for Q4 defense-in-depth
+  // disable of B144 Resend button on Drivers tab. undefined for admin role
+  // (no company association) → button stays enabled. suspended/cancelled
+  // → button hidden (these states already redirect via gateAccountState;
+  // this is belt-and-suspenders against race/stale-state edge cases).
+  const [companyAccountState, setCompanyAccountState] = useState<string | null>(null)
   // B144 (B66.5 commit 4.3): invite status map (email → 'activated'|'invited'|'unknown')
   // populated after fetchCompanyUsers via POST /api/admin/invite-status.
   const [inviteStatuses, setInviteStatuses] = useState<Record<string, 'activated' | 'invited' | 'unknown'>>({})
@@ -231,6 +237,9 @@ export default function CompanyAdminPortal() {
         window.location.href = '/account-cancelled'
         return
       }
+      // B66.5.1: persist account_state for downstream Q4 defense-in-depth
+      // (Drivers tab Resend button disable on suspended/cancelled).
+      setCompanyAccountState(companyRow.account_state as string)
       const gate = gateAccountState(companyRow.account_state as AccountState)
       if (gate.kind === 'redirect') {
         if (gate.reason === 'cancelled') await supabase.auth.signOut()
@@ -245,11 +254,15 @@ export default function CompanyAdminPortal() {
             ))
           : 0
         const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
+        // B66.5.1: pass roleData.role so CA + admin see Update Payment CTA.
+        // (Non-CA viewers would only see this banner from the 3 customer
+        //  portals, which already pass their own role via the helper.)
         setPastDueBanner({
           companyName: companyRow.display_name ?? companyRow.name,
           daysRemainingUntilSuspension: daysRemaining,
           updatePaymentUrl: `${APP_URL}/company_admin?tab=billing`,
           companyId: companyRow.id,
+          userRole: roleData.role,
         })
       }
     }
@@ -479,6 +492,30 @@ export default function CompanyAdminPortal() {
     if (!role?.company) return
     const { data } = await supabase.from('drivers').select('*').ilike('company', role.company).order('name')
     setCompanyDrivers(data || [])
+
+    // B66.5.1 (Item 2): extend invite-status fetch to cover the Drivers tab
+    // surface. Same /api/admin/invite-status endpoint as fetchCompanyUsers;
+    // results merged into the shared inviteStatuses Map via spread (order-
+    // independent — fetchCompanyUsers + fetchCompanyDrivers can complete in
+    // either order without losing entries, per Q5 lock).
+    const driverEmails = (data || [])
+      .map((d: any) => String(d.email).toLowerCase())
+      .filter((e: string) => e.length > 0)
+    if (driverEmails.length > 0) {
+      try {
+        const res = await fetch('/api/admin/invite-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails: driverEmails }),
+        })
+        if (res.ok) {
+          const body = await res.json()
+          setInviteStatuses(prev => ({ ...prev, ...(body.statusByEmail ?? {}) }))
+        }
+      } catch (e) {
+        console.error('[invite-status] drivers fetch failed', e)
+      }
+    }
   }
 
   // Phase 2a: standalone fetch for the Plan tab. Refreshes driver count
@@ -2686,9 +2723,14 @@ export default function CompanyAdminPortal() {
                             </button>
                             {/* B144 (B66.5 c4.3): Resend Invite — only renders for driver/resident */}
                             {/*  with status='invited' AND is_active!=false. 60s client disable. */}
+                            {/* B66.5.1: extended with Q4 defense-in-depth account_state check */}
+                            {/*  (parity with Drivers tab Resend button). Hidden when suspended/cancelled. */}
                             {(u.role === 'driver' || u.role === 'resident')
                               && u.is_active !== false
                               && inviteStatuses[String(u.email).toLowerCase()] === 'invited'
+                              && (companyAccountState === null
+                                  || companyAccountState === 'active'
+                                  || companyAccountState === 'past_due')
                               && (() => {
                                 const lc = String(u.email).toLowerCase()
                                 const disabledUntil = resendDisabledUntil[lc] ?? 0
@@ -2866,9 +2908,22 @@ export default function CompanyAdminPortal() {
                         {d.operator_license && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>Lic: {d.operator_license}</p>}
                         {d.assigned_properties?.length > 0 && <p style={{ color:'#C9A227', fontSize:'11px', margin:'4px 0 0' }}>{Array.isArray(d.assigned_properties) ? d.assigned_properties.join(', ') : d.assigned_properties}</p>}
                       </div>
-                      <span style={{ background: d.is_active ? '#1a3a1a' : '#2a1a1a', color: d.is_active ? '#4caf50' : '#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
-                        {d.is_active ? 'Active' : 'Inactive'}
-                      </span>
+                      {/* B66.5.1 (Item 2): tri-state badge mirroring the
+                          Users list pattern at line ~2669. Inactive (soft-
+                          deleted via deactivate) wins over invite status —
+                          inactive drivers never show as "Invited". */}
+                      {(() => {
+                        const status = inviteStatuses[String(d.email).toLowerCase()] ?? 'unknown'
+                        const isInactive = d.is_active === false
+                        const label = isInactive ? 'Inactive' : (status === 'invited' ? 'Invited' : 'Active')
+                        const bg = isInactive ? '#2a1a1a' : (status === 'invited' ? '#3a2a08' : '#1a3a1a')
+                        const color = isInactive ? '#f44336' : (status === 'invited' ? '#fbbf24' : '#4caf50')
+                        return (
+                          <span style={{ background: bg, color, padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
+                            {label}
+                          </span>
+                        )
+                      })()}
                     </div>
                     {isCA && (
                       <div style={{ display:'flex', gap:'6px', marginTop:'8px' }}>
@@ -2880,6 +2935,26 @@ export default function CompanyAdminPortal() {
                           style={{ flex:1, padding:'7px', background: d.is_active ? '#3a1a1a' : '#1a3a1a', color: d.is_active ? '#f44336' : '#4caf50', border:`1px solid ${d.is_active ? '#b71c1c' : '#2e7d32'}`, borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
                           {d.is_active ? 'Deactivate' : 'Activate'}
                         </button>
+                        {/* B66.5.1 (Item 2 + Q4): Resend Invite — only when
+                            status='invited' AND is_active!=false AND
+                            account_state allows (active OR past_due; suspended/
+                            cancelled disable per Q4 defense-in-depth). */}
+                        {d.is_active !== false
+                          && inviteStatuses[String(d.email).toLowerCase()] === 'invited'
+                          && (companyAccountState === null
+                              || companyAccountState === 'active'
+                              || companyAccountState === 'past_due')
+                          && (() => {
+                            const lc = String(d.email).toLowerCase()
+                            const disabledUntil = resendDisabledUntil[lc] ?? 0
+                            const disabled = resendingEmail === lc || disabledUntil > Date.now()
+                            return (
+                              <button onClick={() => resendInviteForUser(lc)} disabled={disabled}
+                                style={{ flex:1, padding:'7px', background: disabled ? '#1e2535' : '#1a1f2e', color: disabled ? '#555' : '#fbbf24', border:`1px solid ${disabled ? '#3a4055' : '#f59e0b'}`, borderRadius:'6px', cursor: disabled ? 'not-allowed' : 'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                                {resendingEmail === lc ? 'Resending…' : (disabledUntil > Date.now() ? 'Sent ✓' : 'Resend Invite')}
+                              </button>
+                            )
+                          })()}
                       </div>
                     )}
                   </div>
