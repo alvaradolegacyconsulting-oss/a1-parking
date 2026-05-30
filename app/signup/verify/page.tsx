@@ -177,7 +177,10 @@ function UnverifiedCard() {
       <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>📧</div>
       <h2 style={{ color: GOLD, fontSize: 20, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>Verify your email to continue</h2>
       <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 22px' }}>
-        We couldn&apos;t pick up your verified session. Click the link in the verification email we sent — it&apos;ll bring you back here.
+        We couldn&apos;t pick up your verified session. The verification email link must be opened
+        in the <strong>same browser</strong> you used to sign up — switching browsers (or using
+        incognito after starting in a regular window) breaks the link. If you opened it elsewhere,
+        restart signup below.
       </p>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
         <a href="/signup" style={{ background: GOLD, color: '#0a0d14', borderRadius: 10, padding: '10px 18px', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>Restart signup</a>
