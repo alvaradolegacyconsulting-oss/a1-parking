@@ -127,6 +127,26 @@ export default function ResetPassword() {
         window.location.href = '/login'
         return
       }
+      // B66.5.2 audit note: this reset-password gate handling SURVIVED the
+      // 4.3 gateAccountState contract change cleanly, unlike login/page.tsx
+      // which needed a 3-arm refactor (B66.5.2 fix). Why this code is
+      // correct under the new contract:
+      //   • past_due (NEW allow_with_banner) → falls through (no kind
+      //     handler) → redirectByRole → portal mount renders banner ✓
+      //   • suspended (NEW redirect reason) → redirect branch fires,
+      //     signOut conditional is FALSE (cancelled-only), so user stays
+      //     authed for /account-suspended ✓
+      //   • cancelled (unchanged) → redirect branch fires, signOut TRUE,
+      //     bounce to /account-cancelled ✓
+      //   • configuring (unchanged) → redirect branch fires, signOut FALSE,
+      //     redirect to /signup/redeem/verify ✓
+      //
+      // The defensive `if (gate.reason === 'cancelled') signOut` pattern
+      // is correct: terminal states sign out, recoverable states stay
+      // authed. Login's pre-B66.5.2 broken pattern was the inverse — sign
+      // out for everything-non-configuring — which conflated all non-
+      // recoverable states with cancelled. See
+      // [[pattern-defensive-conditional-signout-in-auth-flows]].
       const gate = gateAccountState(companyData?.account_state as AccountState | null | undefined)
       if (gate.kind === 'redirect') {
         if (gate.reason === 'cancelled') await supabase.auth.signOut()

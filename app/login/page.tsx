@@ -142,39 +142,50 @@ export default function Login() {
         return
       }
 
-      // B65.2: account_state gate (spec §3.4). All existing companies were
-      // backfilled to 'active' in B65.1, so no current user hits the non-allow
-      // branches. Wired now so B65.4's atomic activation can produce the
-      // 'configuring' state and have a real landing target.
+      // B65.2 → B66.5.2: account_state gate (spec §3.4) with 3-arm explicit
+      // routing logic. Era-shift: the original B65.2 wiring assumed
+      // gateAccountState returned 'allow_with_banner' ONLY for suspended
+      // (and the inline setSuspendedCompany legacy page was the surface).
+      // B66.5 commit 4.3 changed the gate contract:
+      //   • past_due (NEW) → allow_with_banner — let dispatch continue;
+      //     portal mount renders PastDueBanner above content
+      //   • suspended (CHANGED) → redirect to /account-suspended; STAY
+      //     AUTHED because that page is auth-required (Q2 of 4.3 lock)
+      //     and reads user state for personalization (signing out here
+      //     creates a redirect loop — /account-suspended not in middleware
+      //     publicPaths, so anon access bounces to /login → re-login →
+      //     re-sign-out → infinite loop)
+      //   • cancelled — redirect to /account-cancelled WITH sign-out
+      //     (terminal state; /account-cancelled IS in publicPaths so
+      //     anon access is fine post-sign-out)
+      //   • configuring — redirect to /signup/redeem/verify, stay authed
+      //
+      // Note: setSuspendedCompany legacy state (declared at line 31) is
+      // still used by two OTHER paths (is_active=false at line ~136 and
+      // property-level inactive at line ~190). The account_state-driven
+      // path that used to setSuspendedCompany here is dead, but the
+      // state itself isn't fully dead — kept alive by those other callers.
       const gate = gateAccountState(companyData?.account_state as AccountState | null | undefined)
       if (gate.kind === 'redirect') {
         setLoading(false)
         if (gate.reason === 'configuring') {
-          // Don't sign out — user must stay authed to finish activation.
+          // Stay authed — user must complete activation.
           window.location.href = gate.href
           return
         }
-        // 'cancelled' — bounce out of the session and hand off to the
-        // contact-support route.
+        if (gate.reason === 'suspended') {
+          // B66.5.2: stay authed — /account-suspended needs the session.
+          window.location.href = gate.href
+          return
+        }
+        // 'cancelled' — terminal; bounce out + redirect.
         await supabase.auth.signOut()
         window.location.href = gate.href
         return
       }
-      if (gate.kind === 'allow_with_banner') {
-        // 'suspended' — mirror the existing is_active=false UX with a
-        // different message. The CA portal's banner is the secondary layer
-        // for sessions that bypass login.
-        setLoading(false)
-        await supabase.auth.signOut()
-        setSuspendedCompany({
-          display_name: companyData?.display_name || 'Your Company',
-          support_phone: companyData?.support_phone || null,
-          support_email: companyData?.support_email || null,
-          support_website: companyData?.support_website || null,
-          message: 'Your account has been suspended. Please contact support to resolve this.',
-        })
-        return
-      }
+      // B66.5.2: allow_with_banner (past_due) intentionally falls through
+      // to the rest of the dispatch (bootstrap + redirectByRole). Portal
+      // mount renders the PastDueBanner above content. Do not block here.
 
       if ((roleData.role === 'manager' || roleData.role === 'leasing_agent') && roleData.property?.length) {
         const propNames: string[] = Array.isArray(roleData.property) ? roleData.property : [roleData.property]
