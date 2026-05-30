@@ -373,6 +373,11 @@ export default function SignupTierPicker() {
         <p style={{ color: MUTED, fontSize: 12, textAlign: 'center', margin: '14px 0 0' }}>
           We&apos;ll email you a verification link before charging anything. No payment is collected on this page.
         </p>
+        {/* B117 Recommendation A: pre-link-issuance inline guidance. */}
+        <p style={{ color: '#fbbf24', fontSize: 12, textAlign: 'center', margin: '10px 0 0', lineHeight: 1.5 }}>
+          ⓘ Open the verification link in <strong>this same browser</strong> — links don&apos;t
+          work across browsers (or in incognito if you started in a regular window).
+        </p>
 
       </div>
     </main>
