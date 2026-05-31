@@ -8,6 +8,18 @@
 // LAST insert in the webhook transaction so its existence guarantees
 // full atomic completion).
 //
+// B66.7 — same page reused for proposal-code completion (CP-3 reuse:
+// one success page, two branches via ?proposal_code_id= URL param).
+// In the proposal-code path the company + user_roles already exist
+// (created by redeem_proposal_code RPC); only stripe_customer_id +
+// stripe_subscription_id are still pending the webhook's UPDATE. The
+// poll target shifts: companies.stripe_subscription_id, not user_roles.
+//   • ?proposal_code_id present + ?send_invoice=1: skip polling entirely
+//     (start-billing route updated DB inline before the redirect).
+//   • ?proposal_code_id present without send_invoice: poll companies
+//     for stripe_subscription_id populated (charge_automatically path).
+//   • no proposal_code_id: existing self-serve poll on user_roles.
+//
 // Poll: 1s interval, 30s max, then fallback "still processing" UI
 // with a manual refresh button.
 
@@ -38,6 +50,11 @@ export default function SignupSuccess() {
     let cancelled = false
     let elapsed = 0
 
+    // B66.7 — discriminate via URL params set by start-billing route.
+    const url = typeof window !== 'undefined' ? new URL(window.location.href) : null
+    const proposalCodeId = url?.searchParams.get('proposal_code_id') || null
+    const sendInvoiceMarker = url?.searchParams.get('send_invoice') === '1'
+
     async function poll() {
       if (cancelled) return
       const { data: { user } } = await supabase.auth.getUser()
@@ -53,7 +70,38 @@ export default function SignupSuccess() {
         .select('role, company')
         .ilike('email', user.email!)
         .maybeSingle()
-      if (roleRow) {
+
+      // ── B66.7 proposal-code branch ───────────────────────────────
+      // user_roles already existed before Checkout (created by RPC),
+      // so its presence proves nothing. The signal is
+      // companies.stripe_subscription_id being populated by the
+      // webhook (charge_automatically) or having been set inline by
+      // the start-billing route (send_invoice — short-circuit below).
+      if (proposalCodeId && roleRow?.company) {
+        const { data: companyRow } = await supabase
+          .from('companies')
+          .select('id, stripe_subscription_id, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type, theme')
+          .eq('name', roleRow.company)
+          .single()
+        // send_invoice path: start-billing already populated
+        // stripe_subscription_id inline before the redirect, so the
+        // first poll tick sees it populated and short-circuits.
+        // charge_automatically path: waits for the webhook to populate.
+        const billingLinked = !!companyRow?.stripe_subscription_id
+        if (billingLinked || sendInvoiceMarker) {
+          try { await bootstrapCompanyContext(companyRow as CompanyBootstrapRow | null) }
+          catch (err) {
+            console.error('[signup-success] bootstrap fetch failed (proposal-code path); redirecting without bootstrap', {
+              company: roleRow.company,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+          setStatus({ kind: 'redirecting' })
+          setTimeout(() => { window.location.href = '/company_admin' }, 400)
+          return
+        }
+        // Webhook hasn't landed yet — fall through to poll-elapse logic.
+      } else if (roleRow) {
         // B140 Item 1 — populate company-context localStorage from the
         // just-created companies row BEFORE redirecting to /company_admin.
         // Without this, the dashboard renders with empty localStorage —

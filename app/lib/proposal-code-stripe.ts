@@ -266,6 +266,17 @@ export async function createStripePricesForProposalCode(
           recurring: { interval: 'month' },
           lookup_key: lookupKey,
           nickname: formatNickname(code.client_name, li),
+          // B66.7 CP-1: proposal-code Prices are created here, OUTSIDE the
+          // standard catalog populator (scripts/create-stripe-prices.ts),
+          // so the B66.9 v2 migration that retrofitted tax_behavior on the
+          // standard catalog doesn't reach this code path. Without this,
+          // the proposal-code Prices ship as 'unspecified' tax_behavior
+          // and Stripe rejects the subscription create when default_tax_rates
+          // is attached (tax_behavior must be 'exclusive' or 'inclusive'
+          // on every Price in the subscription). Forward-only — no
+          // production proposal-code Prices exist yet (AP.D confirmed),
+          // so no migration of existing Prices needed.
+          tax_behavior: 'exclusive',
           metadata: {
             proposal_code: code.code,
             proposal_code_id: String(code.id),

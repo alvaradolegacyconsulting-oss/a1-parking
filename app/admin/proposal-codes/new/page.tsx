@@ -67,6 +67,11 @@ export default function NewProposalCode() {
   const [customPerProperty, setCustomPerProperty] = useState<string>('')
   const [customPerDriver, setCustomPerDriver] = useState<string>('')
   const [lockInMonths, setLockInMonths] = useState<string>('')
+  // B66.7 Option γ — admin captures negotiated quantities at code creation;
+  // start-billing route passes these as Stripe Subscription line-item
+  // quantities at redeem. Blank → NULL on insert (and 1 at start-billing).
+  const [includedProperties, setIncludedProperties] = useState<string>('')
+  const [includedDrivers, setIncludedDrivers] = useState<string>('')
   const [overridesText, setOverridesText] = useState<string>('')
   const [notes, setNotes] = useState<string>('')
 
@@ -120,10 +125,32 @@ export default function NewProposalCode() {
   // at proposal_codes_lock_in_duration_valid (B66.2b commit 1) enforces the same.
   const lockInOk = lockInMonths === ''
     || (/^\d+$/.test(lockInMonths) && parseInt(lockInMonths, 10) >= 1 && parseInt(lockInMonths, 10) <= 36)
+  // included_properties / included_drivers (B66.7): optional non-negative
+  // integer. CHECKs proposal_codes_included_{properties,drivers}_valid mirror.
+  const includedIntOk = (s: string) => s === '' || (/^\d+$/.test(s) && parseInt(s, 10) >= 0)
+  const includedPropertiesOk = includedIntOk(includedProperties)
+  const includedDriversOk = includedIntOk(includedDrivers)
   const allOk = prefixOk && clientName.trim() && emailOk && expiresOk
     && numOk(customBaseFee) && numOk(customPerProperty) && numOk(customPerDriver)
     && lockInOk
+    && includedPropertiesOk && includedDriversOk
     && overrideValidation.valid
+
+  // B66.7 computed-total guard against fat-finger pricing. Sums what the
+  // customer actually pays at month 1 given the chosen overrides +
+  // included counts. Falls back to tier defaults when override blank.
+  // Returns null when any input is non-numeric (UI suppresses display).
+  const computedMonthlyTotal = (() => {
+    const base = customBaseFee === '' ? tierDefaults.base : Number(customBaseFee)
+    const perProp = customPerProperty === '' ? perPropertyDefault : Number(customPerProperty)
+    const perDrv = tierType === 'enforcement'
+      ? (customPerDriver === '' ? perDriverDefault : Number(customPerDriver))
+      : 0
+    const propQty = includedProperties === '' ? 0 : parseInt(includedProperties, 10)
+    const drvQty = (tierType === 'enforcement' && includedDrivers !== '') ? parseInt(includedDrivers, 10) : 0
+    if ([base, perProp, perDrv, propQty, drvQty].some(n => !Number.isFinite(n))) return null
+    return base + perProp * propQty + perDrv * drvQty
+  })()
 
   async function submit() {
     setErr('')
@@ -145,6 +172,12 @@ export default function NewProposalCode() {
         ? (customPerDriver === '' ? null : Number(customPerDriver))
         : null,
       lock_in_duration: lockInMonths === '' ? null : parseInt(lockInMonths, 10),
+      // B66.7 Option γ: PM track has no per_driver line, so included_drivers
+      // forced NULL there (mirrors custom_per_driver_fee handling above).
+      included_properties: includedProperties === '' ? null : parseInt(includedProperties, 10),
+      included_drivers: tierType === 'enforcement'
+        ? (includedDrivers === '' ? null : parseInt(includedDrivers, 10))
+        : null,
       feature_overrides: overrideValidation.value,
       notes: notes.trim() || null,
       status: 'draft',
@@ -271,6 +304,55 @@ export default function NewProposalCode() {
             placeholder="Leave blank for no lock-in (range 1-36)" style={inp} />
           {!lockInOk && lockInMonths !== '' && (
             <p style={{ color: '#f44336', fontSize: '11px', margin: '-10px 0 14px' }}>Lock-in must be a whole number between 1 and 36 months.</p>
+          )}
+
+          <p style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }}>
+            Included Quantities (B66.7)
+          </p>
+          <p style={{ color: '#555', fontSize: '11px', margin: '0 0 10px' }}>
+            Initial counts billed on the first Stripe invoice. Customer&apos;s rate (from above) applies uniformly to these AND to any future additions.
+          </p>
+
+          <label style={lbl}>Included Properties</label>
+          <input type="number" min={0} step={1} value={includedProperties}
+            onChange={e => setIncludedProperties(e.target.value)}
+            placeholder="e.g. 30" style={inp} />
+          {!includedPropertiesOk && includedProperties !== '' && (
+            <p style={{ color: '#f44336', fontSize: '11px', margin: '-10px 0 14px' }}>Must be a non-negative whole number.</p>
+          )}
+
+          {tierType === 'enforcement' && (
+            <>
+              <label style={lbl}>Included Drivers</label>
+              <input type="number" min={0} step={1} value={includedDrivers}
+                onChange={e => setIncludedDrivers(e.target.value)}
+                placeholder="e.g. 2" style={inp} />
+              {!includedDriversOk && includedDrivers !== '' && (
+                <p style={{ color: '#f44336', fontSize: '11px', margin: '-10px 0 14px' }}>Must be a non-negative whole number.</p>
+              )}
+            </>
+          )}
+
+          {computedMonthlyTotal !== null && (
+            <div style={{ background: '#1a2030', border: '1px solid #3a4055', borderRadius: '8px', padding: '12px 14px', margin: '0 0 14px' }}>
+              <p style={{ color: '#aaa', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>
+                Computed monthly total
+              </p>
+              <p style={{ color: '#C9A227', fontSize: '18px', fontWeight: 'bold', fontFamily: 'Courier New', margin: 0 }}>
+                ${computedMonthlyTotal.toFixed(2)}/mo
+              </p>
+              <p style={{ color: '#666', fontSize: '11px', margin: '6px 0 0', fontFamily: 'Courier New' }}>
+                base ${(customBaseFee === '' ? tierDefaults.base : Number(customBaseFee)).toFixed(2)}
+                {' + '}
+                {includedProperties || 0} prop × ${(customPerProperty === '' ? perPropertyDefault : Number(customPerProperty)).toFixed(2)}
+                {tierType === 'enforcement' && (
+                  <>
+                    {' + '}
+                    {includedDrivers || 0} drv × ${(customPerDriver === '' ? perDriverDefault : Number(customPerDriver)).toFixed(2)}
+                  </>
+                )}
+              </p>
+            </div>
           )}
 
           <p style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }}>

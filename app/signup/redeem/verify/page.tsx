@@ -199,10 +199,43 @@ export default function VerifyLanding() {
     const companyRow = await fetchCompanyBootstrapRowById(companyId)
     await bootstrapCompanyContext(companyRow)
 
+    // B66.7 — kick off Stripe billing via the start-billing route.
+    // Two-branch outcome:
+    //   • charge_automatically → server returns { checkout_url }; we
+    //     redirect the customer to Stripe-hosted Checkout. They pay,
+    //     Stripe redirects to /signup/success, webhook attaches Stripe
+    //     IDs to the (already-created) companies row.
+    //   • send_invoice → server creates customer+subscription directly,
+    //     UPDATEs companies inline, returns { success_redirect } for us
+    //     to navigate to.
+    // On any start-billing failure we fall back to /company_admin so
+    // the customer isn't stranded; an admin can manually attach billing
+    // via SQL Editor + re-issue. The company is already active either
+    // way (RPC flipped account_state); start-billing is the payment
+    // layer on top, not the activation gate.
+    let billingNavTarget: string = '/company_admin'
+    try {
+      const res = await fetch('/api/proposal-codes/start-billing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: Number(companyId) }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) {
+        if (json.checkout_url) billingNavTarget = json.checkout_url
+        else if (json.success_redirect) billingNavTarget = json.success_redirect
+        else if (json.already_billed) billingNavTarget = '/company_admin'
+      } else {
+        console.error('[redeem] start-billing failed; landing on dashboard:', json)
+      }
+    } catch (e) {
+      console.error('[redeem] start-billing threw; landing on dashboard:', e)
+    }
+
     // Atomic RPC has already flipped account_state to 'active'; bootstrap
     // is now populated; the dashboard will render the right tier on first
     // paint with no logout-and-back-in required.
-    window.location.href = '/company_admin'
+    window.location.href = billingNavTarget
   }
 
   // ── RENDER ─────────────────────────────────────────────────────────
