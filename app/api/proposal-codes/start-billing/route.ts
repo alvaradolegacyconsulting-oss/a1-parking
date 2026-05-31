@@ -182,8 +182,12 @@ export async function POST(request: Request) {
         line_items: lineItems,
         success_url: `${origin}/signup/success?session_id={CHECKOUT_SESSION_ID}&proposal_code_id=${code.id}`,
         cancel_url: `${origin}/signup/cancelled`,
+        // customer_email path: Stripe creates the Customer at session
+        // completion and persists the collected address to it
+        // automatically. customer_update is REJECTED without a pre-
+        // existing customer ID — see /api/signup/create-checkout-session
+        // hotfix (latent since B66.9 ship).
         billing_address_collection: 'required',
-        customer_update: { address: 'auto' },
         // Webhook discriminator. checkout-session-completed handler
         // reads proposal_code_id → UPDATE existing companies row.
         metadata: {
