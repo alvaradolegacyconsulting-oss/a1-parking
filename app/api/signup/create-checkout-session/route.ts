@@ -152,12 +152,13 @@ export async function POST() {
       success_url: `${origin}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/signup/cancelled`,
       // B66.9: collect billing address at checkout for audit + cleaner
-      // customer records. customer_update.address: 'auto' persists the
-      // collected address to the Stripe customer record (otherwise it
-      // lives only on the one invoice from this Checkout). Both fields
-      // needed — see B66.9 Step 7 finding (the second-field gotcha).
+      // customer records. With customer_email (no pre-existing customer),
+      // Stripe persists the collected address to the freshly-created
+      // Customer automatically — no customer_update needed (Stripe
+      // rejects customer_update without a pre-existing `customer` ID).
+      // Hotfix surfaced by B66.7 Smoke B; latent since B66.9 ship because
+      // B66.9 Smoke B hit B117 before reaching this Checkout call.
       billing_address_collection: 'required',
-      customer_update: { address: 'auto' },
       metadata: {
         supabase_user_id: user.id,
         intended_tier_json: JSON.stringify(intended),
