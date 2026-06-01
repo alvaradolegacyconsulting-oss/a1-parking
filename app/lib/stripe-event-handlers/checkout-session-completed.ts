@@ -1,6 +1,7 @@
 import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
+import { getStripe } from '../stripe'
 import type { HandlerResult } from './types'
 
 interface IntendedTier {
@@ -10,6 +11,87 @@ interface IntendedTier {
   property_count: number
   driver_count: number
   company_name: string
+}
+
+// ════════════════════════════════════════════════════════════════════
+// B152 — eager-populate the 8 fields normally written by sibling
+// handlers (customer.subscription.created/updated, customer.updated).
+// Removes dependency on Stripe webhook arrival order — the row lands
+// with all 16 fields populated at INSERT/UPDATE time, regardless of
+// whether sibling events have arrived yet.
+//
+// Sibling handlers (handleSubscriptionUpdated, handleCustomerUpdated)
+// remain wired (B151 dispatch entry + existing entries). They become
+// idempotent UPDATE-on-match: when they arrive after eager-populate,
+// they overwrite with the same values (no-op state-wise). When they
+// arrive before checkout.session.completed has INSERTed the row, they
+// SKIP cleanly (no harm — eager will fill on INSERT). The race is
+// neutralized by construction.
+//
+// Graceful degradation: Stripe API retrieve calls are wrapped. If the
+// API hiccups, fields fall back to null and the INSERT still lands
+// with the core 8 fields. Sibling handlers will backfill from the
+// actual webhook events when those events fire. Worst case = current
+// pre-B152 behavior, which is the safety floor.
+// ════════════════════════════════════════════════════════════════════
+interface EagerFields {
+  subscription_status: string | null
+  current_period_end: string | null
+  cancel_at_period_end: boolean | null
+  address: string | null
+  billing_city: string | null
+  billing_state: string | null
+  billing_postal_code: string | null
+  billing_country: string | null
+}
+const EAGER_NULL: EagerFields = {
+  subscription_status: null,
+  current_period_end: null,
+  cancel_at_period_end: null,
+  address: null,
+  billing_city: null,
+  billing_state: null,
+  billing_postal_code: null,
+  billing_country: null,
+}
+
+async function fetchEagerFields(
+  stripeSubId: string,
+  stripeCustomerId: string,
+): Promise<EagerFields> {
+  try {
+    const stripe = getStripe()
+    const [sub, customer] = await Promise.all([
+      stripe.subscriptions.retrieve(stripeSubId, { expand: ['items.data'] }),
+      stripe.customers.retrieve(stripeCustomerId),
+    ])
+    // current_period_end lives on items.data[0] per the API version that
+    // moved it off the Subscription root. Mirrors subscription-updated.ts.
+    const firstItem = sub.items?.data?.[0]
+    const cpeIso = firstItem?.current_period_end
+      ? new Date(firstItem.current_period_end * 1000).toISOString()
+      : null
+    // Customer may rarely come back as a DeletedCustomer if the customer
+    // was deleted between session completion and our retrieve. Type-narrow.
+    const addr = ('address' in customer && !('deleted' in customer && customer.deleted))
+      ? customer.address
+      : null
+    return {
+      subscription_status: sub.status,
+      current_period_end: cpeIso,
+      cancel_at_period_end: sub.cancel_at_period_end,
+      address: addr?.line1 ?? null,
+      billing_city: addr?.city ?? null,
+      billing_state: addr?.state ?? null,
+      billing_postal_code: addr?.postal_code ?? null,
+      billing_country: addr?.country ?? null,
+    }
+  } catch (e) {
+    // Graceful degradation per Jose's build discipline: don't let a Stripe
+    // API hiccup abort the whole INSERT. Sibling handlers backfill.
+    console.error('[checkout-session-completed] B152 eager-populate Stripe retrieve failed — falling back to null fields; sibling handlers will backfill:', (e as Error).message)
+    return EAGER_NULL
+  }
 }
 
 export async function handleCheckoutSessionCompleted(
@@ -95,6 +177,12 @@ export async function handleCheckoutSessionCompleted(
     }
   }
 
+  // ── B152 eager-populate ──────────────────────────────────────────
+  // Retrieve sub + customer from Stripe API BEFORE the INSERT so we
+  // can land all 16 fields atomically. See the header block above for
+  // the race-neutralization rationale.
+  const eager = await fetchEagerFields(stripeSubId, stripeCustomerId)
+
   // ── INSERT companies row ──────────────────────────────────────────
   const { data: company, error: companyErr } = await supabase
     .from('companies')
@@ -107,13 +195,31 @@ export async function handleCheckoutSessionCompleted(
       acquisition_channel: 'self_serve',
       account_state: 'active',
       is_active: true,
+      // B152 — race-resistant initial state.
+      subscription_status: eager.subscription_status,
+      current_period_end: eager.current_period_end,
+      cancel_at_period_end: eager.cancel_at_period_end,
+      address: eager.address,
+      billing_city: eager.billing_city,
+      billing_state: eager.billing_state,
+      billing_postal_code: eager.billing_postal_code,
+      billing_country: eager.billing_country,
     })
-    .select('id')
+    .select('id, subscription_status, current_period_end, cancel_at_period_end, address, billing_city, billing_state, billing_postal_code, billing_country')
     .single()
   if (companyErr || !company) {
     return { ok: false, reason: `companies INSERT failed: ${companyErr?.message ?? 'unknown'}` }
   }
   const companyId = company.id as number
+
+  // Verify-after-write per F6 — eager fields should round-trip.
+  // Mismatch indicates DB-side weirdness; log but continue (sibling
+  // handlers will overwrite with the canonical Stripe values).
+  for (const k of ['subscription_status','current_period_end','cancel_at_period_end','address','billing_city','billing_state','billing_postal_code','billing_country'] as const) {
+    if (eager[k] !== (company as Record<string, unknown>)[k]) {
+      console.error('[checkout-session-completed] B152 verify mismatch', { companyId, field: k, expected: eager[k], actual: (company as Record<string, unknown>)[k] })
+    }
+  }
 
   // ── INSERT user_roles row (company_admin, no property scope) ───────
   const { error: roleErr } = await supabase
@@ -177,12 +283,27 @@ async function handleProposalCodeCompletion(
     return { ok: false, reason: 'session missing customer or subscription ID (incomplete checkout?)' }
   }
 
-  // ── UPDATE the existing companies row with Stripe IDs ──────────────
+  // ── B152 eager-populate (proposal-code path) ───────────────────────
+  // Same rationale as the self-serve branch: race-resistant initial state.
+  // A1's actual production path is proposal-code, so this branch is the
+  // load-bearing one for the first real customer.
+  const eager = await fetchEagerFields(stripeSubId, stripeCustomerId)
+
+  // ── UPDATE the existing companies row with Stripe IDs + eager fields ─
   const { error: updErr } = await supabase
     .from('companies')
     .update({
       stripe_customer_id: stripeCustomerId,
       stripe_subscription_id: stripeSubId,
+      // B152 — race-resistant initial state.
+      subscription_status: eager.subscription_status,
+      current_period_end: eager.current_period_end,
+      cancel_at_period_end: eager.cancel_at_period_end,
+      address: eager.address,
+      billing_city: eager.billing_city,
+      billing_state: eager.billing_state,
+      billing_postal_code: eager.billing_postal_code,
+      billing_country: eager.billing_country,
     })
     .eq('id', companyId)
   if (updErr) {
@@ -196,7 +317,7 @@ async function handleProposalCodeCompletion(
   // success on the UPDATE call itself.
   const { data: verify, error: verifyErr } = await supabase
     .from('companies')
-    .select('id, stripe_customer_id, stripe_subscription_id')
+    .select('id, stripe_customer_id, stripe_subscription_id, subscription_status, current_period_end, cancel_at_period_end, address, billing_city, billing_state, billing_postal_code, billing_country')
     .eq('id', companyId)
     .maybeSingle()
   if (verifyErr || !verify) {
@@ -206,6 +327,13 @@ async function handleProposalCodeCompletion(
     return {
       ok: false,
       reason: `verify-after-write mismatch: expected customer=${stripeCustomerId} sub=${stripeSubId}, got customer=${verify.stripe_customer_id} sub=${verify.stripe_subscription_id}`,
+    }
+  }
+  // B152 — verify-after-write on the eager fields. Log but don't fail
+  // (sibling handlers will overwrite).
+  for (const k of ['subscription_status','current_period_end','cancel_at_period_end','address','billing_city','billing_state','billing_postal_code','billing_country'] as const) {
+    if (eager[k] !== (verify as Record<string, unknown>)[k]) {
+      console.error('[checkout-session-completed] B152 proposal-code verify mismatch', { companyId, field: k, expected: eager[k], actual: (verify as Record<string, unknown>)[k] })
     }
   }
 

@@ -250,12 +250,31 @@ export async function POST(request: Request) {
         },
       })
 
+      // ── B152 — eager-populate sub state ─────────────────────────────
+      // send_invoice path doesn't go through Checkout, so there's no
+      // sibling-webhook race to neutralize for THIS path specifically.
+      // But the columns are the same, and we have the just-created
+      // subscription + customer objects in hand — populating now
+      // eliminates the same partial-state risk that B152 fixes for
+      // the Checkout-driven paths. Customer address is null because
+      // no Checkout collected one; customer.updated handler will
+      // populate later if the customer sets address via Stripe Portal.
+      const firstItem = subscription.items?.data?.[0]
+      const currentPeriodEndIso = firstItem?.current_period_end
+        ? new Date(firstItem.current_period_end * 1000).toISOString()
+        : null
+
       // ── UPDATE companies inline (no webhook for send_invoice path) ─
       const { error: updErr } = await supabase
         .from('companies')
         .update({
           stripe_customer_id: customer.id,
           stripe_subscription_id: subscription.id,
+          // B152 — race-resistant initial state (sub fields only;
+          // address null until customer.updated fires later).
+          subscription_status: subscription.status,
+          current_period_end: currentPeriodEndIso,
+          cancel_at_period_end: subscription.cancel_at_period_end,
         })
         .eq('id', companyId!)
       if (updErr) {
@@ -271,9 +290,13 @@ export async function POST(request: Request) {
       }
 
       // ── Verify-after-write (F6) ───────────────────────────────────
+      // B152: extended verify to cover the 3 eager-populated sub fields.
+      // Mismatch on stripe IDs is fatal (same as before). Mismatch on
+      // sub fields is logged but not fatal — sibling handlers can
+      // overwrite via customer.subscription.updated when state changes.
       const { data: verify } = await supabase
         .from('companies')
-        .select('stripe_customer_id, stripe_subscription_id')
+        .select('stripe_customer_id, stripe_subscription_id, subscription_status, current_period_end, cancel_at_period_end')
         .eq('id', companyId!)
         .maybeSingle()
       if (!verify || verify.stripe_customer_id !== customer.id || verify.stripe_subscription_id !== subscription.id) {
@@ -281,6 +304,15 @@ export async function POST(request: Request) {
           companyId, expectedCustomer: customer.id, expectedSub: subscription.id, actual: verify,
         })
         return NextResponse.json({ error: 'verify-after-write mismatch on send_invoice path' }, { status: 500 })
+      }
+      if (verify.subscription_status !== subscription.status
+        || verify.current_period_end !== currentPeriodEndIso
+        || verify.cancel_at_period_end !== subscription.cancel_at_period_end) {
+        console.error('[start-billing] send_invoice: B152 eager-fields verify mismatch (non-fatal)', {
+          companyId,
+          expected: { subscription_status: subscription.status, current_period_end: currentPeriodEndIso, cancel_at_period_end: subscription.cancel_at_period_end },
+          actual: { subscription_status: verify.subscription_status, current_period_end: verify.current_period_end, cancel_at_period_end: verify.cancel_at_period_end },
+        })
       }
 
       return NextResponse.json({
