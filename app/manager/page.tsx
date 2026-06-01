@@ -577,6 +577,10 @@ export default function ManagerPortal() {
         // throwing, so an explicit catch isn't needed; we just don't
         // surface the result.
         await supabase.from('residents').delete().ilike('email', targetEmail).ilike('property', manager.name)
+        // B150 — same lifecycle cascade as deactivateResident. Gate-check
+        // ensures we only archive vehicles if NO other active resident
+        // remains at the tuple (handles roommate case).
+        await cascadeVehiclesIfUnitVacant(newResident.unit, manager.name, 'ADD_RESIDENT_ROLLBACK')
       }
       alert('Could not complete resident setup: ' + msg + '\n\nThe login account has been deactivated. Try again or contact support.')
       return
@@ -617,9 +621,44 @@ export default function ManagerPortal() {
 
   async function deactivateResident(id: string) {
     if (!confirm('Deactivate this resident?')) return
+    // B150 — lookup (unit, property) BEFORE deactivation so we can run
+    // the cascade gate-check afterward against current occupancy state.
+    const { data: r } = await supabase.from('residents').select('unit, property').eq('id', id).maybeSingle()
     await supabase.from('residents').update({ is_active: false }).eq('id', id)
     await logAudit({ action: 'DEACTIVATE_RESIDENT', table_name: 'residents', record_id: id, new_values: { is_active: false, property: manager.name } })
+    await cascadeVehiclesIfUnitVacant(r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
     fetchResidents(manager.name)
+  }
+
+  // B150 — vehicle-lifecycle cascade. Fires when the LAST active resident
+  // at a (unit, property) tuple leaves. Roommate-safe: gate-check counts
+  // active residents remaining at the tuple; cascade only runs when 0.
+  // No schema change — flips vehicles.is_active=false, which the resident-
+  // portal fetchVehicles filter (now explicit .eq('is_active', true))
+  // honors, hiding archived vehicles from the next resident at the unit.
+  async function cascadeVehiclesIfUnitVacant(unit: string | null | undefined, property: string | null | undefined, sourceAction: string) {
+    if (!unit || !property) return
+    const { count: othersStillActive } = await supabase
+      .from('residents')
+      .select('id', { count: 'exact', head: true })
+      .ilike('unit', unit)
+      .ilike('property', property)
+      .eq('is_active', true)
+    if (othersStillActive !== 0) return  // roommate still occupies unit
+    const { data: archived } = await supabase
+      .from('vehicles')
+      .update({ is_active: false })
+      .ilike('unit', unit)
+      .ilike('property', property)
+      .eq('is_active', true)
+      .select('id, plate')
+    if (archived && archived.length > 0) {
+      await logAudit({
+        action: 'CASCADE_DEACTIVATE_VEHICLES',
+        table_name: 'vehicles',
+        new_values: { reason: 'B150_lifecycle_cascade', source: sourceAction, unit, property, vehicle_count: archived.length, plates: archived.map(v => v.plate) },
+      })
+    }
   }
 
   async function fetchActivityLogs() {

@@ -111,11 +111,19 @@ export default function ResidentPortal() {
   }
 
   async function fetchVehicles(unit: string, property: string) {
+    // B150: explicit is_active filter. Resident-portal render does NOT
+    // client-side filter on is_active (line 605 renders all vehicles
+    // from state; line 543 only consults is_active for badge color).
+    // Without this filter, B150's move-out cascade (which flips
+    // is_active=false on prior-tenant vehicles when the last resident
+    // at a unit leaves) would leave archived vehicles visible to the
+    // next resident with just an "Inactive" badge — not hidden.
     const { data } = await supabase
       .from('vehicles')
       .select('*')
       .ilike('unit', unit)
       .ilike('property', property)
+      .eq('is_active', true)
     const vehs = data || []
     const spaceNumbers = vehs.map((v: any) => v.space).filter(Boolean)
     if (spaceNumbers.length > 0) {

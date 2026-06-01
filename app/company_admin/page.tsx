@@ -781,6 +781,38 @@ export default function CompanyAdminPortal() {
         }).catch(() => {})
         if (residentInserted) {
           await supabase.from('residents').delete().ilike('email', targetEmail)
+          // B150 — vehicle-lifecycle cascade on rollback delete. Gate-check
+          // counts active residents remaining at the tuple; cascade only
+          // fires when 0 (roommate-safe). For CA-created residents, unit
+          // is hardcoded '' (line 764) so this is usually a no-op, but
+          // applying for spec consistency + future-proofing if the form
+          // gains a unit input.
+          const cascadeUnit = ''
+          const cascadeProperty = propertyArray[0] || null
+          if (cascadeProperty) {
+            const { count: othersStillActive } = await supabase
+              .from('residents')
+              .select('id', { count: 'exact', head: true })
+              .ilike('unit', cascadeUnit)
+              .ilike('property', cascadeProperty)
+              .eq('is_active', true)
+            if (othersStillActive === 0) {
+              const { data: archived } = await supabase
+                .from('vehicles')
+                .update({ is_active: false })
+                .ilike('unit', cascadeUnit)
+                .ilike('property', cascadeProperty)
+                .eq('is_active', true)
+                .select('id, plate')
+              if (archived && archived.length > 0) {
+                await auditLog('CASCADE_DEACTIVATE_VEHICLES', 'vehicles', '', {
+                  reason: 'B150_lifecycle_cascade', source: 'CA_ADD_RESIDENT_ROLLBACK',
+                  unit: cascadeUnit, property: cascadeProperty,
+                  vehicle_count: archived.length, plates: archived.map(v => v.plate),
+                })
+              }
+            }
+          }
         }
         setUserMsg('Could not complete resident setup: ' + msg + '. Login account deactivated.')
         return
