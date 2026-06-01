@@ -66,8 +66,16 @@ export default function ForgotPassword() {
                 <p style={{ color: '#f44336', fontSize: 13, margin: 0 }}>{error}</p>
               </div>
             )}
-            <p style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.6, margin: '0 0 16px' }}>
+            <p style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.6, margin: '0 0 12px' }}>
               Enter your account email and we&apos;ll send you a link to reset your password.
+            </p>
+            {/* B117 Rec A (reset-password variant) — same-browser guidance.
+                Pre-link-issuance preemption: tells the user upfront that the
+                recovery link is browser-context-bound (PKCE code_verifier),
+                avoiding the most common B117 failure mode where the user
+                clicks the link in a different browser than they started in. */}
+            <p style={{ color: '#fbbf24', fontSize: 12, lineHeight: 1.5, margin: '0 0 16px', padding: '8px 10px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 6 }}>
+              Open the reset link in this same browser — links don&apos;t work across browsers or after switching to incognito.
             </p>
             <div style={{ marginBottom: 16 }}>
               <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Email</label>

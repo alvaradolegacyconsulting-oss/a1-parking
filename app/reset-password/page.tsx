@@ -175,9 +175,17 @@ export default function ResetPassword() {
 
         {status.kind === 'no_session' && (
           <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 12, padding: 28, textAlign: 'center' }}>
-            <h2 style={{ color: GOLD, fontSize: 18, fontWeight: 700, margin: '0 0 10px' }}>Reset link expired or invalid</h2>
+            <h2 style={{ color: GOLD, fontSize: 18, fontWeight: 700, margin: '0 0 10px' }}>Reset link couldn&apos;t be verified</h2>
+            {/* B117 Rec A (reset-password variant) — after-the-fact recovery
+                copy. Names the most common B117 failure mode (cross-browser
+                link click loses PKCE code_verifier) and gives an actionable
+                path. Pairs with the pre-link-issuance guidance on
+                /forgot-password (same commit). */}
+            <p style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.6, margin: '0 0 12px' }}>
+              The reset link must be opened in the same browser you started from. Switching browsers (or using incognito after starting in a regular window) breaks it.
+            </p>
             <p style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.6, margin: '0 0 20px' }}>
-              The reset link couldn&apos;t be verified. It may have expired (links are valid for a limited time) or already been used.
+              If you opened it elsewhere, request a new link and click it in the same browser this time. The link may also have expired or already been used.
             </p>
             <a href="/forgot-password" style={{ display: 'inline-block', background: GOLD, color: '#0a0d14', borderRadius: 8, padding: '10px 16px', textDecoration: 'none', fontSize: 13, fontWeight: 700, marginRight: 10 }}>Request a new link</a>
             <a href="/login" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Sign in</a>
