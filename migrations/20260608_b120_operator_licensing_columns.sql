@@ -1,0 +1,114 @@
+-- ════════════════════════════════════════════════════════════════════
+-- B120 — Operator licensing data scaffolding
+-- Drafted: 2026-05-31 — NOT YET APPLIED.
+--
+-- Adds 2 nullable TEXT columns to support TDLR (Texas Department of
+-- Licensing & Regulation) tow-company license numbers on companies +
+-- VSF (Vehicle Storage Facility) license numbers on storage_facilities.
+-- These get displayed conditionally on the live driver-portal tow
+-- ticket (when populated) so customers see the licensing details that
+-- become legally required at activation.
+--
+-- ── SCOPE FENCE (intentional, per attorney-gate posture) ────────────
+-- All fields are OPTIONAL / nullable / conditional-render. NO:
+--   • format/regex validation
+--   • enforcement (NOT NULL)
+--   • mandatory tow-ticket display ("Not on file" placeholder)
+-- Those activation pieces are attorney-gated — they ship as a clean
+-- future change (optional→required, plus regex), not bundled here.
+-- Commit is tagged dormant-pending-attorney-input.
+--
+-- Driver tow-operator license: REUSES existing drivers.operator_license
+-- column. Semantic re-verified — already labeled "Operator License" at
+-- all CA + admin edit sites; already displayed as "License #" under
+-- "TOW OPERATOR" section of the tow ticket. NOT adding a new column.
+--
+-- ── PARTS ───────────────────────────────────────────────────────────
+--   1. companies.tdlr_license_number TEXT NULL
+--   2. storage_facilities.vsf_license_number TEXT NULL
+--
+-- Both nullable. No CHECK constraint (no format gate today; attorney
+-- decides format constraints at activation). No DEFAULT.
+--
+-- ── DEPENDENCIES (assumed; verify via post-apply probe) ─────────────
+-- • companies table exists with CA-editable RLS pattern.
+-- • storage_facilities table exists with admin-editable RLS pattern.
+-- • Both tables use row-level (not column-level) RLS — nullable column
+--   additions inherit the existing row policies transparently.
+--
+-- ── RLS POST-APPLY PROBE (post-apply verification) ──────────────────
+-- After apply, the build script runs a probe confirming a CA can
+-- UPDATE companies.tdlr_license_number (own row) + admin can UPDATE
+-- storage_facilities.vsf_license_number (any row). Captures the
+-- "column-level surprise" failure mode if Postgres or Supabase added
+-- a column-grant default we didn't expect.
+--
+-- ── FORWARD-NOTES (attorney-activation phase, NOT this commit) ──────
+-- (a) When VSF/TDLR become REQUIRED at activation, CA admins will
+--     need facility-edit UI. Today CA can only ADD facilities; subsequent
+--     edits live in /admin (super-admin only). That gap closes at
+--     activation — file as a B120 follow-up triggered by attorney sign-off.
+-- (b) The live tow ticket reads current TDLR/VSF at print time. Whether
+--     a tow ticket should instead SNAPSHOT license values at tow-ticket
+--     generation time (for legal-accuracy — preserving exactly what was
+--     printed on the issued ticket regardless of subsequent edits) is
+--     a legal-accuracy question that may intersect the attorney 4-
+--     questions. Revisit at activation.
+--
+-- ── DELIBERATELY OUT OF SCOPE ────────────────────────────────────────
+-- • Driver self-edit of operator_license — no driver-portal edit UI
+--   exists today (read-only badge at driver/page.tsx:911); adding a
+--   new driver-profile edit screen is its own scoped feature.
+-- • CA-side facility edit UI — pre-existing scope gap; not B120's.
+-- • Historical tow-ticket reprints in CA portal — pre-B120 violations
+--   didn't snapshot license fields, so retroactively rendering them
+--   would either show '—' always (noisy) or require backfill columns.
+-- • Backfill A1's actual TDLR # + VSF # values — Jose collects + direct-
+--   SQL pre-launch.
+--
+-- ── APPLY DISCIPLINE ────────────────────────────────────────────────
+-- SINGLE-PASTE SINGLE-RUN. Paste entire file as ONE block in the
+-- Supabase SQL Editor, click Run ONCE. BEGIN/COMMIT atomic — any
+-- failure rolls back the entire migration. Both DDL idempotent via
+-- IF NOT EXISTS. Safe to re-apply.
+-- ════════════════════════════════════════════════════════════════════
+
+BEGIN;
+
+ALTER TABLE companies
+  ADD COLUMN IF NOT EXISTS tdlr_license_number TEXT;
+
+ALTER TABLE storage_facilities
+  ADD COLUMN IF NOT EXISTS vsf_license_number TEXT;
+
+COMMIT;
+
+-- ════════════════════════════════════════════════════════════════════
+-- VERIFICATION QUERIES (run after migration applies)
+--
+-- ── A. Both columns present + types correct ─────────────────────────
+--   SELECT table_name, column_name, data_type, is_nullable, column_default
+--   FROM information_schema.columns
+--   WHERE table_schema = 'public'
+--     AND (
+--       (table_name = 'companies'           AND column_name = 'tdlr_license_number')
+--       OR
+--       (table_name = 'storage_facilities'  AND column_name = 'vsf_license_number')
+--     )
+--   ORDER BY table_name, column_name;
+--   -- Expected 2 rows, both: text | YES | (null)
+--
+-- ── B. Existing rows unaffected (sanity: all rows have NULL on new column) ──
+--   SELECT COUNT(*) AS total, COUNT(tdlr_license_number) AS non_null
+--   FROM companies;
+--   -- Expected: non_null=0 (no backfill in this migration).
+--
+--   SELECT COUNT(*) AS total, COUNT(vsf_license_number) AS non_null
+--   FROM storage_facilities;
+--   -- Expected: non_null=0.
+--
+-- ── C. RLS probe (post-build, runs from a smoke script) ─────────────
+-- Confirms CA can UPDATE companies.tdlr_license_number on own row +
+-- admin can UPDATE storage_facilities.vsf_license_number on any row.
+-- Script: scripts/_b120_rls_probe.ts (throwaway, deleted after smoke).
+-- ════════════════════════════════════════════════════════════════════

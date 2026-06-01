@@ -19,7 +19,7 @@ export default function AdminPortal() {
   const [companySearch, setCompanySearch] = useState('')
   const [showAddCompany, setShowAddCompany] = useState(false)
   const [editingCompany, setEditingCompany] = useState<any>(null)
-  const [newCompany, setNewCompany] = useState({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy', theme:'gold' })
+  const [newCompany, setNewCompany] = useState({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy', theme:'gold', tdlr_license_number:'' })
 
   const [properties, setProperties] = useState<any[]>([])
   const [propertySearch, setPropertySearch] = useState('')
@@ -49,7 +49,7 @@ export default function AdminPortal() {
   const [facilitySearch, setFacilitySearch] = useState('')
   const [showAddFacility, setShowAddFacility] = useState(false)
   const [editingFacility, setEditingFacility] = useState<any>(null)
-  const [newFacility, setNewFacility] = useState({ name:'', address:'', phone:'', email:'', is_active:true })
+  const [newFacility, setNewFacility] = useState({ name:'', address:'', phone:'', email:'', is_active:true, vsf_license_number:'' })
 
   const [resetPwTarget, setResetPwTarget] = useState<string | null>(null)
   const [resetPwForm, setResetPwForm] = useState({ newPw: '', confirmPw: '' })
@@ -223,7 +223,7 @@ export default function AdminPortal() {
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'ADD_COMPANY', 'companies', data.id, newCompany)
     setShowAddCompany(false)
-    setNewCompany({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy', theme:'gold' })
+    setNewCompany({ name:'', address:'', phone:'', email:'', is_active:true, display_name:'', logo_url:'', support_phone:'', support_email:'', support_website:'', tier_type:'enforcement', tier:'legacy', theme:'gold', tdlr_license_number:'' })
     fetchCompanies()
   }
 
@@ -235,7 +235,8 @@ export default function AdminPortal() {
       support_phone: editingCompany.support_phone || null, support_email: editingCompany.support_email || null,
       support_website: editingCompany.support_website || null,
       tier_type: editingCompany.tier_type || 'enforcement', tier: editingCompany.tier || 'legacy',
-      theme: editingCompany.theme || 'gold'
+      theme: editingCompany.theme || 'gold',
+      tdlr_license_number: editingCompany.tdlr_license_number || null,
     }).eq('id', editingCompany.id)
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'EDIT_COMPANY', 'companies', editingCompany.id, editingCompany)
@@ -656,14 +657,15 @@ export default function AdminPortal() {
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'ADD_FACILITY', 'storage_facilities', data.id, newFacility)
     setShowAddFacility(false)
-    setNewFacility({ name:'', address:'', phone:'', email:'', is_active:true })
+    setNewFacility({ name:'', address:'', phone:'', email:'', is_active:true, vsf_license_number:'' })
     fetchFacilities()
   }
 
   async function saveFacility() {
     const { error } = await supabase.from('storage_facilities').update({
       name: editingFacility.name, address: editingFacility.address,
-      phone: editingFacility.phone, email: editingFacility.email, is_active: editingFacility.is_active
+      phone: editingFacility.phone, email: editingFacility.email, is_active: editingFacility.is_active,
+      vsf_license_number: editingFacility.vsf_license_number || null,
     }).eq('id', editingFacility.id)
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'EDIT_FACILITY', 'storage_facilities', editingFacility.id, editingFacility)
@@ -794,6 +796,8 @@ export default function AdminPortal() {
                 <label style={lbl}>Support Phone</label><input value={newCompany.support_phone} onChange={e => setNewCompany({...newCompany, support_phone: e.target.value})} placeholder="346-428-7864" style={inp} />
                 <label style={lbl}>Support Email</label><input value={newCompany.support_email} onChange={e => setNewCompany({...newCompany, support_email: e.target.value})} placeholder="support@company.com" style={inp} />
                 <label style={lbl}>Support Website</label><input value={newCompany.support_website} onChange={e => setNewCompany({...newCompany, support_website: e.target.value})} placeholder="company.com" style={inp} />
+                <label style={lbl}>TDLR License Number (optional)</label>
+                <input value={newCompany.tdlr_license_number} onChange={e => setNewCompany({...newCompany, tdlr_license_number: e.target.value})} placeholder="Texas tow-company license #" style={inp} />
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                   <div>
                     <label style={lbl}>Account Type</label>
@@ -850,6 +854,8 @@ export default function AdminPortal() {
                 <label style={lbl}>Support Phone</label><input value={editingCompany.support_phone || ''} onChange={e => setEditingCompany({...editingCompany, support_phone: e.target.value})} placeholder="346-428-7864" style={inp} />
                 <label style={lbl}>Support Email</label><input value={editingCompany.support_email || ''} onChange={e => setEditingCompany({...editingCompany, support_email: e.target.value})} placeholder="support@company.com" style={inp} />
                 <label style={lbl}>Support Website</label><input value={editingCompany.support_website || ''} onChange={e => setEditingCompany({...editingCompany, support_website: e.target.value})} placeholder="company.com" style={inp} />
+                <label style={lbl}>TDLR License Number (optional)</label>
+                <input value={editingCompany.tdlr_license_number || ''} onChange={e => setEditingCompany({...editingCompany, tdlr_license_number: e.target.value})} placeholder="Texas tow-company license #" style={inp} />
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                   <div>
                     <label style={lbl}>Account Type</label>
@@ -1428,6 +1434,8 @@ export default function AdminPortal() {
                   <div><label style={lbl}>Phone</label><input value={newFacility.phone} onChange={e => setNewFacility({...newFacility, phone: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>Email</label><input value={newFacility.email} onChange={e => setNewFacility({...newFacility, email: e.target.value})} style={inp} /></div>
                 </div>
+                <label style={lbl}>VSF License Number (optional)</label>
+                <input value={newFacility.vsf_license_number} onChange={e => setNewFacility({...newFacility, vsf_license_number: e.target.value})} placeholder="Vehicle Storage Facility license #" style={inp} />
                 <label style={lbl}>Active</label>
                 <select value={newFacility.is_active ? 'true' : 'false'} onChange={e => setNewFacility({...newFacility, is_active: e.target.value === 'true'})} style={inp}>
                   <option value="true">Yes</option><option value="false">No</option>
@@ -1448,6 +1456,8 @@ export default function AdminPortal() {
                   <div><label style={lbl}>Phone</label><input value={editingFacility.phone || ''} onChange={e => setEditingFacility({...editingFacility, phone: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>Email</label><input value={editingFacility.email || ''} onChange={e => setEditingFacility({...editingFacility, email: e.target.value})} style={inp} /></div>
                 </div>
+                <label style={lbl}>VSF License Number (optional)</label>
+                <input value={editingFacility.vsf_license_number || ''} onChange={e => setEditingFacility({...editingFacility, vsf_license_number: e.target.value})} placeholder="Vehicle Storage Facility license #" style={inp} />
                 <label style={lbl}>Active</label>
                 <select value={editingFacility.is_active ? 'true' : 'false'} onChange={e => setEditingFacility({...editingFacility, is_active: e.target.value === 'true'})} style={inp}>
                   <option value="true">Yes</option><option value="false">No</option>

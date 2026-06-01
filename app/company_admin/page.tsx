@@ -152,7 +152,9 @@ export default function CompanyAdminPortal() {
 
   const [allFacilities, setAllFacilities] = useState<any[]>([])
   const [showAddFacility, setShowAddFacility] = useState(false)
-  const [newFacility, setNewFacility] = useState({ name: '', address: '', phone: '', email: '' })
+  // B120: vsf_license_number captured on CA add (display via Manage>Storage list).
+  // CA edit of facilities is a pre-existing scope gap; admin portal handles edits.
+  const [newFacility, setNewFacility] = useState({ name: '', address: '', phone: '', email: '', vsf_license_number: '' })
   const [facilityMsg, setFacilityMsg] = useState('')
   const [companyAuditLogs, setCompanyAuditLogs] = useState<any[]>([])
   const [auditDateFilter, setAuditDateFilter] = useState('week')
@@ -889,12 +891,14 @@ export default function CompanyAdminPortal() {
     setFacilityMsg('Creating...')
     const { data, error: insErr } = await supabase.from('storage_facilities').insert([{
       name: newFacility.name, address: newFacility.address,
-      phone: newFacility.phone || null, email: newFacility.email || null, is_active: true
+      phone: newFacility.phone || null, email: newFacility.email || null,
+      vsf_license_number: newFacility.vsf_license_number || null,
+      is_active: true
     }]).select().single()
     if (insErr) { setFacilityMsg('Error: ' + insErr.message); return }
     await auditLog('create_facility', 'storage_facilities', data.id, newFacility)
     setFacilityMsg('Facility added!')
-    setNewFacility({ name: '', address: '', phone: '', email: '' })
+    setNewFacility({ name: '', address: '', phone: '', email: '', vsf_license_number: '' })
     setShowAddFacility(false)
     fetchAllFacilitiesManage()
     fetchStorageFacilities()
@@ -2983,6 +2987,8 @@ export default function CompanyAdminPortal() {
                     <input value={newFacility.phone} onChange={e => setNewFacility({ ...newFacility, phone: e.target.value })} placeholder="(713) 555-0100" style={inp} />
                     <label style={lbl}>Email</label>
                     <input type="email" value={newFacility.email} onChange={e => setNewFacility({ ...newFacility, email: e.target.value })} placeholder="storage@example.com" style={inp} />
+                    <label style={lbl}>VSF License Number (optional)</label>
+                    <input value={newFacility.vsf_license_number} onChange={e => setNewFacility({ ...newFacility, vsf_license_number: e.target.value })} placeholder="Vehicle Storage Facility license #" style={inp} />
                     <div style={{ display:'flex', gap:'8px' }}>
                       <button onClick={createFacility} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Add Facility</button>
                       <button onClick={() => { setShowAddFacility(false); setFacilityMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
@@ -2998,6 +3004,7 @@ export default function CompanyAdminPortal() {
                         <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{f.address}</p>
                         {f.phone && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{f.phone}</p>}
                         {f.email && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{f.email}</p>}
+                        {f.vsf_license_number && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>VSF #: {f.vsf_license_number}</p>}
                       </div>
                       <span style={{ background: f.is_active ? '#1a3a1a' : '#2a1a1a', color: f.is_active ? '#4caf50' : '#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
                         {f.is_active ? 'Active' : 'Inactive'}

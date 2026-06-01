@@ -17,6 +17,10 @@ import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBan
 
 export default function DriverPortal() {
   const [driver, setDriver] = useState<any>(null)
+  // B120: tow company's TDLR # (fetched alongside driver; rendered conditionally
+  // under TOW OPERATOR section on the live tow ticket). Stays null when the
+  // company hasn't entered one yet — render code hides the row entirely.
+  const [companyTdlr, setCompanyTdlr] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   // B66.5 commit 4.3: past_due banner state (null = no banner; populated = render).
@@ -117,6 +121,17 @@ export default function DriverPortal() {
     if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
 
     setDriver(d)
+    // B120: fetch the driver's company TDLR # for the tow-ticket render.
+    // Driver carries `company` as a string name; companies.name match
+    // (case-insensitive) yields tdlr_license_number when populated.
+    if (d.company) {
+      const { data: companyRow } = await supabase
+        .from('companies')
+        .select('tdlr_license_number')
+        .ilike('name', d.company)
+        .maybeSingle()
+      setCompanyTdlr(companyRow?.tdlr_license_number ?? null)
+    }
     const assignableProps = (d.assigned_properties || []).filter((p: string) => p !== 'All')
     if (assignableProps.length === 1) setSelectedProperty(assignableProps[0])
     setLoading(false)
@@ -678,11 +693,15 @@ export default function DriverPortal() {
       `Facility: ${storage?.name || '—'}`,
       `Address: ${storage?.address || '—'}`,
       `Phone: ${storage?.phone || '—'}`,
+      // B120: VSF # rendered only when populated on storage_facilities.
+      ...(storage?.vsf_license_number ? [`VSF #: ${storage.vsf_license_number}`] : []),
       ``,
       `TOW OPERATOR`,
       `Name: ${driver?.name || '—'}`,
       `License #: ${driver?.operator_license || '—'}`,
       `Company: ${driver?.company || 'A1 Wrecker, LLC'}`,
+      // B120: TDLR # rendered only when populated on companies.
+      ...(companyTdlr ? [`TDLR #: ${companyTdlr}`] : []),
       ``,
       `FEES`,
       `Tow Fee: $${parseFloat(towFee || '0').toFixed(2)}`,
@@ -753,6 +772,7 @@ export default function DriverPortal() {
           <div class="f"><label>Operator Name</label><span>${driver?.name || '—'}</span></div>
           <div class="f"><label>License #</label><span>${driver?.operator_license || '—'}</span></div>
           <div class="f"><label>Company</label><span>${driver?.company || 'A1 Wrecker, LLC'}</span></div>
+          ${companyTdlr ? `<div class="f"><label>TDLR #</label><span>${companyTdlr}</span></div>` : ''}
         </div>
       </div>
       <div class="sec">
@@ -761,6 +781,7 @@ export default function DriverPortal() {
           <div class="f"><label>Facility</label><span>${storage?.name || '—'}</span></div>
           <div class="f"><label>Phone</label><span>${storage?.phone || '—'}</span></div>
           <div class="f" style="grid-column:span 2"><label>Address</label><span>${storage?.address || '—'}</span></div>
+          ${storage?.vsf_license_number ? `<div class="f"><label>VSF #</label><span>${storage.vsf_license_number}</span></div>` : ''}
         </div>
       </div>
       ${(parseFloat(towFee || '0') > 0 || parseFloat(mileage || '0') > 0) ? `
