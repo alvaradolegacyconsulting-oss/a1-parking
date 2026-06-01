@@ -38,6 +38,16 @@ export type { HandlerResult, SyncResult, SkipResult, EventResult, EventHandler }
 export const dispatch: Record<string, EventHandler> = {
   'checkout.session.completed':
     (e) => handleCheckoutSessionCompleted(e as Stripe.CheckoutSessionCompletedEvent),
+  // B151 — initial subscription creation fires customer.subscription.created
+  // (NOT customer.subscription.updated). Stripe only fires `updated` on
+  // subsequent state changes. Without this entry, subscription_status /
+  // current_period_end / cancel_at_period_end stay NULL after first txn.
+  // handleSubscriptionUpdated accepts either event shape — both carry a
+  // Stripe.Subscription as data.object with identical field layout, and
+  // the handler reads sub.status / sub.cancel_at_period_end /
+  // sub.items.data[0].current_period_end (see subscription-updated.ts:51).
+  'customer.subscription.created':
+    (e) => handleSubscriptionUpdated(e as Stripe.CustomerSubscriptionUpdatedEvent),
   'customer.subscription.updated':
     (e) => handleSubscriptionUpdated(e as Stripe.CustomerSubscriptionUpdatedEvent),
   'customer.subscription.deleted':
