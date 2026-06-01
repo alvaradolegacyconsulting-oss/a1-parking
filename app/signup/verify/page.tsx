@@ -268,10 +268,16 @@ function UnverifiedCard({ otpEmail, otpToken, otpSubmitting, otpError, onEmailCh
     <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 28 }}>
       <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>📧</div>
       <h2 style={{ color: GOLD, fontSize: 20, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>Verify your email to continue</h2>
+      {/* B117 C-token Phase 1 regression-repair: bridges the pre-template
+          window (email contains only a PKCE link, no code) AND the post-
+          template window (email contains a numeric code). Reads sensibly
+          in either era; preserves the Rec A same-browser context for the
+          cross-browser PKCE failure mode (this card's most common cause). */}
       <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 18px' }}>
-        Enter the verification code from your email below. If you clicked the link instead and
-        landed here, the link may have been opened in a different browser than you signed up in —
-        the code path still works from any browser.
+        If your email includes a verification code, enter it below — the code path works from any
+        browser. If you only see a link, it must be opened in the same browser you used to sign up
+        (switching browsers, or using incognito after a regular window, breaks the link). Don&apos;t see a
+        code and your link didn&apos;t work? Click <strong>Restart signup</strong> below.
       </p>
 
       {/* B117 C-token Phase 1 — OTP entry form. Token-only path; works from
