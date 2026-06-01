@@ -10,8 +10,38 @@
 // PKCE detection pattern mirrors /signup/redeem/verify (B65.4): listen
 // to onAuthStateChange + initial getSession() in parallel; 4s fallback
 // timeout to surface "unverified" state if no session minted.
+//
+// ── B117 C-TOKEN PHASE 1 (dual handler — hybrid-template window) ─────
+// This page now handles BOTH:
+//   • PKCE link click — existing path. Auto-exchange via
+//     detectSessionInUrl + onAuthStateChange. Required for in-flight
+//     emails carrying {{ .ConfirmationURL }}.
+//   • Token-only OTP entry — new path. User pastes the 6-8 digit token
+//     from the email; we call supabase.auth.verifyOtp({email, token,
+//     type: 'signup'}) and feed the returned User through the same
+//     downstream flow (attestation + ready card).
+//
+// Both paths converge on the same processVerifiedUser() function below;
+// the OTP path bypasses the useEffect's `resolved` flag by calling
+// processVerifiedUser directly with the User object verifyOtp returned.
+//
+// Pre-flight proof (C1 + C2, 10/10 green): intended_tier user_metadata
+// survives verifyOtp intact; email_confirmed_at populated identically
+// to PKCE path. Downstream gates (B66.3 create-checkout-session,
+// /api/signup/attest) accept either path.
+//
+// Rollout: pattern (1) hybrid-template window. Deploy this dual-handler
+// build → 1h wait for PKCE links to TTL out → Supabase template switches
+// to hybrid (link + token in same body) → 24-72h soak → switch to token-
+// only → cleanup commit removes PKCE handler. PKCE handler stays in
+// place for in-flight emails through the soak.
+//
+// Security framing: keeping both paths during rollout is safe; the
+// low-value-surface justification for OTP-on-signup (compromised OTP
+// yields half-created account with no data) holds independently of
+// which path the user actually takes.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../supabase'
 import { TIER_PRICING } from '../../lib/tier-config'
@@ -46,47 +76,64 @@ export default function SignupVerify() {
   const [attesting, setAttesting] = useState(false)
   const [proceeding, setProceeding] = useState(false)
 
+  // B117 C-token OTP form state. Email pre-fills from ?email= URL param
+  // (set by the new email template), but user can override.
+  const [otpEmail, setOtpEmail] = useState('')
+  const [otpToken, setOtpToken] = useState('')
+  const [otpSubmitting, setOtpSubmitting] = useState(false)
+  const [otpError, setOtpError] = useState('')
+
+  // Shared post-verification flow — used by both PKCE auto-exchange
+  // (via useEffect) and OTP submit (via submitOtp). Single source of
+  // truth for: tier metadata read, attestation POST, ready transition.
+  const processVerifiedUser = useCallback(async (user: User): Promise<void> => {
+    const meta = (user.user_metadata || {}) as Record<string, unknown>
+    const intendedRaw = meta.intended_tier
+    if (!intendedRaw || typeof intendedRaw !== 'object') {
+      setStatus({ kind: 'missing_tier' })
+      return
+    }
+    const intended = intendedRaw as IntendedTier
+
+    // Record the Texas attestation. /api/signup/attest is idempotent
+    // (matches on user_id + document_type + version) so a refresh OR
+    // a PKCE-then-OTP retry doesn't duplicate.
+    setAttesting(true)
+    try {
+      const res = await fetch('/api/signup/attest', { method: 'POST' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setStatus({ kind: 'attest_error', message: body.error || res.statusText })
+        setAttesting(false)
+        return
+      }
+    } catch (e) {
+      setStatus({ kind: 'attest_error', message: (e as Error).message })
+      setAttesting(false)
+      return
+    }
+    setAttesting(false)
+    setStatus({ kind: 'ready', user, tier: intended })
+  }, [])
+
+  // PKCE path — auto-exchange via detectSessionInUrl + onAuthStateChange.
   useEffect(() => {
     let resolved = false
     let cancelled = false
+
+    // Pre-fill OTP email from URL param if present (new template includes it).
+    try {
+      const url = new URL(window.location.href)
+      const e = url.searchParams.get('email')
+      if (e) setOtpEmail(e.trim().toLowerCase())
+    } catch { /* SSR safety */ }
 
     async function onSession(session: Session | null) {
       if (resolved || cancelled) return
       const user = session?.user
       if (!user?.email_confirmed_at) return
       resolved = true
-
-      const meta = (user.user_metadata || {}) as Record<string, unknown>
-      const intendedRaw = meta.intended_tier
-      if (!intendedRaw || typeof intendedRaw !== 'object') {
-        setStatus({ kind: 'missing_tier' })
-        return
-      }
-      const intended = intendedRaw as IntendedTier
-
-      // Record the Texas attestation. /api/signup/attest is idempotent
-      // (matches on user_id + document_type + version) so a refresh
-      // doesn't duplicate. Failures bubble to attest_error state — the
-      // user can retry by refreshing the page.
-      setAttesting(true)
-      try {
-        const res = await fetch('/api/signup/attest', { method: 'POST' })
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
-          setStatus({ kind: 'attest_error', message: body.error || res.statusText })
-          setAttesting(false)
-          return
-        }
-      } catch (e) {
-        setStatus({ kind: 'attest_error', message: (e as Error).message })
-        setAttesting(false)
-        return
-      }
-      setAttesting(false)
-
-      if (!cancelled) {
-        setStatus({ kind: 'ready', user, tier: intended })
-      }
+      await processVerifiedUser(user)
     }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -106,7 +153,33 @@ export default function SignupVerify() {
       subscription.unsubscribe()
       window.clearTimeout(timeoutId)
     }
-  }, [])
+  }, [processVerifiedUser])
+
+  // OTP path — user pastes the token from the verification email. Calls
+  // verifyOtp directly with the user-entered email + token, then feeds
+  // the returned User through processVerifiedUser (bypassing the useEffect
+  // `resolved` lockout, which has already fired with kind: 'unverified').
+  async function submitOtp() {
+    if (!otpEmail.trim() || !otpToken.trim()) return
+    setOtpSubmitting(true)
+    setOtpError('')
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: otpEmail.trim().toLowerCase(),
+      token: otpToken.trim(),
+      type: 'signup',
+    })
+    setOtpSubmitting(false)
+    if (error) {
+      setOtpError(error.message || 'Verification failed. Check the code and try again.')
+      return
+    }
+    if (!data?.user) {
+      setOtpError('Verification succeeded but no user was returned. Try refreshing.')
+      return
+    }
+    setStatus({ kind: 'loading' })
+    await processVerifiedUser(data.user)
+  }
 
   async function proceedToCheckout() {
     setProceeding(true)
@@ -139,7 +212,15 @@ export default function SignupVerify() {
         )}
 
         {status.kind === 'unverified' && (
-          <UnverifiedCard />
+          <UnverifiedCard
+            otpEmail={otpEmail}
+            otpToken={otpToken}
+            otpSubmitting={otpSubmitting}
+            otpError={otpError}
+            onEmailChange={setOtpEmail}
+            onTokenChange={setOtpToken}
+            onSubmit={submitOtp}
+          />
         )}
 
         {status.kind === 'missing_tier' && (
@@ -171,20 +252,60 @@ export default function SignupVerify() {
 
 // ── Sub-components ───────────────────────────────────────────────────
 
-function UnverifiedCard() {
+interface UnverifiedCardProps {
+  otpEmail: string
+  otpToken: string
+  otpSubmitting: boolean
+  otpError: string
+  onEmailChange: (v: string) => void
+  onTokenChange: (v: string) => void
+  onSubmit: () => void
+}
+
+function UnverifiedCard({ otpEmail, otpToken, otpSubmitting, otpError, onEmailChange, onTokenChange, onSubmit }: UnverifiedCardProps) {
+  const formOk = !!otpEmail.trim() && !!otpToken.trim() && !otpSubmitting
   return (
     <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 28 }}>
       <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>📧</div>
       <h2 style={{ color: GOLD, fontSize: 20, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>Verify your email to continue</h2>
-      <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 22px' }}>
-        We couldn&apos;t pick up your verified session. The verification email link must be opened
-        in the <strong>same browser</strong> you used to sign up — switching browsers (or using
-        incognito after starting in a regular window) breaks the link. If you opened it elsewhere,
-        restart signup below.
+      <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 18px' }}>
+        Enter the verification code from your email below. If you clicked the link instead and
+        landed here, the link may have been opened in a different browser than you signed up in —
+        the code path still works from any browser.
       </p>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
-        <a href="/signup" style={{ background: GOLD, color: '#0a0d14', borderRadius: 10, padding: '10px 18px', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>Restart signup</a>
-        <a href="/login" style={{ background: CARD_BG, color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 18px', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Sign in</a>
+
+      {/* B117 C-token Phase 1 — OTP entry form. Token-only path; works from
+          any browser (no code_verifier dependency). Email pre-fills from
+          ?email= URL param when present. */}
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Email</label>
+        <input type="email" value={otpEmail} autoComplete="email"
+          onChange={e => onEmailChange(e.target.value)}
+          placeholder="you@example.com"
+          style={{ display: 'block', width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box' }} />
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Verification code</label>
+        <input type="text" inputMode="numeric" autoComplete="one-time-code" value={otpToken}
+          onChange={e => onTokenChange(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && formOk && onSubmit()}
+          placeholder="6–8 digit code"
+          style={{ display: 'block', width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box', letterSpacing: '0.1em', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }} />
+      </div>
+      {otpError && (
+        <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
+          <p style={{ color: '#f44336', fontSize: 13, margin: 0 }}>{otpError}</p>
+        </div>
+      )}
+      <button onClick={onSubmit} disabled={!formOk}
+        style={{ width: '100%', padding: 13, background: !formOk ? '#555' : GOLD, color: !formOk ? '#888' : '#0a0d14', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, cursor: !formOk ? 'not-allowed' : 'pointer', marginBottom: 18 }}>
+        {otpSubmitting ? 'Verifying…' : 'Verify and continue'}
+      </button>
+
+      <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+        <a href="/signup" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Restart signup</a>
+        <span style={{ color: MUTED, fontSize: 12 }}>·</span>
+        <a href="/login" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Sign in</a>
       </div>
     </div>
   )
