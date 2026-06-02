@@ -18,9 +18,13 @@ function VisitorForm() {
   useEffect(() => {
     async function loadSupportInfo() {
       if (propertyName && propertyName !== 'Managed Property') {
-        const { data: prop } = await supabase.from('properties').select('company').ilike('name', propertyName).single()
+        // B155.3 — anon RPCs replace direct table SELECTs. Same data
+        // shape; safe columns only; no anon over-read.
+        const { data: propRows } = await supabase.rpc('get_property_for_visitor', { p_name: propertyName })
+        const prop = propRows?.[0] as { company: string } | undefined
         if (prop?.company) {
-          const { data: co } = await supabase.from('companies').select('support_phone,support_email,support_website,display_name').ilike('name', prop.company).single()
+          const { data: coRows } = await supabase.rpc('get_company_branding', { p_name: prop.company })
+          const co = coRows?.[0] as { support_phone: string | null; support_email: string | null; support_website: string | null; display_name: string | null } | undefined
           if (co) {
             setSupportPhone(co.support_phone || '')
             setSupportEmail(co.support_email || '')
@@ -30,7 +34,8 @@ function VisitorForm() {
           }
         }
       }
-      const { data: ps } = await supabase.from('platform_settings').select('default_support_phone,default_support_email,default_support_website').eq('id', 1).single()
+      const { data: psRows } = await supabase.rpc('get_platform_defaults')
+      const ps = psRows?.[0] as { default_support_phone: string | null; default_support_email: string | null; default_support_website: string | null } | undefined
       if (ps) {
         setSupportPhone(ps.default_support_phone || '')
         setSupportEmail(ps.default_support_email || '')

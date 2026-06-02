@@ -15,9 +15,10 @@ function VisitorSelectForm() {
   useEffect(() => {
     let cancelled = false
     async function load() {
-      let query = supabase.from('properties').select('name').eq('is_active', true).order('name')
-      if (company) query = query.ilike('company', company)
-      const { data } = await query
+      // B155.3 — anon RPC handles both shapes: optional company filter
+      // + active-only + ordered by name (mirrors the prior .ilike +
+      // .eq('is_active', true) + .order('name') chain).
+      const { data } = await supabase.rpc('get_properties_for_visitor_select', { p_company: company || null })
       if (cancelled) return
       setProperties(data || [])
       if (data && data.length > 0) setSelected(data[0].name)
@@ -27,7 +28,9 @@ function VisitorSelectForm() {
     ;(async () => {
       let resolved: string | null = null
       if (company) {
-        const { data: co } = await supabase.from('companies').select('logo_url').ilike('name', company).single()
+        // B155.3 — branding RPC returns logo_url + safe columns only
+        const { data: coRows } = await supabase.rpc('get_company_branding', { p_name: company })
+        const co = coRows?.[0] as { logo_url: string | null } | undefined
         if (co?.logo_url) resolved = co.logo_url
       }
       if (!resolved) resolved = await getPlatformLogoUrl()

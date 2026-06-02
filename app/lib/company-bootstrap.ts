@@ -84,8 +84,13 @@ export async function bootstrapCompanyContext(
     !companyData.support_website ||
     !companyData.theme
   ) {
-    const { data: pd } = await supabase.from('platform_settings').select('*').eq('id', 1).single()
-    platformData = pd
+    // B155.3 — anon/authenticated RPC replaces direct platform_settings
+    // SELECT. RPC returns exactly the 5 default-* fields this bootstrap
+    // consumes (default_logo_url, default_theme, default_support_phone,
+    // default_support_email, default_support_website) — completeness
+    // verified during B155.3 synthesis vs. consumer enumeration below.
+    const { data: pdRows } = await supabase.rpc('get_platform_defaults')
+    platformData = pdRows?.[0] ?? null
   }
 
   const logo = companyData.logo_url || platformData?.default_logo_url
