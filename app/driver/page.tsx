@@ -172,7 +172,18 @@ export default function DriverPortal() {
   }
 
   async function fetchStorageFacilities() {
-    const { data } = await supabase.from('storage_facilities').select('*').eq('is_active', true).order('name')
+    // B154 — defensive .eq('company', ...) alongside the company-scoped
+    // RLS policy. RLS is the functional gate; the explicit filter makes
+    // scope legible in the code (Class-B defensive-legibility — same
+    // principle that produced B150). driver.company is the row's
+    // company text; matches storage_facilities.company under the new
+    // driver_read_own_facilities policy.
+    const { data } = await supabase
+      .from('storage_facilities')
+      .select('*')
+      .eq('is_active', true)
+      .ilike('company', driver?.company ?? '')
+      .order('name')
     setStorageFacilities(data || [])
   }
 

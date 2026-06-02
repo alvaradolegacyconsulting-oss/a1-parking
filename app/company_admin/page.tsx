@@ -314,7 +314,15 @@ export default function CompanyAdminPortal() {
   }
 
   async function fetchStorageFacilities() {
-    const { data } = await supabase.from('storage_facilities').select('*').eq('is_active', true).order('name')
+    // B154 — defensive .eq('company', ...) alongside company-scoped RLS.
+    // RLS gates functionally; the explicit filter makes scope legible
+    // in the code (Class-B defensive-legibility; same principle as B150).
+    const { data } = await supabase
+      .from('storage_facilities')
+      .select('*')
+      .eq('is_active', true)
+      .ilike('company', role?.company ?? '')
+      .order('name')
     setStorageFacilities(data || [])
   }
 
@@ -555,7 +563,14 @@ export default function CompanyAdminPortal() {
   }
 
   async function fetchAllFacilitiesManage() {
-    const { data } = await supabase.from('storage_facilities').select('*').eq('is_active', true).order('name')
+    // B154 — defensive .eq('company', ...) alongside company-scoped RLS.
+    // Manage > Storage tab — CA's own company's facilities only.
+    const { data } = await supabase
+      .from('storage_facilities')
+      .select('*')
+      .eq('is_active', true)
+      .ilike('company', role?.company ?? '')
+      .order('name')
     setAllFacilities(data || [])
   }
 
@@ -921,10 +936,16 @@ export default function CompanyAdminPortal() {
   async function createFacility() {
     if (!newFacility.name || !newFacility.address) { setFacilityMsg('Name and address are required'); return }
     setFacilityMsg('Creating...')
+    // B154 — set company = caller's company explicitly. Required by the
+    // new company_admin_own_facilities WITH CHECK clause; without this,
+    // the INSERT would land with company=NULL, which fails the policy
+    // (NULL ~~* anything → NULL, treated as false). Closes the CA-INSERT
+    // gap that was a silent RLS block before this commit.
     const { data, error: insErr } = await supabase.from('storage_facilities').insert([{
       name: newFacility.name, address: newFacility.address,
       phone: newFacility.phone || null, email: newFacility.email || null,
       vsf_license_number: newFacility.vsf_license_number || null,
+      company: role?.company || null,
       is_active: true
     }]).select().single()
     if (insErr) { setFacilityMsg('Error: ' + insErr.message); return }
