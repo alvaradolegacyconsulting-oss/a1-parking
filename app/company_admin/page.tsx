@@ -3024,7 +3024,6 @@ export default function CompanyAdminPortal() {
             {manageSection === 'storage' && (
               <div>
                 <div style={{ background:'#1a1e2e', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 12px', marginBottom:'12px' }}>
-                  <p style={{ color:'#888', fontSize:'11px', margin:'0' }}>Storage facilities are shared across all companies.</p>
                 </div>
                 {facilityMsg && msgBox(facilityMsg)}
                 {isCA && addBtn('+ Add Storage Facility', () => { setShowAddFacility(true); setFacilityMsg('') })}
@@ -3291,8 +3290,10 @@ export default function CompanyAdminPortal() {
 
           const videoMaxSec = Number(getLimit(FEATURE_FLAGS.VIDEO_MAX_DURATION_SECONDS, ctx))
           const photoCap = Number(getLimit(FEATURE_FLAGS.MAX_PHOTOS_PER_VIOLATION, ctx))
-          const passMonthly = getLimit(FEATURE_FLAGS.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH, ctx)
-          const passDuration = getLimit(FEATURE_FLAGS.MAX_VISITOR_PASS_DURATION_HOURS, ctx)
+          // B149: passMonthly + passDuration deliberately NOT read — the
+          // tier-level visitor-pass limits they reference were display-
+          // only (never enforced at pass-create sites). Plan tab no
+          // longer advertises them.
           const hasOverride = ctx.proposal_code?.feature_overrides
             && Object.keys(ctx.proposal_code.feature_overrides).length > 0
 
@@ -3344,32 +3345,32 @@ export default function CompanyAdminPortal() {
                 </div>
               )}
 
-              {/* Visitor pass caps + per-property monthly usage — PM track only */}
+              {/* Visitor pass usage per property — PM track only.
+                  B149 honest-DOWN: the tier-level MAX_VISITOR_PASSES_PER_
+                  PROPERTY_MONTH + MAX_VISITOR_PASS_DURATION_HOURS limits
+                  shown here historically (Cap: X/mo · Max Yh/pass + %
+                  progress bars) were DISPLAY-ONLY — never enforced at any
+                  pass-create site. Removed to stop advertising a cap we
+                  don't enforce. Per-property usage count is real and
+                  preserved (sourced from visitorPassesThisMonth). Actual
+                  enforcement happens via properties.visitor_pass_limit
+                  (per-property per-plate annual cap, manager-set, gated
+                  by enforce_visitor_pass_limit trigger) — different
+                  concept, not advertised here. */}
               {isPM && (
                 <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'10px' }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px' }}>
-                    <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:0 }}>Visitor Passes</p>
-                    <p style={{ color:'#aaa', fontSize:'11px', margin:0 }}>
-                      Cap: {fmtLimit(passMonthly)}/mo · Max {passDuration < 0 ? 'unlimited' : `${passDuration}h`}/pass
-                    </p>
-                  </div>
+                  <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0 0 8px' }}>Visitor Passes</p>
                   {/* Calendar-month usage per property; resets 00:00 on the 1st */}
                   {properties.length === 0 ? (
                     <p style={{ color:'#555', fontSize:'11px', margin:'8px 0 0', fontStyle:'italic' }}>No properties to report on.</p>
                   ) : (
-                    <div style={{ marginTop:'8px' }}>
+                    <div style={{ marginTop:'4px' }}>
                       {properties.map(prop => {
                         const used = visitorPassesThisMonth[prop.name] ?? 0
-                        const propPct = pct(used, passMonthly)
                         return (
-                          <div key={prop.id || prop.name} style={{ marginBottom:'8px' }}>
-                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'3px' }}>
-                              <span style={{ color:'#aaa', fontSize:'11px' }}>{prop.name}</span>
-                              <span style={{ color:'#aaa', fontSize:'11px' }}>{used} of {fmtLimit(passMonthly)} this month</span>
-                            </div>
-                            <div style={{ height:'4px', background:'#0f1117', borderRadius:'2px', overflow:'hidden' }}>
-                              <div style={{ height:'100%', width: `${propPct}%`, background: barColor(used, passMonthly), transition:'width 0.3s' }} />
-                            </div>
+                          <div key={prop.id || prop.name} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+                            <span style={{ color:'#aaa', fontSize:'11px' }}>{prop.name}</span>
+                            <span style={{ color:'#aaa', fontSize:'11px' }}>{used} this month</span>
                           </div>
                         )
                       })}

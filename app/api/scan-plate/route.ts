@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createSupabaseServerClient } from '../../lib/server-auth'
 
 export async function POST(request: NextRequest) {
   console.log('scan-plate API called')
+
+  // Auth gate: route calls Claude Vision (paid). Open route was an
+  // abuse vector — anyone with the URL could run up the Anthropic bill.
+  // Mirrors the createSupabaseServerClient + auth.getUser pattern used
+  // by /api/signup/attest + /api/signup/create-checkout-session.
+  const supabase = await createSupabaseServerClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) {
+    return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
+  }
 
   const { image } = await request.json()
   if (!image) return NextResponse.json({ error: 'No image provided' }, { status: 400 })

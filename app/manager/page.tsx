@@ -486,13 +486,18 @@ export default function ManagerPortal() {
   async function addVehicle(unit?: string) {
     if (!newVehicle.plate) { alert('Plate is required'); return }
     const normalizedPlate = normalizePlate(newVehicle.plate)
+    // permit_expiry coercion: form holds '' when blank; Postgres rejects
+    // '' on a DATE column with `invalid input syntax for type date`.
+     // Coerce explicitly (same family as the residents.lease_end fix).
+    // Single write site today; inline at N=1 is correct per scope discipline.
     const { error } = await supabase.from('vehicles').insert([{
       ...newVehicle,
       plate: normalizedPlate,
       unit: unit || newVehicle.unit,
       property: manager.name,
       is_active: true,
-      year: parseInt(newVehicle.year) || null
+      year: parseInt(newVehicle.year) || null,
+      permit_expiry: newVehicle.permit_expiry || null,
     }])
     if (error) { alert('Error: ' + error.message) }
     else {
