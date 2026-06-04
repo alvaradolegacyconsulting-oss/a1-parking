@@ -1,0 +1,233 @@
+-- ════════════════════════════════════════════════════════════════════
+-- B155.4 — user_roles role-write lockdown (CA → admin escalation fix)
+-- Drafted: 2026-06-04 — NOT YET APPLIED.
+--
+-- STANDALONE HOTFIX commit. Closes a SECOND escalation path on the
+-- user_roles table — same class as B155.1, different entry point.
+-- B155.1 closed the anon-INSERT path (public_insert_user_roles WITH
+-- CHECK true). This closes the authenticated-CA-INSERT path
+-- (company_admin_own_users FOR ALL with WITH CHECK null → USING
+-- substitutes, constrains company but NOT role).
+--
+-- ── THE CHAIN, AS CONFIRMED IN PRE-FLIGHT VERIFY ────────────────────
+-- 1. company_admin_own_users is FOR ALL / {authenticated} with
+--    USING = (get_my_role()='company_admin' AND company ~~*
+--    get_my_company()) and WITH CHECK = NULL.
+--    Confirmed via pg_policy.polwithcheck = NULL.
+-- 2. For FOR ALL with WITH CHECK = NULL, Postgres substitutes USING
+--    as the write check on INSERT and UPDATE. USING constrains the
+--    new row's company but does NOT constrain role.
+-- 3. No trigger guards. Confirmed: pg_trigger returned 0 rows for
+--    public.user_roles (excluding internal triggers).
+-- 4. No CHECK constraint on role. Confirmed: pg_constraint returned
+--    only user_roles_pkey (PRIMARY KEY on id). No role whitelist.
+-- 5. anon + authenticated have INSERT/UPDATE/DELETE grants on
+--    user_roles (Supabase default; RLS is sole gate).
+-- 6. Helper get_my_role() = SELECT role FROM user_roles WHERE email
+--    ILIKE auth.jwt()->>'email' LIMIT 1 — no ORDER BY. Returns SOME
+--    row when duplicates exist (and attacker can DELETE original CA
+--    row via USING-admitted DELETE to make resolution deterministic).
+--
+-- Two-step attack any authenticated CA can execute today via PostgREST:
+--   STEP 1: POST /rest/v1/user_roles
+--     {email:'<own>', role:'admin', company:'<own-company>'}
+--     → admitted by company_admin_own_users (USING substitutes for
+--     WITH CHECK; company gate passes; role unconstrained).
+--   STEP 2 (optional, for deterministic helper resolution):
+--     DELETE /rest/v1/user_roles?email=eq.<own>&role=eq.company_admin
+--     → admitted by USING.
+-- After step 1 (or 2), get_my_role() resolves to 'admin'. admin_all_*
+-- policies on every table admit ALL cross-tenant reads/writes. Full
+-- multi-tenant breach.
+--
+-- UPDATE vector also open: CA could UPDATE user_roles SET role='admin'
+-- WHERE email=... — same outcome, one statement, also gated only by
+-- USING (and USING is the WITH CHECK for FOR ALL UPDATE too).
+--
+-- ── SEVERITY REFRAME ────────────────────────────────────────────────
+-- Current threat: low. Only CA today is A1 (trusted), public_signup_
+-- open=false. No untrusted CA can reach /rest/v1/user_roles POST as
+-- company_admin.
+-- Latent risk: critical. Must close BEFORE any of:
+--   (a) A1 invites a second CA
+--   (b) public_signup_open flips (B66 arc)
+--   (c) any flow that grants company_admin without out-of-band trust
+--       verification ships.
+-- Fix-now SHAPE (single migration, atomic, probe-verified), not
+-- fix-NOW-tonight. Same urgency profile as B155.1.
+--
+-- ── FIX SHAPE (Jose-greenlit, lockdown discipline) ──────────────────
+-- DROP + CREATE company_admin_own_users atomically. New shape:
+--   • USING unchanged (gates SELECT/UPDATE/DELETE on own-company rows).
+--   • WITH CHECK now pinned: BOTH company match AND role IN allowed-set.
+--   • FOR ALL means the new WITH CHECK applies to INSERT *and* UPDATE
+--     simultaneously — closes BOTH the INSERT-self-admin path AND the
+--     UPDATE-existing-row-to-admin path in one rewrite.
+--   • DELETE unaffected (DELETE only evaluates USING, not WITH CHECK).
+--     Deleting own-company rows is not an escalation vector — leave
+--     as-is.
+--
+-- ── DECISION RECORD: CA-creatable role set ──────────────────────────
+-- Decided 2026-06-04 by Jose, locked as-is:
+--   role IN ('manager', 'leasing_agent', 'driver', 'resident')
+--
+-- A company_admin may NOT create another company_admin (or admin) via
+-- the application. company_admin and admin are EXCLUDED from any
+-- non-admin RLS write path. Additional company_admins / ownership
+-- transfer are provisioned via platform-admin (service-role), not
+-- self-serve — consistent with the B2B-only support model
+-- ("contact ShieldMyLot to add a co-admin or transfer ownership").
+--
+-- Structural principle (carry-forward, now extended):
+-- Neither role='admin' NOR role='company_admin' is writable via any
+-- peer/non-admin RLS path. Both are created only via service-role /
+-- migration / a purpose-built controlled flow.
+--
+-- Product note (not part of this fix): operate with one company_admin
+-- per subscription for now (fine for A1; clean accountability). Not
+-- baked in as "exactly one forever" — multi-CA / co-admin / ownership-
+-- transfer is a deliberate future self-serve feature with its own
+-- guardrails, not an open RLS path.
+--
+-- ── SCOPE GUARD ─────────────────────────────────────────────────────
+-- This migration is POLICY REWRITE ONLY. It does NOT:
+--   • Add UNIQUE(lower(email)) on user_roles. 10 duplicate sampyo+*
+--     test-fixture rows exist today and would fail the constraint.
+--     The scheduled pre-go-live data wipe is the dedup (for free);
+--     UNIQUE lands as its own small migration immediately after.
+--   • Touch any other user_roles policy (admin_all_user_roles,
+--     authenticated_self_insert_resident, user_read_own_role unchanged).
+--   • Touch get_my_role() helper body (LIMIT-1-no-ORDER-BY remains
+--     spec-assumption; UNIQUE post-wipe locks the assumption
+--     permanently).
+--
+-- ── DEPENDENCIES (confirmed via pre-flight verify pass) ─────────────
+-- • user_roles RLS enabled in production (Part 2.3 — all 19 public
+--   tables rls_enabled=true).
+-- • get_my_role() + get_my_company() functions exist (B40 captured
+--   bodies into migrations/20260518_b40_violations_rls_capture; B155.1
+--   verify confirmed unchanged).
+-- • company_admin_own_users currently exists with the broken shape
+--   (Part 1 confirmed: polcmd='*', with_check_expr=NULL).
+--
+-- ── CA-SELF-WRITE COMPATIBILITY (pre-push audit, 2026-06-04) ────────
+-- The new WITH CHECK blocks CA from any authenticated-client write to
+-- their own user_roles row (because the new row would still have
+-- role='company_admin', failing the role-IN-set check). Pre-push
+-- audit confirms ALL CA-self-write fields go through SECURITY DEFINER
+-- RPCs (which bypass RLS), so this is a non-issue:
+--   • must_change_password   → set_must_change_password() RPC
+--                              (migrations/20260512; consumed by
+--                              /reset-password-required, /change-password,
+--                              admin/manager/CA portals, bulk-invite)
+--   • tos_accepted_at        → accept_tos() RPC (login flow)
+--     tos_accepted_version   → accept_signup_consents() RPC (signup flow)
+--     privacy_accepted_version → upsert_consent_versions() RPC
+--                              (B118 migrations/20260604)
+--   • texas_confirmed[_at]   → /register writes to RESIDENTS table,
+--                              not user_roles (irrelevant)
+-- Only one .from('user_roles').update() exists in the codebase
+-- (scripts/provision-uat-accounts.ts:234, service-role context).
+-- No client-side authenticated CA-self-update path exists.
+-- A1's CA first-login flow (must_change_password flip) goes through
+-- the SECURITY DEFINER RPC and is unaffected by this migration.
+--
+-- ── APPLY DISCIPLINE ────────────────────────────────────────────────
+-- SINGLE-PASTE SINGLE-RUN. Paste this entire file as ONE block in the
+-- Supabase SQL Editor, click Run ONCE. BEGIN/COMMIT atomic — any
+-- statement failing rolls back the whole hotfix. All DDL idempotent
+-- (DROP POLICY IF EXISTS + CREATE POLICY). Safe to re-apply.
+-- ════════════════════════════════════════════════════════════════════
+
+BEGIN;
+
+-- ════════════════════════════════════════════════════════════════════
+-- PART 1 — Rewrite company_admin_own_users with role-pinned WITH CHECK
+-- ════════════════════════════════════════════════════════════════════
+-- Production original: FOR ALL / {authenticated} /
+--   USING (get_my_role()='company_admin' AND company ~~* get_my_company())
+--   WITH CHECK NULL ← THE BUG. Allows CA to INSERT/UPDATE rows with
+--                     any role value (including 'admin') as long as
+--                     the company matches.
+--
+-- New shape: USING unchanged (preserves SELECT/UPDATE/DELETE on
+-- own-company rows). WITH CHECK now pinned to the locked CA-creatable
+-- role set per the Decision Record above. FOR ALL means the new
+-- WITH CHECK applies to BOTH INSERT and UPDATE — single rewrite
+-- closes both vectors.
+
+DROP POLICY IF EXISTS company_admin_own_users ON user_roles;
+CREATE POLICY company_admin_own_users ON user_roles
+  FOR ALL TO authenticated
+  USING (
+    get_my_role() = 'company_admin'
+    AND company ~~* get_my_company()
+  )
+  WITH CHECK (
+    get_my_role() = 'company_admin'
+    AND company ~~* get_my_company()
+    AND role IN ('manager', 'leasing_agent', 'driver', 'resident')
+  );
+
+COMMIT;
+
+-- ════════════════════════════════════════════════════════════════════
+-- VERIFICATION QUERIES (run after migration applies)
+--
+-- ── A. Confirm the rewritten policy has the new WITH CHECK ──────────
+--   SELECT policyname, cmd, roles, qual AS using_expr,
+--          with_check AS with_check_expr
+--   FROM pg_policies
+--   WHERE schemaname = 'public'
+--     AND tablename = 'user_roles'
+--     AND policyname = 'company_admin_own_users';
+--   -- Expected 1 row:
+--   --   company_admin_own_users | ALL | {authenticated}
+--   --     | (get_my_role()='company_admin' AND company ~~* get_my_company())
+--   --     | ((get_my_role()='company_admin') AND (company ~~* get_my_company())
+--   --        AND (role = ANY (ARRAY['manager','leasing_agent','driver','resident'])))
+--
+-- ── B. Sibling policies unchanged (regression check) ────────────────
+--   SELECT policyname, cmd, roles, qual, with_check
+--   FROM pg_policies
+--   WHERE schemaname = 'public' AND tablename = 'user_roles'
+--   ORDER BY policyname;
+--   -- Expected 4 rows total:
+--   --   admin_all_user_roles                | ALL    | {authenticated} | get_my_role()='admin' | null
+--   --   authenticated_self_insert_resident  | INSERT | {authenticated} | null                  | role='resident' AND lower(email)=lower(auth.jwt()->>'email')
+--   --   company_admin_own_users             | ALL    | {authenticated} | (per A above)         | (per A above) -- NEW SHAPE
+--   --   user_read_own_role                  | SELECT | {authenticated} | email ~~* (auth.jwt()->>'email') | null
+--   -- All four present; only company_admin_own_users' with_check changed.
+--
+-- ── C. Acceptance probe (script-driven, see scripts/_b155_4_probe.ts) ─
+-- 9 assertions = 4 POS + 5 NEG:
+--   • POS-1: CA-of-A INSERT {email:M, role:'manager',         company:A} → OK
+--   • POS-2: CA-of-A INSERT {email:L, role:'leasing_agent',   company:A} → OK
+--   • POS-3: CA-of-A INSERT {email:D, role:'driver',          company:A} → OK
+--   • POS-4: CA-of-A INSERT {email:R, role:'resident',        company:A} → OK
+--   • NEG-1: CA-of-A INSERT {email:X, role:'admin',           company:A} → BLOCKED
+--   • NEG-2: CA-of-A INSERT {email:Y, role:'company_admin',   company:A} → BLOCKED
+--   • NEG-3: CA-of-A UPDATE existing manager row SET role='admin' → BLOCKED
+--   • NEG-4: CA-of-A INSERT {email:Z, role:'manager',         company:B} → BLOCKED (cross-company)
+--   • NEG-5: CA-of-A INSERT {email:W, role:'admin',           company:B} → BLOCKED (compound)
+-- Self-cleaning, prints pass/fail, exits non-zero on failure.
+--
+-- ── STAGED ROLLBACK (if break detected post-apply — UNCOMMENT + RUN) ─
+-- If the new WITH CHECK breaks a legitimate CA write path that this
+-- pre-flight missed, restore the prior (broken-but-functional) shape
+-- with this rollback block. Recoverable on test data.
+--
+-- BEGIN;
+-- DROP POLICY IF EXISTS company_admin_own_users ON user_roles;
+-- CREATE POLICY company_admin_own_users ON user_roles
+--   FOR ALL TO authenticated
+--   USING (
+--     get_my_role() = 'company_admin'
+--     AND company ~~* get_my_company()
+--   );
+-- -- WITH CHECK omitted → restores prior null/USING-substitution behavior
+-- COMMIT;
+--
+-- ── SAFETY ──────────────────────────────────────────────────────────
+-- All DDL idempotent. BEGIN/COMMIT atomic. Safe to re-apply.
+-- ════════════════════════════════════════════════════════════════════
