@@ -1,6 +1,7 @@
 import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
+import { getStripeMode } from '../stripe'
 import { PAST_DUE_GRACE_MS } from '../dunning-config'
 import { sendDunningDay0, type DunningCompany } from '../dunning-emails'
 import type { SyncResult, SkipResult } from './types'
@@ -53,16 +54,100 @@ export async function handleSubscriptionUpdated(
     ? new Date(firstItem.current_period_end * 1000).toISOString()
     : null
 
+  // ── B141 — resolve subscription → tier/tier_type via stripe_prices ──
+  // Scope to the BASE line item's price ID. per_property and per_driver
+  // items don't define tier; iterating them would risk picking the wrong
+  // row. Custom-customer protection: stripe_prices.tier_track + tier_name
+  // are NOT NULL on every row (standard catalog AND per-code rows from
+  // B66.2b), so this same query resolves A1's negotiated Prices identically
+  // to standard customers. No special-casing.
+  //
+  // Defensive: skip the tier write (log + continue) if lookup returns no
+  // row. The non-tier columns (subscription_status etc) still UPDATE
+  // successfully. Tagged prefix matches the existing
+  // [subscription-updated-*] discipline at this handler.
+  //
+  // NOT FATAL by design: tier-write is additive on top of the required
+  // status/period/cancel UPDATE. A fatal failure here would block that
+  // required write and trigger Stripe webhook retries over an additive
+  // concern — wrong shape for a webhook handler.
+  const subPriceIds = (sub.items?.data ?? [])
+    .map(it => it.price?.id)
+    .filter((id): id is string => typeof id === 'string')
+
+  let resolvedTier: { tier_track: string; tier_name: string } | null = null
+  if (subPriceIds.length > 0) {
+    const mode = getStripeMode()
+    const { data: priceRow, error: priceErr } = await supabase
+      .from('stripe_prices')
+      .select('tier_track, tier_name')
+      .in('stripe_price_id', subPriceIds)
+      .eq('mode', mode)
+      .eq('line_item', 'base')
+      .maybeSingle()
+    if (priceErr) {
+      console.error('[B141-tier-lookup-failed]', {
+        subId: sub.id, companyId: company.id, error: priceErr.message,
+      })
+    } else if (priceRow) {
+      resolvedTier = { tier_track: priceRow.tier_track, tier_name: priceRow.tier_name }
+    } else {
+      // No base-line-item price match. Acceptable latent gap: if a sub's
+      // base price ID isn't in stripe_prices (price created outside the
+      // catalog / B66.2b reconciliation gap), tier silently won't update —
+      // this log is the safety net. Fine for A1 (per-code prices ARE in
+      // the table at issue time).
+      console.warn('[B141-tier-no-match]', {
+        subId: sub.id, companyId: company.id, subPriceIds, mode,
+      })
+    }
+  }
+
+  // Build the UPDATE payload — append tier columns only if resolved.
+  // Allows the always-required subscription_status / period / cancel
+  // UPDATE to land even when tier resolution fails (defensive degrade).
+  const updatePayload: Record<string, unknown> = {
+    subscription_status: sub.status,
+    current_period_end: currentPeriodEndIso,
+    cancel_at_period_end: sub.cancel_at_period_end,
+  }
+  if (resolvedTier) {
+    updatePayload.tier = resolvedTier.tier_name        // companies.tier   ← B141
+    updatePayload.tier_type = resolvedTier.tier_track  // companies.tier_type ← B141
+  }
+
   const { error: updErr } = await supabase
     .from('companies')
-    .update({
-      subscription_status: sub.status,
-      current_period_end: currentPeriodEndIso,
-      cancel_at_period_end: sub.cancel_at_period_end,
-    })
+    .update(updatePayload)
     .eq('id', company.id)
   if (updErr) {
     return { ok: false, reason: `companies UPDATE failed for sub ${sub.id}: ${updErr.message}` }
+  }
+
+  // ── B141 — F6 verify-after-write for the tier columns ───────────────
+  // Mirrors the [subscription-updated-populator-verify-mismatch] pattern
+  // already used by the unpaid populator below. Non-fatal: tier write is
+  // additive on top of the required UPDATE above. Tagged-log surfaces any
+  // silent drift between intent and actual column state. Only runs when
+  // we actually wrote tier — skips the no-match defensive path cleanly.
+  if (resolvedTier) {
+    const { data: verifyRow, error: verifyErr } = await supabase
+      .from('companies')
+      .select('tier, tier_type')
+      .eq('id', company.id)
+      .maybeSingle()
+    if (verifyErr || !verifyRow) {
+      console.error('[B141-tier-verify-mismatch]', {
+        companyId: company.id, stage: 'read',
+        error: verifyErr?.message ?? 'no row returned',
+      })
+    } else if (verifyRow.tier !== resolvedTier.tier_name
+      || verifyRow.tier_type !== resolvedTier.tier_track) {
+      console.error('[B141-tier-verify-mismatch]', {
+        companyId: company.id, stage: 'column-check',
+        expected: resolvedTier, actual: verifyRow,
+      })
+    }
   }
 
   // ── B66.5 Decision 3 — defensive unpaid populator ──────────────────
