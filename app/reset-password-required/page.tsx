@@ -50,6 +50,13 @@ export default function ResetPasswordRequired() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
+  // B117 Phase 2 — OTP fallback state. Email pre-fills from ?email=
+  // URL param (set by the new Invite-user template); user can override.
+  const [otpEmail, setOtpEmail] = useState('')
+  const [otpToken, setOtpToken] = useState('')
+  const [otpSubmitting, setOtpSubmitting] = useState(false)
+  const [otpError, setOtpError] = useState('')
+
   // Detect the invite-minted session. Same shape as /reset-password +
   // /signup/verify: onAuthStateChange + getSession in parallel with 4s
   // fallback timeout. Supabase Auth invite sends a hash-fragment URL;
@@ -57,6 +64,14 @@ export default function ResetPasswordRequired() {
   useEffect(() => {
     let resolved = false
     let cancelled = false
+
+    // B117 Phase 2 — pre-fill OTP email from URL param (new template
+    // includes ?email={{ .Email }} appended to ConfirmationURL).
+    try {
+      const url = new URL(window.location.href)
+      const e = url.searchParams.get('email')
+      if (e) setOtpEmail(e.trim().toLowerCase())
+    } catch { /* SSR safety */ }
 
     function onUser(user: User | null) {
       if (resolved || cancelled) return
@@ -87,6 +102,32 @@ export default function ResetPasswordRequired() {
   const pwErr = validatePassword(password)
   const matchErr = password && confirmPassword && password !== confirmPassword ? 'Passwords do not match.' : null
   const formOk = !pwErr && !matchErr && password.length > 0 && confirmPassword.length > 0
+
+  // B117 Phase 2 — OTP fallback. User pastes the code from the invite
+  // email; verifyOtp({type:'invite'}) mints a session like the link path.
+  // After success, the ready-state block renders the set-password form.
+  // Bypasses the useEffect `resolved` lockout since the no_session card
+  // only shows after the 4s timeout fires.
+  async function submitOtp() {
+    if (!otpEmail.trim() || !otpToken.trim()) return
+    setOtpSubmitting(true)
+    setOtpError('')
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: otpEmail.trim().toLowerCase(),
+      token: otpToken.trim(),
+      type: 'invite',
+    })
+    setOtpSubmitting(false)
+    if (error) {
+      setOtpError(error.message || 'Verification failed. Check the code and try again.')
+      return
+    }
+    if (!data?.user) {
+      setOtpError('Verification succeeded but no user was returned. Try refreshing.')
+      return
+    }
+    setStatus({ kind: 'ready', user: data.user })
+  }
 
   async function submit() {
     if (status.kind !== 'ready' || !formOk) return
@@ -141,13 +182,48 @@ export default function ResetPasswordRequired() {
         )}
 
         {status.kind === 'no_session' && (
-          <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 12, padding: 28, textAlign: 'center' }}>
-            <h2 style={{ color: GOLD, fontSize: 18, fontWeight: 700, margin: '0 0 10px' }}>Invite link expired or invalid</h2>
-            <p style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.6, margin: '0 0 20px' }}>
-              The invite link couldn&apos;t be verified. It may have expired (links are valid for a limited time) or already been used.
-              Contact your administrator to send a new invite.
+          <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 12, padding: 28 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>📧</div>
+            <h2 style={{ color: GOLD, fontSize: 18, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>Verify your invite</h2>
+            {/* B117 Phase 2 — dual recovery: PKCE link OR OTP code. The link
+                is browser-context-bound (code_verifier in localStorage); the
+                code works from any browser. Invite path uses type='invite'
+                per Supabase docs (inviteUserByEmail tokens). */}
+            <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', lineHeight: 1.6, margin: '0 0 18px' }}>
+              If your invite email includes a verification code, enter it below — the code works from
+              any browser. If you only see a link, it must be opened in the same browser session
+              (switching browsers breaks the link). If your link has expired, contact your
+              administrator for a new invite.
             </p>
-            <a href="/login" style={{ display: 'inline-block', background: GOLD, color: '#0a0d14', borderRadius: 8, padding: '10px 16px', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>Sign in</a>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Email</label>
+              <input type="email" value={otpEmail} autoComplete="email"
+                onChange={e => setOtpEmail(e.target.value)}
+                placeholder="you@example.com"
+                style={{ display: 'block', width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Verification code</label>
+              <input type="text" inputMode="numeric" autoComplete="one-time-code" value={otpToken}
+                onChange={e => setOtpToken(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && otpEmail.trim() && otpToken.trim() && !otpSubmitting && submitOtp()}
+                placeholder="6–8 digit code"
+                style={{ display: 'block', width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box', letterSpacing: '0.1em', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }} />
+            </div>
+            {otpError && (
+              <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
+                <p style={{ color: '#f44336', fontSize: 13, margin: 0 }}>{otpError}</p>
+              </div>
+            )}
+            <button onClick={submitOtp} disabled={!otpEmail.trim() || !otpToken.trim() || otpSubmitting}
+              style={{ width: '100%', padding: 13, background: !otpEmail.trim() || !otpToken.trim() || otpSubmitting ? '#555' : GOLD, color: !otpEmail.trim() || !otpToken.trim() || otpSubmitting ? '#888' : '#0f1117', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, cursor: !otpEmail.trim() || !otpToken.trim() || otpSubmitting ? 'not-allowed' : 'pointer', marginBottom: 18 }}>
+              {otpSubmitting ? 'Verifying…' : 'Verify and continue'}
+            </button>
+
+            <div style={{ borderTop: '1px solid #2a2f3d', paddingTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <a href="/login" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Sign in</a>
+            </div>
           </div>
         )}
 

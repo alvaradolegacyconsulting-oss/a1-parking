@@ -47,12 +47,27 @@ export default function ResetPassword() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
+  // B117 Phase 2 — OTP fallback state. Email pre-fills from ?email=
+  // URL param (set by the new Reset-Password template); user can override.
+  const [otpEmail, setOtpEmail] = useState('')
+  const [otpToken, setOtpToken] = useState('')
+  const [otpSubmitting, setOtpSubmitting] = useState(false)
+  const [otpError, setOtpError] = useState('')
+
   // Detect the PKCE-minted session. Same pattern as /signup/redeem/verify
   // and /signup/verify: listen for onAuthStateChange + getSession in
   // parallel, with a 4s fallback for the no-session case.
   useEffect(() => {
     let resolved = false
     let cancelled = false
+
+    // B117 Phase 2 — pre-fill OTP email from URL param (new template
+    // includes ?email={{ .Email }} appended to ConfirmationURL).
+    try {
+      const url = new URL(window.location.href)
+      const e = url.searchParams.get('email')
+      if (e) setOtpEmail(e.trim().toLowerCase())
+    } catch { /* SSR safety */ }
 
     function onUser(user: User | null) {
       if (resolved || cancelled) return
@@ -83,6 +98,32 @@ export default function ResetPassword() {
   const pwErr = validatePassword(password)
   const matchErr = password && confirmPassword && password !== confirmPassword ? 'Passwords do not match.' : null
   const formOk = !pwErr && !matchErr && password.length > 0 && confirmPassword.length > 0
+
+  // B117 Phase 2 — OTP fallback. User pastes the code from the recovery
+  // email; verifyOtp({type:'recovery'}) mints a session just like the
+  // PKCE link path. After success, the ready-state block renders the
+  // new-password form. Bypasses the useEffect `resolved` lockout since
+  // the no_session card only shows after the 4s timeout fires.
+  async function submitOtp() {
+    if (!otpEmail.trim() || !otpToken.trim()) return
+    setOtpSubmitting(true)
+    setOtpError('')
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: otpEmail.trim().toLowerCase(),
+      token: otpToken.trim(),
+      type: 'recovery',
+    })
+    setOtpSubmitting(false)
+    if (error) {
+      setOtpError(error.message || 'Verification failed. Check the code and try again.')
+      return
+    }
+    if (!data?.user) {
+      setOtpError('Verification succeeded but no user was returned. Try refreshing.')
+      return
+    }
+    setStatus({ kind: 'ready', user: data.user })
+  }
 
   async function submit() {
     if (status.kind !== 'ready' || !formOk) return
@@ -174,21 +215,50 @@ export default function ResetPassword() {
         )}
 
         {status.kind === 'no_session' && (
-          <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 12, padding: 28, textAlign: 'center' }}>
-            <h2 style={{ color: GOLD, fontSize: 18, fontWeight: 700, margin: '0 0 10px' }}>Reset link couldn&apos;t be verified</h2>
-            {/* B117 Rec A (reset-password variant) — after-the-fact recovery
-                copy. Names the most common B117 failure mode (cross-browser
-                link click loses PKCE code_verifier) and gives an actionable
-                path. Pairs with the pre-link-issuance guidance on
-                /forgot-password (same commit). */}
-            <p style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.6, margin: '0 0 12px' }}>
-              The reset link must be opened in the same browser you started from. Switching browsers (or using incognito after starting in a regular window) breaks it.
+          <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 12, padding: 28 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>📧</div>
+            <h2 style={{ color: GOLD, fontSize: 18, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>Verify to continue</h2>
+            {/* B117 Phase 2 — dual recovery: PKCE link OR OTP code. The link
+                is browser-context-bound (code_verifier in localStorage); the
+                code works from any browser. Mirrors /signup/redeem/verify's
+                Phase 2 card. */}
+            <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', lineHeight: 1.6, margin: '0 0 18px' }}>
+              If your email includes a verification code, enter it below — the code works from any
+              browser. If you only see a link, it must be opened in the same browser you used to
+              request the reset (switching browsers, or using incognito after a regular window, breaks
+              the link).
             </p>
-            <p style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.6, margin: '0 0 20px' }}>
-              If you opened it elsewhere, request a new link and click it in the same browser this time. The link may also have expired or already been used.
-            </p>
-            <a href="/forgot-password" style={{ display: 'inline-block', background: GOLD, color: '#0a0d14', borderRadius: 8, padding: '10px 16px', textDecoration: 'none', fontSize: 13, fontWeight: 700, marginRight: 10 }}>Request a new link</a>
-            <a href="/login" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Sign in</a>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Email</label>
+              <input type="email" value={otpEmail} autoComplete="email"
+                onChange={e => setOtpEmail(e.target.value)}
+                placeholder="you@example.com"
+                style={{ display: 'block', width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Verification code</label>
+              <input type="text" inputMode="numeric" autoComplete="one-time-code" value={otpToken}
+                onChange={e => setOtpToken(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && otpEmail.trim() && otpToken.trim() && !otpSubmitting && submitOtp()}
+                placeholder="6–8 digit code"
+                style={{ display: 'block', width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box', letterSpacing: '0.1em', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }} />
+            </div>
+            {otpError && (
+              <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
+                <p style={{ color: '#f44336', fontSize: 13, margin: 0 }}>{otpError}</p>
+              </div>
+            )}
+            <button onClick={submitOtp} disabled={!otpEmail.trim() || !otpToken.trim() || otpSubmitting}
+              style={{ width: '100%', padding: 13, background: !otpEmail.trim() || !otpToken.trim() || otpSubmitting ? '#555' : GOLD, color: !otpEmail.trim() || !otpToken.trim() || otpSubmitting ? '#888' : '#0f1117', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, cursor: !otpEmail.trim() || !otpToken.trim() || otpSubmitting ? 'not-allowed' : 'pointer', marginBottom: 18 }}>
+              {otpSubmitting ? 'Verifying…' : 'Verify and continue'}
+            </button>
+
+            <div style={{ borderTop: '1px solid #2a2f3d', paddingTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <a href="/forgot-password" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Request a new link</a>
+              <span style={{ color: '#666', fontSize: 12 }}>·</span>
+              <a href="/login" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Sign in</a>
+            </div>
           </div>
         )}
 
