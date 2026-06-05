@@ -18,6 +18,7 @@ import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE } 
 // with null localStorage and falls back to the 'Legacy Enforcement'
 // default until the user signs out and back in. See project_b76.
 import { bootstrapCompanyContext, fetchCompanyBootstrapRowById } from '../../../lib/company-bootstrap'
+import { isOtpExpiredOrUsed } from '../../../lib/otp-errors'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -32,6 +33,7 @@ type Status =
   | { kind: 'invalid_code'; reason: string }                                  // session ok, but code can't be redeemed (expired since signup, revoked, etc.)
   | { kind: 'ready'; user: User; proposalCode: string; tierLabel: string }    // form-ready
   | { kind: 'billing_error'; companyId: number | string; message: string }    // B158-A: start-billing failed post-redeem; show recoverable error card
+  | { kind: 'already_verified' }                                              // B162: verifyOtp returned otp_expired (already-used OR truly-expired; indistinguishable client-side)
 
 // B158-A: shared start-billing invocation. Returns navigation target on
 // success, error message on failure. Used by both activate() (initial
@@ -221,6 +223,13 @@ export default function VerifyLanding() {
     })
     setOtpSubmitting(false)
     if (error) {
+      // B162 — Supabase returns 'otp_expired' for both "already used by
+      // another tab/device" AND "truly expired (24h elapsed)." No client-
+      // side distinguisher. Recovery card serves both cases honestly.
+      if (isOtpExpiredOrUsed(error)) {
+        setStatus({ kind: 'already_verified' })
+        return
+      }
       setOtpError(error.message || 'Verification failed. Check the code and try again.')
       return
     }
@@ -421,6 +430,34 @@ export default function VerifyLanding() {
             </button>
             <p style={{ color: MUTED, fontSize: 11, textAlign: 'center', margin: '14px 0 0', lineHeight: 1.5 }}>
               Your account is active either way — billing can be reconnected at any time.
+            </p>
+          </div>
+        )}
+
+        {/* B162 — recovery card for verifyOtp 'otp_expired'. The proposal
+            code is NOT recoverable at this state (no session, no
+            user_metadata available). Bare /signup/redeem is a dead-end
+            (lands on "No code in this link"). So primary action is
+            contact-support mailto: to get a fresh proposal link issued.
+            Sign in stays secondary for the cross-device-verified case. */}
+        {status.kind === 'already_verified' && (
+          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 28 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>⚠️</div>
+            <h2 style={{ color: GOLD, fontSize: 20, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>This code can&apos;t be used</h2>
+            <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 22px' }}>
+              It may have already been used, or expired. If you finished verifying on another device
+              or tab, sign in to continue activating your company. Otherwise, contact support — your
+              proposal code can only be re-issued by our team.
+            </p>
+            <a href="mailto:support@shieldmylot.com?subject=Need%20new%20proposal%20link"
+              style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, marginBottom: 12, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+              Contact support
+            </a>
+            <a href="/login" style={{ display: 'block', width: '100%', padding: 13, background: 'transparent', color: TEXT, fontWeight: 'bold', fontSize: 14, border: `1px solid ${BORDER}`, borderRadius: 8, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+              Sign in
+            </a>
+            <p style={{ color: MUTED, fontSize: 11, textAlign: 'center', margin: '14px 0 0', lineHeight: 1.5 }}>
+              We&apos;ll send you a fresh link tied to your original proposal terms.
             </p>
           </div>
         )}

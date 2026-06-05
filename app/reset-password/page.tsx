@@ -22,6 +22,7 @@ import type { User } from '@supabase/supabase-js'
 import { supabase } from '../supabase'
 import { gateAccountState, AccountState } from '../lib/account-state'
 import { validatePassword } from '../lib/password-rules'
+import { isOtpExpiredOrUsed } from '../lib/otp-errors'
 
 const GOLD = '#C9A227'
 
@@ -32,6 +33,7 @@ type Status =
   | { kind: 'updating' }
   | { kind: 'success'; user: User }
   | { kind: 'error'; message: string }
+  | { kind: 'already_verified' }   // B162: verifyOtp returned otp_expired (already-used OR truly-expired; indistinguishable client-side)
 
 function redirectByRole(role: string) {
   if (role === 'admin') window.location.href = '/'
@@ -115,6 +117,13 @@ export default function ResetPassword() {
     })
     setOtpSubmitting(false)
     if (error) {
+      // B162 — Supabase returns 'otp_expired' for both "already used by
+      // another tab/device" AND "truly expired (24h elapsed)." No client-
+      // side distinguisher. Recovery card serves both cases honestly.
+      if (isOtpExpiredOrUsed(error)) {
+        setStatus({ kind: 'already_verified' })
+        return
+      }
       setOtpError(error.message || 'Verification failed. Check the code and try again.')
       return
     }
@@ -259,6 +268,31 @@ export default function ResetPassword() {
               <span style={{ color: '#666', fontSize: 12 }}>·</span>
               <a href="/login" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Sign in</a>
             </div>
+          </div>
+        )}
+
+        {/* B162 — recovery card for verifyOtp 'otp_expired' on the recovery
+            flow. Self-serve restart works for this page: "Request a new
+            link" sends user back to /forgot-password to trigger a fresh
+            reset email. Sign in stays secondary for the cross-device-set-
+            password case. */}
+        {status.kind === 'already_verified' && (
+          <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 12, padding: 28 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>⚠️</div>
+            <h2 style={{ color: GOLD, fontSize: 18, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>This code can&apos;t be used</h2>
+            <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', lineHeight: 1.6, margin: '0 0 22px' }}>
+              It may have already been used, or expired. If you set a new password on another device
+              or tab, sign in below. Otherwise, request a fresh reset link.
+            </p>
+            <a href="/forgot-password" style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0f1117', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, marginBottom: 12, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+              Request a new link
+            </a>
+            <a href="/login" style={{ display: 'block', width: '100%', padding: 13, background: 'transparent', color: 'white', fontWeight: 'bold', fontSize: 14, border: '1px solid #3a4055', borderRadius: 8, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+              Sign in
+            </a>
+            <p style={{ color: '#666', fontSize: 11, textAlign: 'center', margin: '14px 0 0', lineHeight: 1.5 }}>
+              Reset links and codes share one token — the same code can&apos;t be reused.
+            </p>
           </div>
         )}
 

@@ -46,6 +46,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../supabase'
 import { TIER_PRICING } from '../../lib/tier-config'
 import { ENFORCEMENT_TIERS, PROPERTY_MANAGEMENT_TIERS } from '../../lib/tier-display'
+import { isOtpExpiredOrUsed } from '../../lib/otp-errors'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -70,6 +71,7 @@ type Status =
   | { kind: 'ready'; user: User; tier: IntendedTier }
   | { kind: 'attest_error'; message: string }
   | { kind: 'checkout_error'; message: string }
+  | { kind: 'already_verified' }   // B162: verifyOtp returned otp_expired (already-used OR truly-expired; indistinguishable client-side)
 
 export default function SignupVerify() {
   const [status, setStatus] = useState<Status>({ kind: 'loading' })
@@ -170,6 +172,14 @@ export default function SignupVerify() {
     })
     setOtpSubmitting(false)
     if (error) {
+      // B162 — Supabase returns 'otp_expired' for both "token already used
+      // by another tab/device" AND "token genuinely expired (24h elapsed)."
+      // No client-side distinguisher. Surface a single recovery card that
+      // serves both cases honestly.
+      if (isOtpExpiredOrUsed(error)) {
+        setStatus({ kind: 'already_verified' })
+        return
+      }
       setOtpError(error.message || 'Verification failed. Check the code and try again.')
       return
     }
@@ -239,6 +249,34 @@ export default function SignupVerify() {
             primaryLabel="Refresh"
             primaryHref="/signup/verify"
           />
+        )}
+
+        {/* B162 — recovery card for verifyOtp 'otp_expired' (already used OR
+            truly expired; same code, no distinguisher). Two honest paths:
+            restart signup (gold primary, works for the expired case AND lets
+            the already-used user start fresh if they don't have a session)
+            + Sign in (outline secondary, works if the user verified
+            elsewhere). Same shape as B158-A button-primacy rationale: the
+            always-works path is primary. */}
+        {status.kind === 'already_verified' && (
+          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 28 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>⚠️</div>
+            <h2 style={{ color: GOLD, fontSize: 20, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>This code can&apos;t be used</h2>
+            <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 22px' }}>
+              It may have already been used, or expired. If you finished verifying on another device
+              or tab, sign in to continue with your account setup. Otherwise, restart signup to get a
+              fresh verification email.
+            </p>
+            <a href="/signup" style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, marginBottom: 12, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+              Restart signup
+            </a>
+            <a href="/login" style={{ display: 'block', width: '100%', padding: 13, background: 'transparent', color: TEXT, fontWeight: 'bold', fontSize: 14, border: `1px solid ${BORDER}`, borderRadius: 8, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+              Sign in
+            </a>
+            <p style={{ color: MUTED, fontSize: 11, textAlign: 'center', margin: '14px 0 0', lineHeight: 1.5 }}>
+              The same code can&apos;t be reused — restarting issues a fresh email.
+            </p>
+          </div>
         )}
 
         {status.kind === 'ready' && (

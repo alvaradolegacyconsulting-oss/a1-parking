@@ -34,6 +34,7 @@ import { useEffect, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { supabase } from '../supabase'
 import { validatePassword } from '../lib/password-rules'
+import { isOtpExpiredOrUsed } from '../lib/otp-errors'
 
 const GOLD = '#C9A227'
 
@@ -44,6 +45,7 @@ type Status =
   | { kind: 'updating' }
   | { kind: 'success' }
   | { kind: 'error'; message: string }
+  | { kind: 'already_verified' }   // B162: verifyOtp returned otp_expired (already-used OR truly-expired; indistinguishable client-side)
 
 export default function ResetPasswordRequired() {
   const [status, setStatus] = useState<Status>({ kind: 'loading' })
@@ -119,6 +121,13 @@ export default function ResetPasswordRequired() {
     })
     setOtpSubmitting(false)
     if (error) {
+      // B162 — Supabase returns 'otp_expired' for both "already used by
+      // another tab/device" AND "truly expired (24h elapsed)." No client-
+      // side distinguisher. Recovery card serves both cases honestly.
+      if (isOtpExpiredOrUsed(error)) {
+        setStatus({ kind: 'already_verified' })
+        return
+      }
       setOtpError(error.message || 'Verification failed. Check the code and try again.')
       return
     }
@@ -224,6 +233,36 @@ export default function ResetPasswordRequired() {
             <div style={{ borderTop: '1px solid #2a2f3d', paddingTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
               <a href="/login" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Sign in</a>
             </div>
+          </div>
+        )}
+
+        {/* B162 — recovery card for verifyOtp 'otp_expired' on the invite
+            flow. THIS PAGE IS THE EXCEPTION: no self-serve restart (admin
+            owns inviteUserByEmail; user can't re-trigger). Per Confirm 2,
+            the mailto: contact-admin/support is the LOAD-BEARING primary
+            action — it's the only working path for the truly-expired case.
+            Sign in stays secondary for the cross-device-set-password case.
+            This is the B113 bulk-invite landing — highest-traffic surface
+            for this exact error during UAT. */}
+        {status.kind === 'already_verified' && (
+          <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 12, padding: 28 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>⚠️</div>
+            <h2 style={{ color: GOLD, fontSize: 18, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>This invite can&apos;t be used</h2>
+            <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', lineHeight: 1.6, margin: '0 0 22px' }}>
+              It may have already been used, or expired. If you set up your account on another device
+              or tab, sign in below. If your invite expired, request a fresh invite — only an admin can
+              re-send.
+            </p>
+            <a href="mailto:support@shieldmylot.com?subject=Invite%20expired%20%E2%80%94%20need%20new%20invite"
+              style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0f1117', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, marginBottom: 12, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+              Contact your administrator
+            </a>
+            <a href="/login" style={{ display: 'block', width: '100%', padding: 13, background: 'transparent', color: 'white', fontWeight: 'bold', fontSize: 14, border: '1px solid #3a4055', borderRadius: 8, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+              Sign in
+            </a>
+            <p style={{ color: '#666', fontSize: 11, textAlign: 'center', margin: '14px 0 0', lineHeight: 1.5 }}>
+              Contacting support routes your request to whoever sent the invite.
+            </p>
           </div>
         )}
 
