@@ -31,6 +31,35 @@ type Status =
   | { kind: 'unverified' }                                                    // no session / email not confirmed
   | { kind: 'invalid_code'; reason: string }                                  // session ok, but code can't be redeemed (expired since signup, revoked, etc.)
   | { kind: 'ready'; user: User; proposalCode: string; tierLabel: string }    // form-ready
+  | { kind: 'billing_error'; companyId: number | string; message: string }    // B158-A: start-billing failed post-redeem; show recoverable error card
+
+// B158-A: shared start-billing invocation. Returns navigation target on
+// success, error message on failure. Used by both activate() (initial
+// kickoff after redeem_proposal_code RPC) and retryBilling() (recovery
+// from the billing_error state). Pure I/O wrapper — no component state
+// access, intentional module-level scope.
+type StartBillingResult = { navigateTo: string } | { errorMessage: string }
+
+async function invokeStartBilling(companyIdValue: number | string): Promise<StartBillingResult> {
+  try {
+    const res = await fetch('/api/proposal-codes/start-billing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company_id: Number(companyIdValue) }),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (res.ok) {
+      if (json.checkout_url) return { navigateTo: json.checkout_url }
+      if (json.success_redirect) return { navigateTo: json.success_redirect }
+      if (json.already_billed) return { navigateTo: '/company_admin' }
+      return { errorMessage: 'Billing service returned an unrecognized response. Try again or contact support.' }
+    }
+    const serverMessage = typeof json.error === 'string' ? json.error : null
+    return { errorMessage: serverMessage || `Billing setup couldn't start (HTTP ${res.status}).` }
+  } catch {
+    return { errorMessage: "Billing setup couldn't start — network error. Check your connection and try again." }
+  }
+}
 
 type Submission =
   | { kind: 'editing' }
@@ -156,6 +185,26 @@ export default function VerifyLanding() {
     }
   }, [processVerifiedUser])
 
+  // B158-A: retry handler for the billing_error state. Re-invokes
+  // start-billing for the existing companyId; on success navigates to
+  // Checkout / success-redirect; on failure refreshes the error message.
+  // Idempotent per start-billing route's already_billed shortcut (line
+  // 117-119 of the route) — a prior-successful sub creates short-circuit
+  // back to /company_admin rather than a duplicate subscription.
+  async function retryBilling(companyIdValue: number | string) {
+    setStatus({ kind: 'loading' })
+    const result = await invokeStartBilling(companyIdValue)
+    if ('navigateTo' in result) {
+      window.location.href = result.navigateTo
+      return
+    }
+    setStatus({
+      kind: 'billing_error',
+      companyId: companyIdValue,
+      message: result.errorMessage,
+    })
+  }
+
   // B117 Phase 2 — OTP fallback handler. User pastes the code from the
   // verification email; we call verifyOtp({type:'signup'}) directly and
   // feed the returned User through processVerifiedUser (bypassing the
@@ -247,42 +296,29 @@ export default function VerifyLanding() {
     await bootstrapCompanyContext(companyRow)
 
     // B66.7 — kick off Stripe billing via the start-billing route.
-    // Two-branch outcome:
-    //   • charge_automatically → server returns { checkout_url }; we
-    //     redirect the customer to Stripe-hosted Checkout. They pay,
-    //     Stripe redirects to /signup/success, webhook attaches Stripe
-    //     IDs to the (already-created) companies row.
-    //   • send_invoice → server creates customer+subscription directly,
-    //     UPDATEs companies inline, returns { success_redirect } for us
-    //     to navigate to.
-    // On any start-billing failure we fall back to /company_admin so
-    // the customer isn't stranded; an admin can manually attach billing
-    // via SQL Editor + re-issue. The company is already active either
-    // way (RPC flipped account_state); start-billing is the payment
-    // layer on top, not the activation gate.
-    let billingNavTarget: string = '/company_admin'
-    try {
-      const res = await fetch('/api/proposal-codes/start-billing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: Number(companyId) }),
-      })
-      const json = await res.json().catch(() => ({}))
-      if (res.ok) {
-        if (json.checkout_url) billingNavTarget = json.checkout_url
-        else if (json.success_redirect) billingNavTarget = json.success_redirect
-        else if (json.already_billed) billingNavTarget = '/company_admin'
-      } else {
-        console.error('[redeem] start-billing failed; landing on dashboard:', json)
-      }
-    } catch (e) {
-      console.error('[redeem] start-billing threw; landing on dashboard:', e)
+    // Success branches: charge_automatically → { checkout_url } (Stripe
+    // Checkout); send_invoice → { success_redirect } (inline customer +
+    // subscription create). B158-A: failures now surface a visible
+    // billing_error state instead of silently navigating to /company_admin
+    // — the company IS active either way (redeem RPC flipped
+    // account_state), but a silent fallback strands the customer mid-
+    // onboarding with no signal that billing didn't complete. The error
+    // card offers Retry (idempotent: already_billed shortcut catches a
+    // prior successful sub) + support contact + Continue-to-dashboard
+    // escape hatch.
+    const billingResult = await invokeStartBilling(companyId)
+    if ('navigateTo' in billingResult) {
+      window.location.href = billingResult.navigateTo
+      return
     }
-
-    // Atomic RPC has already flipped account_state to 'active'; bootstrap
-    // is now populated; the dashboard will render the right tier on first
-    // paint with no logout-and-back-in required.
-    window.location.href = billingNavTarget
+    // Surface the failure. Company is already active per the redeem RPC;
+    // the user can still use the dashboard, but billing needs retry or
+    // support backfill.
+    setStatus({
+      kind: 'billing_error',
+      companyId,
+      message: billingResult.errorMessage,
+    })
   }
 
   // ── RENDER ─────────────────────────────────────────────────────────
@@ -355,6 +391,37 @@ export default function VerifyLanding() {
               <span style={{ color: MUTED, fontSize: 12 }}>·</span>
               <a href="/login" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>Sign in</a>
             </div>
+          </div>
+        )}
+
+        {status.kind === 'billing_error' && (
+          <div style={{ background: CARD_BG, border: '1px solid rgba(220, 53, 69, 0.45)', borderRadius: 14, padding: 28 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#3a1a1a', border: '2px solid #dc3545', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>⚠️</div>
+            <h2 style={{ color: '#f87171', fontSize: 20, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>Billing setup couldn&apos;t start</h2>
+            <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 14px' }}>
+              Your account is active and you can use the dashboard, but the payment-method step
+              didn&apos;t complete. Continue to your dashboard now, or contact{' '}
+              <a href="mailto:support@shieldmylot.com" style={{ color: GOLD }}>support@shieldmylot.com</a>
+              {' '}and we&apos;ll finish the billing setup for you.
+            </p>
+            <p style={{ color: MUTED, fontSize: 12, lineHeight: 1.5, margin: '0 0 22px', padding: '10px 14px', background: 'rgba(220,53,69,0.08)', border: '1px solid rgba(220,53,69,0.25)', borderRadius: 8, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-word' }}>
+              {status.message}
+            </p>
+            {/* B158-A button order: Continue (primary/gold) is the working
+                path; Retry (secondary/outline) will fail until the
+                underlying B158-B fix lands. Visual emphasis matches what
+                actually works today. */}
+            <button onClick={() => { window.location.href = '/company_admin' }}
+              style={{ width: '100%', padding: 13, background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, cursor: 'pointer', marginBottom: 12 }}>
+              Continue to dashboard
+            </button>
+            <button onClick={() => retryBilling(status.companyId)}
+              style={{ width: '100%', padding: 13, background: 'transparent', color: TEXT, fontWeight: 'bold', fontSize: 14, border: `1px solid ${BORDER}`, borderRadius: 8, cursor: 'pointer' }}>
+              Retry billing setup
+            </button>
+            <p style={{ color: MUTED, fontSize: 11, textAlign: 'center', margin: '14px 0 0', lineHeight: 1.5 }}>
+              Your account is active either way — billing can be reconnected at any time.
+            </p>
           </div>
         )}
 
