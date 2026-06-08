@@ -2,6 +2,7 @@ import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
 import { sendDunningRecovery, type DunningCompany } from '../dunning-emails'
+import { reconcileAtRenewal } from '../stripe-mutations'
 import type { SyncResult, SkipResult } from './types'
 
 /**
@@ -50,6 +51,47 @@ export async function handleInvoicePaymentSucceeded(
   }
   if (!company) {
     return { ok: true, skipped: true, reason: `no company for stripe_customer_id ${customerId}` }
+  }
+
+  // ── B147 3c — renewal-trim branch ──────────────────────────────────
+  // Fires INDEPENDENT of the recovery path below. Active customers
+  // also need cycle-boundary quantity reconciliation, so this branch
+  // runs BEFORE the skip-on-active gate.
+  //
+  // Mandatory billing_reason='subscription_cycle' gate: this webhook
+  // also fires on subscription_create (signup) and subscription_update
+  // (proration / quantity charges). Trimming on either would
+  // prematurely true-up before the cycle has actually closed.
+  //
+  // send_invoice short-circuit lives in the helper (COMMIT 2.1's
+  // fail-safe allowlist). This branch doesn't repeat the check — the
+  // helper returns empty actions for non-charge_automatically subs,
+  // logged as [B147-skipped-manual-collection].
+  //
+  // Non-fatal: helper failures log via tagged prefix and don't block
+  // the recovery write below or fail the webhook ack. Helper is itself
+  // bidirectional + idempotent (target === item.quantity → noop), so
+  // double-firing on Stripe retries is safe.
+  //
+  // Co-fire composition (past_due/suspended + cycle): both this trim
+  // branch AND the recovery branch fire in the same handler invocation.
+  // They touch different layers (trim: Stripe sub items; recovery: DB
+  // companies row + dunning state) — no shared mutation, no ordering
+  // dependency. Trim-first ordering is deliberate: non-fatal trim
+  // failure doesn't block the load-bearing recovery write.
+  if (invoice.billing_reason === 'subscription_cycle') {
+    const trimResult = await reconcileAtRenewal(company.id as number)
+    if (trimResult.ok) {
+      console.log('[B147-renewal-trim]', {
+        companyId: company.id, billingReason: invoice.billing_reason,
+        invoiceId: invoice.id, actions: trimResult.actions,
+      })
+    } else {
+      console.error('[B147-renewal-trim-failed]', {
+        companyId: company.id, billingReason: invoice.billing_reason,
+        invoiceId: invoice.id, reason: trimResult.reason,
+      })
+    }
   }
 
   // Skip when in 'active' (normal successful payment, no recovery
