@@ -48,6 +48,23 @@ interface SubItemSnapshot {
   priceId: string
 }
 
+// B147 2.1 — snapshot includes the sub's collection_method so callers
+// can short-circuit on non-auto subs.
+//
+// FAIL-SAFE ALLOWLIST: only 'charge_automatically' is treated as safe
+// for auto-mutation. send_invoice + null + unknown + future Stripe
+// values all skip. The check is at the helper layer — single source
+// of truth, so future callers (B165 tier change, etc.) can't
+// accidentally forget the gate. Rationale: send_invoice subs are
+// today managed manually via the proposal-code send_invoice branch;
+// auto-trim would overwrite manual control. Unknown / new Stripe
+// collection_method values default to the safe path (skip) rather
+// than guess.
+interface SubscriptionSnapshot {
+  collectionMethod: string  // 'charge_automatically' | 'send_invoice' | other-future | '' (null)
+  items: SubItemSnapshot[]
+}
+
 interface ActiveCounts {
   properties: number
   drivers: number
@@ -74,11 +91,11 @@ async function loadCompanyForSync(
 
 // Snapshot the live subscription's line items with line_item labels
 // resolved via stripe_prices. Same pattern as B141's price→tier lookup.
-async function snapshotLineItems(
+async function snapshotSubscription(
   supabase: ReturnType<typeof createSupabaseServiceClient>,
   stripeSubId: string,
   companyId: number,
-): Promise<SubItemSnapshot[] | null> {
+): Promise<SubscriptionSnapshot | null> {
   const stripe = getStripe()
   let sub
   try {
@@ -90,10 +107,16 @@ async function snapshotLineItems(
     return null
   }
 
+  // B147 2.1 — pass-through, no default-to-auto. Empty string for null/
+  // undefined so the allowlist check is honest: only the exact string
+  // 'charge_automatically' wins. Any other value (send_invoice, null,
+  // future Stripe values) lands at the skip path. Fail-safe stance.
+  const collectionMethod = String(sub.collection_method ?? '')
+
   const priceIds = (sub.items?.data ?? [])
     .map(it => it.price?.id)
     .filter((id): id is string => typeof id === 'string')
-  if (priceIds.length === 0) return []
+  if (priceIds.length === 0) return { collectionMethod, items: [] }
 
   const mode = getStripeMode()
   const { data: priceRows, error: priceErr } = await supabase
@@ -109,17 +132,17 @@ async function snapshotLineItems(
   }
   const labelByPriceId = new Map((priceRows ?? []).map(p => [p.stripe_price_id as string, p.line_item as string]))
 
-  const out: SubItemSnapshot[] = []
+  const items: SubItemSnapshot[] = []
   for (const it of sub.items?.data ?? []) {
     if (!it.price?.id || typeof it.quantity !== 'number') continue
-    out.push({
+    items.push({
       itemId: it.id,
       lineItem: labelByPriceId.get(it.price.id) ?? 'unknown',
       quantity: it.quantity,
       priceId: it.price.id,
     })
   }
-  return out
+  return { collectionMethod, items }
 }
 
 // Count is_active=true rows for properties + drivers via company name
@@ -174,7 +197,7 @@ async function updateLineItemQuantity(
 // ─── Public API ─────────────────────────────────────────────────────
 
 export type SyncOnAddResult =
-  | { ok: true; action: 'incremented' | 'noop_within_floor' | 'skipped_no_sub' | 'skipped_no_line_item' }
+  | { ok: true; action: 'incremented' | 'noop_within_floor' | 'skipped_no_sub' | 'skipped_no_line_item' | 'skipped_manual_collection' }
   | { ok: false; reason: string }
 
 /**
@@ -198,11 +221,22 @@ export async function syncOnAdd(
   const company = await loadCompanyForSync(supabase, companyId)
   if (!company) return { ok: true, action: 'skipped_no_sub' }
 
-  const snapshots = await snapshotLineItems(supabase, company.stripeSubId, companyId)
-  if (!snapshots) return { ok: false, reason: 'snapshot failed (see [B147-*] logs)' }
+  const snapshot = await snapshotSubscription(supabase, company.stripeSubId, companyId)
+  if (!snapshot) return { ok: false, reason: 'snapshot failed (see [B147-*] logs)' }
+
+  // B147 2.1 — fail-safe allowlist. Only 'charge_automatically' subs
+  // are eligible for auto-mutation. send_invoice + null + unknown +
+  // future Stripe values all skip. Gate lives at the helper layer
+  // (single source of truth); same check appears in reconcileAtRenewal.
+  if (snapshot.collectionMethod !== 'charge_automatically') {
+    console.warn('[B147-skipped-manual-collection]', {
+      companyId, kind, callsite: 'syncOnAdd', collectionMethod: snapshot.collectionMethod,
+    })
+    return { ok: true, action: 'skipped_manual_collection' }
+  }
 
   const targetLineItem = kind === 'property' ? 'per_property' : 'per_driver'
-  const item = snapshots.find(s => s.lineItem === targetLineItem)
+  const item = snapshot.items.find(s => s.lineItem === targetLineItem)
   if (!item) return { ok: true, action: 'skipped_no_line_item' }
 
   const counts = await countActiveRecords(supabase, company.name)
@@ -251,13 +285,24 @@ export async function reconcileAtRenewal(
   const company = await loadCompanyForSync(supabase, companyId)
   if (!company) return { ok: true, actions: [] }
 
-  const snapshots = await snapshotLineItems(supabase, company.stripeSubId, companyId)
-  if (!snapshots) return { ok: false, reason: 'snapshot failed (see [B147-*] logs)' }
+  const snapshot = await snapshotSubscription(supabase, company.stripeSubId, companyId)
+  if (!snapshot) return { ok: false, reason: 'snapshot failed (see [B147-*] logs)' }
+
+  // B147 2.1 — fail-safe allowlist (symmetric with syncOnAdd). Renewal
+  // trim must not overwrite manually-managed quantities. Returns empty
+  // actions; the tagged log carries the reason + the actual
+  // collectionMethod value for observability.
+  if (snapshot.collectionMethod !== 'charge_automatically') {
+    console.warn('[B147-skipped-manual-collection]', {
+      companyId, callsite: 'reconcileAtRenewal', collectionMethod: snapshot.collectionMethod,
+    })
+    return { ok: true, actions: [] }
+  }
 
   const counts = await countActiveRecords(supabase, company.name)
   const actions: ReconcileAction[] = []
 
-  for (const item of snapshots) {
+  for (const item of snapshot.items) {
     // Base-line-item tripwire — non-fatal tagged log, no mutation.
     // Per locked design, base is always quantity=1; an unexpected
     // value here means something upstream (admin Dashboard edit,
