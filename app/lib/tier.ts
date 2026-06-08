@@ -73,6 +73,19 @@ export function getCompanyContext(): CompanyContext {
   return { tier, tier_type, proposal_code }
 }
 
+// B147 3a — read cached company_id from localStorage. Populated by
+// bootstrapCompanyContext after /login resolve (or post-activation
+// path). Returns null if missing/invalid; callers degrade gracefully
+// (e.g., B147 syncOnAdd sites skip the Stripe sync but the DB write
+// already succeeded — renewal trim auto-heals next cycle). SSR-safe.
+export function getCachedCompanyId(): number | null {
+  if (typeof window === 'undefined') return null
+  const raw = localStorage.getItem('company_id')
+  if (!raw) return null
+  const n = Number(raw)
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+
 // Resolve a flag value: proposal_code override > tier config > false.
 // Numeric flags fall back to 0 (no allowance) when undefined.
 export function hasFeature(flag: FeatureFlag, company: CompanyContext): boolean | number {

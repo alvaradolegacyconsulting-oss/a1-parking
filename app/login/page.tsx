@@ -11,6 +11,9 @@ import { gateAccountState, AccountState } from '../lib/account-state'
 import { bootstrapCompanyContext, CompanyBootstrapRow } from '../lib/company-bootstrap'
 // B118: version-aware modal predicate + accept_tos(versions) call.
 import { TOS_VERSION, PRIVACY_VERSION } from '../lib/legal-versions'
+// B147 3a: hardened company-by-name resolution replacing naked
+// .ilike().single() pattern that silently degrades on 0/2+-rows (B76 class).
+import { resolveCompanyByName } from '../lib/company-resolve'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -29,6 +32,11 @@ export default function Login() {
   const [pendingEmail, setPendingEmail] = useState('')
   const [pendingForcePwReset, setPendingForcePwReset] = useState(false)
   const [suspendedCompany, setSuspendedCompany] = useState<{ display_name: string; support_phone: string | null; support_email: string | null; support_website: string | null; message?: string } | null>(null)
+  // B147 3a — resolve-failure state. Captures the company name for
+  // display in the error card. Single-string body copy regardless of
+  // which resolve reason fired (no info leak); tagged-log in
+  // resolveCompanyByName differentiates by reason for ops.
+  const [resolveFailed, setResolveFailed] = useState<{ companyName: string } | null>(null)
 
   useEffect(() => {
     setCompanyLogo(localStorage.getItem('company_logo'))
@@ -124,13 +132,24 @@ export default function Login() {
     }
 
     if (roleData.role !== 'admin' && roleData.company) {
-      const { data: companyData } = await supabase
-        .from('companies')
-        .select('id, is_active, logo_url, display_name, support_phone, support_email, support_website, tier, tier_type, theme, account_state')
-        .ilike('name', roleData.company)
-        .single()
+      // B147 3a — hardened resolve. Replaces the naked
+      // .ilike(roleData.company).single() pattern which silently
+      // swallowed 0-row + 2+-row errors → context-less portal degrade
+      // (B76 class). Failure path: signOut completes BEFORE
+      // setResolveFailed so the card never renders against a still-
+      // authenticated session. Success path is byte-equivalent to today
+      // — companyData feeds the existing is_active check +
+      // gateAccountState + bootstrap.
+      const resolveResult = await resolveCompanyByName(supabase, roleData.company)
+      if (!resolveResult.ok) {
+        setLoading(false)
+        await supabase.auth.signOut()
+        setResolveFailed({ companyName: String(roleData.company ?? '') })
+        return
+      }
+      const companyData = resolveResult.company
 
-      if (companyData && companyData.is_active === false) {
+      if (companyData.is_active === false) {
         setLoading(false)
         await supabase.auth.signOut()
         setSuspendedCompany({
@@ -318,6 +337,29 @@ export default function Login() {
 
         <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'12px' }}>Powered by ShieldMyLot</p>
       </div>
+
+      {resolveFailed && (
+        <div style={{ position:'fixed', inset:0, background:'#0f1117', zIndex:9999, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'24px', fontFamily:'Arial, sans-serif' }}>
+          <div style={{ maxWidth:'420px', width:'100%', textAlign:'center' }}>
+            <div style={{ width:'72px', height:'72px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #C9A227', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 24px', fontSize:'32px' }}>⚠️</div>
+            <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0 0 8px' }}>We couldn&apos;t load your company</h1>
+            <p style={{ color:'#888', fontSize:'13px', margin:'0 0 28px', lineHeight:'1.6' }}>
+              Your sign-in succeeded, but we couldn&apos;t find a unique company record for{' '}
+              <strong style={{ color:'#ccc' }}>{resolveFailed.companyName}</strong>. This is usually a name-mismatch
+              issue (extra spaces or a duplicate). Contact <a href="mailto:support@shieldmylot.com" style={{ color:'#C9A227' }}>support@shieldmylot.com</a> and we&apos;ll fix it.
+            </p>
+            <a href={`mailto:support@shieldmylot.com?subject=${encodeURIComponent("Couldn't load company")}`}
+              style={{ display:'block', width:'100%', padding:'13px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'14px', border:'none', borderRadius:'8px', marginBottom:'12px', textAlign:'center', textDecoration:'none', boxSizing:'border-box' }}>
+              Contact support
+            </a>
+            <button
+              onClick={() => { setResolveFailed(null); window.location.reload() }}
+              style={{ width:'100%', padding:'13px', background:'#1e2535', color:'#aaa', fontWeight:'bold', fontSize:'14px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer' }}>
+              Try signing in again
+            </button>
+          </div>
+        </div>
+      )}
 
       {suspendedCompany && (
         <div style={{ position:'fixed', inset:0, background:'#0f1117', zIndex:9999, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'24px', fontFamily:'Arial, sans-serif' }}>

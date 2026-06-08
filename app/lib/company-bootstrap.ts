@@ -70,6 +70,7 @@ export async function bootstrapCompanyContext(
     localStorage.removeItem('company_tier_type')
     localStorage.removeItem('company_theme')
     localStorage.removeItem('company_proposal_code')
+    localStorage.removeItem('company_id')   // B147 3a — clear cached id
     return
   }
 
@@ -122,6 +123,13 @@ export async function bootstrapCompanyContext(
   }
   localStorage.setItem('company_theme', theme)
   applyTheme()
+
+  // B147 3a — cache companies.id for downstream consumers
+  // (getCachedCompanyId in tier.ts; B147 syncOnAdd sites at the CA
+  // portal). Both /login and the post-activation path call this
+  // function → both populate the cache uniformly.
+  if (companyData.id) localStorage.setItem('company_id', String(companyData.id))
+  else localStorage.removeItem('company_id')
 
   if (companyData.id) {
     const { data: pc } = await supabase
