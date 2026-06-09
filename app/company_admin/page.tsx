@@ -5,7 +5,33 @@ import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
-import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature } from '../lib/tier'
+import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId } from '../lib/tier'
+
+// B147 3b.1 — client-side wrapper for the server-only syncOnAdd helper.
+// Calls /api/billing/sync-on-add which enforces auth + ownership server-
+// side. Returns the same shape syncOnAdd does, so the 4 CA-portal call
+// sites don't change their caller pattern (skip-no-companyid +
+// [B147-sync-failed]). Non-throwing — network errors degrade to
+// { ok: false; reason } so the DB-write-stays-committed semantics hold.
+async function callSyncOnAdd(
+  companyId: number,
+  kind: 'property' | 'driver',
+): Promise<{ ok: true; action: string } | { ok: false; reason: string }> {
+  try {
+    const res = await fetch('/api/billing/sync-on-add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company_id: companyId, kind }),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (res.ok && json.ok) {
+      return { ok: true, action: String(json.action ?? 'unknown') }
+    }
+    return { ok: false, reason: String(json.reason ?? json.error ?? `HTTP ${res.status}`) }
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message }
+  }
+}
 import { TIER_DISPLAY_NAME, type TierType } from '../lib/tier-config'
 // B65.2: account_state gate (spec §3.4) — defense in depth with login dispatch.
 // B66.5 commit 4.3: extended for past_due banner + suspended redirect era shift.
@@ -602,6 +628,19 @@ export default function CompanyAdminPortal() {
     }]).select().single()
     if (insErr) { setPropMsg('Error: ' + insErr.message); return }
     await auditLog('create_property', 'properties', data.id, { name: newProperty.name, company: role?.company })
+
+    // B147 3b — sync to Stripe AFTER DB write succeeds. Non-throwing per
+    // helper contract; UX path is uninterrupted regardless of outcome.
+    // Helper handles all skip cases (no-sub, send_invoice, etc); silent
+    // on success / expected-skip actions.
+    const companyIdForSync = getCachedCompanyId()
+    if (companyIdForSync === null) {
+      console.warn('[B147-sync-skipped-no-companyid]', { site: 'saveProperty', propertyId: data.id })
+    } else {
+      const r = await callSyncOnAdd(companyIdForSync,'property')
+      if (!r.ok) console.warn('[B147-sync-failed]', { site: 'saveProperty', companyId: companyIdForSync, propertyId: data.id, reason: r.reason })
+    }
+
     setPropMsg('Property added!')
     setNewProperty({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
     setShowAddProperty(false)
@@ -725,9 +764,41 @@ export default function CompanyAdminPortal() {
   }
 
   async function togglePropertyActive(prop: any) {
-    const { error: updErr } = await supabase.from('properties').update({ is_active: !prop.is_active }).eq('id', prop.id)
+    const wasActive = prop.is_active
+
+    // B147 3b — tier-gate reactivation symmetrically with saveProperty.
+    // Without this gate, a customer at cap could reactivate a
+    // deactivated unit to push active count over cap, then syncOnAdd
+    // would charge for the over-cap unit. The cap is the UI's source
+    // of truth; syncOnAdd trusts it was enforced before the DB write.
+    if (!wasActive) {
+      const ctx = getCompanyContext()
+      const currentActiveCount = properties.filter(p => p.is_active).length
+      if (!isUnderLimit(FEATURE_FLAGS.MAX_PROPERTIES, currentActiveCount, ctx)) {
+        const limit = getLimit(FEATURE_FLAGS.MAX_PROPERTIES, ctx)
+        setPropMsg(`Property limit reached (${limit}). Upgrade your tier to reactivate this one.`)
+        return
+      }
+    }
+
+    const { error: updErr } = await supabase.from('properties').update({ is_active: !wasActive }).eq('id', prop.id)
     if (updErr) { setPropMsg('Error: ' + updErr.message); return }
-    await auditLog(prop.is_active ? 'deactivate_property' : 'activate_property', 'properties', prop.id, { is_active: !prop.is_active })
+    await auditLog(wasActive ? 'deactivate_property' : 'activate_property', 'properties', prop.id, { is_active: !wasActive })
+
+    // B147 3b — sync ONLY on reactivation (false→true). Deactivation
+    // defers to renewal trim per locked decision; no Stripe call on
+    // toggle-off. Reactivation within prepaid floor returns
+    // 'noop_within_floor' from the helper (reactivation-by-construction).
+    if (!wasActive) {
+      const companyIdForSync = getCachedCompanyId()
+      if (companyIdForSync === null) {
+        console.warn('[B147-sync-skipped-no-companyid]', { site: 'togglePropertyActive', propertyId: prop.id })
+      } else {
+        const r = await callSyncOnAdd(companyIdForSync,'property')
+        if (!r.ok) console.warn('[B147-sync-failed]', { site: 'togglePropertyActive', companyId: companyIdForSync, propertyId: prop.id, reason: r.reason })
+      }
+    }
+
     await reloadProperties()
   }
 
@@ -904,6 +975,18 @@ export default function CompanyAdminPortal() {
     if (insErr) { setDriverMsg('Auth created but driver insert failed: ' + insErr.message); return }
     await supabase.from('user_roles').insert([{ email: newDriver.email, role: 'driver', company: role?.company }])
     await auditLog('create_driver', 'drivers', inserted.id, { name: newDriver.name, email: newDriver.email, company: role?.company })
+
+    // B147 3b — sync to Stripe AFTER all DB writes succeed. PM-track
+    // companies have no per_driver line item; helper returns
+    // 'skipped_no_line_item' for those — silent.
+    const companyIdForSync = getCachedCompanyId()
+    if (companyIdForSync === null) {
+      console.warn('[B147-sync-skipped-no-companyid]', { site: 'createDriver', driverId: inserted.id })
+    } else {
+      const r = await callSyncOnAdd(companyIdForSync,'driver')
+      if (!r.ok) console.warn('[B147-sync-failed]', { site: 'createDriver', companyId: companyIdForSync, driverId: inserted.id, reason: r.reason })
+    }
+
     setDriverMsg(`Driver created! Temp password: ${tempPass}`)
     setNewDriver({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] })
     setShowAddDriver(false)
@@ -927,9 +1010,39 @@ export default function CompanyAdminPortal() {
   }
 
   async function toggleDriverActive(driver: any) {
-    const { error: updErr } = await supabase.from('drivers').update({ is_active: !driver.is_active }).eq('id', driver.id)
+    const wasActive = driver.is_active
+
+    // B147 3b — tier-gate reactivation symmetrically with createDriver
+    // (admin-bypass preserved). Same exploit class as togglePropertyActive
+    // without this gate.
+    if (!wasActive) {
+      if (role?.role !== 'admin') {
+        const ctx = getCompanyContext()
+        const currentActiveCount = companyDrivers.filter(d => d.is_active).length
+        if (!isUnderLimit(FEATURE_FLAGS.MAX_DRIVERS, currentActiveCount, ctx)) {
+          const limit = getLimit(FEATURE_FLAGS.MAX_DRIVERS, ctx)
+          setDriverMsg(`Driver limit reached (${limit}). Upgrade your tier to reactivate this one.`)
+          return
+        }
+      }
+    }
+
+    const { error: updErr } = await supabase.from('drivers').update({ is_active: !wasActive }).eq('id', driver.id)
     if (updErr) { setDriverMsg('Error: ' + updErr.message); return }
-    await auditLog(driver.is_active ? 'deactivate_driver' : 'activate_driver', 'drivers', driver.id, { is_active: !driver.is_active })
+    await auditLog(wasActive ? 'deactivate_driver' : 'activate_driver', 'drivers', driver.id, { is_active: !wasActive })
+
+    // B147 3b — sync ONLY on reactivation. Same rationale as
+    // togglePropertyActive — deactivation defers to renewal trim.
+    if (!wasActive) {
+      const companyIdForSync = getCachedCompanyId()
+      if (companyIdForSync === null) {
+        console.warn('[B147-sync-skipped-no-companyid]', { site: 'toggleDriverActive', driverId: driver.id })
+      } else {
+        const r = await callSyncOnAdd(companyIdForSync,'driver')
+        if (!r.ok) console.warn('[B147-sync-failed]', { site: 'toggleDriverActive', companyId: companyIdForSync, driverId: driver.id, reason: r.reason })
+      }
+    }
+
     fetchCompanyDrivers()
   }
 

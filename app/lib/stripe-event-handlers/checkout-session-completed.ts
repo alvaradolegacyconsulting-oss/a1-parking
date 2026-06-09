@@ -44,6 +44,22 @@ interface EagerFields {
   billing_postal_code: string | null
   billing_country: string | null
 }
+// B164 — semantic equality for timestamptz round-trip. JS Date → ISO
+// produces '2026-07-07T23:37:08.000Z'; Postgres timestamptz read-back
+// produces '2026-07-07T23:37:08+00:00'. Identical instant, different
+// string form. Naive === false-positives on every signup. Compare via
+// epoch ms. Falls back to string equality if either side fails to
+// parse (NaN), so a genuine mismatch (null vs undefined vs malformed
+// string) still surfaces rather than silently passing.
+function timestampMatches(expected: unknown, actual: unknown): boolean {
+  if (expected === null && actual === null) return true
+  if (expected === null || actual === null) return false
+  const e = typeof expected === 'string' ? Date.parse(expected) : NaN
+  const a = typeof actual === 'string' ? Date.parse(actual) : NaN
+  if (Number.isNaN(e) || Number.isNaN(a)) return expected === actual
+  return e === a
+}
+
 const EAGER_NULL: EagerFields = {
   subscription_status: null,
   current_period_end: null,
@@ -215,9 +231,17 @@ export async function handleCheckoutSessionCompleted(
   // Verify-after-write per F6 — eager fields should round-trip.
   // Mismatch indicates DB-side weirdness; log but continue (sibling
   // handlers will overwrite with the canonical Stripe values).
+  // B164 — semantic compare on current_period_end (timestamptz string
+  // form differs Stripe-ISO vs Postgres-read-back); B152 → B153 tag fix
+  // (verify-after-write was added in B153, never updated).
   for (const k of ['subscription_status','current_period_end','cancel_at_period_end','address','billing_city','billing_state','billing_postal_code','billing_country'] as const) {
-    if (eager[k] !== (company as Record<string, unknown>)[k]) {
-      console.error('[checkout-session-completed] B152 verify mismatch', { companyId, field: k, expected: eager[k], actual: (company as Record<string, unknown>)[k] })
+    const expected = eager[k]
+    const actual = (company as Record<string, unknown>)[k]
+    const matches = k === 'current_period_end'
+      ? timestampMatches(expected, actual)
+      : expected === actual
+    if (!matches) {
+      console.error('[checkout-session-completed] B153 verify mismatch', { companyId, field: k, expected, actual })
     }
   }
 
@@ -329,11 +353,20 @@ async function handleProposalCodeCompletion(
       reason: `verify-after-write mismatch: expected customer=${stripeCustomerId} sub=${stripeSubId}, got customer=${verify.stripe_customer_id} sub=${verify.stripe_subscription_id}`,
     }
   }
-  // B152 — verify-after-write on the eager fields. Log but don't fail
-  // (sibling handlers will overwrite).
+  // B153 — verify-after-write on the eager fields. Log but don't fail
+  // (sibling handlers will overwrite). B164 fixed the timestamp-equality
+  // false-positive on current_period_end (timestamptz round-trip
+  // '.000Z' vs '+00:00' differ as strings but match as instants); also
+  // fixed the stale B152 log tag → B153 (the verify-after-write was
+  // added in B153, never relabeled).
   for (const k of ['subscription_status','current_period_end','cancel_at_period_end','address','billing_city','billing_state','billing_postal_code','billing_country'] as const) {
-    if (eager[k] !== (verify as Record<string, unknown>)[k]) {
-      console.error('[checkout-session-completed] B152 proposal-code verify mismatch', { companyId, field: k, expected: eager[k], actual: (verify as Record<string, unknown>)[k] })
+    const expected = eager[k]
+    const actual = (verify as Record<string, unknown>)[k]
+    const matches = k === 'current_period_end'
+      ? timestampMatches(expected, actual)
+      : expected === actual
+    if (!matches) {
+      console.error('[checkout-session-completed] B153 proposal-code verify mismatch', { companyId, field: k, expected, actual })
     }
   }
 
