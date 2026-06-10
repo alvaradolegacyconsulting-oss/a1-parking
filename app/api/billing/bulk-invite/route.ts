@@ -312,7 +312,10 @@ export async function POST(req: NextRequest) {
             make: res.vehicle_make,
             model: res.vehicle_model,
             color: res.vehicle_color,
-            resident_email: res.email,
+            // B166 — defensive normalize at the stamp site so the
+            // deactivation-time owner-trim match is reliable regardless
+            // of what validateRows does upstream.
+            resident_email: res.email.trim().toLowerCase(),
             company: roleRow.company,
             property: res.property,
             unit: res.unit,

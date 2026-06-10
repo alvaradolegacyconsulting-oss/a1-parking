@@ -143,6 +143,9 @@ function RegisterForm() {
           color: v.color.trim() || null,
           unit: account.unit.trim(),
           property: property || null,
+          // B166 — stamp owner. account.email already lowercased+trimmed
+          // for the residents/user_roles inserts above; mirror it here.
+          resident_email: account.email.trim().toLowerCase(),
           is_active: false,
           status: 'pending',
         }])

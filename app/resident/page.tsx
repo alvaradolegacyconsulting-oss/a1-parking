@@ -283,6 +283,10 @@ export default function ResidentPortal() {
       space: newVehicle.space,
       unit: resident.unit,
       property: resident.property,
+      // B166 — stamp owner so move-out can scope vehicle deactivation
+      // by resident_email match. Normalized to match the deactivation-
+      // time owner-trim predicate.
+      resident_email: resident?.email ? resident.email.trim().toLowerCase() : null,
       is_active: false,
       status: 'pending',
     }])

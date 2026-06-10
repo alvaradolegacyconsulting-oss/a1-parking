@@ -21,6 +21,15 @@ import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tool
 import { evaluatePortalGate } from '../lib/portal-account-gate'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
 
+// B166 — escape PostgREST ILIKE wildcards so user-entered values
+// (unit/property) can't over-match via embedded % or _. Email uses
+// .eq() instead (forward stamps are all-lowercase; underscore in the
+// local-part would otherwise be interpreted as ILIKE wildcard and
+// over-match on a destructive UPDATE).
+function escapeIlikeValue(s: string): string {
+  return s.replace(/[\\%_]/g, '\\$&')
+}
+
 export default function ManagerPortal() {
   const [manager, setManager] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -35,9 +44,18 @@ export default function ManagerPortal() {
   const [stats, setStats] = useState({ total_vehicles: 0, active_passes: 0, violations_today: 0, violations_week: 0 })
   const [showAddVehicle, setShowAddVehicle] = useState(false)
   const [newVehicle, setNewVehicle] = useState({ plate: '', state: 'TX', make: '', model: '', year: '', color: '', unit: '', space: '', permit_expiry: '' })
+  // B166 — owner-picker state for manager addVehicle. residentsAtUnit
+  // populates when user enters/changes the unit in Modal A, or when
+  // Modal B opens (unit is fixed = editingResident.unit). Pre-select
+  // when exactly one active resident; force pick at 2+; "Unit-level"
+  // fallback at 0.
+  const [residentsAtUnit, setResidentsAtUnit] = useState<Array<{ email: string; name: string }>>([])
+  const [vehicleOwnerEmail, setVehicleOwnerEmail] = useState('')
   const [violationFilter, setViolationFilter] = useState('today')
   const [showAddResident, setShowAddResident] = useState(false)
-  const [newResident, setNewResident] = useState({ name: '', email: '', phone: '', unit: '', space: '', lease_end: '' })
+  // B167 — optional vehicle fields on PM Add Resident. Plate empty
+  // string => skip vehicle insert (resident-only path).
+  const [newResident, setNewResident] = useState({ name: '', email: '', phone: '', unit: '', space: '', lease_end: '', vehicle_plate: '', vehicle_state: 'TX', vehicle_make: '', vehicle_model: '', vehicle_year: '', vehicle_color: '' })
   const [editingResident, setEditingResident] = useState<any>(null)
   const [allProperties, setAllProperties] = useState<any[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
@@ -479,13 +497,43 @@ export default function ManagerPortal() {
     await supabase.from('residents').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', r.id)
     await supabase.from('vehicles').update({ is_active: false, status: 'declined' }).ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
     await logAudit({ action: 'DECLINE_RESIDENT', table_name: 'residents', record_id: r.id, new_values: { name: r.name, unit: r.unit, property: manager.name } })
+    // B166 — owner-trim. Defensive against any historical active vehicle
+    // owned by this email at this tuple (the pending-status filter above
+    // only catches pending-status rows; an active row owned by a re-
+    // appearing email would survive without this).
+    await trimDepartedResidentVehicles(r.email, r.unit, manager.name, 'DECLINE_RESIDENT')
     setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
     fetchResidents(manager.name)
+  }
+
+  // B166 — fetch active residents at (unit, property) so the addVehicle
+  // picker can pre-select / force-pick / fall back to Unit-level. Called
+  // on Modal A Unit-input blur and on Modal B open.
+  async function fetchResidentsAtUnit(unit: string | null | undefined) {
+    if (!unit || !manager?.name) { setResidentsAtUnit([]); setVehicleOwnerEmail(''); return }
+    const trimmed = unit.trim()
+    if (!trimmed) { setResidentsAtUnit([]); setVehicleOwnerEmail(''); return }
+    // B166 — escape ILIKE wildcards on the user-entered unit. Non-
+    // destructive SELECT (lower stakes than the owner-trim UPDATE) but
+    // applied for consistency with the trim predicate.
+    const { data } = await supabase
+      .from('residents')
+      .select('email, name')
+      .ilike('unit', escapeIlikeValue(trimmed))
+      .ilike('property', escapeIlikeValue(manager.name))
+      .eq('is_active', true)
+    const list = (data || []).filter(r => r.email)
+    setResidentsAtUnit(list)
+    // Pre-select sole resident; force pick at 2+ (empty); empty at 0 → Unit-level.
+    setVehicleOwnerEmail(list.length === 1 ? list[0].email : '')
   }
 
   async function addVehicle(unit?: string) {
     if (!newVehicle.plate) { alert('Plate is required'); return }
     const normalizedPlate = normalizePlate(newVehicle.plate)
+    // B166 — normalize picked owner email at the stamp site. Empty
+    // string → null = Unit-level / shared (B150 cascade handles vacancy).
+    const ownerEmail = vehicleOwnerEmail.trim().toLowerCase() || null
     // permit_expiry coercion: form holds '' when blank; Postgres rejects
     // '' on a DATE column with `invalid input syntax for type date`.
      // Coerce explicitly (same family as the residents.lease_end fix).
@@ -495,16 +543,19 @@ export default function ManagerPortal() {
       plate: normalizedPlate,
       unit: unit || newVehicle.unit,
       property: manager.name,
+      resident_email: ownerEmail,
       is_active: true,
       year: parseInt(newVehicle.year) || null,
       permit_expiry: newVehicle.permit_expiry || null,
     }])
     if (error) { alert('Error: ' + error.message) }
     else {
-      await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name } })
+      await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name, resident_email: ownerEmail } })
       alert('Vehicle added!')
       setShowAddVehicle(false)
       setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', unit:'', space:'', permit_expiry:'' })
+      setVehicleOwnerEmail('')
+      setResidentsAtUnit([])
       fetchVehicles(manager.name)
     }
   }
@@ -566,6 +617,36 @@ export default function ManagerPortal() {
         p_value: true,
       })
       if (flagErr) throw new Error('must_change_password set failed: ' + flagErr.message)
+
+      // B167 — step 4: optional vehicle insert with INLINE error
+      // boundary. Last in the try; failure must NOT bubble to the
+      // outer catch (which would roll back the resident). Pattern
+      // matches bulk-invite/route.ts:307 — resident commit stands;
+      // customer can add the vehicle later via the Edit Resident
+      // modal or /resident if this insert fails.
+      if (newResident.vehicle_plate.trim()) {
+        const { error: vehErr } = await supabase.from('vehicles').insert([{
+          plate: normalizePlate(newResident.vehicle_plate),
+          state: newResident.vehicle_state || 'TX',
+          make: newResident.vehicle_make.trim() || null,
+          model: newResident.vehicle_model.trim() || null,
+          year: parseInt(newResident.vehicle_year) || null,
+          color: newResident.vehicle_color.trim() || null,
+          unit: newResident.unit,
+          property: manager.name,
+          // B166 — owner stamp. targetEmail already lowercased at L522.
+          resident_email: targetEmail,
+          is_active: true,
+          status: 'active',
+        }])
+        if (vehErr) {
+          // Inline boundary — log + soft alert + CONTINUE. Do NOT throw.
+          console.error('[B167-vehicle-insert-failed]', { residentEmail: targetEmail, plate: newResident.vehicle_plate, error: vehErr.message })
+          alert('Resident created successfully, but the vehicle could not be added: ' + vehErr.message + '\n\nYou can add the vehicle later via the Edit Resident → Vehicles section.')
+        } else {
+          await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizePlate(newResident.vehicle_plate), source: 'ADD_RESIDENT', unit: newResident.unit, property: manager.name, resident_email: targetEmail } })
+        }
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       // Roll back the auth user (and the residents row if it landed).
@@ -603,7 +684,7 @@ export default function ManagerPortal() {
     })
 
     setShowAddResident(false)
-    setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'' })
+    setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'', vehicle_plate:'', vehicle_state:'TX', vehicle_make:'', vehicle_model:'', vehicle_year:'', vehicle_color:'' })
     fetchResidents(manager.name)
     setCredentials({ email: targetEmail, password: tempPassword })
   }
@@ -626,13 +707,86 @@ export default function ManagerPortal() {
 
   async function deactivateResident(id: string) {
     if (!confirm('Deactivate this resident?')) return
-    // B150 — lookup (unit, property) BEFORE deactivation so we can run
-    // the cascade gate-check afterward against current occupancy state.
-    const { data: r } = await supabase.from('residents').select('unit, property').eq('id', id).maybeSingle()
+    // B150 + B166 — lookup (email, unit, property) BEFORE deactivation so
+    // we can (B166) owner-trim the departed resident's vehicles and then
+    // (B150) gate-check unit occupancy for the cascade. Pulling email
+    // from the resident's own row (per Jose's note) defends against any
+    // formatting mismatch between residents and vehicles.
+    const { data: r } = await supabase.from('residents').select('email, unit, property').eq('id', id).maybeSingle()
     await supabase.from('residents').update({ is_active: false }).eq('id', id)
     await logAudit({ action: 'DEACTIVATE_RESIDENT', table_name: 'residents', record_id: id, new_values: { is_active: false, property: manager.name } })
+    // B166 owner-trim runs FIRST (per-owner). B150 cascade runs after
+    // and sweeps any remaining un-owned vehicles if the unit fully
+    // vacates. Composition: roommate stays → B166 hides only departed
+    // owner's; B150 no-ops. Full vacancy → B166 hides owned; B150
+    // sweeps the rest.
+    await trimDepartedResidentVehicles(r?.email, r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
     await cascadeVehiclesIfUnitVacant(r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
     fetchResidents(manager.name)
+  }
+
+  // B166 — owner-trim. Flips vehicles.is_active=false for the departed
+  // resident's vehicles, scoped to (resident_email, property, unit). One
+  // field flip covers both halves of the defect: privacy (resident-portal
+  // fetchVehicles filters on is_active=true) AND enforcement (pm_plate_
+  // lookup / check_resident_plate / driver-side query all filter on
+  // is_active=TRUE → departed car returns "not authorized" → tow-eligible).
+  // Composes with B150 cascadeVehiclesIfUnitVacant which runs after.
+  async function trimDepartedResidentVehicles(
+    rawEmail: string | null | undefined,
+    rawUnit: string | null | undefined,
+    rawProperty: string | null | undefined,
+    sourceAction: string
+  ) {
+    if (!rawEmail || !rawUnit || !rawProperty) return
+    const email = rawEmail.trim().toLowerCase()
+    const unit = rawUnit.trim()
+    const property = rawProperty.trim()
+    if (!email || !unit || !property) return
+    // Email: .eq() on the lowercased value — forward stamps are all
+    // lowercase; historical mixed-case rows wiped pre-launch; .eq()
+    // avoids ILIKE wildcard injection (underscores in email local-parts
+    // would otherwise over-match on a destructive UPDATE).
+    // Unit/property: keep ILIKE for case-insensitivity but escape
+    // any embedded % or _ in the user-entered values so 'Apt_214'
+    // doesn't match 'Apt1214' etc.
+    const { data: matched, error } = await supabase
+      .from('vehicles')
+      .update({ is_active: false })
+      .eq('resident_email', email)
+      .ilike('unit', escapeIlikeValue(unit))
+      .ilike('property', escapeIlikeValue(property))
+      .eq('is_active', true)
+      .select('id, plate')
+    if (error) {
+      console.error('[B166-owner-trim-failed]', { sourceAction, email, property, unit, error: error.message })
+      return
+    }
+    const affected = matched?.length || 0
+    if (affected > 0) {
+      // F6 verify-after-write: re-SELECT the matched ids and confirm
+      // is_active=false. Non-fatal; log mismatch.
+      const { data: verify } = await supabase
+        .from('vehicles')
+        .select('id, is_active')
+        .in('id', matched!.map(v => v.id))
+      const mismatched = (verify || []).filter(v => v.is_active !== false)
+      if (mismatched.length > 0) {
+        console.error('[B166-owner-trim-verify-mismatch]', { sourceAction, email, property, unit, affected, mismatchedCount: mismatched.length })
+      }
+      await logAudit({
+        action: 'B166_OWNER_TRIM',
+        table_name: 'vehicles',
+        new_values: {
+          source: sourceAction,
+          resident_email: email,
+          property,
+          unit,
+          vehicles_affected: affected,
+          plates: matched!.map(v => v.plate),
+        },
+      })
+    }
   }
 
   // B150 — vehicle-lifecycle cascade. Fires when the LAST active resident
@@ -643,18 +797,26 @@ export default function ManagerPortal() {
   // honors, hiding archived vehicles from the next resident at the unit.
   async function cascadeVehiclesIfUnitVacant(unit: string | null | undefined, property: string | null | undefined, sourceAction: string) {
     if (!unit || !property) return
+    // B166 escape bundle — apply the same ILIKE wildcard escape used by
+    // trimDepartedResidentVehicles. The vehicles UPDATE arm below is
+    // destructive (is_active=false) so embedded %/_ in unit/property
+    // values must be treated as literals, not wildcards. The residents
+    // count arm is non-destructive but escaped for consistency so the
+    // gate-check counts the right tuple.
+    const escUnit = escapeIlikeValue(unit)
+    const escProperty = escapeIlikeValue(property)
     const { count: othersStillActive } = await supabase
       .from('residents')
       .select('id', { count: 'exact', head: true })
-      .ilike('unit', unit)
-      .ilike('property', property)
+      .ilike('unit', escUnit)
+      .ilike('property', escProperty)
       .eq('is_active', true)
     if (othersStillActive !== 0) return  // roommate still occupies unit
     const { data: archived } = await supabase
       .from('vehicles')
       .update({ is_active: false })
-      .ilike('unit', unit)
-      .ilike('property', property)
+      .ilike('unit', escUnit)
+      .ilike('property', escProperty)
       .eq('is_active', true)
       .select('id, plate')
     if (archived && archived.length > 0) {
@@ -1123,9 +1285,25 @@ export default function ManagerPortal() {
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Model</label><input value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} placeholder="Camry" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Year</label><input value={newVehicle.year} onChange={e => setNewVehicle({...newVehicle, year: e.target.value})} placeholder="2022" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Color</label><input value={newVehicle.color} onChange={e => setNewVehicle({...newVehicle, color: e.target.value})} placeholder="Black" style={inputStyle} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Unit *</label><input value={newVehicle.unit} onChange={e => setNewVehicle({...newVehicle, unit: e.target.value})} placeholder="Apt 214" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Unit *</label><input value={newVehicle.unit} onChange={e => setNewVehicle({...newVehicle, unit: e.target.value})} onBlur={() => fetchResidentsAtUnit(newVehicle.unit)} placeholder="Apt 214" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Space</label><input value={newVehicle.space} onChange={e => setNewVehicle({...newVehicle, space: e.target.value})} placeholder="A-12" style={inputStyle} /></div>
                   <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Permit Expiry</label><input type="date" value={newVehicle.permit_expiry} onChange={e => setNewVehicle({...newVehicle, permit_expiry: e.target.value})} style={inputStyle} /></div>
+                  {/* B166 — owner picker. Auto-populates on Unit blur via fetchResidentsAtUnit. */}
+                  <div style={{ gridColumn:'span 2' }}>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Vehicle Owner</label>
+                    <select value={vehicleOwnerEmail} onChange={e => setVehicleOwnerEmail(e.target.value)} style={inputStyle}>
+                      <option value="">Unit-level / shared (no owner)</option>
+                      {residentsAtUnit.map(r => (
+                        <option key={r.email} value={r.email}>{r.name} ({r.email})</option>
+                      ))}
+                    </select>
+                    {newVehicle.unit && residentsAtUnit.length === 0 && (
+                      <p style={{ color:'#777', fontSize:'10px', margin:'4px 0 0' }}>No active residents at this unit; vehicle will be unit-level.</p>
+                    )}
+                    {residentsAtUnit.length >= 2 && !vehicleOwnerEmail && (
+                      <p style={{ color:'#C9A227', fontSize:'10px', margin:'4px 0 0' }}>Multiple residents — pick the owner.</p>
+                    )}
+                  </div>
                 </div>
                 <div style={{ display:'flex', gap:'8px' }}>
                   <button onClick={() => addVehicle()} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Add Vehicle</button>
@@ -1400,6 +1578,17 @@ export default function ManagerPortal() {
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Unit *</label><input value={newResident.unit} onChange={e => setNewResident({...newResident, unit: e.target.value})} placeholder="Apt 214" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Space</label><input value={newResident.space} onChange={e => setNewResident({...newResident, space: e.target.value})} placeholder="A-12" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Lease End</label><input type="date" value={newResident.lease_end} onChange={e => setNewResident({...newResident, lease_end: e.target.value})} style={inputStyle} /></div>
+                  {/* B167 — optional vehicle fields. Plate empty => resident-only. */}
+                  <div style={{ gridColumn:'span 2', borderTop:'1px solid #2a2f3d', paddingTop:'10px', marginTop:'4px' }}>
+                    <p style={{ color:'white', fontSize:'12px', fontWeight:'bold', margin:'0 0 6px' }}>Vehicle (optional)</p>
+                    <p style={{ color:'#777', fontSize:'10px', margin:'0' }}>Leave Plate empty to add the resident without a vehicle.</p>
+                  </div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate</label><input value={newResident.vehicle_plate} onChange={e => setNewResident({...newResident, vehicle_plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><select value={newResident.vehicle_state} onChange={e => setNewResident({...newResident, vehicle_state: e.target.value})} style={inputStyle}>{['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}</select></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Make</label><input value={newResident.vehicle_make} onChange={e => setNewResident({...newResident, vehicle_make: e.target.value})} placeholder="Toyota" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Model</label><input value={newResident.vehicle_model} onChange={e => setNewResident({...newResident, vehicle_model: e.target.value})} placeholder="Camry" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Year</label><input value={newResident.vehicle_year} onChange={e => setNewResident({...newResident, vehicle_year: e.target.value})} placeholder="2022" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Color</label><input value={newResident.vehicle_color} onChange={e => setNewResident({...newResident, vehicle_color: e.target.value})} placeholder="Black" style={inputStyle} /></div>
                 </div>
                 <div style={{ display:'flex', gap:'8px' }}>
                   <button onClick={addResident} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Add Resident</button>
@@ -1425,7 +1614,7 @@ export default function ManagerPortal() {
                 <div style={{ borderTop:'1px solid #2a2f3d', paddingTop:'14px' }}>
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
                     <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>Vehicles — {editingResident.unit}</p>
-                    <button onClick={() => setShowAddVehicle(true)} style={{ padding:'5px 10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'11px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>+ Add Vehicle</button>
+                    <button onClick={async () => { setShowAddVehicle(true); await fetchResidentsAtUnit(editingResident.unit); setVehicleOwnerEmail(editingResident.email || '') }} style={{ padding:'5px 10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'11px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>+ Add Vehicle</button>
                   </div>
                   {showAddVehicle && (
                     <div style={{ background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', padding:'12px', marginBottom:'10px' }}>
@@ -1438,6 +1627,19 @@ export default function ManagerPortal() {
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Color</label><input value={newVehicle.color} onChange={e => setNewVehicle({...newVehicle, color: e.target.value})} placeholder="Black" style={inputStyle} /></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Space</label><input value={newVehicle.space} onChange={e => setNewVehicle({...newVehicle, space: e.target.value})} placeholder="A-12" style={inputStyle} /></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Permit Expiry</label><input type="date" value={newVehicle.permit_expiry} onChange={e => setNewVehicle({...newVehicle, permit_expiry: e.target.value})} style={inputStyle} /></div>
+                        {/* B166 — owner picker. Pre-loaded with editingResident on modal open. */}
+                        <div style={{ gridColumn:'span 2' }}>
+                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Vehicle Owner</label>
+                          <select value={vehicleOwnerEmail} onChange={e => setVehicleOwnerEmail(e.target.value)} style={inputStyle}>
+                            <option value="">Unit-level / shared (no owner)</option>
+                            {residentsAtUnit.map(r => (
+                              <option key={r.email} value={r.email}>{r.name} ({r.email})</option>
+                            ))}
+                          </select>
+                          {residentsAtUnit.length >= 2 && !vehicleOwnerEmail && (
+                            <p style={{ color:'#C9A227', fontSize:'10px', margin:'4px 0 0' }}>Multiple residents — pick the owner.</p>
+                          )}
+                        </div>
                       </div>
                       <div style={{ display:'flex', gap:'8px' }}>
                         <button onClick={() => addVehicle(editingResident.unit)} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer' }}>Add Vehicle</button>
