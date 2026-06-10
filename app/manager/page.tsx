@@ -483,11 +483,54 @@ export default function ManagerPortal() {
     setTimeout(() => { setResetPwTarget(null); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }, 2000)
   }
 
+  // Notify the resident of an approve/decline decision via the
+  // /api/manager/notify-resident-decision endpoint. NON-BLOCKING on
+  // failure — the DB writes are already committed; the email is the
+  // secondary channel. Returns { ok, message_id } so callers can
+  // stamp the audit log with email_sent + message_id for forensic
+  // visibility.
+  async function notifyResidentDecision(args: {
+    residentId: string
+    decision: 'approved' | 'declined'
+    note: string | null
+  }): Promise<{ ok: boolean; message_id: string | null }> {
+    try {
+      const res = await fetch('/api/manager/notify-resident-decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(args),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (res.ok && j.ok) {
+        return { ok: true, message_id: j.message_id || null }
+      }
+      console.error('[resident-decision-email] failed:', j.error || res.statusText)
+      return { ok: false, message_id: null }
+    } catch (e) {
+      console.error('[resident-decision-email] threw:', e)
+      return { ok: false, message_id: null }
+    }
+  }
+
   async function approveResident(r: any) {
     const note = residentNotes[r.id] || null
     await supabase.from('residents').update({ is_active: true, status: 'active', manager_note: note }).eq('id', r.id)
     await supabase.from('vehicles').update({ is_active: true, status: 'active' }).ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
-    await logAudit({ action: 'APPROVE_RESIDENT', table_name: 'residents', record_id: r.id, new_values: { name: r.name, unit: r.unit, property: manager.name } })
+    // Send the approval email + capture outcome for the audit. Email
+    // failure is non-fatal — approval is already committed.
+    const emailResult = await notifyResidentDecision({ residentId: r.id, decision: 'approved', note: null })
+    await logAudit({
+      action: 'APPROVE_RESIDENT',
+      table_name: 'residents',
+      record_id: r.id,
+      new_values: {
+        name: r.name,
+        unit: r.unit,
+        property: manager.name,
+        email_sent: emailResult.ok,
+        message_id: emailResult.message_id,
+      },
+    })
     setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
     fetchResidents(manager.name)
   }
@@ -496,7 +539,21 @@ export default function ManagerPortal() {
     const note = residentNotes[r.id] || null
     await supabase.from('residents').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', r.id)
     await supabase.from('vehicles').update({ is_active: false, status: 'declined' }).ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
-    await logAudit({ action: 'DECLINE_RESIDENT', table_name: 'residents', record_id: r.id, new_values: { name: r.name, unit: r.unit, property: manager.name } })
+    // Send the decline email (with optional manager note) + capture
+    // outcome for the audit. Email failure is non-fatal.
+    const emailResult = await notifyResidentDecision({ residentId: r.id, decision: 'declined', note })
+    await logAudit({
+      action: 'DECLINE_RESIDENT',
+      table_name: 'residents',
+      record_id: r.id,
+      new_values: {
+        name: r.name,
+        unit: r.unit,
+        property: manager.name,
+        email_sent: emailResult.ok,
+        message_id: emailResult.message_id,
+      },
+    })
     // B166 — owner-trim. Defensive against any historical active vehicle
     // owned by this email at this tuple (the pending-status filter above
     // only catches pending-status rows; an active row owned by a re-

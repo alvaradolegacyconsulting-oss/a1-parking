@@ -84,15 +84,18 @@ If you've been waiting more than 2 business days, contact your property manager 
 
 ### How you'll know you're approved
 
-**ShieldMyLot does not send you any emails.** Your property manager handles all resident communication.
+**You'll receive an email when your manager decides.** Approved or declined, a notification email is sent to the address you registered with — usually within 1-2 business days of submitting your registration.
 
-To check your status, log in at **https://www.shieldmylot.com/login** using the email and password you set during registration. One of three things will happen:
+- **Approved email:** Confirms approval and links you back to the login page. **Log in with the email and password you chose at signup** — there's no temporary password to track; you already know your credentials.
+- **Declined email:** Tells you the registration was not approved, and includes any note your property manager left explaining why (if no note is provided, the email directs you to contact the leasing office).
+
+You can also check status by logging in at **https://www.shieldmylot.com/login**:
 
 - **Approved:** You'll see your resident portal with your vehicles listed.
 - **Still pending:** You'll see a "pending approval" message.
-- **Declined:** You'll see a "registration declined" message. Contact your property manager to understand why.
+- **Declined:** You'll see a "registration declined" message.
 
-Many residents find it easiest to just try logging in once a day until access works. Once approved, your access is permanent (until you move out or your manager deactivates your account).
+Once approved, your access is permanent (until you move out or your manager deactivates your account).
 
 ---
 
@@ -146,7 +149,7 @@ Initial registration is capped at 2 vehicles to keep the signup form simple. If 
 4. Fill in the vehicle details
 5. Submit
 
-The request goes to your property manager for approval. **You won't receive an email when it's approved** — the status updates in your resident portal. Check back periodically, or refresh the page when you're expecting approval.
+The request goes to your property manager for approval. **You'll receive an email when the decision is made** (approved or declined), and the status also updates in your resident portal.
 
 This approval-required workflow exists so property managers can prevent abuse (residents adding non-resident vehicles to bypass enforcement).
 
@@ -208,7 +211,7 @@ You can, but unregistered vehicles at the property may be subject to enforcement
 The QR code may be outdated, or your property's account may have an issue. Contact your property manager or leasing office directly to get a fresh link.
 
 **How will I know my registration was approved?**
-Log in periodically. ShieldMyLot does not send emails — all status updates appear in your resident portal when you log in.
+You'll get an email — approved or declined — to the address you registered with. The status also appears in your resident portal when you log in.
 
 **I forgot my password.**
 Use the "Forgot Password" link on the login page to reset it. You'll need access to the email address you registered with.
