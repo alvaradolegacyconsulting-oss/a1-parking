@@ -387,8 +387,12 @@ export default function CompanyAdminPortal() {
   }
 
   async function auditLog(action: string, table_name: string, record_id: string, new_values: any) {
+    // B155.2 F4 — audit_logs WITH CHECK enforces self-attribution.
+    // Helper closes over `user?.email` (always self-attributing by
+    // construction), but guard against a null user race.
+    if (!user?.email) return
     await supabase.from('audit_logs').insert([{
-      user_email: user?.email, action, table_name,
+      user_email: user.email, action, table_name,
       record_id: String(record_id), new_values,
       created_at: new Date().toISOString()
     }])

@@ -151,9 +151,23 @@ function RegisterForm() {
         }])
       }
 
-      await supabase.from('audit_logs').insert([
-        { action: 'REGISTRATION_TOS_ACCEPTED', table_name: 'residents', new_values: { email: account.email.trim(), property: property || null } },
+      // B155.2 F4 — consent capture is legal-evidence (proof of ToS/
+      // Privacy acceptance at signup). Stamp user_email explicitly so
+      // the audit_logs self-attribution WITH CHECK admits the row.
+      // signInWithPassword above (line 90-93) created the session, so
+      // auth.jwt()->>'email' matches account.email. Surface insert
+      // failures via console.error (not alert) so a legitimate audit
+      // miss is loud in monitoring without blocking registration —
+      // consent capture must not fail the signup.
+      const { error: auditErr } = await supabase.from('audit_logs').insert([
+        {
+          user_email: account.email.trim().toLowerCase(),
+          action: 'REGISTRATION_TOS_ACCEPTED',
+          table_name: 'residents',
+          new_values: { email: account.email.trim(), property: property || null },
+        },
       ])
+      if (auditErr) console.error('[B155.2 F4] REGISTRATION_TOS_ACCEPTED audit insert failed:', auditErr.message)
       // Sign out — registration complete, account is in pending state.
       // Leaving the session active would auto-redirect to /resident on
       // the next nav and surface a "pending" landing page; signing out

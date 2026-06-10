@@ -94,6 +94,10 @@ export default function AdminPortal() {
   }
 
   async function auditLog(email: string, action: string, table_name: string, record_id: any, new_values: any) {
+    // B155.2 F4 — audit_logs WITH CHECK enforces self-attribution.
+    // Every call site passes adminEmail (auth-derived), but guard the
+    // helper against any future caller passing empty/undefined.
+    if (!email) return
     await supabase.from('audit_logs').insert([{
       user_email: email,
       action,
