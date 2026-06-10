@@ -681,6 +681,25 @@ export default function DriverPortal() {
     if (!tw) return
     const v = ticketTarget
     const total = (parseFloat(towFee || '0') + parseFloat(mileage || '0')).toFixed(2)
+    // Capability-URL ticket view (90-day expiry). Populate view_token
+    // on the violation row; recipient clicks the URL → /ticket/view/
+    // <token> → sees rich hosted view with photos. Token RPC is
+    // independent of the storage info stamped below — the public view
+    // re-reads the violation row at request time, so the order doesn't
+    // matter. Failure is non-fatal: the popup just omits the Share /
+    // Copy buttons and the mailto body's "View online" line.
+    let viewUrl = ''
+    if (ticketTarget?.id) {
+      const { data: tokenResult, error: tokenErr } = await supabase.rpc('set_violation_view_token', { p_violation_id: ticketTarget.id })
+      if (tokenErr) {
+        console.error('[tow-ticket-view] set_violation_view_token failed:', tokenErr.message)
+      } else if (tokenResult && typeof tokenResult === 'object' && 'token' in tokenResult) {
+        viewUrl = `https://shieldmylot.com/ticket/view/${(tokenResult as { token: string }).token}`
+      } else if (tokenResult && typeof tokenResult === 'object' && 'error' in tokenResult) {
+        console.error('[tow-ticket-view] set_violation_view_token returned error:', (tokenResult as { error: string }).error)
+      }
+    }
+    const storageEmail = storage?.email ? encodeURIComponent(storage.email) : ''
     const mailSubject = encodeURIComponent(`Tow Ticket - ${v.plate}`)
     const mailBody = encodeURIComponent([
       `TOW TICKET — ${driver?.company || 'A1 Wrecker, LLC'}`,
@@ -718,6 +737,11 @@ export default function DriverPortal() {
       `Tow Fee: $${parseFloat(towFee || '0').toFixed(2)}`,
       `Mileage Fee: $${parseFloat(mileage || '0').toFixed(2)}`,
       `Total Due: $${total}`,
+      // Capability-URL link in the plain-text body (the same URL goes
+      // into mailto's "to" / share-sheet / clipboard via the popup
+      // buttons below). If the RPC failed, viewUrl is empty and these
+      // lines are skipped.
+      ...(viewUrl ? [``, `VIEW FULL TICKET ONLINE (with photos):`, viewUrl] : []),
     ].join('\n'))
     const photosHtml = v.photos?.length
       ? `<div style="margin-top:20px"><p style="font-weight:bold;margin-bottom:8px">EVIDENCE PHOTOS</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${v.photos.map((u: string) => `<img src="${u}" style="width:100%;border-radius:4px;border:1px solid #ddd" onerror="this.style.display='none'">`).join('')}</div></div>`
@@ -810,9 +834,11 @@ export default function DriverPortal() {
         <div><div class="sig-line">Date</div></div>
       </div>
       <div class="ftr">${driver?.company || localStorage.getItem('company_name') || 'A1 Wrecker, LLC'} &middot; ${localStorage.getItem('company_support_website') || localStorage.getItem('company_support_phone') || ''}<br>Generated ${new Date().toLocaleString()}</div>
-      <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center">
+      <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
         <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
-        <a href="mailto:?subject=${mailSubject}&body=${mailBody}" style="padding:11px 22px;background:#1e3a5f;color:#fff;font-weight:bold;font-size:13px;border-radius:7px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center">Email Ticket</a>
+        <a href="mailto:${storageEmail}?subject=${mailSubject}&body=${mailBody}" style="padding:11px 22px;background:#1e3a5f;color:#fff;font-weight:bold;font-size:13px;border-radius:7px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center">Email Ticket</a>
+        ${viewUrl ? `<button onclick="if(navigator.share){navigator.share({title:'Tow Ticket',text:'Tow ticket for plate ${v.plate}',url:'${viewUrl}'}).catch(()=>{})}else{alert('Sharing not supported on this device. Use Email or Copy Link.')}" style="padding:11px 22px;background:#2e7d32;color:#fff;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Share</button>` : ''}
+        ${viewUrl ? `<button onclick="navigator.clipboard.writeText('${viewUrl}').then(()=>{var b=event.target;var t=b.textContent;b.textContent='Copied!';setTimeout(function(){b.textContent=t},1500)})" style="padding:11px 22px;background:#555;color:#fff;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Copy Link</button>` : ''}
         <button onclick="window.close()" style="padding:11px 22px;background:#333;color:#fff;font-size:13px;border:none;border-radius:7px;cursor:pointer">Close</button>
       </div>
     </body></html>`)
