@@ -1282,11 +1282,18 @@ export default function DriverPortal() {
                   )}
 
                   {(() => {
-                    // Phase 2a: video duration cap pulled from tier. localStorage
-                    // company_tier may not be populated on driver portals (no CA
-                    // onboarding flow for drivers); falls back to legacy/enforcement
-                    // = 60s, which matches the pre-Phase-2a hardcoded default.
-                    const videoMaxSec = Number(getLimit(FEATURE_FLAGS.VIDEO_MAX_DURATION_SECONDS, getCompanyContext())) || 60
+                    // Phase 2a: video duration cap pulled from tier.
+                    // Driver-video-gate (2026-06-10): a value of 0 means the
+                    // tier explicitly excludes video (PM-track Essential /
+                    // Professional / Enterprise per tier-config.ts). Hide
+                    // the control entirely so a driver on a non-video tier
+                    // never sees an input they can't use (the prior
+                    // `|| 60` fallback collapsed 0 to 60 — show-then-fail).
+                    // Defense-in-depth: PM tiers lack DRIVER_PORTAL today,
+                    // so reaching here on PM context is rare, but the
+                    // render-side gate is the correct discipline regardless.
+                    const videoMaxSec = Number(getLimit(FEATURE_FLAGS.VIDEO_MAX_DURATION_SECONDS, getCompanyContext()))
+                    if (videoMaxSec === 0) return null
                     return (
                       <>
                         <label style={lbl}>Video (optional) — max {videoMaxSec} sec, 150MB</label>
