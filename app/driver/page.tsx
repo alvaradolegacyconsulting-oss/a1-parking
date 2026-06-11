@@ -108,9 +108,26 @@ export default function DriverPortal() {
     const { data: driverData } = await supabase
       .from('drivers').select('*').ilike('email', user.email!).single()
 
-    const d = driverData ?? {
-      name: user.email, email: user.email,
-      assigned_properties: ['All'], operator_license: 'N/A', company: 'A1 Wrecker, LLC'
+    // Driver-company-source fix (2026-06-10): the canonical company for
+    // the driver session is user_roles.company — the same source RLS
+    // uses via get_my_company(). drivers.company can drift (different
+    // casing, trailing space, "Demo Towing" vs "Demo Towing LLC", etc.)
+    // and the drivers row can be missing entirely. The prior fallback
+    // hardcoded 'A1 Wrecker, LLC' which silently mis-attributed every
+    // non-A1 driver: the storage-facility dropdown filter, the account-
+    // state portal gate, AND the TDLR lookup all evaluated against A1
+    // instead of the actual company. RLS still gated correctly (uses
+    // user_roles.company), so the symptom was an empty dropdown + wrong
+    // gate result rather than a leak. Single-source from roleData.
+    // company so all three consumers stay aligned with RLS. Closes the
+    // B27 "fragile name-string matcher" memory's predicted recurrence —
+    // "revisit when A1 hires a 7th driver or onboards next customer."
+    const d = {
+      ...(driverData ?? {
+        name: user.email, email: user.email,
+        assigned_properties: ['All'], operator_license: 'N/A',
+      }),
+      company: roleData.company || '',
     }
 
     // B66.5 commit 4.3 + B66.5.1: account-state gate with userRole threaded
@@ -172,17 +189,35 @@ export default function DriverPortal() {
   }
 
   async function fetchStorageFacilities() {
-    // B154 — defensive .eq('company', ...) alongside the company-scoped
-    // RLS policy. RLS is the functional gate; the explicit filter makes
-    // scope legible in the code (Class-B defensive-legibility — same
-    // principle that produced B150). driver.company is the row's
-    // company text; matches storage_facilities.company under the new
-    // driver_read_own_facilities policy.
+    // B177 (2026-06-11) — the prior B154-era client-side
+    // `.ilike('company', driver?.company ?? '')` filter was REMOVED.
+    // Why: instrumentation under driver1@demotowing.com's real session
+    // proved that the RLS-only query returns the correct facilities
+    // (RLS uses `driver_read_own_facilities`: company ~~* get_my_
+    // company()), but the client .ilike read `driver?.company` via a
+    // STALE REACT CLOSURE. fetchStorageFacilities is called inline at
+    // the end of loadDriver, right after setDriver(d) — but setDriver
+    // is async; the closure captured the initial render's driver
+    // state (= null). So .ilike resolved to .ilike('company', '')
+    // which matches nothing, even though Option C had correctly
+    // populated d.company → "Demo Towing LLC".
+    //
+    // The fix (per Jose's Part 2): trust RLS. Per role:
+    //   • driver → driver_read_own_facilities (own-company scope)
+    //   • CA     → company_admin_own_facilities (own-company scope)
+    //   • admin  → admin_all_facilities (super-admin all)
+    // All three RLS policies were proven to scope correctly (B177
+    // capture). The client-side defensive filter was redundant AND
+    // the failure surface — removing it makes the dropdown immune to
+    // any client-state population race or fragility.
+    //
+    // Closes the B27 "fragile name-string matcher" memory's class at
+    // the read-site layer (Option C closed the SOURCE; this closes the
+    // CONSUMER).
     const { data } = await supabase
       .from('storage_facilities')
       .select('*')
       .eq('is_active', true)
-      .ilike('company', driver?.company ?? '')
       .order('name')
     setStorageFacilities(data || [])
   }
