@@ -47,3 +47,4 @@ next-env.d.ts
 
 # Test output artifacts from earlier sessions; never B85 scope.
 /output/
+FETCH_HEAD

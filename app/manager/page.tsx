@@ -1024,7 +1024,8 @@ export default function ManagerPortal() {
     const mk = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`
 
     const [{ data: vData }, { data: vehData }, { data: drData }] = await Promise.all([
-      supabase.from('violations').select('created_at,tow_ticket_generated').eq('is_confirmed', true).ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
+      // B175 — analytics counter excludes voided violations.
+      supabase.from('violations').select('created_at,tow_ticket_generated').eq('is_confirmed', true).is('voided_at', null).ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
       supabase.from('vehicles').select('status,is_active').ilike('property', manager.name),
       supabase.from('dispute_requests').select('id').ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
     ])
@@ -1805,7 +1806,23 @@ export default function ManagerPortal() {
             {filteredViolations().length === 0
               ? <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No violations for this period</p></div>
               : filteredViolations().map((v,i) => (
-                <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                <div key={i} style={{ background:'#161b26', border: v.voided_at ? '1px solid #b71c1c' : '1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px', opacity: v.voided_at ? 0.78 : 1 }}>
+                  {/* B175 — voided marker. Manager + admin keep voided rows
+                      visible+marked for forensic clarity (operators need to
+                      see what was voided; resident view filters them out,
+                      analytics excludes from counts). The opacity dim + red
+                      border + badge communicate "not in effect" without
+                      hiding the audit-relevant data. */}
+                  {v.voided_at && (
+                    <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'6px 10px', marginBottom:'10px', display:'flex', alignItems:'center', gap:'8px' }}>
+                      <span style={{ fontSize:'14px' }}>🚫</span>
+                      <span style={{ color:'#f44336', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em' }}>VOIDED</span>
+                      <span style={{ color:'#888', fontSize:'10px', marginLeft:'auto' }}>
+                        {new Date(v.voided_at as string).toLocaleDateString()}
+                        {v.void_reason ? ` · ${v.void_reason}` : ''}
+                      </span>
+                    </div>
+                  )}
                   <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'8px' }}>
                     <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'18px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
                     <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>

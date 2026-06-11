@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import MediaRemovalDialog, { RemoverRole } from './MediaRemovalDialog'
+import ViolationVoidDialog from './ViolationVoidDialog'
 
 // B13/B18 Commit C2 — post-confirmation edit modal.
 // Reused by manager + CA portals. Opens with a known violationId,
@@ -33,6 +34,10 @@ type ModalViolation = {
   vehicle_make: string | null
   vehicle_model: string | null
   created_at: string | null
+  // B175 — when populated, the violation is voided; this modal refuses
+  // media edits on voided violations (the row is treated as not-in-
+  // effect; further edits would mislead the audit trail).
+  voided_at: string | null
   photos: Array<{ id: number; url: string }>
   video: { id: number; url: string } | null
 }
@@ -67,6 +72,10 @@ export default function PostConfirmationEditModal({
     mediaId: number
     mediaUrl: string
   }>(null)
+  // B175 — void dialog state. Opens when the user clicks "Void
+  // violation". On success, refetch + close the entire modal so the
+  // parent's list picks up the now-voided row.
+  const [showVoidDialog, setShowVoidDialog] = useState(false)
 
   useEffect(() => {
     if (open && violationId != null) {
@@ -81,7 +90,7 @@ export default function PostConfirmationEditModal({
   async function load(id: number) {
     setLoading(true)
     const { data, error } = await supabase.from('violations')
-      .select('id, plate, violation_type, property, location, notes, driver_name, vehicle_color, vehicle_make, vehicle_model, created_at, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
+      .select('id, plate, violation_type, property, location, notes, driver_name, vehicle_color, vehicle_make, vehicle_model, created_at, voided_at, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('id', id)
       .single()
     setLoading(false)
@@ -106,6 +115,7 @@ export default function PostConfirmationEditModal({
       vehicle_make: data.vehicle_make,
       vehicle_model: data.vehicle_model,
       created_at: data.created_at,
+      voided_at: (data as { voided_at?: string | null }).voided_at ?? null,
       photos: activePhotos.map(p => ({ id: p.id, url: p.photo_url })),
       video: activeVideos[0]
         ? { id: activeVideos[0].id, url: activeVideos[0].video_url }
@@ -114,6 +124,41 @@ export default function PostConfirmationEditModal({
   }
 
   if (!open) return null
+
+  // B175 — refuse media edits on a voided violation. The row is
+  // treated as not-in-effect everywhere it surfaces; further media
+  // edits would mislead the audit trail.
+  if (violation && violation.voided_at) {
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 900, padding: 16,
+      }}>
+        <div style={{
+          background: '#0f1117', border: '2px solid #b71c1c', borderRadius: 10,
+          padding: 24, maxWidth: 460, width: '100%', boxSizing: 'border-box',
+          fontFamily: 'Arial, sans-serif', textAlign: 'center',
+        }}>
+          <div style={{ fontSize: 36, marginBottom: 10 }}>🚫</div>
+          <h2 style={{ color: '#f44336', fontSize: 16, fontWeight: 'bold', margin: '0 0 10px' }}>
+            This violation has been voided
+          </h2>
+          <p style={{ color: '#aaa', fontSize: 12, lineHeight: 1.5, margin: '0 0 18px' }}>
+            Media edits are not permitted on voided violations. The row stays as
+            audit evidence; further changes would mislead the trail.
+          </p>
+          <button onClick={onClose} style={{
+            padding: '10px 24px', background: '#1e2535', color: '#aaa',
+            fontSize: 13, fontWeight: 'bold', border: '1px solid #3a4055',
+            borderRadius: 8, cursor: 'pointer', fontFamily: 'Arial',
+          }}>
+            Close
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}>
@@ -226,11 +271,48 @@ export default function PostConfirmationEditModal({
               </p>
             )}
 
+            {/* B175 — Void Violation button. Render gate (Jose amendment
+                2026-06-11): company_admin + admin ONLY. Manager EXCLUDED
+                (managers retain media-removal authority on confirmed
+                violations via this same modal — asymmetry consciously
+                accepted; void is a company-level correction action). The
+                void_violation RPC's server-side role gate is the backstop:
+                even if a manager bypassed this render guard, the RPC
+                refuses with `role_not_authorized`. */}
+            {(userRole === 'company_admin' || userRole === 'admin') && (
+              <button onClick={() => setShowVoidDialog(true)}
+                style={{ width: '100%', padding: '12px', background: '#1e2535', color: '#f44336', fontSize: '13px', fontWeight: 'bold', border: '1px solid #b71c1c', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial', marginBottom: '8px' }}>
+                🚫 Void this violation
+              </button>
+            )}
             <button onClick={onClose}
               style={{ width: '100%', padding: '12px', background: '#1e2535', color: '#aaa', fontSize: '13px', fontWeight: 'bold', border: '1px solid #3a4055', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
               Close
             </button>
           </>
+        )}
+
+        {showVoidDialog && violation && (
+          <ViolationVoidDialog
+            open={true}
+            violationId={violation.id}
+            plate={violation.plate || ''}
+            property={violation.property}
+            violationType={violation.violation_type}
+            userEmail={userEmail}
+            onCancel={() => setShowVoidDialog(false)}
+            onVoided={() => {
+              // Void succeeded server-side. Close the void dialog, then
+              // close this modal — the parent portal's list will refresh
+              // and re-render the row as voided per Q4 (visible+marked
+              // for manager/admin, hidden for resident, filtered out for
+              // analytics). Alternative: refetch in-place via load() so
+              // the refusal-UI guard (line 126) renders; chose to close
+              // for cleaner UX (user just initiated a permanent action).
+              setShowVoidDialog(false)
+              onClose()
+            }}
+          />
         )}
 
         {removalTarget && violation && (

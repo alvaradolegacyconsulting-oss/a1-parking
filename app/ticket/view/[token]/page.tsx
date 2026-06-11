@@ -48,16 +48,43 @@ interface PhotoRow {
 
 type RpcResult =
   | { error: string }
+  | { status: 'voided' }  // B175 — voided ticket. NO payload. Public page renders a clean voided-notice.
   | { violation: ViolationRow; photos: PhotoRow[] }
 
 async function fetchTicket(token: string): Promise<RpcResult> {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-  const { data, error } = await supabase.rpc('get_violation_by_view_token', { p_token: token })
-  if (error) return { error: 'not_found_or_expired' }
-  return data as RpcResult
+  // B175 fix-up (2026-06-11) — defensive guards so the page component's
+  // discriminator chain NEVER sees null/undefined/non-object. The page
+  // does `'error' in result` and `'status' in result` to narrow — the
+  // `in` operator throws TypeError on a non-object operand, which
+  // produced "server error" on the voided-ticket smoke when something
+  // in the fetch path bypassed the prior `if (error)` guard. Catch:
+  //   • supabase.rpc returned an explicit error → fall through to
+  //     not_found_or_expired (existing behavior).
+  //   • supabase.rpc returned data = null/undefined/primitive →
+  //     fall through (was the throw vector).
+  //   • The RPC call itself threw → fall through (network / SSL /
+  //     environment misconfig).
+  // Anything reaching the page component is now guaranteed to be a
+  // non-null object the `in` operator can safely walk.
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    const { data, error } = await supabase.rpc('get_violation_by_view_token', { p_token: token })
+    if (error) {
+      console.error('[ticket-view] RPC error:', error.message)
+      return { error: 'not_found_or_expired' }
+    }
+    if (!data || typeof data !== 'object') {
+      console.error('[ticket-view] RPC returned non-object data:', JSON.stringify(data))
+      return { error: 'not_found_or_expired' }
+    }
+    return data as RpcResult
+  } catch (e) {
+    console.error('[ticket-view] fetchTicket threw:', e instanceof Error ? e.message : String(e))
+    return { error: 'not_found_or_expired' }
+  }
 }
 
 export default async function TicketViewPage({
@@ -70,12 +97,23 @@ export default async function TicketViewPage({
   const { token } = await params
   const result = await fetchTicket(token)
 
+  // B175 — voided ticket: render the dedicated voided notice WITHOUT
+  // the violation payload. Per Jose's Q6c lock: a violation is often
+  // voided BECAUSE the data was wrong (wrong plate/vehicle); we must
+  // not keep republishing the erroneous record on an anonymous public
+  // URL. The RPC returns no plate/photos/location for voided rows;
+  // this branch communicates that to the recipient cleanly.
+  //
+  // Discriminator: each variant has a unique key — `status` (voided),
+  // `error` (not-found/expired/invalid), or `violation` + `photos`
+  // (the OK payload). Check by key to give TS a clean narrowing.
   if ('error' in result) {
     return <NotFoundView reason={result.error} />
   }
-
-  const { violation: v, photos } = result
-  return <TicketView violation={v} photos={photos} />
+  if ('status' in result) {
+    return <VoidedView />
+  }
+  return <TicketView violation={result.violation} photos={result.photos} />
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -271,6 +309,39 @@ function NotFoundView({ reason }: { reason: string }) {
         <p style={{ fontSize: 12, color: '#888', lineHeight: 1.6, marginTop: 16 }}>
           If you believe this link should be valid, contact the tow operator or storage facility
           listed on your tow ticket.
+        </p>
+      </article>
+    </main>
+  )
+}
+
+// B175 — Voided ticket view. The RPC returns {status:'voided'} when a
+// violation has been voided (voided_at IS NOT NULL), WITHOUT any
+// payload (no plate, photos, location). The recipient sees a clean
+// "voided / not in effect" notice. Rationale: a violation is often
+// voided BECAUSE the data was wrong (wrong plate / wrong vehicle); we
+// must not keep republishing the erroneous record on an anonymous
+// public URL. The void branch fires even on links that have technically
+// expired — "voided" is more informative than "expired/not found" for
+// a recipient holding the link, and leaks no payload either way.
+function VoidedView() {
+  return (
+    <main style={pageStyle}>
+      <article style={{ ...cardStyle, textAlign: 'center', padding: 48, border: '2px solid #b71c1c' }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🚫</div>
+        <h1 style={{ fontSize: 22, fontWeight: 'bold', margin: '0 0 12px', color: '#b71c1c' }}>
+          This ticket has been voided
+        </h1>
+        <p style={{ fontSize: 14, color: '#333', lineHeight: 1.6, margin: '0 0 16px', fontWeight: 'bold' }}>
+          NOT IN EFFECT
+        </p>
+        <p style={{ fontSize: 13, color: '#555', lineHeight: 1.6, margin: 0 }}>
+          The tow operator who issued this ticket has marked it voided. There is no fee owed
+          and no action required from this notice.
+        </p>
+        <p style={{ fontSize: 12, color: '#888', lineHeight: 1.6, marginTop: 16 }}>
+          If you have questions, contact the tow operator or storage facility that originally
+          issued the ticket.
         </p>
       </article>
     </main>

@@ -1461,7 +1461,19 @@ export default function DriverPortal() {
                 <p style={{ color: '#555', fontSize: '13px', margin: '0' }}>No violations found for this period</p>
               </div>
             ) : fvs.map((v, i) => (
-              <div key={i} style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: '10px', padding: '14px', marginBottom: '8px' }}>
+              <div key={i} style={{ background: '#161b26', border: v.voided_at ? '1px solid #b71c1c' : '1px solid #2a2f3d', borderRadius: '10px', padding: '14px', marginBottom: '8px', opacity: v.voided_at ? 0.78 : 1 }}>
+                {/* B175 — voided marker (driver sees same visible+marked as
+                    manager/admin for forensic clarity). */}
+                {v.voided_at && (
+                  <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'6px 10px', marginBottom:'10px', display:'flex', alignItems:'center', gap:'8px' }}>
+                    <span style={{ fontSize:'14px' }}>🚫</span>
+                    <span style={{ color:'#f44336', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em' }}>VOIDED</span>
+                    <span style={{ color:'#888', fontSize:'10px', marginLeft:'auto' }}>
+                      {new Date(v.voided_at as string).toLocaleDateString()}
+                      {v.void_reason ? ` · ${v.void_reason}` : ''}
+                    </span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
                   <div>
                     <p style={{ color: '#f44336', fontFamily: 'Courier New', fontSize: '20px', fontWeight: 'bold', margin: '0' }}>{v.plate}</p>

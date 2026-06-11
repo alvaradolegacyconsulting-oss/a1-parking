@@ -152,9 +152,14 @@ export default function ResidentPortal() {
   async function fetchMyViolations() {
     const plates = vehicles.map((v: any) => normalizePlate(v.plate)).filter(Boolean)
     if (plates.length === 0) { setMyViolations([]); return }
+    // B175 — residents do NOT see voided violations. Nothing for them
+    // to act on (no fee, no dispute, no portal interaction). Manager
+    // / admin / driver lists keep voided rows visible+marked for
+    // forensic clarity; resident view hides them entirely.
     const { data } = await supabase.from('violations')
       .select('*, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', true)
+      .is('voided_at', null)
       .in('plate', plates)
       .order('created_at', { ascending: false })
     // B13/B18 Commit A: flatten photo_rows → v.photos string[] filtered

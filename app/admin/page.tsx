@@ -131,7 +131,10 @@ export default function AdminPortal() {
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
     const mk = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`
 
-    const { data: vData } = await supabase.from('violations').select('property,created_at').gte('created_at', sixMoAgo.toISOString())
+    // B175 — analytics counters exclude voided violations. Voided ≠
+    // enforced activity; counting them would inflate the operator's
+    // enforcement footprint.
+    const { data: vData } = await supabase.from('violations').select('property,created_at').is('voided_at', null).gte('created_at', sixMoAgo.toISOString())
     const viols = vData || []
     const thisMonthViolations = viols.filter((v: any) => new Date(v.created_at) >= thisMonthStart).length
 

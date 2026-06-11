@@ -332,7 +332,8 @@ export default function CompanyAdminPortal() {
     const week = new Date(); week.setDate(week.getDate() - 7)
     const [{ data: vehicles }, { data: viol }] = await Promise.all([
       supabase.from('vehicles').select('id').ilike('property', property).eq('is_active', true),
-      supabase.from('violations').select('created_at').eq('is_confirmed', true).ilike('property', property).gte('created_at', sixmo.toISOString()),
+      // B175 — analytics counter excludes voided violations.
+      supabase.from('violations').select('created_at').eq('is_confirmed', true).is('voided_at', null).ilike('property', property).gte('created_at', sixmo.toISOString()),
     ])
     const todayCount = (viol || []).filter(v => new Date(v.created_at) >= today).length
     const weekCount = (viol || []).filter(v => new Date(v.created_at) >= week).length
@@ -1549,7 +1550,8 @@ export default function CompanyAdminPortal() {
     const startDate = new Date(now.getFullYear(), now.getMonth() - numMonths, analyticsRange === '30d' ? now.getDate() - 30 : 1)
 
     const [{ data: vData }, { data: drData }] = await Promise.all([
-      supabase.from('violations').select('property,created_at,tow_ticket_generated,violation_type,driver_name').eq('is_confirmed', true).in('property', propNames).gte('created_at', startDate.toISOString()),
+      // B175 — analytics counter excludes voided violations.
+      supabase.from('violations').select('property,created_at,tow_ticket_generated,violation_type,driver_name').eq('is_confirmed', true).is('voided_at', null).in('property', propNames).gte('created_at', startDate.toISOString()),
       supabase.from('dispute_requests').select('id').in('property', propNames).eq('status', 'pending'),
     ])
 
@@ -2435,7 +2437,19 @@ export default function CompanyAdminPortal() {
                 <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No violations found for this period</p>
               </div>
             ) : fvs.map((v, i) => (
-              <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+              <div key={i} style={{ background:'#161b26', border: v.voided_at ? '1px solid #b71c1c' : '1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px', opacity: v.voided_at ? 0.78 : 1 }}>
+                {/* B175 — voided marker (CA sees same visible+marked as
+                    manager/admin/driver for forensic clarity). */}
+                {v.voided_at && (
+                  <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'6px 10px', marginBottom:'10px', display:'flex', alignItems:'center', gap:'8px' }}>
+                    <span style={{ fontSize:'14px' }}>🚫</span>
+                    <span style={{ color:'#f44336', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em' }}>VOIDED</span>
+                    <span style={{ color:'#888', fontSize:'10px', marginLeft:'auto' }}>
+                      {new Date(v.voided_at as string).toLocaleDateString()}
+                      {v.void_reason ? ` · ${v.void_reason}` : ''}
+                    </span>
+                  </div>
+                )}
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
                   <div>
                     <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
