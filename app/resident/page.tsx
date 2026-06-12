@@ -10,6 +10,20 @@ import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatu
 import { evaluatePortalGate } from '../lib/portal-account-gate'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
 
+// B180 — resident dispute affordance hidden for A1 launch. Gates every
+// dispute-related surface that can only ever read a single state with
+// disputes off (initiate button + inline form + window-closed message +
+// per-card "No Dispute Filed" status badge + Violations-tab pending
+// counter). The post-resolve dispute details panel intentionally
+// remains gated by `dispute && ...` only — pre-existing dispute history
+// (if any ever existed) still surfaces; it's data display, not an
+// affordance. A1 has no pre-existing disputes so it's a no-op there.
+// Server-side: dispute_requests INSERT remains RLS-permitted for
+// authenticated residents — UI-hide does NOT block a determined console
+// poke. Real lockdown lands with B181 (per-property server-gated toggle).
+// To re-enable post-A1, replace the const with a per-property check.
+const RESIDENT_DISPUTES_ENABLED = false
+
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
   const [vehicles, setVehicles] = useState<any[]>([])
@@ -466,7 +480,7 @@ export default function ResidentPortal() {
             })()}
           </button>
           <button style={tabStyle('myviol')} onClick={() => setActiveTab('myviol')}>
-            Violations{myDisputes.some(d => d.status === 'pending') && <span style={{ background:'#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{myDisputes.filter(d => d.status === 'pending').length}</span>}
+            Violations{RESIDENT_DISPUTES_ENABLED && myDisputes.some(d => d.status === 'pending') && <span style={{ background:'#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{myDisputes.filter(d => d.status === 'pending').length}</span>}
           </button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
         </div>
@@ -775,22 +789,24 @@ export default function ResidentPortal() {
                       ▶ Play Video
                     </button>
                   )}
-                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: (!dispute && canDispute) ? '10px' : '0' }}>
-                    <span style={{ background:dispBadge.bg, color:dispBadge.color, padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', border:`1px solid ${dispBadge.color}33` }}>{dispBadge.text}</span>
-                    {dispute?.resolved_at && <span style={{ color:'#555', fontSize:'10px' }}>Resolved {new Date(dispute.resolved_at).toLocaleDateString()}</span>}
-                  </div>
+                  {RESIDENT_DISPUTES_ENABLED && (
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: (!dispute && canDispute) ? '10px' : '0' }}>
+                      <span style={{ background:dispBadge.bg, color:dispBadge.color, padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', border:`1px solid ${dispBadge.color}33` }}>{dispBadge.text}</span>
+                      {dispute?.resolved_at && <span style={{ color:'#555', fontSize:'10px' }}>Resolved {new Date(dispute.resolved_at).toLocaleDateString()}</span>}
+                    </div>
+                  )}
 
-                  {!dispute && canDispute && disputingId !== v.id && (
+                  {RESIDENT_DISPUTES_ENABLED && !dispute && canDispute && disputingId !== v.id && (
                     <button onClick={() => { setDisputingId(v.id); setDisputeForm({ reason:'', details:'' }); setDisputeEvidence(null) }}
                       style={{ width:'100%', padding:'9px', background:'#1a1200', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', marginTop:'10px' }}>
                       ⚖ Dispute This Tow
                     </button>
                   )}
-                  {!dispute && !canDispute && (
+                  {RESIDENT_DISPUTES_ENABLED && !dispute && !canDispute && (
                     <p style={{ color:'#555', fontSize:'11px', margin:'10px 0 0', fontStyle:'italic' }}>Dispute window closed (30 days from violation date)</p>
                   )}
 
-                  {disputingId === v.id && (
+                  {RESIDENT_DISPUTES_ENABLED && disputingId === v.id && (
                     <div style={{ marginTop:'12px', borderTop:'1px solid #2a2f3d', paddingTop:'12px' }}>
                       <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', margin:'0 0 10px' }}>⚖ File a Dispute</p>
                       <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.07em', display:'block', marginBottom:'4px' }}>Reason *</label>
