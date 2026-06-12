@@ -879,18 +879,32 @@ export default function DriverPortal() {
     </body></html>`)
     tw.document.close()
     if (ticketTarget?.id && storage) {
-      const now = new Date().toISOString()
-      await supabase.from('violations').update({
-        tow_ticket_generated: true,
-        tow_storage_name: storage.name || null,
-        tow_storage_address: storage.address || null,
-        tow_storage_phone: storage.phone || null,
-        tow_fee: towFee || null,
-        tow_ticket_generated_at: now,
-      }).eq('id', ticketTarget.id)
-      const patch = { tow_ticket_generated: true, tow_storage_name: storage.name, tow_storage_address: storage.address, tow_storage_phone: storage.phone, tow_fee: towFee, tow_ticket_generated_at: now }
-      setViolations((prev: any[]) => prev.map((v: any) => v.id === ticketTarget.id ? { ...v, ...patch } : v))
-      setTicketTarget((prev: any) => prev ? { ...prev, ...patch } : null)
+      // B178 — direct UPDATE of tow_* columns on a confirmed violation
+      // is now denied by the tightened RLS (USING is_confirmed = false).
+      // Route through stamp_tow_ticket SECURITY DEFINER RPC which
+      // validates role + violation/facility scope server-side, derives
+      // tow_storage_* from the facility row (canonical, not client-
+      // passed), and returns the updated row.
+      const { data: stampResult, error: stampErr } = await supabase.rpc('stamp_tow_ticket', {
+        p_violation_id: ticketTarget.id,
+        p_storage_facility_id: storage.id,
+        p_tow_fee: parseFloat(towFee || '0') || null,
+      })
+      if (stampErr) {
+        console.error('[B178 stamp_tow_ticket] RPC error:', stampErr.message)
+      } else {
+        const result = stampResult as { ok?: boolean; violation?: Record<string, unknown>; error?: string }
+        if (!result?.ok || !result.violation) {
+          console.error('[B178 stamp_tow_ticket] refused:', result?.error)
+        } else {
+          // Server returns the canonical updated row; reflect in local
+          // state. setViolations + setTicketTarget receive the same
+          // shape as the prior client-side patch (subset spread fine).
+          const updated = result.violation as Record<string, unknown>
+          setViolations((prev: any[]) => prev.map((v: any) => v.id === ticketTarget.id ? { ...v, ...updated } : v))
+          setTicketTarget((prev: any) => prev ? { ...prev, ...updated } : null)
+        }
+      }
     }
   }
 
