@@ -946,13 +946,47 @@ export default function ManagerPortal() {
     })
   }
 
-  function reprintTicket(v: any) {
+  async function reprintTicket(v: any) {
+    // Open the popup synchronously inside the click handler so popup
+    // blockers don't fire, then fill it asynchronously after the
+    // licensing fetches resolve.
     const tw = window.open('', '_blank')
     if (!tw) return
+    tw.document.write('<!DOCTYPE html><html><head><title>Loading…</title></head><body style="font-family:Arial,sans-serif;padding:40px;text-align:center;color:#555">Loading ticket…</body></html>')
+
+    // B120 — resolve company TDLR + facility VSF for the licensing
+    // block. driver_license is already on the violation row (snapshot
+    // from driver portal at insert; null for manager-issued tickets).
+    // Both fetches are best-effort: render show-if-present, hide-if-null.
+    let companyTdlr: string | null = null
+    let facilityVsf: string | null = null
+    try {
+      if (managerCompany) {
+        const { data: c } = await supabase
+          .from('companies')
+          .select('tdlr_license_number')
+          .ilike('name', managerCompany)
+          .maybeSingle()
+        companyTdlr = (c?.tdlr_license_number as string | null) || null
+      }
+      if (v.tow_storage_name) {
+        const { data: sf } = await supabase
+          .from('storage_facilities')
+          .select('vsf_license_number')
+          .ilike('name', v.tow_storage_name)
+          .maybeSingle()
+        facilityVsf = (sf?.vsf_license_number as string | null) || null
+      }
+    } catch (e) {
+      console.error('[B120 reprint licensing fetch]', (e as Error).message)
+    }
+
     const total = parseFloat(v.tow_fee || '0').toFixed(2)
     const photosHtml = v.photos?.length
       ? `<div style="margin-top:20px"><p style="font-weight:bold;margin-bottom:8px">EVIDENCE PHOTOS</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${v.photos.map((u: string) => `<img src="${u}" style="width:100%;border-radius:4px;border:1px solid #ddd" onerror="this.style.display='none'">`).join('')}</div></div>`
       : ''
+    // Wipe the loading message before writing the real ticket.
+    tw.document.open()
     tw.document.write(`<!DOCTYPE html><html><head><title>Tow Ticket — ${v.plate}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:28px;max-width:680px;margin:0 auto;color:#111;font-size:13px}
       .hdr{display:flex;align-items:center;gap:14px;margin-bottom:22px;padding-bottom:14px;border-bottom:3px solid #C9A227}
@@ -995,11 +1029,14 @@ export default function ManagerPortal() {
       </div></div>
       <div class="sec"><div class="sh">Tow Operator</div><div class="g2">
         <div class="f"><label>Name</label><span>${v.driver_name || '—'}</span></div>
+        ${v.driver_license ? `<div class="f"><label>License #</label><span>${v.driver_license}</span></div>` : ''}
+        ${companyTdlr ? `<div class="f"><label>TDLR #</label><span>${companyTdlr}</span></div>` : ''}
       </div></div>
       <div class="sec"><div class="sh">Storage / Impound</div><div class="g2">
         <div class="f"><label>Facility</label><span>${v.tow_storage_name || '—'}</span></div>
         <div class="f"><label>Phone</label><span>${v.tow_storage_phone || '—'}</span></div>
         <div class="f" style="grid-column:span 2"><label>Address</label><span>${v.tow_storage_address || '—'}</span></div>
+        ${facilityVsf ? `<div class="f" style="grid-column:span 2"><label>VSF #</label><span>${facilityVsf}</span></div>` : ''}
       </div></div>
       ${parseFloat(v.tow_fee || '0') > 0 ? `<div class="sec"><div class="sh">Fees</div><div class="g2">
         <div class="f"><label>Tow Fee</label><span>$${parseFloat(v.tow_fee).toFixed(2)}</span></div>

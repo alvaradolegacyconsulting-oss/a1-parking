@@ -149,7 +149,13 @@ export default function CompanyAdminPortal() {
   const [passes, setPasses] = useState<any[]>([])
 
   // Manage tab
-  const [manageSection, setManageSection] = useState<'properties' | 'users' | 'drivers' | 'storage' | 'auditlog'>('properties')
+  const [manageSection, setManageSection] = useState<'properties' | 'users' | 'drivers' | 'storage' | 'company' | 'auditlog'>('properties')
+  // B120 Part 2 — CA-side TDLR capture state. Loaded on demand when
+  // the Company sub-tab is opened; saved via update_my_company_tdlr RPC.
+  const [companyTdlrInput, setCompanyTdlrInput] = useState<string>('')
+  const [companyTdlrLoaded, setCompanyTdlrLoaded] = useState<boolean>(false)
+  const [companyTdlrSaving, setCompanyTdlrSaving] = useState<boolean>(false)
+  const [companyTdlrMsg, setCompanyTdlrMsg] = useState<string>('')
   const [manageLoaded, setManageLoaded] = useState(false)
 
   const [editingProperty, setEditingProperty] = useState<any>(null)
@@ -1623,13 +1629,51 @@ export default function CompanyAdminPortal() {
     setSelectedStorage(''); setTowFee(''); setMileage(''); setVin('')
   }
 
-  function reprintTicket(v: any) {
+  async function reprintTicket(v: any) {
+    // Open popup synchronously to keep the popup-blocker happy; fill
+    // asynchronously after the licensing fetches complete.
     const tw = window.open('', '_blank')
     if (!tw) return
+    tw.document.write('<!DOCTYPE html><html><head><title>Loading…</title></head><body style="font-family:Arial,sans-serif;padding:40px;text-align:center;color:#555">Loading ticket…</body></html>')
+
+    // B120 — resolve company TDLR + facility VSF for the licensing
+    // block. driver_license already on the row when set by driver
+    // portal at insert (null for CA-issued tickets).
+    let companyTdlr: string | null = null
+    let facilityVsf: string | null = null
+    try {
+      if (role?.company) {
+        const { data: c } = await supabase
+          .from('companies')
+          .select('tdlr_license_number')
+          .ilike('name', role.company)
+          .maybeSingle()
+        companyTdlr = (c?.tdlr_license_number as string | null) || null
+      }
+      if (v.tow_storage_name) {
+        // Prefer the in-scope storageFacilities array (already loaded);
+        // fall back to a direct query if not present.
+        const local = storageFacilities.find((sf: any) => (sf?.name || '').toLowerCase() === (v.tow_storage_name || '').toLowerCase())
+        if (local?.vsf_license_number) {
+          facilityVsf = local.vsf_license_number as string
+        } else {
+          const { data: sf } = await supabase
+            .from('storage_facilities')
+            .select('vsf_license_number')
+            .ilike('name', v.tow_storage_name)
+            .maybeSingle()
+          facilityVsf = (sf?.vsf_license_number as string | null) || null
+        }
+      }
+    } catch (e) {
+      console.error('[B120 reprint licensing fetch]', (e as Error).message)
+    }
+
     const total = parseFloat(v.tow_fee || '0').toFixed(2)
     const photosHtml = v.photos?.length
       ? `<div style="margin-top:20px"><p style="font-weight:bold;margin-bottom:8px">EVIDENCE PHOTOS</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${v.photos.map((u: string) => `<img src="${u}" style="width:100%;border-radius:4px;border:1px solid #ddd" onerror="this.style.display='none'">`).join('')}</div></div>`
       : ''
+    tw.document.open()
     tw.document.write(`<!DOCTYPE html><html><head><title>Tow Ticket — ${v.plate}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:28px;max-width:680px;margin:0 auto;color:#111;font-size:13px}
       .hdr{display:flex;align-items:center;gap:14px;margin-bottom:22px;padding-bottom:14px;border-bottom:3px solid #C9A227}
@@ -1671,10 +1715,16 @@ export default function CompanyAdminPortal() {
         <div class="f"><label>Authorized By</label><span>${v.property || '—'}</span></div>
         <div class="f"><label>Company</label><span>${role?.company || '—'}</span></div>
       </div></div>
+      <div class="sec"><div class="sh">Tow Operator</div><div class="g2">
+        <div class="f"><label>Name</label><span>${v.driver_name || '—'}</span></div>
+        ${v.driver_license ? `<div class="f"><label>License #</label><span>${v.driver_license}</span></div>` : ''}
+        ${companyTdlr ? `<div class="f"><label>TDLR #</label><span>${companyTdlr}</span></div>` : ''}
+      </div></div>
       <div class="sec"><div class="sh">Storage / Impound</div><div class="g2">
         <div class="f"><label>Facility</label><span>${v.tow_storage_name || '—'}</span></div>
         <div class="f"><label>Phone</label><span>${v.tow_storage_phone || '—'}</span></div>
         <div class="f" style="grid-column:span 2"><label>Address</label><span>${v.tow_storage_address || '—'}</span></div>
+        ${facilityVsf ? `<div class="f" style="grid-column:span 2"><label>VSF #</label><span>${facilityVsf}</span></div>` : ''}
       </div></div>
       ${parseFloat(v.tow_fee || '0') > 0 ? `<div class="sec"><div class="sh">Fees</div><div class="g2">
         <div class="f"><label>Tow Fee</label><span>$${parseFloat(v.tow_fee).toFixed(2)}</span></div>
@@ -1698,6 +1748,25 @@ export default function CompanyAdminPortal() {
     if (!tw) return
     const v = ticketTarget
     const total = (parseFloat(towFee || '0') + parseFloat(mileage || '0')).toFixed(2)
+
+    // B120 — resolve company TDLR for the licensing block. VSF comes
+    // directly from the selected storage (already in scope).
+    // driver_license: snapshot is set by the driver portal at insert;
+    // for CA-issued tickets it's typically null → renders nothing.
+    let companyTdlr: string | null = null
+    try {
+      if (role?.company) {
+        const { data: c } = await supabase
+          .from('companies')
+          .select('tdlr_license_number')
+          .ilike('name', role.company)
+          .maybeSingle()
+        companyTdlr = (c?.tdlr_license_number as string | null) || null
+      }
+    } catch (e) {
+      console.error('[B120 live-ticket TDLR fetch]', (e as Error).message)
+    }
+    const facilityVsf: string | null = (storage?.vsf_license_number as string | null) || null
     // Capability-URL ticket view (mirrors driver/page.tsx generateTicket).
     // 90-day expiry; recipient clicks URL → /ticket/view/<token> →
     // sees rich hosted view. Failure non-fatal: Share / Copy buttons
@@ -1783,10 +1852,16 @@ export default function CompanyAdminPortal() {
         <div class="f"><label>Authorized By</label><span>${v.property || '—'}</span></div>
         <div class="f"><label>Company</label><span>${role?.company || '—'}</span></div>
       </div></div>
+      <div class="sec"><div class="sh">Tow Operator</div><div class="g2">
+        <div class="f"><label>Name</label><span>${v.driver_name || '—'}</span></div>
+        ${v.driver_license ? `<div class="f"><label>License #</label><span>${v.driver_license}</span></div>` : ''}
+        ${companyTdlr ? `<div class="f"><label>TDLR #</label><span>${companyTdlr}</span></div>` : ''}
+      </div></div>
       <div class="sec"><div class="sh">Storage / Impound</div><div class="g2">
         <div class="f"><label>Facility</label><span>${storage?.name || '—'}</span></div>
         <div class="f"><label>Phone</label><span>${storage?.phone || '—'}</span></div>
         <div class="f" style="grid-column:span 2"><label>Address</label><span>${storage?.address || '—'}</span></div>
+        ${facilityVsf ? `<div class="f" style="grid-column:span 2"><label>VSF #</label><span>${facilityVsf}</span></div>` : ''}
       </div></div>
       ${(parseFloat(towFee || '0') > 0 || parseFloat(mileage || '0') > 0) ? `
       <div class="sec"><div class="sh">Fees</div><div class="g2">
@@ -2648,16 +2723,29 @@ export default function CompanyAdminPortal() {
           <div>
             {/* Sub-tab bar */}
             <div style={{ display:'flex', gap:'3px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
-              {(['properties', 'users', 'drivers', 'storage', 'auditlog'] as const).map(s => (
+              {(['properties', 'users', 'drivers', 'storage', 'company', 'auditlog'] as const).map(s => (
                 <button key={s}
-                  onClick={() => { setManageSection(s); if (s === 'auditlog') fetchCompanyAuditLogs() }}
+                  onClick={async () => {
+                    setManageSection(s)
+                    if (s === 'auditlog') fetchCompanyAuditLogs()
+                    // B120 Part 2 — load current TDLR on Company sub-tab open.
+                    if (s === 'company' && !companyTdlrLoaded && role?.company) {
+                      const { data: c } = await supabase
+                        .from('companies')
+                        .select('tdlr_license_number')
+                        .ilike('name', role.company)
+                        .maybeSingle()
+                      setCompanyTdlrInput((c?.tdlr_license_number as string | null) || '')
+                      setCompanyTdlrLoaded(true)
+                    }
+                  }}
                   style={{
                     flex:1, padding:'7px 4px', border:'none', borderRadius:'6px', cursor:'pointer',
                     fontWeight:'bold', fontSize:'10px', fontFamily:'Arial, sans-serif',
                     background: manageSection === s ? '#C9A227' : 'transparent',
                     color: manageSection === s ? '#0f1117' : '#888',
                   }}>
-                  {s === 'properties' ? 'Properties' : s === 'users' ? 'Users' : s === 'drivers' ? 'Drivers' : s === 'storage' ? 'Storage' : 'Audit Log'}
+                  {s === 'properties' ? 'Properties' : s === 'users' ? 'Users' : s === 'drivers' ? 'Drivers' : s === 'storage' ? 'Storage' : s === 'company' ? 'Company' : 'Audit Log'}
                 </button>
               ))}
             </div>
@@ -3229,7 +3317,59 @@ export default function CompanyAdminPortal() {
               </div>
             )}
 
-            {/* SECTION 5 — Audit Log */}
+            {/* SECTION 5 — Company (B120 Part 2: CA-side TDLR capture) */}
+            {/* Surgical single-field write surface: TDLR is the only column
+                this surface mutates. Backed by update_my_company_tdlr DEFINER
+                RPC (role gate = company_admin; scope gate = own company by
+                get_my_company; empty-string → NULL coerced server-side).
+                Optional / nullable / no validation, mirroring the sibling
+                VSF + operator_license patterns. */}
+            {manageSection === 'company' && (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'18px' }}>
+                <p style={{ color:'#888', fontSize:'11px', margin:'0 0 14px', lineHeight:1.5 }}>
+                  Your company&apos;s TDLR license number, when set, appears on tow tickets your team issues. Leave blank if not applicable.
+                </p>
+                {companyTdlrMsg && msgBox(companyTdlrMsg)}
+                <label style={lbl}>TDLR License Number (optional)</label>
+                <input
+                  value={companyTdlrInput}
+                  onChange={e => setCompanyTdlrInput(e.target.value)}
+                  placeholder="Texas tow-company license #"
+                  style={inp}
+                />
+                <button
+                  onClick={async () => {
+                    setCompanyTdlrSaving(true)
+                    setCompanyTdlrMsg('')
+                    const { data, error } = await supabase.rpc('update_my_company_tdlr', { p_tdlr: companyTdlrInput })
+                    setCompanyTdlrSaving(false)
+                    if (error) {
+                      setCompanyTdlrMsg('Error: ' + error.message)
+                      return
+                    }
+                    const result = data as { ok?: boolean; tdlr_license_number?: string | null; error?: string }
+                    if (!result?.ok) {
+                      setCompanyTdlrMsg('Error: ' + (result?.error || 'unknown'))
+                      return
+                    }
+                    // Reflect canonical normalized value (e.g. trimmed / NULL'd)
+                    // back into the field so what's shown matches what's stored.
+                    setCompanyTdlrInput(result.tdlr_license_number || '')
+                    setCompanyTdlrMsg('Saved.')
+                  }}
+                  disabled={companyTdlrSaving}
+                  style={{
+                    marginTop: 12, padding:'10px 16px', background: companyTdlrSaving ? '#2a2f3d' : '#C9A227',
+                    color: companyTdlrSaving ? '#555' : '#0f1117', fontWeight:'bold', fontSize:'12px',
+                    border:'none', borderRadius:'8px', cursor: companyTdlrSaving ? 'not-allowed' : 'pointer',
+                    fontFamily:'Arial, sans-serif',
+                  }}>
+                  {companyTdlrSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            )}
+
+            {/* SECTION 6 — Audit Log */}
             {manageSection === 'auditlog' && (() => {
               const today = new Date(); today.setHours(0,0,0,0)
               const week = new Date(); week.setDate(week.getDate()-7)

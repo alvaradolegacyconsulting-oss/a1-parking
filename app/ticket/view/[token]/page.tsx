@@ -34,11 +34,20 @@ interface ViolationRow {
   notes: string | null
   property: string | null
   driver_name: string | null
+  // B120 — operator license is snapshotted onto violations.driver_license
+  // at insert time by the driver portal (driver/page.tsx:428). NULL for
+  // manager-issued / CA-issued tickets — render show-if-present.
+  driver_license: string | null
   tow_storage_name: string | null
   tow_storage_address: string | null
   tow_storage_phone: string | null
   tow_fee: number | string | null
   created_at: string
+  // B120 — server-side resolved licensing values folded into the
+  // violation payload by get_violation_by_view_token. Both null if
+  // the source row doesn't exist or the field is unset on it.
+  resolved_tdlr_license: string | null
+  resolved_vsf_license: string | null
 }
 
 interface PhotoRow {
@@ -180,8 +189,14 @@ function TicketView({ violation: v, photos }: { violation: ViolationRow; photos:
         </Section>
 
         {/* Tow Operator */}
+        {/* B120 — operator license + TDLR render show-if-present (load-bearing:
+            a null value renders nothing, never a blank line or placeholder).
+            Operator Name always renders ('—' fallback) since name is the row's
+            anchor; license + TDLR are additive disclosures. */}
         <Section title="Tow Operator">
-          <Field label="Operator Name" value={v.driver_name || '—'} span2 />
+          <Field label="Operator Name" value={v.driver_name || '—'} span2={!v.driver_license} />
+          {v.driver_license ? <Field label="License #" value={v.driver_license} /> : null}
+          {v.resolved_tdlr_license ? <Field label="TDLR #" value={v.resolved_tdlr_license} /> : null}
         </Section>
 
         {/* Storage */}
@@ -189,6 +204,8 @@ function TicketView({ violation: v, photos }: { violation: ViolationRow; photos:
           <Field label="Facility" value={v.tow_storage_name || '—'} />
           <Field label="Phone" value={v.tow_storage_phone || '—'} />
           <Field label="Address" value={v.tow_storage_address || '—'} span2 />
+          {/* B120 — VSF show-if-present. */}
+          {v.resolved_vsf_license ? <Field label="VSF #" value={v.resolved_vsf_license} span2 /> : null}
         </Section>
 
         {/* Fees */}
