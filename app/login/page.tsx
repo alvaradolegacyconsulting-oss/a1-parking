@@ -239,13 +239,26 @@ export default function Login() {
 
     setLoading(false)
 
-    const { data: { user: freshUser } } = await supabase.auth.getUser()
-    // Belt + suspenders: honor either the user_metadata flag (legacy /
-    // future Supabase admin path) OR the user_roles.must_change_password
-    // column (set during manager/admin/company_admin temp-password creation).
-    const metaForce = freshUser?.user_metadata?.force_password_reset === true
-    const dbForce = roleData.must_change_password === true
-    const forcePwReset = metaForce || dbForce
+    // Force-password-reset gate (2026-06-11 — self-reg fix).
+    // user_roles.must_change_password (dbForce) is the AUTHORITATIVE
+    // discriminator: set TRUE only by the temp-password paths via
+    // set_must_change_password(email, true) (manager addResident,
+    // admin add user, bulk-invite). Self-reg residents never call
+    // that RPC → dbForce stays false → not forced.
+    //
+    // The prior metaForce half (user_metadata.force_password_reset)
+    // produced a false positive: swift-handler stamps that flag on
+    // EVERY create_user call (including self-reg via register/page.tsx).
+    // Self-reg residents set their own password at signup; the metadata
+    // flag misclassified them as needing a forced change. Dropped from
+    // the OR. Nothing reads metaForce after this change, so the stale
+    // flag is harmless (cleaning it up at the swift-handler root cause
+    // is a separate low-priority tech-debt item).
+    //
+    // Bulk/manager/admin temp-password paths are UNCHANGED: they still
+    // set must_change_password=true via the RPC; the login redirect
+    // (line 47) still fires for them via dbForce.
+    const forcePwReset = roleData.must_change_password === true
 
     // B118: version-aware modal predicate. Modal fires when:
     //   • User has never consented (legacy blanket-existence check), OR
