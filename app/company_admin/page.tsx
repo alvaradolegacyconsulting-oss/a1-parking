@@ -172,7 +172,9 @@ export default function CompanyAdminPortal() {
   const [resetPwForm, setResetPwForm] = useState({ newPw: '', confirmPw: '' })
   const [resetPwMsg, setResetPwMsg] = useState('')
   const [showAddUser, setShowAddUser] = useState(false)
-  const [newUser, setNewUser] = useState({ email: '', password: '', role: 'manager', property: '' })
+  // D2: name field added. Single-column "Full Name" capture matches the
+  // existing drivers.name / residents.name pattern (no first/last split).
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'manager', property: '' })
   const [userMsg, setUserMsg] = useState('')
   const [togglingUser, setTogglingUser] = useState<string | null>(null)
 
@@ -845,17 +847,25 @@ export default function CompanyAdminPortal() {
       // log in.
       let residentInserted = false
       try {
+        // D2: pass p_name through to user_roles.name. RPC's 5-arg signature
+        // (post-2026-06-13 migration) accepts p_name with DEFAULT NULL; passing
+        // null when the form was left blank preserves the prior empty-string-
+        // means-fallback semantics at the residents-branch insert below.
         const { error: insErr } = await supabase.rpc('insert_user_role', {
           p_email: targetEmail,
           p_role: 'resident',
           p_company: role?.company || '',
-          p_property: propertyArray.length > 0 ? propertyArray : []
+          p_property: propertyArray.length > 0 ? propertyArray : [],
+          p_name: newUser.name.trim() || null,
         })
         if (insErr) throw new Error('user_role INSERT failed: ' + insErr.message)
 
         const { error: rErr } = await supabase.from('residents').insert([{
           email: targetEmail,
-          name: newUser.email.trim(),
+          // D2: prefer the typed Full Name; fall back to email (the pre-D2
+          // behavior) so legacy CAs who don't type a name still get a
+          // non-null residents.name row.
+          name: newUser.name.trim() || newUser.email.trim(),
           property: propertyArray[0] || null,
           company: role?.company || null,
           unit: '',
@@ -919,26 +929,29 @@ export default function CompanyAdminPortal() {
         email: targetEmail, created_by_role: 'company_admin', created_by_email: user?.email, company: role?.company,
       })
       setUserMsg('Resident created successfully!')
-      setNewUser({ email: '', password: '', role: 'manager', property: '' })
+      setNewUser({ name: '', email: '', password: '', role: 'manager', property: '' })
       setShowAddUser(false)
       fetchCompanyUsers()
       setCredentials({ email: targetEmail, password: passwordToUse })
       return
     }
 
-    // Non-resident path — original behavior.
+    // Non-resident path — original behavior, plus D2 name capture.
     const { error: insErr } = await supabase
       .rpc('insert_user_role', {
         p_email: newUser.email.trim(),
         p_role: newUser.role,
         p_company: role?.company || '',
-        p_property: propertyArray.length > 0 ? propertyArray : []
+        p_property: propertyArray.length > 0 ? propertyArray : [],
+        p_name: newUser.name.trim() || null,
       })
     if (insErr) { setUserMsg('Auth created but role insert failed: ' + insErr.message); return }
     if (newUser.role === 'driver') {
       await supabase.from('drivers').insert([{
         email: newUser.email.trim(),
-        name: newUser.email.trim(),
+        // D2: prefer the typed Full Name; fall back to email (pre-D2
+        // behavior) so drivers.name is non-null for legacy callers.
+        name: newUser.name.trim() || newUser.email.trim(),
         company: role?.company || null,
         assigned_properties: propertyArray,
         is_active: true
@@ -946,7 +959,7 @@ export default function CompanyAdminPortal() {
     }
     await auditLog('create_user', 'user_roles', newUser.email, { email: newUser.email, role: newUser.role, company: role?.company })
     setUserMsg('User created successfully!')
-    setNewUser({ email: '', password: '', role: 'manager', property: '' })
+    setNewUser({ name: '', email: '', password: '', role: 'manager', property: '' })
     setShowAddUser(false)
     fetchCompanyUsers()
   }
@@ -2937,6 +2950,11 @@ export default function CompanyAdminPortal() {
                 {showAddUser && isCA && (
                   <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
                     <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New User</p>
+                    {/* D2: Full Name capture. Optional; on blank the residents/
+                        drivers entity rows fall back to email (preserves the
+                        pre-D2 behavior) and user_roles.name lands NULL. */}
+                    <label style={lbl}>Full Name</label>
+                    <input value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} placeholder="Jane Doe" style={inp} />
                     <label style={lbl}>Email *</label>
                     <input type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="user@example.com" style={inp} />
                     {newUser.role !== 'resident' && (<>
@@ -2998,7 +3016,11 @@ export default function CompanyAdminPortal() {
                         <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'6px', opacity: !showActiveCompanyUsers && u.is_active === false ? 0.5 : 1 }}>
                           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
                             <div>
-                              <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.email}</p>
+                              {/* D2: prefer name when present, else email. Email
+                                  always renders underneath when name is shown so
+                                  CAs can still match against their invitee list. */}
+                              <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.name || u.email}</p>
+                              {u.name && <p style={{ color:'#888', fontSize:'11px', margin:'1px 0 0' }}>{u.email}</p>}
                               {u.property && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{u.property}</p>}
                             </div>
                             <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
