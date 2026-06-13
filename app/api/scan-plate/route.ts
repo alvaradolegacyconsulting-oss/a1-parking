@@ -1,24 +1,120 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '../../lib/server-auth'
+import { hasFeature } from '../../lib/tier'
+import { FEATURE_FLAGS } from '../../lib/feature-flags'
+
+// /api/scan-plate — Claude Vision plate-recognition endpoint.
+//
+// Gate ordering (cheapest-first per Jose's spec):
+//   1. AUTH (no DB)         — getUser → 401 if unauthenticated
+//   2. ROLE (one DB read)   — user_roles.role ∈ {driver, company_admin} else 403
+//   3. PAYLOAD (no DB)      — image must be base64 string ≤ 2 MB else 400/413
+//   4. ENTITLEMENT (DB)     — companies.tier resolves AI_PLATE_SCANNING via
+//                             hasFeature() — Growth/Legacy/Premium only,
+//                             Starter + all PM blocked → 403 with upgrade copy
+//
+// Why hasFeature (sync) inline instead of hasFeatureAsync: hasFeatureAsync
+// uses the browser anon supabase client which doesn't carry server-side
+// JWT cookies, so its companies SELECT would silently return null under
+// the authenticated_read_own_company RLS policy. The cookies-aware server
+// client (createSupabaseServerClient) does carry the JWT, so its companies
+// SELECT respects RLS and resolves cleanly to the caller's own company row.
+// We replicate hasFeatureAsync's tier+overrides resolution inline against
+// the server client to keep the entitlement check accurate for proposal-
+// code customers whose feature_overrides flip plate-scan back on.
+//
+// Out of scope for this commit (per the locked June-4 launch plan): the
+// per-user rate limit + daily cost ceiling. Those need Vercel KV and ship
+// as Scan-plate Commit 2.
+
+const MAX_IMAGE_B64_BYTES = 2 * 1024 * 1024  // 2 MB base64 ≈ 1.5 MB raw JPEG.
+
+const ALLOWED_ROLES = new Set(['driver', 'company_admin'])
 
 export async function POST(request: NextRequest) {
-  console.log('scan-plate API called')
-
-  // Auth gate: route calls Claude Vision (paid). Open route was an
-  // abuse vector — anyone with the URL could run up the Anthropic bill.
-  // Mirrors the createSupabaseServerClient + auth.getUser pattern used
-  // by /api/signup/attest + /api/signup/create-checkout-session.
+  // ── 1. AUTH ──────────────────────────────────────────────────────
   const supabase = await createSupabaseServerClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) {
+  if (authErr || !user?.email) {
     return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
   }
 
-  const { image } = await request.json()
-  if (!image) return NextResponse.json({ error: 'No image provided' }, { status: 400 })
+  // ── 2. ROLE GATE ─────────────────────────────────────────────────
+  // user_roles RLS permits self-read; the caller's row is always reachable.
+  const { data: roleRow, error: roleErr } = await supabase
+    .from('user_roles')
+    .select('role, company')
+    .ilike('email', user.email)
+    .maybeSingle()
+  if (roleErr || !roleRow) {
+    return NextResponse.json({ error: 'no role assigned' }, { status: 403 })
+  }
+  if (!ALLOWED_ROLES.has(roleRow.role)) {
+    // Field-enforcement action: only driver + company_admin are legitimate
+    // callers (see app/driver/page.tsx:302 + app/company_admin/page.tsx:1164,
+    // the only call sites in the codebase).
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
 
+  // ── 3. PAYLOAD SHAPE + SIZE ──────────────────────────────────────
+  // request.json() can throw on malformed JSON; catch and 400.
+  const body = await request.json().catch(() => null) as { image?: unknown } | null
+  if (!body || typeof body.image !== 'string') {
+    return NextResponse.json({ error: 'image must be a base64 string' }, { status: 400 })
+  }
+  const image = body.image
+  // Shape sanity: base64 alphabet plus padding. A camera-captured JPEG b64
+  // starts with /9j/ (the SOI marker). We accept any base64 alphabet start
+  // to keep the check permissive against future capture formats while still
+  // rejecting obvious junk like form-encoded payloads or HTML.
+  if (image.length === 0 || !/^[A-Za-z0-9+/]/.test(image)) {
+    return NextResponse.json({ error: 'image is not valid base64' }, { status: 400 })
+  }
+  if (image.length > MAX_IMAGE_B64_BYTES) {
+    return NextResponse.json({
+      error: 'Image exceeds size limit. Please use a lower-resolution capture.',
+    }, { status: 413 })
+  }
+
+  // ── 4. ENTITLEMENT (last; the DB hit) ────────────────────────────
+  // Resolve caller's companyId + tier via own-company read (RLS-permitted
+  // by authenticated_read_own_company at migrations/20260612_b155_3_...sql).
+  const { data: company, error: companyErr } = await supabase
+    .from('companies')
+    .select('id, tier, tier_type')
+    .ilike('name', roleRow.company ?? '')
+    .maybeSingle()
+  if (companyErr || !company) {
+    return NextResponse.json({ error: 'company not found' }, { status: 403 })
+  }
+
+  // proposal_codes_summary may be RLS-readable by company_admin only; tolerate
+  // null (driver caller may not have direct read; the feature_overrides path
+  // is then skipped, falling through to the tier matrix — correct default
+  // since plate-scan overrides are rare and Growth/Legacy entitle without
+  // override anyway).
+  const { data: pc } = await supabase
+    .from('proposal_codes_summary')
+    .select('feature_overrides')
+    .eq('company_id', company.id)
+    .eq('status', 'redeemed')
+    .maybeSingle()
+
+  const allowed = hasFeature(FEATURE_FLAGS.AI_PLATE_SCANNING, {
+    tier: (company.tier as string) || 'legacy',
+    tier_type: (company.tier_type as string) || 'enforcement',
+    proposal_code: pc
+      ? { feature_overrides: pc.feature_overrides as Record<string, boolean | number> }
+      : null,
+  })
+  if (allowed !== true) {
+    return NextResponse.json({
+      error: 'AI plate scanning is not available on your current tier. Upgrade to Growth or Legacy to enable it.',
+    }, { status: 403 })
+  }
+
+  // ── HANDLER BODY (unchanged from pre-gate route) ─────────────────
   const apiKey = process.env.ANTHROPIC_API_KEY
-  console.log('API key exists:', !!apiKey)
   if (!apiKey) return NextResponse.json({ error: 'Plate scanning not configured' }, { status: 500 })
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -47,11 +143,8 @@ export async function POST(request: NextRequest) {
     }),
   })
 
-  console.log('Anthropic response status:', response.status)
   const responseText = await response.text()
-  console.log('Anthropic response:', responseText)
-
-  let data: any
+  let data: { content?: Array<{ text?: string }>; error?: { message?: string } }
   try {
     data = JSON.parse(responseText)
   } catch {

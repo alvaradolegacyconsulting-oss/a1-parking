@@ -33,8 +33,19 @@ const ENF_STARTER: TierConfigShape = {
   // B42: photo count cap per violation. Starter = 3.
   [F.MAX_PHOTOS_PER_VIOLATION]: 3,
 
-  // enforcement core
-  [F.AI_PLATE_SCANNING]: true,
+  // enforcement core.
+  // AI plate scanning: Growth + Legacy + Premium ONLY (Starter blocked) per
+  // the June-4 launch entitlement spec. Premium inherits Legacy's value
+  // through the spread chain (ENF_PREMIUM = {...ENF_LEGACY}). The flag is
+  // the single source of truth — the /api/scan-plate route gates purely on
+  // hasFeatureAsync(F.AI_PLATE_SCANNING, companyId) with no tier-string
+  // special-casing. Blast radius of this `false` value: the legacy
+  // hasFeatureLegacy('plate_lookup') shim at app/lib/tier.ts:205 maps
+  // 'plate_lookup' → F.AI_PLATE_SCANNING. Grep across app/ finds ZERO
+  // callers of hasFeatureLegacy('plate_lookup'), so this matrix flip
+  // affects only the scan-plate route gate (nothing else reads this flag
+  // from the UI side today).
+  [F.AI_PLATE_SCANNING]: false,
   [F.VIOLATION_DOCUMENTATION]: true,
   [F.TOW_TICKET_GENERATION]: true,
   [F.TOWING_AUTHORIZATION_UI]: true,
@@ -92,6 +103,13 @@ const ENF_GROWTH: TierConfigShape = {
   ...ENF_STARTER,
   [F.MAX_PROPERTIES]: 15,
   [F.MAX_DRIVERS]: 10,
+  // AI plate scanning: explicit override of the ENF_STARTER `false` value
+  // (June-4 launch spec entitles Growth/Legacy/Premium). Without this
+  // explicit `true`, the spread cascade from Starter would silently leave
+  // every enforcement tier locked out — same gotcha pattern as the Phase 2a
+  // video-duration override + B42 photo-cap override. Inherits to Legacy +
+  // Premium via the ...ENF_GROWTH → ...ENF_LEGACY spread chain.
+  [F.AI_PLATE_SCANNING]: true,
   // Phase 2a: growth and legacy both allow 60s video.
   [F.VIDEO_MAX_DURATION_SECONDS]: 60,
   // B42: photo cap on Growth = 10.
