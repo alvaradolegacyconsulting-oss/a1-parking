@@ -54,9 +54,54 @@
 
 import { createClient } from '@supabase/supabase-js'
 
-const COMPANY_NAME = 'A1 Wrecker (UAT)'
-const COMPANY_TIER_TYPE = 'enforcement'
-const COMPANY_TIER = 'legacy'
+// Tier variant selection. Default = enforcement.legacy (A1's actual tier;
+// backward-compatible with all pre-existing UAT runs). CLI overrides:
+//   --tier=starter       → enforcement.starter UAT account (scan-plate Starter 403 case)
+//   --tier=pm-essential  → property_management.essential UAT account (scan-plate PM 403 case)
+// Each variant creates a distinct company name + email-suffix namespace so
+// the three variants coexist cleanly on the same Supabase project.
+//
+// USAGE:
+//   npx tsx --env-file=.env.local scripts/provision-uat-accounts.ts
+//   npx tsx --env-file=.env.local scripts/provision-uat-accounts.ts --tier=starter
+//   npx tsx --env-file=.env.local scripts/provision-uat-accounts.ts --tier=pm-essential
+type TierVariant = 'legacy' | 'starter' | 'pm-essential'
+const tierArg = (process.argv.find(a => a.startsWith('--tier=')) ?? '').slice('--tier='.length)
+const TIER_VARIANT: TierVariant = (() => {
+  if (tierArg === 'starter' || tierArg === 'pm-essential' || tierArg === 'legacy' || tierArg === '') {
+    return (tierArg || 'legacy') as TierVariant
+  }
+  console.error(`[provision-uat] unknown --tier=${tierArg}; valid: legacy | starter | pm-essential`)
+  process.exit(2)
+})()
+
+const VARIANT_CONFIG = {
+  legacy: {
+    companyName: 'A1 Wrecker (UAT)',
+    tier_type: 'enforcement' as const,
+    tier: 'legacy' as const,
+    emailSuffix: '',         // existing aliases — unchanged
+    pwSuffix: '',
+  },
+  starter: {
+    companyName: 'A1 Starter (UAT)',
+    tier_type: 'enforcement' as const,
+    tier: 'starter' as const,
+    emailSuffix: '-starter',
+    pwSuffix: 'ST',
+  },
+  'pm-essential': {
+    companyName: 'A1 PM (UAT)',
+    tier_type: 'property_management' as const,
+    tier: 'essential' as const,
+    emailSuffix: '-pm',
+    pwSuffix: 'PM',
+  },
+}[TIER_VARIANT]
+
+const COMPANY_NAME = VARIANT_CONFIG.companyName
+const COMPANY_TIER_TYPE: 'enforcement' | 'property_management' = VARIANT_CONFIG.tier_type
+const COMPANY_TIER: 'legacy' | 'starter' | 'essential' = VARIANT_CONFIG.tier
 const PROPERTY_NAME = 'UAT Test Property'
 const PROPERTY_ADDRESS = '123 UAT Lane'
 const PROPERTY_CITY = 'Houston'
@@ -73,12 +118,27 @@ interface UserSpec {
   scopeProperty: boolean // assigns property[] = [PROPERTY_NAME] in user_roles
 }
 
+// Email aliases parameterized by tier-variant suffix. Legacy stays at the
+// original +uat-{role}; Starter/PM get +uat-starter-{role} / +uat-pm-{role}
+// so all three variants coexist without collision. Passwords get a 2-char
+// variant tag for ease-of-recall during UAT but stay deterministic per-role.
+const ES = VARIANT_CONFIG.emailSuffix
+const PS = VARIANT_CONFIG.pwSuffix
+// PM track: MAX_DRIVERS=0 + no driver-portal feature (per tier-config).
+// Skip the driver user + drivers entity row + vehicles for PM variant so
+// we don't seed structurally meaningless rows. The CA persona on PM is
+// sufficient for the scan-plate PM 403 entitlement test (entitlement
+// gate fires per company.tier_type — caller role within the allowed set
+// is fine; the matrix denies AI_PLATE_SCANNING for any PM tier).
+const IS_PM = COMPANY_TIER_TYPE === 'property_management'
 const USERS: UserSpec[] = [
-  { email: 'alvaradolegacyconsulting+uat-ca@gmail.com',       password: 'UAT2026!CA', role: 'company_admin',  scopeProperty: false },
-  { email: 'alvaradolegacyconsulting+uat-driver@gmail.com',   password: 'UAT2026!DR', role: 'driver',         scopeProperty: false },
-  { email: 'alvaradolegacyconsulting+uat-manager@gmail.com',  password: 'UAT2026!MG', role: 'manager',        scopeProperty: true  },
-  { email: 'alvaradolegacyconsulting+uat-leasing@gmail.com',  password: 'UAT2026!LE', role: 'leasing_agent',  scopeProperty: true  },
-  { email: 'alvaradolegacyconsulting+uat-resident@gmail.com', password: 'UAT2026!RE', role: 'resident',       scopeProperty: true  },
+  { email: `alvaradolegacyconsulting+uat${ES}-ca@gmail.com`,       password: `UAT2026!${PS}CA`, role: 'company_admin',  scopeProperty: false },
+  ...(IS_PM ? [] : [
+    { email: `alvaradolegacyconsulting+uat${ES}-driver@gmail.com`, password: `UAT2026!${PS}DR`, role: 'driver' as const, scopeProperty: false },
+  ]),
+  { email: `alvaradolegacyconsulting+uat${ES}-manager@gmail.com`,  password: `UAT2026!${PS}MG`, role: 'manager',        scopeProperty: true  },
+  { email: `alvaradolegacyconsulting+uat${ES}-leasing@gmail.com`,  password: `UAT2026!${PS}LE`, role: 'leasing_agent',  scopeProperty: true  },
+  { email: `alvaradolegacyconsulting+uat${ES}-resident@gmail.com`, password: `UAT2026!${PS}RE`, role: 'resident',       scopeProperty: true  },
 ]
 
 interface VehicleSpec {
@@ -250,28 +310,32 @@ async function main() {
     }
   }
 
-  // ── 5. drivers row (for the driver user) ──────────────────────────
+  // ── 5. drivers row (for the driver user; ENFORCEMENT track only) ──
   console.log(`\n[5/6] drivers + residents seed rows`)
-  const driverUser = USERS.find(u => u.role === 'driver')!
-  const { data: existingDriver } = await supabase
-    .from('drivers')
-    .select('id')
-    .ilike('email', driverUser.email)
-    .maybeSingle()
-  if (existingDriver) {
-    console.log(`  ✓ drivers row for ${driverUser.email} exists (id=${existingDriver.id})`)
+  const driverUser = USERS.find(u => u.role === 'driver')
+  if (!driverUser) {
+    console.log(`  ✓ drivers row SKIPPED (${COMPANY_TIER_TYPE} track — no driver user provisioned)`)
   } else {
-    const { error } = await supabase.from('drivers').insert([{
-      name: 'UAT Driver',
-      email: driverUser.email,
-      phone: '713-555-0101',
-      operator_license: 'TX-OPS-UAT-001',
-      assigned_properties: [PROPERTY_NAME],
-      company: COMPANY_NAME,
-      is_active: true,
-    }])
-    if (error) console.error('  ✗ drivers INSERT failed:', error.message)
-    else console.log(`  ✓ drivers row created for ${driverUser.email}`)
+    const { data: existingDriver } = await supabase
+      .from('drivers')
+      .select('id')
+      .ilike('email', driverUser.email)
+      .maybeSingle()
+    if (existingDriver) {
+      console.log(`  ✓ drivers row for ${driverUser.email} exists (id=${existingDriver.id})`)
+    } else {
+      const { error } = await supabase.from('drivers').insert([{
+        name: 'UAT Driver',
+        email: driverUser.email,
+        phone: '713-555-0101',
+        operator_license: 'TX-OPS-UAT-001',
+        assigned_properties: [PROPERTY_NAME],
+        company: COMPANY_NAME,
+        is_active: true,
+      }])
+      if (error) console.error('  ✗ drivers INSERT failed:', error.message)
+      else console.log(`  ✓ drivers row created for ${driverUser.email}`)
+    }
   }
 
   // ── 5b. residents row (for the resident user) ─────────────────────
