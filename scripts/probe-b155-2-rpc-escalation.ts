@@ -1,22 +1,32 @@
-// B155.2 RPC-path escalation verification — companion to
-// probe-b155-2-escalation.ts.
+// B155.2 RPC-path probe — escalation + scope + self-reg + admin + legit-path
+// regression gate.
 //
-// The original B155.2 probe (probe-b155-2-escalation.ts) ONLY tested the
-// direct .from('user_roles').insert(...) RLS-gated path. It NEVER tested
-// the .rpc('insert_user_role', ...) SECURITY DEFINER path.
+// Sibling to scripts/probe-b155-2-escalation.ts (which covers the direct
+// .from('user_roles').insert(...) RLS path). This probe covers the
+// .rpc('insert_user_role', ...) SECURITY DEFINER path that the original
+// probe never tested.
 //
-// pg_get_functiondef(insert_user_role) at the time this probe was written
-// (2026-06-13) showed: LANGUAGE sql, SECURITY DEFINER, no SET search_path,
-// body = bare INSERT INTO user_roles with no role-IN-set guard. SECURITY
-// DEFINER bypasses RLS. The probe confirmed empirically: an authenticated
-// CA could call rpc({p_role:'admin', ...}) and write an admin row.
+// PRE-FIX BEHAVIOR (Dashboard-applied insert_user_role, 2026-06-13)
+//   • LANGUAGE sql, SECURITY DEFINER, no SET search_path
+//   • Body: bare INSERT INTO user_roles, no guards
+//   • An authenticated CA could mint admin / company_admin / arbitrary
+//     role strings — empirically confirmed by this probe before fix.
 //
-// The closure migration (apply atomically with D2 schema change) moves
-// the role + caller-company guards INTO the function body so SECURITY
-// DEFINER bypass of RLS no longer matters. After apply:
-//   • Tests 1.1 / 1.2 / 1.4 must flip FAIL → PASS (role-IN-set denial).
-//   • Test 1.3 (control) stays PASS (manager + p_company matches CA's
-//     own company → both guards pass).
+// POST-FIX BEHAVIOR (this probe is the regression gate)
+//   • escalation.* / scope.* / denial.* — must PASS (denial returns the
+//     right exception class)
+//   • legit.tenant_* / legit.self_reg_resident — must PASS (row lands +
+//     name persists)
+//   • admin.* — must PASS (admin bypass branch works for all role+company
+//     combos, including admin-minting-admin)
+//
+// COVERS ALL FOUR CALLER BRANCHES in the post-2026-06-13 body:
+//   • v_caller_role = 'admin'                          → tested via testAdminPath
+//   • v_caller_role IN (company_admin/manager/leasing) → tested via testEscalations,
+//                                                        testScope, testLegitTenantPaths
+//   • v_caller_role IS NULL (self-reg)                 → tested via testSelfRegPaths
+//   • else-deny                                        → covered by the legit-path
+//                                                        absence of failures
 //
 // USAGE
 //   npx tsx --env-file=.env.local scripts/probe-b155-2-rpc-escalation.ts
@@ -32,8 +42,7 @@ const anonKey    = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 const RUN_TAG = `b155-rpc-${Date.now()}`
-const CA_EMAIL = `mateo+${RUN_TAG}-ca@example.com`
-const CA_PW    = `B155_${RUN_TAG}!`
+const CA_COMPANY = 'Demo Towing LLC'  // canonical test seed
 
 const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
 
@@ -45,104 +54,243 @@ const record = (id: string, pass: boolean, detail: string) => {
 }
 const cleanup: Array<() => Promise<void>> = []
 
-async function setupCA(): Promise<SupabaseClient> {
+async function spawnAuthUser(emailPrefix: string): Promise<{ email: string; client: SupabaseClient; authId: string }> {
+  const email = `mateo+${RUN_TAG}-${emailPrefix}@example.com`
+  const pw = `B155_${RUN_TAG}_${emailPrefix}!`
   const { data: created, error: cErr } = await admin.auth.admin.createUser({
-    email: CA_EMAIL, password: CA_PW, email_confirm: true,
+    email, password: pw, email_confirm: true,
   })
-  if (cErr || !created.user) throw new Error(`auth create CA: ${cErr?.message}`)
+  if (cErr || !created.user) throw new Error(`auth create ${emailPrefix}: ${cErr?.message}`)
   cleanup.push(async () => { await admin.auth.admin.deleteUser(created.user!.id) })
 
-  const { error: rErr } = await admin.from('user_roles').insert({
-    email: CA_EMAIL, role: 'company_admin', company: 'Demo Towing LLC',
-  })
-  if (rErr) throw new Error(`user_roles insert: ${rErr.message}`)
-  cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', CA_EMAIL) })
-
-  const tenant = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  const { error: sErr } = await tenant.auth.signInWithPassword({ email: CA_EMAIL, password: CA_PW })
-  if (sErr) throw new Error(`signIn CA: ${sErr.message}`)
-  return tenant
+  const client = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { error: sErr } = await client.auth.signInWithPassword({ email, password: pw })
+  if (sErr) throw new Error(`signIn ${emailPrefix}: ${sErr.message}`)
+  return { email, client, authId: created.user.id }
 }
 
-async function testRpcEscalation(tenant: SupabaseClient) {
-  console.log('\n── RPC-PATH ESCALATION TESTS (insert_user_role SECURITY DEFINER) ──')
-
-  // 1.1 — admin
-  const t1a = `mateo+${RUN_TAG}-rpc-admin@example.com`
-  const { data: d1a, error: e1a } = await tenant.rpc('insert_user_role', {
-    p_email: t1a, p_role: 'admin', p_company: 'Demo Towing LLC', p_property: [],
+async function spawnCA(): Promise<{ email: string; client: SupabaseClient }> {
+  const { email, client } = await spawnAuthUser('ca')
+  const { error: rErr } = await admin.from('user_roles').insert({
+    email, role: 'company_admin', company: CA_COMPANY,
   })
-  const { data: gt1a } = await admin.from('user_roles').select('id, role').eq('email', t1a).maybeSingle()
-  if (gt1a?.role === 'admin') {
-    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t1a) })
-    record('RPC.admin INSERT', false,
-      `ESCALATION SUCCEEDED — CA wrote a role=admin row via RPC; id=${gt1a.id}. RPC return: data=${JSON.stringify(d1a)} error=${e1a?.message ?? 'null'}`)
+  if (rErr) throw new Error(`user_roles CA insert: ${rErr.message}`)
+  cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', email) })
+  await client.auth.refreshSession()
+  return { email, client }
+}
+
+async function spawnAdmin(): Promise<{ email: string; client: SupabaseClient }> {
+  // Throwaway admin user. Admin role rows historically carry company=NULL
+  // (see production audit — admin@alc.com row 19 has no company). Mirror
+  // that posture so the v_caller_role='admin' branch fires correctly
+  // (admin bypass is identity-based, not scope-based).
+  const { email, client } = await spawnAuthUser('admin')
+  const { error: rErr } = await admin.from('user_roles').insert({
+    email, role: 'admin', company: null,
+  })
+  if (rErr) throw new Error(`user_roles admin insert: ${rErr.message}`)
+  cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', email) })
+  await client.auth.refreshSession()
+  return { email, client }
+}
+
+async function readUserRoleRow(email: string) {
+  const { data } = await admin.from('user_roles').select('id, role, company, name').ilike('email', email).maybeSingle()
+  return data
+}
+
+async function testEscalations(ca: { email: string; client: SupabaseClient }) {
+  console.log('\n── ESCALATION DENIAL TESTS (CA caller, illegal roles) ──')
+
+  // 1.1 — CA → role='admin'
+  const t1 = `mateo+${RUN_TAG}-rpc-admin@example.com`
+  const { data: d1, error: e1 } = await ca.client.rpc('insert_user_role', {
+    p_email: t1, p_role: 'admin', p_company: CA_COMPANY, p_property: [],
+  })
+  const gt1 = await readUserRoleRow(t1)
+  if (gt1) {
+    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t1) })
+    record('escalation.admin_insert', false,
+      `ESCALATION SUCCEEDED — CA wrote role=admin via RPC; id=${gt1.id}. RPC: data=${JSON.stringify(d1)} error=${e1?.message ?? 'null'}`)
   } else {
-    record('RPC.admin INSERT', true,
-      `Denied: error=${e1a?.message ?? '(no error, no row)'}; ground-truth role=${gt1a?.role ?? 'no row'}`)
+    record('escalation.admin_insert', true,
+      `Denied: error=${e1?.message ?? '(no error, no row)'}`)
   }
 
-  // 1.2 — company_admin
-  const t1b = `mateo+${RUN_TAG}-rpc-ca@example.com`
-  const { data: d1b, error: e1b } = await tenant.rpc('insert_user_role', {
-    p_email: t1b, p_role: 'company_admin', p_company: 'Demo Towing LLC', p_property: [],
+  // 1.2 — CA → role='company_admin'
+  const t2 = `mateo+${RUN_TAG}-rpc-ca@example.com`
+  const { data: d2, error: e2 } = await ca.client.rpc('insert_user_role', {
+    p_email: t2, p_role: 'company_admin', p_company: CA_COMPANY, p_property: [],
   })
-  const { data: gt1b } = await admin.from('user_roles').select('id, role').eq('email', t1b).maybeSingle()
-  if (gt1b?.role === 'company_admin') {
-    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t1b) })
-    record('RPC.company_admin INSERT', false,
-      `ESCALATION SUCCEEDED — CA wrote a role=company_admin row via RPC; id=${gt1b.id}. RPC return: data=${JSON.stringify(d1b)} error=${e1b?.message ?? 'null'}`)
+  const gt2 = await readUserRoleRow(t2)
+  if (gt2) {
+    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t2) })
+    record('escalation.company_admin_insert', false,
+      `ESCALATION SUCCEEDED — CA wrote role=company_admin via RPC; id=${gt2.id}. RPC: data=${JSON.stringify(d2)} error=${e2?.message ?? 'null'}`)
   } else {
-    record('RPC.company_admin INSERT', true,
-      `Denied: error=${e1b?.message ?? '(no error, no row)'}; ground-truth role=${gt1b?.role ?? 'no row'}`)
+    record('escalation.company_admin_insert', true,
+      `Denied: error=${e2?.message ?? '(no error, no row)'}`)
   }
 
-  // 1.3 — control: manager (should succeed pre AND post fix)
-  const t1c = `mateo+${RUN_TAG}-rpc-mgr@example.com`
-  const { error: e1c } = await tenant.rpc('insert_user_role', {
-    p_email: t1c, p_role: 'manager', p_company: 'Demo Towing LLC', p_property: ['Bayou Heights Apartments'],
+  // 1.3 — CA → role='noop' (arbitrary string)
+  const t3 = `mateo+${RUN_TAG}-rpc-noop@example.com`
+  const { error: e3 } = await ca.client.rpc('insert_user_role', {
+    p_email: t3, p_role: 'noop', p_company: CA_COMPANY, p_property: [],
   })
-  const { data: gt1c } = await admin.from('user_roles').select('id, role').eq('email', t1c).maybeSingle()
-  if (gt1c?.role === 'manager') {
-    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t1c) })
-    record('RPC.manager INSERT (control)', true,
-      `Legit-path PASSED — manager INSERT succeeded via RPC (id=${gt1c.id})`)
+  const gt3 = await readUserRoleRow(t3)
+  if (gt3) {
+    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t3) })
+    record('escalation.noop_insert', false,
+      `BODY GUARD ABSENT — RPC accepted role='noop'. id=${gt3.id}`)
   } else {
-    record('RPC.manager INSERT (control)', false,
-      `Legit-path FAILED — manager INSERT via RPC didn't land. error=${e1c?.message ?? 'unknown'}; ground-truth role=${gt1c?.role ?? 'no row'}`)
+    record('escalation.noop_insert', true,
+      `Denied: error=${e3?.message ?? '(no error, no row)'}`)
+  }
+}
+
+async function testScope(ca: { email: string; client: SupabaseClient }) {
+  console.log('\n── SCOPE DENIAL TESTS (CA caller, cross-company) ──')
+
+  // 2.1 — CA tries to insert manager into a DIFFERENT company
+  const t1 = `mateo+${RUN_TAG}-rpc-xcomp@example.com`
+  const { error: e1 } = await ca.client.rpc('insert_user_role', {
+    p_email: t1, p_role: 'manager', p_company: 'Some Other Company', p_property: [],
+  })
+  const gt1 = await readUserRoleRow(t1)
+  if (gt1) {
+    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t1) })
+    record('scope.cross_company', false,
+      `SCOPE VIOLATION SUCCEEDED — CA wrote into "${gt1.company}". id=${gt1.id}`)
+  } else {
+    record('scope.cross_company', true,
+      `Denied: error=${e1?.message ?? '(no error, no row)'}`)
+  }
+}
+
+async function testLegitTenantPaths(ca: { email: string; client: SupabaseClient }) {
+  console.log('\n── LEGIT TENANT-PROVISIONER PATHS (CA + own company, valid roles, p_name persists) ──')
+
+  // 3.1 — CA inserts manager with name (control / Add-User parity)
+  const t1 = `mateo+${RUN_TAG}-rpc-mgr@example.com`
+  const { error: e1 } = await ca.client.rpc('insert_user_role', {
+    p_email: t1, p_role: 'manager', p_company: CA_COMPANY, p_property: ['Bayou Heights Apartments'], p_name: 'Test Manager',
+  })
+  const gt1 = await readUserRoleRow(t1)
+  if (gt1) cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t1) })
+  const pass1 = gt1?.role === 'manager' && gt1?.name === 'Test Manager'
+  record('legit.tenant_manager_with_name', pass1,
+    pass1
+      ? `inserted (id=${gt1!.id}, name="${gt1!.name}")`
+      : `expected manager+name="Test Manager", got role=${gt1?.role ?? 'no row'} name=${JSON.stringify(gt1?.name)} error=${e1?.message ?? 'null'}`)
+
+  // 3.2 — CA inserts driver with name (bulk-invite per-row parity)
+  const t2 = `mateo+${RUN_TAG}-rpc-drv@example.com`
+  const { error: e2 } = await ca.client.rpc('insert_user_role', {
+    p_email: t2, p_role: 'driver', p_company: CA_COMPANY, p_property: [], p_name: 'Test Driver',
+  })
+  const gt2 = await readUserRoleRow(t2)
+  if (gt2) cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t2) })
+  const pass2 = gt2?.role === 'driver' && gt2?.name === 'Test Driver'
+  record('legit.tenant_driver_with_name', pass2,
+    pass2
+      ? `inserted (id=${gt2!.id}, name="${gt2!.name}")`
+      : `expected driver+name="Test Driver", got role=${gt2?.role ?? 'no row'} name=${JSON.stringify(gt2?.name)} error=${e2?.message ?? 'null'}`)
+}
+
+async function testAdminPath(adm: { email: string; client: SupabaseClient }) {
+  console.log('\n── ADMIN-CALLER PATHS (bypass: any role, any company, p_name persists) ──')
+
+  // 5.1 — admin mints role='admin' (legit admin Add-User dropdown choice)
+  const t1 = `mateo+${RUN_TAG}-admin-mint-admin@example.com`
+  const { error: e1 } = await adm.client.rpc('insert_user_role', {
+    p_email: t1, p_role: 'admin', p_company: 'Brand New Co', p_property: [], p_name: 'Minted Admin',
+  })
+  const gt1 = await readUserRoleRow(t1)
+  if (gt1) cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t1) })
+  const pass1 = gt1?.role === 'admin' && gt1?.name === 'Minted Admin'
+  record('admin.mint_admin', pass1,
+    pass1
+      ? `inserted (id=${gt1!.id}, role=admin, name="${gt1!.name}", company="${gt1!.company}")`
+      : `expected role=admin+name="Minted Admin", got role=${gt1?.role ?? 'no row'} name=${JSON.stringify(gt1?.name)} error=${e1?.message ?? 'null'}`)
+
+  // 5.2 — admin mints role='company_admin' (legit admin Add-User dropdown choice)
+  const t2 = `mateo+${RUN_TAG}-admin-mint-ca@example.com`
+  const { error: e2 } = await adm.client.rpc('insert_user_role', {
+    p_email: t2, p_role: 'company_admin', p_company: 'Brand New Co', p_property: [], p_name: 'Minted CA',
+  })
+  const gt2 = await readUserRoleRow(t2)
+  if (gt2) cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t2) })
+  const pass2 = gt2?.role === 'company_admin' && gt2?.name === 'Minted CA'
+  record('admin.mint_company_admin', pass2,
+    pass2
+      ? `inserted (id=${gt2!.id}, role=company_admin, name="${gt2!.name}", company="${gt2!.company}")`
+      : `expected role=company_admin+name="Minted CA", got role=${gt2?.role ?? 'no row'} name=${JSON.stringify(gt2?.name)} error=${e2?.message ?? 'null'}`)
+
+  // 5.3 — admin cross-company mint (admin bypasses the scope guard tenant
+  // roles hit at scope.cross_company) — same email pattern but for a tenant
+  // role in a company different from the admin's NULL home company.
+  const t3 = `mateo+${RUN_TAG}-admin-cross-comp@example.com`
+  const { error: e3 } = await adm.client.rpc('insert_user_role', {
+    p_email: t3, p_role: 'manager', p_company: 'Some Cross Company', p_property: ['Some Property'], p_name: 'Cross-Co Mgr',
+  })
+  const gt3 = await readUserRoleRow(t3)
+  if (gt3) cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t3) })
+  const pass3 = gt3?.role === 'manager' && gt3?.name === 'Cross-Co Mgr' && gt3?.company === 'Some Cross Company'
+  record('admin.cross_company_with_name', pass3,
+    pass3
+      ? `inserted (id=${gt3!.id}, role=manager, name="${gt3!.name}", company="${gt3!.company}")`
+      : `expected role=manager+name="Cross-Co Mgr"+company="Some Cross Company", got role=${gt3?.role ?? 'no row'} name=${JSON.stringify(gt3?.name)} company=${JSON.stringify(gt3?.company)} error=${e3?.message ?? 'null'}`)
+}
+
+async function testSelfRegPaths() {
+  console.log('\n── SELF-REG PATHS (roleless authenticated caller) ──')
+
+  // Strategy: spawn a fresh roleless tenant for each subtest where a
+  // successful insert would change the caller's role context. The denial
+  // subtests can share since denial leaves the caller still roleless.
+  const u = await spawnAuthUser('selfreg')
+
+  // 4.1 — denial: roleless caller tries to mint someone else's email
+  const otherEmail = `mateo+${RUN_TAG}-rpc-selfreg-other@example.com`
+  const { error: e1 } = await u.client.rpc('insert_user_role', {
+    p_email: otherEmail, p_role: 'resident', p_company: CA_COMPANY, p_property: [], p_name: 'Other',
+  })
+  const gt1 = await readUserRoleRow(otherEmail)
+  if (gt1) {
+    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', otherEmail) })
+    record('denial.self_reg_other_email', false,
+      `SELF-REG SCOPE VIOLATION — roleless wrote other-email row. id=${gt1.id}`)
+  } else {
+    record('denial.self_reg_other_email', true,
+      `Denied: error=${e1?.message ?? '(no error, no row)'}`)
   }
 
-  // 1.4 — invented role 'noop' (probes the absence/presence of the role-IN-set body guard)
-  const t1d = `mateo+${RUN_TAG}-rpc-noop@example.com`
-  const { error: e1d } = await tenant.rpc('insert_user_role', {
-    p_email: t1d, p_role: 'noop', p_company: 'Demo Towing LLC', p_property: [],
+  // 4.2 — denial: roleless caller tries to mint role='manager' on own email
+  const { error: e2 } = await u.client.rpc('insert_user_role', {
+    p_email: u.email, p_role: 'manager', p_company: CA_COMPANY, p_property: [], p_name: 'Pretend Mgr',
   })
-  const { data: gt1d } = await admin.from('user_roles').select('id, role').eq('email', t1d).maybeSingle()
-  if (gt1d) {
-    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t1d) })
-    record('RPC.noop INSERT (body-guard absence)', false,
-      `BODY GUARD ABSENT — RPC accepted role='noop' (an arbitrary string). id=${gt1d.id}`)
+  const gt2 = await readUserRoleRow(u.email)
+  if (gt2) {
+    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', u.email) })
+    record('denial.self_reg_other_role', false,
+      `SELF-REG ROLE VIOLATION — roleless wrote role=${gt2.role}. id=${gt2.id}`)
   } else {
-    record('RPC.noop INSERT (body-guard absence)', true,
-      `Denied: error=${e1d?.message ?? '(no error, no row)'}`)
+    record('denial.self_reg_other_role', true,
+      `Denied: error=${e2?.message ?? '(no error, no row)'}`)
   }
 
-  // 2.1 — cross-company scope (post-fix only; pre-fix would have inserted into
-  // "Some Other Company" without any check). Should FAIL with
-  // company_scope_violation after the closure migration applies.
-  const t2a = `mateo+${RUN_TAG}-rpc-xcomp@example.com`
-  const { error: e2a } = await tenant.rpc('insert_user_role', {
-    p_email: t2a, p_role: 'manager', p_company: 'Some Other Company', p_property: [],
+  // 4.3 — legit: roleless caller mints own resident row with name
+  const { error: e3 } = await u.client.rpc('insert_user_role', {
+    p_email: u.email, p_role: 'resident', p_company: CA_COMPANY, p_property: ['Bayou Heights Apartments'], p_name: 'Self Reg Resident',
   })
-  const { data: gt2a } = await admin.from('user_roles').select('id, role, company').eq('email', t2a).maybeSingle()
-  if (gt2a) {
-    cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', t2a) })
-    record('RPC.cross_company (scope guard)', false,
-      `CROSS-COMPANY SCOPE VIOLATION — CA wrote into company "${gt2a.company}" (id=${gt2a.id})`)
-  } else {
-    record('RPC.cross_company (scope guard)', true,
-      `Denied: error=${e2a?.message ?? '(no error, no row)'}`)
-  }
+  const gt3 = await readUserRoleRow(u.email)
+  if (gt3) cleanup.push(async () => { await admin.from('user_roles').delete().eq('email', u.email) })
+  const pass3 = gt3?.role === 'resident' && gt3?.name === 'Self Reg Resident'
+  record('legit.self_reg_resident', pass3,
+    pass3
+      ? `inserted (id=${gt3!.id}, name="${gt3!.name}")`
+      : `expected resident+name="Self Reg Resident", got role=${gt3?.role ?? 'no row'} name=${JSON.stringify(gt3?.name)} error=${e3?.message ?? 'null'}`)
 }
 
 async function cleanupAll() {
@@ -152,23 +300,37 @@ async function cleanupAll() {
 }
 
 async function main() {
-  console.log(`B155.2 RPC-path escalation · ${RUN_TAG}`)
+  console.log(`B155.2 RPC-path probe (escalation + legit-path) · ${RUN_TAG}`)
   console.log(`Project: ${url}\n`)
-  let tenant: SupabaseClient
-  try { tenant = await setupCA() } catch (e) {
+
+  let ca: { email: string; client: SupabaseClient }
+  let adm: { email: string; client: SupabaseClient }
+  try {
+    ca = await spawnCA()
+    adm = await spawnAdmin()
+  } catch (e) {
     console.error('SETUP FAILED:', (e as Error).message); await cleanupAll(); process.exit(1)
   }
-  try { await testRpcEscalation(tenant) } catch (e) {
+
+  try {
+    await testEscalations(ca)
+    await testScope(ca)
+    await testLegitTenantPaths(ca)
+    await testSelfRegPaths()
+    await testAdminPath(adm)
+  } catch (e) {
     console.error('PROBE THREW:', (e as Error).message)
-  } finally { await cleanupAll() }
+  } finally {
+    await cleanupAll()
+  }
 
   console.log('\n── SUMMARY ──')
-  const failed = checks.filter(c => !c.pass).length
-  console.log(`${checks.length - failed}/${checks.length} PASS (${failed} FAIL)`)
+  const passed = checks.filter(c => c.pass).length
+  const failed = checks.length - passed
+  console.log(`${passed}/${checks.length} PASS (${failed} FAIL)`)
   console.log('\nINTERPRETATION:')
-  console.log('  RPC.admin / company_admin / noop / cross_company — PASS = denied (good); FAIL = guard absent (BAD)')
-  console.log('  RPC.manager (control) — PASS = legit path works; FAIL = guard over-tightened')
-
+  console.log('  escalation.* / scope.cross_company / denial.* — PASS = denied (good); FAIL = guard absent (BAD)')
+  console.log('  legit.tenant_* / legit.self_reg_resident / admin.* — PASS = legit path works (good); FAIL = guard over-tightened')
   process.exit(failed > 0 ? 1 : 0)
 }
 
