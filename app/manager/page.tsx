@@ -946,113 +946,6 @@ export default function ManagerPortal() {
     })
   }
 
-  async function reprintTicket(v: any) {
-    // Open the popup synchronously inside the click handler so popup
-    // blockers don't fire, then fill it asynchronously after the
-    // licensing fetches resolve.
-    const tw = window.open('', '_blank')
-    if (!tw) return
-    tw.document.write('<!DOCTYPE html><html><head><title>Loading…</title></head><body style="font-family:Arial,sans-serif;padding:40px;text-align:center;color:#555">Loading ticket…</body></html>')
-
-    // B120 — resolve company TDLR + facility VSF for the licensing
-    // block. driver_license is already on the violation row (snapshot
-    // from driver portal at insert; null for manager-issued tickets).
-    // Both fetches are best-effort: render show-if-present, hide-if-null.
-    let companyTdlr: string | null = null
-    let facilityVsf: string | null = null
-    try {
-      if (managerCompany) {
-        const { data: c } = await supabase
-          .from('companies')
-          .select('tdlr_license_number')
-          .ilike('name', managerCompany)
-          .maybeSingle()
-        companyTdlr = (c?.tdlr_license_number as string | null) || null
-      }
-      if (v.tow_storage_name) {
-        const { data: sf } = await supabase
-          .from('storage_facilities')
-          .select('vsf_license_number')
-          .ilike('name', v.tow_storage_name)
-          .maybeSingle()
-        facilityVsf = (sf?.vsf_license_number as string | null) || null
-      }
-    } catch (e) {
-      console.error('[B120 reprint licensing fetch]', (e as Error).message)
-    }
-
-    const total = parseFloat(v.tow_fee || '0').toFixed(2)
-    const photosHtml = v.photos?.length
-      ? `<div style="margin-top:20px"><p style="font-weight:bold;margin-bottom:8px">EVIDENCE PHOTOS</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${v.photos.map((u: string) => `<img src="${u}" style="width:100%;border-radius:4px;border:1px solid #ddd" onerror="this.style.display='none'">`).join('')}</div></div>`
-      : ''
-    // Wipe the loading message before writing the real ticket.
-    tw.document.open()
-    tw.document.write(`<!DOCTYPE html><html><head><title>Tow Ticket — ${v.plate}</title><style>
-      *{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:28px;max-width:680px;margin:0 auto;color:#111;font-size:13px}
-      .hdr{display:flex;align-items:center;gap:14px;margin-bottom:22px;padding-bottom:14px;border-bottom:3px solid #C9A227}
-      .logo{width:64px;height:64px;border-radius:8px;border:2px solid #C9A227;object-fit:contain}
-      .sec{margin-bottom:18px}.sh{font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:.08em;color:#777;margin-bottom:8px;padding-bottom:3px;border-bottom:1px solid #eee}
-      .g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.f label{font-size:10px;font-weight:bold;color:#555;text-transform:uppercase;letter-spacing:.05em;display:block}
-      .f span{font-size:13px;color:#111;display:block;margin-top:1px}.plate{font-family:"Courier New",monospace;font-size:22px;font-weight:bold}
-      .warn{background:#fff3cd;border:1px solid #e6b800;border-radius:5px;padding:9px 12px;font-size:11px;margin-bottom:16px}
-      .sig-wrap{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:28px}.sig-line{border-top:1px solid #555;padding-top:5px;font-size:10px;color:#666;margin-top:36px}
-      .ftr{margin-top:20px;padding-top:10px;border-top:2px solid #C9A227;font-size:10px;color:#888;text-align:center}
-      @media print{.no-print{display:none}body{padding:18px}}
-    </style></head><body>
-      <div class="hdr">
-        <img src="${getCachedLogoUrl(localStorage.getItem('company_logo'))}" class="logo" alt="" onerror="this.style.display='none'">
-        <div>
-          <div style="font-size:20px;font-weight:bold">${managerCompany || 'Tow Service'}</div>
-          <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET (REPRINT)</div>
-        </div>
-        <div style="margin-left:auto;text-align:right">
-          <div style="font-size:10px;color:#888">Date / Time</div>
-          <div style="font-weight:bold">${new Date(v.created_at).toLocaleString()}</div>
-          <div style="font-size:10px;color:#888;margin-top:4px">Ticket #</div>
-          <div style="font-weight:bold">${String(v.id).substring(0,8).toUpperCase()}</div>
-        </div>
-      </div>
-      <div class="warn">⚠ This vehicle has been towed pursuant to Texas Transportation Code §683. Contact the storage facility below to recover your vehicle.</div>
-      <div class="sec"><div class="sh">Vehicle Information</div><div class="g2">
-        <div class="f"><label>License Plate</label><span class="plate">${v.plate}</span></div>
-        <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
-        ${v.vehicle_year ? `<div class="f"><label>Year</label><span>${v.vehicle_year}</span></div>` : ''}
-        ${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).length ? `<div class="f"><label>Make / Model / Color</label><span>${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join('  ·  ')}</span></div>` : ''}
-      </div></div>
-      <div class="sec"><div class="sh">Violation</div><div class="g2">
-        <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
-        <div class="f"><label>Location / Space</label><span>${v.location || '—'}</span></div>
-        <div class="f" style="grid-column:span 2"><label>Notes</label><span>${v.notes || 'No additional notes.'}</span></div>
-      </div></div>
-      <div class="sec"><div class="sh">Property</div><div class="g2">
-        <div class="f"><label>Authorized By</label><span>${v.property || '—'}</span></div>
-      </div></div>
-      <div class="sec"><div class="sh">Tow Operator</div><div class="g2">
-        <div class="f"><label>Name</label><span>${v.driver_name || '—'}</span></div>
-        ${v.driver_license ? `<div class="f"><label>License #</label><span>${v.driver_license}</span></div>` : ''}
-        ${companyTdlr ? `<div class="f"><label>TDLR #</label><span>${companyTdlr}</span></div>` : ''}
-      </div></div>
-      <div class="sec"><div class="sh">Storage / Impound</div><div class="g2">
-        <div class="f"><label>Facility</label><span>${v.tow_storage_name || '—'}</span></div>
-        <div class="f"><label>Phone</label><span>${v.tow_storage_phone || '—'}</span></div>
-        <div class="f" style="grid-column:span 2"><label>Address</label><span>${v.tow_storage_address || '—'}</span></div>
-        ${facilityVsf ? `<div class="f" style="grid-column:span 2"><label>VSF #</label><span>${facilityVsf}</span></div>` : ''}
-      </div></div>
-      ${parseFloat(v.tow_fee || '0') > 0 ? `<div class="sec"><div class="sh">Fees</div><div class="g2">
-        <div class="f"><label>Tow Fee</label><span>$${parseFloat(v.tow_fee).toFixed(2)}</span></div>
-        <div class="f"><label>Total Due</label><span style="font-size:16px;font-weight:bold">$${total}</span></div>
-      </div></div>` : ''}
-      ${photosHtml}
-      <div class="sig-wrap"><div><div class="sig-line">Operator Signature</div></div><div><div class="sig-line">Date</div></div></div>
-      <div class="ftr">${managerCompany || ''}<br>Reprinted ${new Date().toLocaleString()}</div>
-      <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center">
-        <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
-        <button onclick="window.close()" style="padding:11px 22px;background:#333;color:#fff;font-size:13px;border:none;border-radius:7px;cursor:pointer">Close</button>
-      </div>
-    </body></html>`)
-    tw.document.close()
-  }
-
   async function fetchInsights() {
     if (!manager) return
     setInsightsLoaded(false)
@@ -1893,10 +1786,16 @@ export default function ManagerPortal() {
                   {v.tow_ticket_generated && (
                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:'10px', paddingTop:'10px', borderTop:'1px solid #2a2f3d' }}>
                       <span style={{ background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'10px', fontWeight:'bold', padding:'3px 8px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>
-                      <button onClick={() => reprintTicket(v)}
-                        style={{ padding:'6px 12px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
-                        Reprint Ticket
-                      </button>
+                      {/* B182 — manager / leasing_agent see the price-free PM view
+                          via /ticket/pm/[id]. The route's RPC enforces property-
+                          scope + voided + role gates, returning a payload that
+                          NEVER contains tow_fee or tow_storage_*. The prior
+                          Reprint button used the manager portal's local template
+                          which carried prices — removed in favor of this. */}
+                      <a href={`/ticket/pm/${v.id}`} target="_blank" rel="noopener noreferrer"
+                        style={{ padding:'6px 12px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial', textDecoration:'none', display:'inline-block' }}>
+                        View Ticket
+                      </a>
                     </div>
                   )}
                   {!isReadOnly && (

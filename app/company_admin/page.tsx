@@ -1670,116 +1670,41 @@ export default function CompanyAdminPortal() {
     setSelectedStorage(''); setTowFee(''); setMileage(''); setVin('')
   }
 
-  async function reprintTicket(v: any) {
-    // Open popup synchronously to keep the popup-blocker happy; fill
-    // asynchronously after the licensing fetches complete.
-    const tw = window.open('', '_blank')
-    if (!tw) return
-    tw.document.write('<!DOCTYPE html><html><head><title>Loading…</title></head><body style="font-family:Arial,sans-serif;padding:40px;text-align:center;color:#555">Loading ticket…</body></html>')
-
-    // B120 — resolve company TDLR + facility VSF for the licensing
-    // block. driver_license already on the row when set by driver
-    // portal at insert (null for CA-issued tickets).
-    let companyTdlr: string | null = null
-    let facilityVsf: string | null = null
+  // B182 — replaces the legacy reprintTicket() that rendered a divergent
+  // CA-portal popup (price-carrying) with a thin wrapper around the
+  // canonical public capability URL. Mints a fresh 90-day token via
+  // set_violation_view_token (B178 SECURITY DEFINER RPC) and either
+  // opens the URL in a new tab (view) or copies it to the clipboard
+  // (copy). The capability URL is the priced motorist + facility view —
+  // same data the operator shared at issue time. PMs see the price-
+  // stripped view at /ticket/pm/[id] (different route, different RPC,
+  // separate auth path).
+  async function viewOrCopyPublicTicket(v: { id: number }, mode: 'view' | 'copy') {
     try {
-      if (role?.company) {
-        const { data: c } = await supabase
-          .from('companies')
-          .select('tdlr_license_number')
-          .ilike('name', role.company)
-          .maybeSingle()
-        companyTdlr = (c?.tdlr_license_number as string | null) || null
+      const { data: tokenResult, error: tokenErr } = await supabase.rpc('set_violation_view_token', { p_violation_id: v.id })
+      if (tokenErr) {
+        alert('Failed to mint ticket link: ' + tokenErr.message)
+        return
       }
-      if (v.tow_storage_name) {
-        // Prefer the in-scope storageFacilities array (already loaded);
-        // fall back to a direct query if not present.
-        const local = storageFacilities.find((sf: any) => (sf?.name || '').toLowerCase() === (v.tow_storage_name || '').toLowerCase())
-        if (local?.vsf_license_number) {
-          facilityVsf = local.vsf_license_number as string
-        } else {
-          const { data: sf } = await supabase
-            .from('storage_facilities')
-            .select('vsf_license_number')
-            .ilike('name', v.tow_storage_name)
-            .maybeSingle()
-          facilityVsf = (sf?.vsf_license_number as string | null) || null
+      const result = tokenResult as { ok?: boolean; token?: string; error?: string } | null
+      if (!result || !result.ok || !result.token) {
+        alert('Failed to mint ticket link: ' + (result?.error ?? 'unknown'))
+        return
+      }
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
+      const url = `${appUrl}/ticket/view/${result.token}`
+      if (mode === 'view') {
+        window.open(url, '_blank', 'noopener,noreferrer')
+      } else {
+        try {
+          await navigator.clipboard.writeText(url)
+        } catch {
+          alert('Copy unavailable — public ticket URL: ' + url)
         }
       }
     } catch (e) {
-      console.error('[B120 reprint licensing fetch]', (e as Error).message)
+      alert('Failed to mint ticket link: ' + (e instanceof Error ? e.message : String(e)))
     }
-
-    const total = parseFloat(v.tow_fee || '0').toFixed(2)
-    const photosHtml = v.photos?.length
-      ? `<div style="margin-top:20px"><p style="font-weight:bold;margin-bottom:8px">EVIDENCE PHOTOS</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${v.photos.map((u: string) => `<img src="${u}" style="width:100%;border-radius:4px;border:1px solid #ddd" onerror="this.style.display='none'">`).join('')}</div></div>`
-      : ''
-    tw.document.open()
-    tw.document.write(`<!DOCTYPE html><html><head><title>Tow Ticket — ${v.plate}</title><style>
-      *{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:28px;max-width:680px;margin:0 auto;color:#111;font-size:13px}
-      .hdr{display:flex;align-items:center;gap:14px;margin-bottom:22px;padding-bottom:14px;border-bottom:3px solid #C9A227}
-      .logo{width:64px;height:64px;border-radius:8px;border:2px solid #C9A227;object-fit:contain}
-      .sec{margin-bottom:18px}.sh{font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:.08em;color:#777;margin-bottom:8px;padding-bottom:3px;border-bottom:1px solid #eee}
-      .g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.f label{font-size:10px;font-weight:bold;color:#555;text-transform:uppercase;letter-spacing:.05em;display:block}
-      .f span{font-size:13px;color:#111;display:block;margin-top:1px}.plate{font-family:"Courier New",monospace;font-size:22px;font-weight:bold}
-      .warn{background:#fff3cd;border:1px solid #e6b800;border-radius:5px;padding:9px 12px;font-size:11px;margin-bottom:16px}
-      .sig-wrap{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:28px}.sig-line{border-top:1px solid #555;padding-top:5px;font-size:10px;color:#666;margin-top:36px}
-      .ftr{margin-top:20px;padding-top:10px;border-top:2px solid #C9A227;font-size:10px;color:#888;text-align:center}
-      @media print{.no-print{display:none}body{padding:18px}}
-    </style></head><body>
-      <div class="hdr">
-        <img src="${getCachedLogoUrl(localStorage.getItem('company_logo'))}" class="logo" alt="" onerror="this.style.display='none'">
-        <div>
-          <div style="font-size:20px;font-weight:bold">${role?.company || 'Tow Service'}</div>
-          <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET (REPRINT)</div>
-        </div>
-        <div style="margin-left:auto;text-align:right">
-          <div style="font-size:10px;color:#888">Date / Time</div>
-          <div style="font-weight:bold">${new Date(v.created_at).toLocaleString()}</div>
-          <div style="font-size:10px;color:#888;margin-top:4px">Ticket #</div>
-          <div style="font-weight:bold">${String(v.id).substring(0,8).toUpperCase()}</div>
-        </div>
-      </div>
-      <div class="warn">⚠ This vehicle has been towed pursuant to Texas Transportation Code §683. Contact the storage facility below to recover your vehicle.</div>
-      <div class="sec"><div class="sh">Vehicle Information</div><div class="g2">
-        <div class="f"><label>License Plate</label><span class="plate">${v.plate}</span></div>
-        <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
-        ${v.vehicle_year ? `<div class="f"><label>Year</label><span>${v.vehicle_year}</span></div>` : ''}
-        ${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).length ? `<div class="f"><label>Make / Model / Color</label><span>${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join('  ·  ')}</span></div>` : ''}
-      </div></div>
-      <div class="sec"><div class="sh">Violation</div><div class="g2">
-        <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
-        <div class="f"><label>Location / Space</label><span>${v.location || '—'}</span></div>
-        <div class="f" style="grid-column:span 2"><label>Notes</label><span>${v.notes || 'No additional notes.'}</span></div>
-      </div></div>
-      <div class="sec"><div class="sh">Property</div><div class="g2">
-        <div class="f"><label>Authorized By</label><span>${v.property || '—'}</span></div>
-        <div class="f"><label>Company</label><span>${role?.company || '—'}</span></div>
-      </div></div>
-      <div class="sec"><div class="sh">Tow Operator</div><div class="g2">
-        <div class="f"><label>Name</label><span>${v.driver_name || '—'}</span></div>
-        ${v.driver_license ? `<div class="f"><label>License #</label><span>${v.driver_license}</span></div>` : ''}
-        ${companyTdlr ? `<div class="f"><label>TDLR #</label><span>${companyTdlr}</span></div>` : ''}
-      </div></div>
-      <div class="sec"><div class="sh">Storage / Impound</div><div class="g2">
-        <div class="f"><label>Facility</label><span>${v.tow_storage_name || '—'}</span></div>
-        <div class="f"><label>Phone</label><span>${v.tow_storage_phone || '—'}</span></div>
-        <div class="f" style="grid-column:span 2"><label>Address</label><span>${v.tow_storage_address || '—'}</span></div>
-        ${facilityVsf ? `<div class="f" style="grid-column:span 2"><label>VSF #</label><span>${facilityVsf}</span></div>` : ''}
-      </div></div>
-      ${parseFloat(v.tow_fee || '0') > 0 ? `<div class="sec"><div class="sh">Fees</div><div class="g2">
-        <div class="f"><label>Tow Fee</label><span>$${parseFloat(v.tow_fee).toFixed(2)}</span></div>
-        <div class="f"><label>Total Due</label><span style="font-size:16px;font-weight:bold">$${total}</span></div>
-      </div></div>` : ''}
-      ${photosHtml}
-      <div class="sig-wrap"><div><div class="sig-line">Authorized Signature</div></div><div><div class="sig-line">Date</div></div></div>
-      <div class="ftr">${role?.company || ''}<br>Reprinted ${new Date().toLocaleString()}</div>
-      <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center">
-        <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
-        <button onclick="window.close()" style="padding:11px 22px;background:#333;color:#fff;font-size:13px;border:none;border-radius:7px;cursor:pointer">Close</button>
-      </div>
-    </body></html>`)
-    tw.document.close()
   }
 
   async function generateTicket() {
@@ -2612,13 +2537,29 @@ export default function CompanyAdminPortal() {
                     ▶ Play Video
                   </button>
                 )}
-                {v.tow_ticket_generated && (
+                {v.tow_ticket_generated && !v.voided_at && (
                   <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingBottom:'8px', borderBottom:'1px solid #2a2f3d', marginBottom:'6px' }}>
                     <span style={{ background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'10px', fontWeight:'bold', padding:'3px 8px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>
-                    <button onClick={() => reprintTicket(v)}
-                      style={{ padding:'6px 12px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
-                      Reprint Ticket
-                    </button>
+                    {/* B182 — replaces the divergent CA reprint template (which
+                        carried prices) with the canonical public capability URL.
+                        View opens it in a new tab; Copy puts the URL on the
+                        clipboard for forwarding. Each click mints a fresh 90-day
+                        token via set_violation_view_token. */}
+                    <div style={{ display:'flex', gap:'6px' }}>
+                      <button onClick={() => viewOrCopyPublicTicket(v, 'view')}
+                        style={{ padding:'6px 10px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                        🌐 View
+                      </button>
+                      <button onClick={() => viewOrCopyPublicTicket(v, 'copy')}
+                        style={{ padding:'6px 10px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                        📋 Copy Link
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {v.voided_at && (
+                  <div style={{ display:'flex', alignItems:'center', paddingBottom:'8px', borderBottom:'1px solid #2a2f3d', marginBottom:'6px' }}>
+                    <span style={{ background:'#3a1a1a', border:'1px solid #b71c1c', color:'#f44336', fontSize:'10px', fontWeight:'bold', padding:'3px 8px', borderRadius:'4px', letterSpacing:'0.05em' }}>🚫 TICKET VOIDED</span>
                   </div>
                 )}
                 <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
