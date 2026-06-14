@@ -6,8 +6,11 @@
 // DEFINER function ships without a behavioral probe.
 //
 // This probe runs SEVEN scenarios against the live DB:
-//   pm.own_property_priced_stripped — manager sees own-property ticket
-//     with payload that has no tow_fee / tow_storage_* fields
+//   pm.own_property_price_stripped_storage_kept — manager sees own-
+//     property ticket with payload that has no tow_fee but DOES include
+//     tow_storage_name (2026-06-14 spec correction: PM gets storage so
+//     they can direct residents to recover the vehicle; only price is
+//     hidden, storage is not money)
 //   pm.cross_property_denied         — manager scoped to property A
 //     cannot read a violation on property B (out_of_scope)
 //   pm.voided_denied                 — voided ticket refused even when
@@ -154,23 +157,33 @@ async function main() {
     process.exit(1)
   }
 
-  // 1. Manager + own property + ticketed + not voided → price-stripped payload
-  console.log('\n── PRICE-STRIPPED PAYLOAD TEST ──')
+  // 1. Manager + own property + ticketed + not voided → price-stripped
+  //    payload, storage KEPT (2026-06-14 spec correction). Two assertions:
+  //   (a) money + price-routing fields ABSENT (tow_fee, view_token,
+  //       view_token_expires_at, voided_*, void_reason)
+  //   (b) storage facility fields PRESENT (tow_storage_name verified
+  //       explicitly with a non-null value; PM legitimately needs to
+  //       tell residents where the towed vehicle went)
+  console.log('\n── PRICE-STRIPPED PAYLOAD TEST (storage kept) ──')
   const r1 = await callRpc(mgr.client, V_OWN_LIVE)
   const d1 = r1.data as { ok?: boolean; violation?: Record<string, unknown>; photos?: unknown; error?: string } | null
   if (d1?.ok && d1.violation && typeof d1.violation === 'object') {
     const viol = d1.violation
-    const omittedFields = ['tow_fee', 'tow_storage_name', 'tow_storage_address', 'tow_storage_phone', 'view_token', 'view_token_expires_at', 'voided_at', 'void_reason']
+    const omittedFields = ['tow_fee', 'view_token', 'view_token_expires_at', 'voided_at', 'void_reason']
     const leaked = omittedFields.filter(f => f in viol)
-    if (leaked.length === 0) {
-      record('pm.own_property_priced_stripped', true,
-        `payload keys=[${Object.keys(viol).join(',')}] — no money/storage leak`)
+    const storageKept = 'tow_storage_name' in viol && viol['tow_storage_name'] != null
+    if (leaked.length === 0 && storageKept) {
+      record('pm.own_property_price_stripped_storage_kept', true,
+        `payload keys=[${Object.keys(viol).join(',')}] — tow_fee absent, tow_storage_name="${viol['tow_storage_name']}" present`)
+    } else if (leaked.length > 0) {
+      record('pm.own_property_price_stripped_storage_kept', false,
+        `PRICE LEAK — fields [${leaked.join(', ')}] present in payload`)
     } else {
-      record('pm.own_property_priced_stripped', false,
-        `MONEY/STORAGE LEAK — fields [${leaked.join(', ')}] present in payload`)
+      record('pm.own_property_price_stripped_storage_kept', false,
+        `STORAGE MISSING — tow_storage_name should be present (non-null). payload keys=[${Object.keys(viol).join(',')}]`)
     }
   } else {
-    record('pm.own_property_priced_stripped', false,
+    record('pm.own_property_price_stripped_storage_kept', false,
       `expected ok=true with violation payload, got ${JSON.stringify(d1)} error=${r1.error?.message ?? 'null'}`)
   }
 
