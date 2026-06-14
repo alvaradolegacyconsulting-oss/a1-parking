@@ -174,7 +174,10 @@ export default function CompanyAdminPortal() {
   const [showAddUser, setShowAddUser] = useState(false)
   // D2: name field added. Single-column "Full Name" capture matches the
   // existing drivers.name / residents.name pattern (no first/last split).
-  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'manager', property: '' })
+  // D1 Commit 2: password field removed — non-resident roles invite via
+  // email (no temp password to capture), residents auto-generate via
+  // generateTempPassword() inside createUser's resident branch.
+  const [newUser, setNewUser] = useState({ name: '', email: '', role: 'manager', property: '' })
   const [userMsg, setUserMsg] = useState('')
   const [togglingUser, setTogglingUser] = useState<string | null>(null)
 
@@ -818,30 +821,31 @@ export default function CompanyAdminPortal() {
   async function createUser() {
     const isResident = newUser.role === 'resident'
     if (!newUser.email || !newUser.role) { setUserMsg('Email and role are required'); return }
-    if (!isResident && !newUser.password) { setUserMsg('Password is required for non-resident roles'); return }
     setUserMsg('Creating...')
 
-    const passwordToUse = isResident ? generateTempPassword() : newUser.password
     const targetEmail = newUser.email.trim().toLowerCase()
-
-    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
-    const { data: { session } } = await supabase.auth.getSession()
-    const swiftUrl = (fnBase ?? '') + '/swift-handler'
-    try {
-      const res = await fetch(swiftUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ action: 'create_user', email: newUser.email, password: passwordToUse })
-      })
-      const json = await res.json()
-      if (!res.ok) { setUserMsg('Error: ' + (json.error || 'Failed to create auth account')); return }
-    } catch (e: any) { setUserMsg('Error: ' + e.message); return }
-
     const propertyArray = newUser.property
       ? newUser.property.split('|').map(p => p.trim()).filter(Boolean)
       : []
 
     if (isResident) {
+      // Resident path — UNCHANGED from D2. CA hands the temp password
+      // to the resident manually (typically on the phone at creation
+      // time). See app/api/admin/invite-user/route.ts header for why
+      // residents weren't folded into the invite-by-email arc.
+      const passwordToUse = generateTempPassword()
+      const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
+      const { data: { session } } = await supabase.auth.getSession()
+      const swiftUrl = (fnBase ?? '') + '/swift-handler'
+      try {
+        const res = await fetch(swiftUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ action: 'create_user', email: newUser.email, password: passwordToUse })
+        })
+        const json = await res.json()
+        if (!res.ok) { setUserMsg('Error: ' + (json.error || 'Failed to create auth account')); return }
+      } catch (e: any) { setUserMsg('Error: ' + e.message); return }
       // Wrap post-auth steps in try/catch with rollback so the manager
       // never sees "success + temp password" when the user can't actually
       // log in.
@@ -929,37 +933,44 @@ export default function CompanyAdminPortal() {
         email: targetEmail, created_by_role: 'company_admin', created_by_email: user?.email, company: role?.company,
       })
       setUserMsg('Resident created successfully!')
-      setNewUser({ name: '', email: '', password: '', role: 'manager', property: '' })
+      setNewUser({ name: '', email: '', role: 'manager', property: '' })
       setShowAddUser(false)
       fetchCompanyUsers()
       setCredentials({ email: targetEmail, password: passwordToUse })
       return
     }
 
-    // Non-resident path — original behavior, plus D2 name capture.
-    const { error: insErr } = await supabase
-      .rpc('insert_user_role', {
-        p_email: newUser.email.trim(),
-        p_role: newUser.role,
-        p_company: role?.company || '',
-        p_property: propertyArray.length > 0 ? propertyArray : [],
-        p_name: newUser.name.trim() || null,
+    // Non-resident path — D1 Commit 2. Server-side route handles
+    // inviteUserByEmail + insert_user_role (JWT-carrying, so D2's
+    // caller-role / company-scope guards fire) + set_must_change_
+    // password + drivers entity row + audit log. The CA gets a single
+    // success/failure response; no temp password to share, no swift-
+    // handler URL construction (B187 root-cause routed around).
+    try {
+      const res = await fetch('/api/admin/invite-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: targetEmail,
+          role: newUser.role,
+          name: newUser.name.trim() || null,
+          property: propertyArray,
+        }),
       })
-    if (insErr) { setUserMsg('Auth created but role insert failed: ' + insErr.message); return }
-    if (newUser.role === 'driver') {
-      await supabase.from('drivers').insert([{
-        email: newUser.email.trim(),
-        // D2: prefer the typed Full Name; fall back to email (pre-D2
-        // behavior) so drivers.name is non-null for legacy callers.
-        name: newUser.name.trim() || newUser.email.trim(),
-        company: role?.company || null,
-        assigned_properties: propertyArray,
-        is_active: true
-      }])
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setUserMsg('Error: ' + (json.error || 'Failed to send invite'))
+        return
+      }
+      setUserMsg(json.warning
+        ? `Invite sent — partial: ${json.warning}`
+        : `Invite email sent to ${targetEmail}`)
+    } catch (e: any) {
+      setUserMsg('Error: ' + e.message)
+      return
     }
-    await auditLog('create_user', 'user_roles', newUser.email, { email: newUser.email, role: newUser.role, company: role?.company })
-    setUserMsg('User created successfully!')
-    setNewUser({ name: '', email: '', password: '', role: 'manager', property: '' })
+
+    setNewUser({ name: '', email: '', role: 'manager', property: '' })
     setShowAddUser(false)
     fetchCompanyUsers()
   }
@@ -977,41 +988,58 @@ export default function CompanyAdminPortal() {
         return
       }
     }
-    setDriverMsg('Creating...')
-    const tempPass = Math.random().toString(36).slice(-8) + 'A1!'
-    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
-    const { data: { session } } = await supabase.auth.getSession()
+    setDriverMsg('Sending invite...')
+
+    // D1 Commit 2 extension — route the auth user creation + role
+    // assignment + drivers entity insert through /api/admin/invite-user
+    // (the same JWT-carrying server route the Add User form uses). This
+    // eliminates the client-side swift-handler URL construction that
+    // triggers B187 (Safari DOMException) and replaces the temp-password
+    // pattern with email-link invitation.
     try {
-      const res = await fetch(fnBase + '/swift-handler', {
+      const res = await fetch('/api/admin/invite-user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ action: 'create_user', email: newDriver.email, password: tempPass })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: newDriver.email,
+          role: 'driver',
+          name: newDriver.name,
+          property: newDriver.assigned_properties,
+          phone: newDriver.phone || null,
+          operator_license: newDriver.operator_license || null,
+        }),
       })
       const json = await res.json()
-      if (!res.ok) { setDriverMsg('Error: ' + (json.error || 'Failed to create auth account')); return }
-    } catch (e: any) { setDriverMsg('Error: ' + e.message); return }
-    const { data: inserted, error: insErr } = await supabase.from('drivers').insert([{
-      name: newDriver.name, email: newDriver.email,
-      phone: newDriver.phone || null, operator_license: newDriver.operator_license || null,
-      assigned_properties: newDriver.assigned_properties,
-      company: role?.company, is_active: true
-    }]).select().single()
-    if (insErr) { setDriverMsg('Auth created but driver insert failed: ' + insErr.message); return }
-    await supabase.from('user_roles').insert([{ email: newDriver.email, role: 'driver', company: role?.company }])
-    await auditLog('create_driver', 'drivers', inserted.id, { name: newDriver.name, email: newDriver.email, company: role?.company })
+      if (!res.ok || !json?.ok) {
+        setDriverMsg('Error: ' + (json?.error || 'Failed to invite driver'))
+        return
+      }
+      if (json.warning) {
+        // Route returned ok:true with a non-fatal warning (e.g. drivers entity
+        // insert failed but auth + role landed — B188 partial-state class).
+        // Surface friendly copy to the CA; raw warning stays in console for
+        // debugging without leaking RLS / DB error text into the UI.
+        console.warn('[createDriver] route warning:', json.warning)
+        setDriverMsg(`Invite sent to ${newDriver.email}, but the driver record didn't fully save — contact support if the driver doesn't appear in your list.`)
+      } else {
+        setDriverMsg(`Invite email sent to ${newDriver.email}`)
+      }
+    } catch (e) {
+      setDriverMsg('Error: ' + (e instanceof Error ? e.message : String(e)))
+      return
+    }
 
-    // B147 3b — sync to Stripe AFTER all DB writes succeed. PM-track
+    // B147 3b — sync to Stripe AFTER the route's DB writes succeed. PM-track
     // companies have no per_driver line item; helper returns
     // 'skipped_no_line_item' for those — silent.
     const companyIdForSync = getCachedCompanyId()
     if (companyIdForSync === null) {
-      console.warn('[B147-sync-skipped-no-companyid]', { site: 'createDriver', driverId: inserted.id })
+      console.warn('[B147-sync-skipped-no-companyid]', { site: 'createDriver', email: newDriver.email })
     } else {
-      const r = await callSyncOnAdd(companyIdForSync,'driver')
-      if (!r.ok) console.warn('[B147-sync-failed]', { site: 'createDriver', companyId: companyIdForSync, driverId: inserted.id, reason: r.reason })
+      const r = await callSyncOnAdd(companyIdForSync, 'driver')
+      if (!r.ok) console.warn('[B147-sync-failed]', { site: 'createDriver', companyId: companyIdForSync, email: newDriver.email, reason: r.reason })
     }
 
-    setDriverMsg(`Driver created! Temp password: ${tempPass}`)
     setNewDriver({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] })
     setShowAddDriver(false)
     fetchCompanyDrivers()
@@ -2957,10 +2985,11 @@ export default function CompanyAdminPortal() {
                     <input value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} placeholder="Jane Doe" style={inp} />
                     <label style={lbl}>Email *</label>
                     <input type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="user@example.com" style={inp} />
-                    {newUser.role !== 'resident' && (<>
-                      <label style={lbl}>Password *</label>
-                      <input type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} placeholder="Temporary password" style={inp} />
-                    </>)}
+                    {/* D1 Commit 2: password input removed. Non-resident roles
+                        receive an invite email and set their own password via
+                        /reset-password-required (the route handles that arc
+                        server-side). Residents auto-generate a temp password
+                        which the CA hands off manually — same flow as before. */}
                     <label style={lbl}>Role *</label>
                     <select value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })} style={inp}>
                       <option value="manager">Manager</option>

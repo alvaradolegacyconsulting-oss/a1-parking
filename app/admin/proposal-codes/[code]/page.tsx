@@ -103,6 +103,8 @@ export default function ProposalCodeDetail() {
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState<string>('')
   const [busy, setBusy] = useState(false)
+  // Redemption-link copy feedback. 1.5s "Copied!" state.
+  const [redeemUrlCopied, setRedeemUrlCopied] = useState(false)
 
   // Edit state (drafts only)
   const [clientName, setClientName] = useState('')
@@ -617,6 +619,30 @@ export default function ProposalCodeDetail() {
             </button>
             <button onClick={openApplyModal} style={btnGold}>Apply to Company</button>
             <button onClick={() => setRevokeOpen(true)} style={btnDanger}>Revoke</button>
+            {/* Redemption-link copy. Surfaces only on ISSUED codes (not drafts;
+                drafts have no Stripe Prices and would fail at /start-billing if
+                redeemed mid-state). Constructs the same ?code= URL the redeem
+                flow consumes (app/signup/redeem/page.tsx). NOT the B15 acceptance
+                page — just exposes the existing redeem URL with one click. */}
+            <button
+              onClick={async () => {
+                const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
+                const url = `${appUrl}/signup/redeem?code=${encodeURIComponent(row.code)}`
+                try {
+                  await navigator.clipboard.writeText(url)
+                  setRedeemUrlCopied(true)
+                  window.setTimeout(() => setRedeemUrlCopied(false), 1500)
+                } catch {
+                  // Clipboard API unavailable (older browser / non-secure context).
+                  // Fall back: surface the URL so admin can manually copy.
+                  setMsg('Copy unavailable — redemption URL: ' + url)
+                }
+              }}
+              style={{ ...btnGhost, background: redeemUrlCopied ? '#1a3a1a' : btnGhost.background, color: redeemUrlCopied ? '#4caf50' : btnGhost.color }}
+              title="Copy the customer-facing redemption URL"
+            >
+              {redeemUrlCopied ? '✓ Copied' : '📋 Copy Redeem Link'}
+            </button>
           </>)}
           {status === 'redeemed' && (<>
             <button onClick={viewPdf} disabled={!row.pdf_url} style={{ ...btnGhost, opacity: row.pdf_url ? 1 : 0.5, cursor: row.pdf_url ? 'pointer' : 'not-allowed' }}>
