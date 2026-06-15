@@ -261,16 +261,24 @@ export default function ResidentPortal() {
   }
 
   async function saveVehicle() {
-    // Residents can only edit cosmetic descriptors (B9 May 13 spec).
-    // plate, unit, space are excluded from the payload regardless of
-    // what's in editingVehicle state — defensive.
-    const { error } = await supabase.from('vehicles').update({
-      state: editingVehicle.state,
-      make: editingVehicle.make,
-      model: editingVehicle.model,
-      year: editingVehicle.year,
-      color: editingVehicle.color,
-    }).eq('id', editingVehicle.id)
+    // B90 v2 — DEFINER RPC replaces the direct .update() path. The
+    // resident_update_vehicles RLS policy was DROPped; this RPC is the
+    // only resident-write path on vehicles. Signature pins the 5
+    // allowlist columns (state/make/model/year/color); any other
+    // column is structurally unreachable from the resident lane.
+    // Crafted REST PATCH attempts return permission denied (no UPDATE
+    // policy for resident role).
+    const yearAsInt = editingVehicle.year
+      ? parseInt(String(editingVehicle.year), 10)
+      : null
+    const { error } = await supabase.rpc('update_my_vehicle_cosmetic', {
+      p_id:    editingVehicle.id,
+      p_state: editingVehicle.state,
+      p_make:  editingVehicle.make,
+      p_model: editingVehicle.model,
+      p_year:  yearAsInt,
+      p_color: editingVehicle.color,
+    })
     if (error) { alert('Error: ' + error.message) }
     else {
       await logAudit({
@@ -320,7 +328,11 @@ export default function ResidentPortal() {
   }
 
   async function markDeclinedRead(id: string) {
-    await supabase.from('vehicles').update({ resident_read: true }).eq('id', id)
+    // B90 v2 — DEFINER RPC replaces the direct .update() path here too.
+    // The resident_update_vehicles RLS policy was DROPped; this RPC is
+    // the only path by which a resident can flip resident_read=TRUE on
+    // a vehicle they own. Ownership guard mirrors update_my_vehicle_cosmetic.
+    await supabase.rpc('mark_my_vehicle_declined_read', { p_id: id })
     fetchVehicles(resident.unit, resident.property)
   }
 
@@ -661,10 +673,22 @@ export default function ResidentPortal() {
                               Mark as Read
                             </button>
                           )}
-                          <button onClick={() => { setEditingVehicleId(isEditing ? null : v.id); setEditingVehicle({...v}) }}
-                            style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
-                            {isEditing ? 'Cancel Edit' : 'Edit'}
-                          </button>
+                          {/* B90 — Edit is intentionally hidden on declined vehicles.
+                              Editing cosmetic fields (color/make/model/year/state) on a
+                              declined vehicle doesn't address the decline reason; the
+                              resident's recourse is to request a new vehicle through
+                              the "+ Request New Vehicle" flow with the corrected info,
+                              which routes through manager approval cleanly. The server-
+                              side write guard at the BEFORE UPDATE trigger
+                              (enforce_resident_vehicle_cosmetic_only_trigger) prevents
+                              a crafted REST PATCH from flipping status:'declined' →
+                              'pending', which is the workflow-bypass half of B90. */}
+                          {v.status !== 'declined' && (
+                            <button onClick={() => { setEditingVehicleId(isEditing ? null : v.id); setEditingVehicle({...v}) }}
+                              style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                              {isEditing ? 'Cancel Edit' : 'Edit'}
+                            </button>
+                          )}
                         </div>
 
                         <div style={{ paddingBottom:'4px' }}>
