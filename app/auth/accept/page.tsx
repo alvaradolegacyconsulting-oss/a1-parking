@@ -53,7 +53,18 @@ import { isOtpExpiredOrUsed } from '../../lib/otp-errors'
 
 const GOLD = '#C9A227'
 
-type AcceptType = 'invite' | 'recovery'
+// All Supabase Auth email-action types that consume a single-use token on
+// GET via the default {{ .ConfirmationURL }} / /auth/v1/verify endpoint.
+// Five today — invite + recovery shipped with B198; signup added by this
+// commit; email_change + magiclink added proactively (inert until those
+// templates are ever pointed here — they exist server-side and would
+// inherit the prefetch hazard the moment they're activated).
+//
+// EmailOtpType in @supabase/auth-js types: 'signup' | 'invite' | 'magiclink'
+// | 'recovery' | 'email_change' | 'email'. We don't include 'email' here
+// because Supabase reserves it for the legacy generic flow; all five
+// branded flows above cover production usage.
+type AcceptType = 'invite' | 'recovery' | 'signup' | 'email_change' | 'magiclink'
 
 type Status =
   | { kind: 'loading' }
@@ -65,8 +76,9 @@ type Status =
   | { kind: 'bad_params'; reason: string }
 
 // Copy varies by type but the page structure is identical. Centralized so
-// it's obvious which strings change when extending to another email-action
-// type later (email_change, magic-link, etc.).
+// it's obvious which strings change per type. otpType maps to the verifyOtp
+// EmailOtpType — same string for all current types (Supabase uses the same
+// taxonomy on both sides), but the indirection keeps room for divergence.
 const COPY: Record<AcceptType, {
   title: string
   subtitle: string
@@ -77,7 +89,7 @@ const COPY: Record<AcceptType, {
   alreadyUsedHeading: string
   alreadyUsedDetail: string
   defaultNext: string
-  otpType: 'invite' | 'recovery'
+  otpType: 'invite' | 'recovery' | 'signup' | 'email_change' | 'magiclink'
 }> = {
   invite: {
     title: 'Complete account setup',
@@ -103,7 +115,62 @@ const COPY: Record<AcceptType, {
     defaultNext: '/reset-password',
     otpType: 'recovery',
   },
+  signup: {
+    // Self-serve flow lands here from the Confirm-signup template. Two
+    // downstream pages handle the post-verification work via the `next`
+    // URL param: /signup/verify (B66.3 self-serve checkout flow) and
+    // /signup/redeem/verify (B65 proposal-code flow). Both already
+    // handle "session already minted" through their useEffect getSession()
+    // path — see flow-through smoke note in commit message.
+    title: 'Confirm your account',
+    subtitle: 'Welcome to ShieldMyLot. Click below to confirm your email and continue.',
+    primaryButton: 'Confirm account',
+    verifyingButton: 'Confirming…',
+    successHeading: 'Confirmed',
+    successDetail: 'Taking you to the next step…',
+    alreadyUsedHeading: 'This confirmation link can’t be used',
+    alreadyUsedDetail: 'It may have already been used, or expired. If you confirmed on another device, sign in. If the link expired, restart signup from the homepage.',
+    defaultNext: '/signup/verify',
+    otpType: 'signup',
+  },
+  email_change: {
+    // Email-change template is not currently dispatched by any app code
+    // (no auth.updateUser({ email }) call sites). Wired here so it CANNOT
+    // open the prefetch hole if/when an email-change UI ships in the
+    // user dashboard. Email-change sends TWO emails (to old + new
+    // addresses); both consume single-use tokens. Both should route here.
+    title: 'Confirm email change',
+    subtitle: 'Click below to confirm your new email address.',
+    primaryButton: 'Confirm change',
+    verifyingButton: 'Confirming…',
+    successHeading: 'Email updated',
+    successDetail: 'Redirecting…',
+    alreadyUsedHeading: 'This confirmation link can’t be used',
+    alreadyUsedDetail: 'It may have already been used, or expired. Sign in to manage your account.',
+    defaultNext: '/',
+    otpType: 'email_change',
+  },
+  magiclink: {
+    // Magic-link template is not currently dispatched (no signInWithOtp
+    // call sites). Wired proactively for the same reason as email_change.
+    // If passwordless sign-in ever launches, the template flips here and
+    // the prefetch hazard is closed-by-default.
+    title: 'Sign in',
+    subtitle: 'Click below to sign in to your account.',
+    primaryButton: 'Sign in',
+    verifyingButton: 'Signing in…',
+    successHeading: 'Signed in',
+    successDetail: 'Redirecting…',
+    alreadyUsedHeading: 'This sign-in link can’t be used',
+    alreadyUsedDetail: 'It may have already been used, or expired. Request a new sign-in link.',
+    defaultNext: '/',
+    otpType: 'magiclink',
+  },
 }
+
+const ACCEPTED_TYPES: ReadonlySet<AcceptType> = new Set<AcceptType>([
+  'invite', 'recovery', 'signup', 'email_change', 'magiclink',
+])
 
 function isAllowedNext(next: string): boolean {
   // Same-origin allowlist. Reject anything that could be an open-redirect
@@ -141,7 +208,7 @@ export default function AuthAcceptPage() {
       const nx  = url.searchParams.get('next')       ?? ''
       const em  = url.searchParams.get('email')      ?? ''
 
-      if (tp !== 'invite' && tp !== 'recovery') {
+      if (!ACCEPTED_TYPES.has(tp as AcceptType)) {
         setStatus({ kind: 'bad_params', reason: 'Unsupported link type. This URL may have been copied incorrectly.' })
         return
       }
