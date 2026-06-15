@@ -173,13 +173,43 @@ const ACCEPTED_TYPES: ReadonlySet<AcceptType> = new Set<AcceptType>([
 ])
 
 function isAllowedNext(next: string): boolean {
-  // Same-origin allowlist. Reject anything that could be an open-redirect
-  // (//evil.com, https://evil.com, javascript:, data:, etc.). Only same-
-  // origin relative paths starting with a single `/`.
+  // Same-origin allowlist via WHATWG URL resolution. Reject anything that
+  // would navigate off-origin or use a non-web protocol.
+  //
+  // B205 — the prior implementation rejected ANY input not starting with
+  // '/' (only same-origin relative paths). That excluded legitimate
+  // Supabase template substitutions: {{ .RedirectTo }} resolves to the
+  // full emailRedirectTo URL (e.g. 'https://shieldmylot.com/signup/redeem/verify'),
+  // which falls through to the defaultNext fallback → wrong-page landing
+  // for redeem signup cross-context (the actual repro that surfaced this).
+  //
+  // It also missed backslash bypasses: '/\evil.com' starts with '/' and
+  // not '//' → the prior check ALLOWED, but the browser's URL parser
+  // normalizes '\' → '/' in special-scheme URLs (WHATWG URL spec), so
+  // window.location.href = '/\evil.com' actually navigates to
+  // https://evil.com/. Empirically verified via
+  // scripts/probe-b205-open-redirect.ts: '/\evil.com' and '/\/evil.com'
+  // both resolve to https://evil.com/.
+  //
+  // V3 (this implementation): resolve `next` as a URL against the current
+  // page's URL — that's exactly what window.location.href = next does on
+  // assignment — then assert (a) the protocol is http/https (excludes
+  // javascript:, data:, file:, vbscript:, etc.) and (b) the resolved
+  // origin matches the current origin. Matches the browser's actual
+  // navigation semantics, so any input that would navigate off-origin is
+  // correctly rejected.
+  //
+  // 23/23 smoke pass on probe-b205-open-redirect.ts (covers relative +
+  // absolute same-origin, lookalike subdomains, protocol-relative,
+  // backslash variants, non-web schemes, CRLF, fragment-only, query-only).
   if (!next || typeof next !== 'string') return false
-  if (!next.startsWith('/')) return false
-  if (next.startsWith('//')) return false
-  return true
+  try {
+    const resolved = new URL(next, window.location.href)
+    if (resolved.protocol !== 'https:' && resolved.protocol !== 'http:') return false
+    return resolved.origin === window.location.origin
+  } catch {
+    return false
+  }
 }
 
 export default function AuthAcceptPage() {

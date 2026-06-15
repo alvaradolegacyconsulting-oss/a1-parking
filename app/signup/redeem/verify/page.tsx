@@ -118,7 +118,23 @@ export default function VerifyLanding() {
   // validate_proposal_code re-check (Finding 8 — UX-only correctness),
   // ready-state transition. Mirrors /signup/verify's Phase 1 pattern.
   const processVerifiedUser = useCallback(async (user: User): Promise<void> => {
-    const meta = (user.user_metadata || {}) as Record<string, unknown>
+    // B205: re-fetch the canonical user from /auth/v1/user before reading
+    // user_metadata. On the cross-browser path (B198's /auth/accept →
+    // verifyOtp({token_hash, type:'signup'}) → redirect here), the session
+    // landing in localStorage carries the JWT-claim-derived user shape —
+    // sometimes without user_metadata fully populated. Reading meta off
+    // `session.user` directly surfaced as 'missing_code' cross-context.
+    // getUser() hits /auth/v1/user and returns the full user row including
+    // metadata. Falls back to session.user on transport error (preserves
+    // same-browser case where session.user is already rich). The canonical
+    // user is also threaded into the ready state — its id powers the
+    // redeem_proposal_code RPC at activate() (p_user_id: status.user.id).
+    const { data: userResp, error: userErr } = await supabase.auth.getUser()
+    const u = userResp?.user ?? user
+    if (userErr) {
+      console.warn('[signup/redeem/verify] getUser() failed, falling back to session.user:', userErr.message)
+    }
+    const meta = (u.user_metadata || {}) as Record<string, unknown>
     const code = typeof meta.proposal_code === 'string' && meta.proposal_code.length > 0
       ? meta.proposal_code
       : null
@@ -141,7 +157,7 @@ export default function VerifyLanding() {
 
     setStatus({
       kind: 'ready',
-      user,
+      user: u,
       proposalCode: code,
       tierLabel: tierLabelFor(String(result.tier_type), String(result.tier)),
     })

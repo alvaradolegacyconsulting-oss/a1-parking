@@ -89,7 +89,21 @@ export default function SignupVerify() {
   // (via useEffect) and OTP submit (via submitOtp). Single source of
   // truth for: tier metadata read, attestation POST, ready transition.
   const processVerifiedUser = useCallback(async (user: User): Promise<void> => {
-    const meta = (user.user_metadata || {}) as Record<string, unknown>
+    // B205: re-fetch the canonical user from /auth/v1/user before reading
+    // user_metadata. On the cross-browser path (B198's /auth/accept →
+    // verifyOtp({token_hash, type:'signup'}) → redirect here), the session
+    // landing in localStorage carries the JWT-claim-derived user shape —
+    // sometimes without user_metadata fully populated. Reading meta off
+    // `session.user` directly surfaced as "missing_tier" cross-context.
+    // getUser() hits /auth/v1/user and returns the full user row including
+    // metadata. Falls back to session.user on transport error (preserves
+    // same-browser case where session.user is already rich).
+    const { data: userResp, error: userErr } = await supabase.auth.getUser()
+    const u = userResp?.user ?? user
+    if (userErr) {
+      console.warn('[signup/verify] getUser() failed, falling back to session.user:', userErr.message)
+    }
+    const meta = (u.user_metadata || {}) as Record<string, unknown>
     const intendedRaw = meta.intended_tier
     if (!intendedRaw || typeof intendedRaw !== 'object') {
       setStatus({ kind: 'missing_tier' })
@@ -115,7 +129,7 @@ export default function SignupVerify() {
       return
     }
     setAttesting(false)
-    setStatus({ kind: 'ready', user, tier: intended })
+    setStatus({ kind: 'ready', user: u, tier: intended })
   }, [])
 
   // PKCE path — auto-exchange via detectSessionInUrl + onAuthStateChange.
