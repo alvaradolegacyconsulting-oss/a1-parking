@@ -11,7 +11,6 @@ import { hasFeature, getCompanyContext } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import SupportContact from '../components/SupportContact'
 import CredentialsModal from '../components/CredentialsModal'
-import PostConfirmationEditModal from '../components/PostConfirmationEditModal'
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
@@ -61,7 +60,6 @@ export default function ManagerPortal() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [isReadOnly, setIsReadOnly] = useState(false)
   // C2: post-confirmation media edit modal
-  const [editMediaViolationId, setEditMediaViolationId] = useState<number | null>(null)
   const [spaces, setSpaces] = useState<any[]>([])
   const [editingSpace, setEditingSpace] = useState<any>(null)
   const [spaceError, setSpaceError] = useState('')
@@ -1809,12 +1807,13 @@ export default function ManagerPortal() {
                       </a>
                     </div>
                   )}
-                  {!isReadOnly && (
-                    <button onClick={() => setEditMediaViolationId(v.id)}
-                      style={{ width:'100%', padding:'9px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', marginTop:'10px' }}>
-                      Manage Media
-                    </button>
-                  )}
+                  {/* B182 #2 — "Manage Media" button removed. PMs view evidence
+                      but must not delete it. Server-side closure: dropped
+                      violation_photos_manager_update + violation_videos_manager_update
+                      policies (migrations/20260615_b182_2_media_authz_close.sql).
+                      Resolution + deletion authority stays with company_admin via
+                      its existing PostConfirmationEditModal entry in
+                      app/company_admin/page.tsx. */}
                   <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
                     style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'6px 0 2px', display:'block' }}>
                     🔍 Search FindMyTowedCar.org
@@ -2241,18 +2240,6 @@ export default function ManagerPortal() {
       {credentials && (
         <CredentialsModal email={credentials.email} password={credentials.password} onClose={() => setCredentials(null)} />
       )}
-      <PostConfirmationEditModal
-        open={editMediaViolationId != null}
-        violationId={editMediaViolationId}
-        userRole="manager"
-        userEmail={managerEmail}
-        onClose={() => {
-          setEditMediaViolationId(null)
-          // Refresh the violations list so a card whose only photo was just
-          // removed re-renders with the updated v.photos / v.video_url state.
-          if (manager?.name) fetchViolations(manager.name)
-        }}
-      />
     </main>
   )
 }
