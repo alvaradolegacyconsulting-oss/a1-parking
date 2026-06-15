@@ -316,7 +316,13 @@ export async function POST(req: NextRequest) {
             // deactivation-time owner-trim match is reliable regardless
             // of what validateRows does upstream.
             resident_email: res.email.trim().toLowerCase(),
-            company: roleRow.company,
+            // B203 — `company` column does NOT exist on `vehicles`; the
+            // earlier inclusion here was returning a PostgREST schema-
+            // cache rejection that was swallowed by the catch below.
+            // Ownership scope is via (property, unit) + resident_email,
+            // consistent with the 4 other vehicles.insert call sites
+            // (manager/page.tsx:596, :694, resident/page.tsx:321,
+            // register/page.tsx:137).
             property: res.property,
             unit: res.unit,
             status: 'active',
