@@ -140,7 +140,7 @@ function PmTicketView({ violation: v, photos }: { violation: PmViolation; photos
         </div>
 
         <div style={infoBannerStyle}>
-          This is the manager view of an issued tow ticket. Fees and pricing are intentionally not shown here — those appear on the public ticket the motorist and storage facility receive. Storage facility contact is included so you can direct residents to recover their vehicle.
+          This is the manager view of an issued tow ticket. Fees and pricing are intentionally not shown here. Storage facility contact is included so you can direct residents to recover their vehicle.
         </div>
 
         <Section title="Vehicle">
