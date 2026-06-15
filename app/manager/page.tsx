@@ -651,11 +651,22 @@ export default function ManagerPortal() {
     // error — do NOT show the credentials modal.
     let residentInserted = false
     try {
+      // B197 — explicit residents-column enumeration (was: spread of
+      // newResident, which carried vehicle_plate/state/make/model/year/color
+      // form fields into the residents insert and tripped PostgREST's
+      // schema-cache check on the first vehicle_* column). Vehicle fields
+      // are written to the `vehicles` table at the B167 step below, never
+      // here. Matches the CA-portal precedent (app/company_admin/page.tsx
+      // createUser resident-branch) + the B182 explicit-enumeration
+      // discipline (server-side projection over CSS-hiding).
       const { error: rErr } = await supabase.from('residents').insert([{
-        ...newResident,
-        email: targetEmail,
+        name:      newResident.name,
+        email:     targetEmail,
+        phone:     newResident.phone || null,
+        unit:      newResident.unit,
+        space:     newResident.space || null,
         lease_end: newResident.lease_end || null,
-        property: manager.name,
+        property:  manager.name,
         is_active: true,
       }])
       if (rErr) throw new Error('residents INSERT failed: ' + rErr.message)
