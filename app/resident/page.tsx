@@ -110,7 +110,7 @@ export default function ResidentPortal() {
       setLoading(false)
       setResident(data)
       setEditForm(data)
-      fetchVehicles(data.unit, data.property)
+      fetchVehicles(data.unit, data.property, data.email)
       fetchPasses(data.unit)
       if (data.property) {
         const { data: prop } = await supabase
@@ -124,21 +124,39 @@ export default function ResidentPortal() {
     }
   }
 
-  async function fetchVehicles(unit: string, property: string) {
-    // B150: explicit is_active filter. Resident-portal render does NOT
-    // client-side filter on is_active (line 605 renders all vehicles
-    // from state; line 543 only consults is_active for badge color).
-    // Without this filter, B150's move-out cascade (which flips
-    // is_active=false on prior-tenant vehicles when the last resident
-    // at a unit leaves) would leave archived vehicles visible to the
-    // next resident with just an "Inactive" badge — not hidden.
+  async function fetchVehicles(unit: string, property: string, email: string) {
+    // B150 + B202: the original B150 filter `.eq('is_active', true)`
+    // silently swept up declined vehicles too (declineVehicle in the
+    // manager portal sets is_active=false alongside status='declined'),
+    // so the resident never saw the manager-note card OR the Mark-as-Read
+    // affordance for their own declined requests. B202 restores them
+    // without re-opening B150's move-out leak.
+    //
+    // Server fetch: loose .or() with CONSTANT strings only — no email
+    // interpolation. PostgREST .or() is a comma/paren/dot-tokenized
+    // grammar; interpolating a value with dots (every email has them),
+    // commas (rare but real), or parens (rare) can alter parse or break
+    // the filter. ILIKE wildcards `_` and `%` also appear in real emails
+    // (e.g. user_test@example.com) — interpolating would re-open the
+    // A2-class wildcard surface inside the filter string. Avoid both.
+    //
+    // Client filter: lowercased exact equality on resident_email scopes
+    // the declined-row branch to the CURRENT resident's ownership. A
+    // prior tenant's declined vehicle at the same (property, unit) won't
+    // match because its resident_email belongs to the prior tenant.
+    // Preserves B150's intent end-to-end.
     const { data } = await supabase
       .from('vehicles')
       .select('*')
       .ilike('unit', unit)
       .ilike('property', property)
-      .eq('is_active', true)
-    const vehs = data || []
+      .or('is_active.eq.true,status.eq.declined')
+    const emailLower = email.toLowerCase()
+    const vehs = (data || []).filter((v: any) =>
+      v.is_active === true ||
+      (v.status === 'declined' &&
+       (v.resident_email ?? '').toLowerCase() === emailLower)
+    )
     const spaceNumbers = vehs.map((v: any) => v.space).filter(Boolean)
     if (spaceNumbers.length > 0) {
       const { data: spaceData } = await supabase
@@ -293,7 +311,7 @@ export default function ResidentPortal() {
           year: editingVehicle.year,
         },
       })
-      setEditingVehicleId(null); fetchVehicles(resident.unit, resident.property)
+      setEditingVehicleId(null); fetchVehicles(resident.unit, resident.property, resident.email)
     }
   }
 
@@ -323,7 +341,7 @@ export default function ResidentPortal() {
       setRequestMsg('Vehicle submitted for Property Manager approval. You will see the status update here.')
       setShowRequestForm(false)
       setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
-      fetchVehicles(resident.unit, resident.property)
+      fetchVehicles(resident.unit, resident.property, resident.email)
     }
   }
 
@@ -333,7 +351,7 @@ export default function ResidentPortal() {
     // the only path by which a resident can flip resident_read=TRUE on
     // a vehicle they own. Ownership guard mirrors update_my_vehicle_cosmetic.
     await supabase.rpc('mark_my_vehicle_declined_read', { p_id: id })
-    fetchVehicles(resident.unit, resident.property)
+    fetchVehicles(resident.unit, resident.property, resident.email)
   }
 
   async function issueVisitorPass() {
