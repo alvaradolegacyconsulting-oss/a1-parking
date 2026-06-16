@@ -149,13 +149,27 @@ export async function POST(request: Request) {
     )
   }
 
-  // ── Tax rate resolution (Pattern B per B66.9) ─────────────────────
-  // Fails closed: never ship a subscription without TX tax attached.
+  // ── Tax rate resolution — split per branch ───────────────────────
+  // Pattern A (Stripe Tax) replaces Pattern B for charge_automatically
+  // (the A1-relevant path). Pattern B (default_tax_rates with the
+  // fixed 6.6%-flat TaxRate) is RETAINED for the send_invoice branch
+  // because that path bypasses Checkout — it has no billing-address
+  // collection mechanism today, so automatic_tax would reject the
+  // Subscription.create. Migrating send_invoice to Pattern A requires
+  // (a) wiring companies.address + billing_* into the customers.create
+  // call, and (b) auditing the admin Issue-form for address-required.
+  // Filed as backlog; deferred until first net-30/enterprise contract.
+  //
+  // Therefore: taxRateId is required ONLY when collection_method is
+  // send_invoice. The charge_automatically branch ignores it.
   const taxRateEnvVar = mode === 'live' ? 'STRIPE_LIVE_TX_TAX_RATE_ID' : 'STRIPE_TEST_TX_TAX_RATE_ID'
   const taxRateId = process.env[taxRateEnvVar]
-  if (!taxRateId) {
-    console.error(`[start-billing] missing ${taxRateEnvVar} — refusing to bill without TX tax rate`)
+  if (code.collection_method === 'send_invoice' && !taxRateId) {
+    console.error(`[start-billing] send_invoice path needs ${taxRateEnvVar} (Pattern B) until Pattern A wiring lands — refusing to bill without TX tax`)
     return NextResponse.json({ error: 'Tax configuration missing. Contact support.' }, { status: 500 })
+  }
+  if (code.collection_method === 'charge_automatically' && taxRateId) {
+    console.log(`[start-billing] ${taxRateEnvVar} present but unused under Pattern A (charge_automatically branch)`)
   }
 
   // ── Build line items ─────────────────────────────────────────────
@@ -187,7 +201,17 @@ export async function POST(request: Request) {
         // automatically. customer_update is REJECTED without a pre-
         // existing customer ID — see /api/signup/create-checkout-session
         // hotfix (latent since B66.9 ship).
+        // Pattern A (B110 close-out): this collected address ALSO
+        // sources the Stripe Tax jurisdiction below.
         billing_address_collection: 'required',
+        // Pattern A — Stripe Tax. Computes tax server-side from the
+        // customer's billing address + each Product's tax_code
+        // (txcd_10103001 = SaaS, applies TX Rule 3.330 80%-basis
+        // natively). Each Product in this subscription inherits its
+        // tax_code via proposal-code-stripe.ts:234-258, which reuses
+        // the standard catalog's Products (set by
+        // scripts/create-stripe-prices.ts).
+        automatic_tax: { enabled: true },
         // Webhook discriminator. checkout-session-completed handler
         // reads proposal_code_id → UPDATE existing companies row.
         metadata: {
@@ -196,7 +220,6 @@ export async function POST(request: Request) {
           company_id: String(companyId),
         },
         subscription_data: {
-          default_tax_rates: [taxRateId],
           metadata: {
             supabase_user_id: user.id,
             proposal_code_id: String(code.id),
@@ -221,6 +244,12 @@ export async function POST(request: Request) {
     // No Checkout (no card collection); Stripe issues an invoice net-30
     // payable via the hosted-invoice-page link Stripe emails the
     // customer at the contact email below.
+    //
+    // Narrow taxRateId for TS: the early-return guard at the top of
+    // this route already enforced presence when collection_method is
+    // 'send_invoice'. Re-narrowing locally with a defensive cast keeps
+    // the type system happy without weakening the runtime check.
+    const sendInvoiceTaxRateId: string = taxRateId as string
     try {
       const customer = await stripe.customers.create({
         email: user.email!,
@@ -239,7 +268,7 @@ export async function POST(request: Request) {
         items: lineItems.map(li => ({ price: li.price, quantity: li.quantity })),
         collection_method: 'send_invoice',
         days_until_due: 30,
-        default_tax_rates: [taxRateId],
+        default_tax_rates: [sendInvoiceTaxRateId],
         metadata: {
           supabase_user_id: user.id,
           company_id: String(companyId),

@@ -189,6 +189,32 @@ function platformSettingsColumn(a: LogicalAddress): string {
   return `price_pm_${a.tier_name}_${a.line_item}`
 }
 
+// Pattern A — idempotent tax_code backfill on a Product.
+// Reads the current Product's tax_code; updates iff missing or
+// different from the target. Verifies-after-write per B66.5 F6: the
+// post-update retrieve asserts the field landed, so a silent drop
+// by Stripe surfaces immediately rather than at first transaction.
+//
+// Safe to call on Products that already have the correct tax_code —
+// a leading retrieve avoids a no-op update call.
+async function ensureProductTaxCode(
+  stripe: Stripe,
+  productId: string,
+  targetTaxCode: string,
+): Promise<void> {
+  const before = await stripe.products.retrieve(productId)
+  const beforeTaxCode = typeof before.tax_code === 'string' ? before.tax_code : before.tax_code?.id ?? null
+  if (beforeTaxCode === targetTaxCode) return
+  await stripe.products.update(productId, { tax_code: targetTaxCode })
+  const after = await stripe.products.retrieve(productId)
+  const afterTaxCode = typeof after.tax_code === 'string' ? after.tax_code : after.tax_code?.id ?? null
+  if (afterTaxCode !== targetTaxCode) {
+    throw new Error(
+      `Product ${productId} tax_code verify-after-write mismatch — set "${targetTaxCode}", retrieved "${afterTaxCode}"`,
+    )
+  }
+}
+
 function unitAmountCents(monthlyDollars: number, cycle: Cycle): number {
   const dollars = cycle === 'monthly' ? monthlyDollars : monthlyDollars * ANNUAL_MULTIPLIER
   return Math.round(dollars * 100)
@@ -289,6 +315,11 @@ async function main() {
       stripeProductId = typeof p.product === 'string' ? p.product : p.product.id
       action = 'recover'
       recovered++
+      // Pattern A backfill — recovered Products predate the tax_code
+      // wiring (created at B66.2a ship before B110 close-out). Stamp
+      // the SaaS tax_code idempotently. Same call as the create path
+      // below; no-op when already set.
+      await ensureProductTaxCode(stripe, stripeProductId, 'txcd_10103001')
       // Cache the Product for the sibling cycle.
       productIdByGroup.set(groupKey, stripeProductId)
     } else {
@@ -304,6 +335,16 @@ async function main() {
         } else {
           const product = await stripe.products.create({
             name: formatProductName(addr),
+            // Pattern A — Stripe Tax (B110 close-out): tax_code drives
+            // automatic_tax jurisdiction-aware computation. SaaS in TX
+            // = txcd_10103001 (Software as a Service); Stripe's tax
+            // engine reads this + customer billing address and applies
+            // the TX Rule 3.330 80%-basis automatically. Same tax_code
+            // for all 15 SaaS Products + every proposal-code Price
+            // (proposal-code Prices REUSE these Products via
+            // proposal-code-stripe.ts:234-258, so the tax_code
+            // propagates by inheritance — no parallel set needed there).
+            tax_code: 'txcd_10103001',
             metadata: {
               tier_track: addr.tier_track,
               tier_name: addr.tier_name,
@@ -313,6 +354,13 @@ async function main() {
           })
           productId = product.id
         }
+        // Idempotent tax_code backfill for Products discovered via
+        // recovery or sibling-reuse (which didn't go through the
+        // .create above). On re-run after the Pattern A swap, every
+        // catalog row's Product gets the SaaS tax_code stamped.
+        // Verify-after-write per B66.5 F6 discipline: retrieve back
+        // and assert the field landed.
+        await ensureProductTaxCode(stripe, productId, 'txcd_10103001')
         productIdByGroup.set(groupKey, productId)
       }
 

@@ -127,21 +127,23 @@ export async function POST() {
   const stripe = getStripe()
   const origin = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
 
-  // B66.9: Texas Sales Tax Rate ID resolution (Pattern B — fixed-rate
-  // jurisdiction-based tax). 6.6% effective rate created via
-  // scripts/create-stripe-tax-rate.ts and stored in Vercel env per mode.
-  // Fails closed: if the env var is missing, refuse to checkout rather
-  // than silently undercharge. Pre-launch this should always be set;
-  // missing env var means the operator skipped Vercel setup.
+  // Pattern A (Stripe Tax) replaces B66.9's Pattern B fixed-rate attach.
+  // The STRIPE_<MODE>_TX_TAX_RATE_ID env var is no longer required by
+  // this route — Stripe Tax sources jurisdiction from the customer's
+  // billing address (collected at Checkout below) and applies the SaaS
+  // tax_code on each Product (txcd_10103001 — set in
+  // scripts/create-stripe-prices.ts) which carries the TX Rule 3.330
+  // 80%-of-8.25% reduced basis natively. The env var resolution is
+  // kept as a no-op observability log during the migration window so
+  // the absence on Vercel doesn't surface as a deploy surprise, and
+  // log greps can confirm Pattern A is the active path. The send_invoice
+  // branch in /api/proposal-codes/start-billing still uses the env var
+  // (Pattern B until its own migration); remove this block + the
+  // STRIPE_<MODE>_TX_TAX_RATE_ID Vercel vars after that lands.
   const stripeMode = process.env.STRIPE_MODE === 'live' ? 'live' : 'test'
   const taxRateEnvVar = stripeMode === 'live' ? 'STRIPE_LIVE_TX_TAX_RATE_ID' : 'STRIPE_TEST_TX_TAX_RATE_ID'
-  const taxRateId = process.env[taxRateEnvVar]
-  if (!taxRateId) {
-    console.error(`[create-checkout-session] missing ${taxRateEnvVar} — refusing to checkout without TX tax rate configured`)
-    return NextResponse.json(
-      { error: 'Tax configuration missing. Contact support.' },
-      { status: 500 }
-    )
+  if (process.env[taxRateEnvVar]) {
+    console.log(`[create-checkout-session] ${taxRateEnvVar} present but unused under Pattern A (automatic_tax)`)
   }
 
   try {
@@ -156,18 +158,24 @@ export async function POST() {
       // Stripe persists the collected address to the freshly-created
       // Customer automatically — no customer_update needed (Stripe
       // rejects customer_update without a pre-existing `customer` ID).
-      // Hotfix surfaced by B66.7 Smoke B; latent since B66.9 ship because
-      // B66.9 Smoke B hit B117 before reaching this Checkout call.
+      // Pattern A (B110 close-out): this collected address is ALSO the
+      // jurisdiction-sourcing input for Stripe Tax — automatic_tax
+      // below requires it.
       billing_address_collection: 'required',
+      // Pattern A — Stripe Tax. Computes tax server-side based on the
+      // customer's billing address + each Product's tax_code
+      // (txcd_10103001 = SaaS, applies TX Rule 3.330 80%-basis
+      // natively). Replaces Pattern B's fixed 6.6%-flat TaxRate attach
+      // which mis-charged for non-Houston TX billing addresses (Sugar
+      // Land, Katy, Pearland etc. have different combined rates) plus
+      // gave no jurisdiction-level filing report. Requires Stripe Tax
+      // enabled + TX collection obligation registered in Dashboard.
+      automatic_tax: { enabled: true },
       metadata: {
         supabase_user_id: user.id,
         intended_tier_json: JSON.stringify(intended),
       },
       subscription_data: {
-        // B66.9: default_tax_rates attaches the TX Sales Tax Rate to the
-        // subscription. Tax computed by Stripe (6.6% × line subtotal,
-        // rendered as a separate line on every recurring invoice).
-        default_tax_rates: [taxRateId],
         metadata: {
           supabase_user_id: user.id,
           company_name: intended.company_name,
