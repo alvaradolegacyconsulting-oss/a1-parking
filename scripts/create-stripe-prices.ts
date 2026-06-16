@@ -280,7 +280,7 @@ async function main() {
     //   • No DB row                            → fresh INSERT (original path)
     const { data: existing, error: selErr } = await supabase
       .from('stripe_prices')
-      .select('id, stripe_price_id, lookup_key')
+      .select('id, stripe_price_id, stripe_product_id, lookup_key')
       .eq('tier_track', addr.tier_track)
       .eq('tier_name', addr.tier_name)
       .eq('line_item', addr.line_item)
@@ -292,8 +292,18 @@ async function main() {
       process.exit(1)
     }
     if (existing && existing.lookup_key === lookupKey) {
+      // Pattern A self-heal on DB-skip path. The create / Stripe-recovery
+      // / sibling-reuse paths all call ensureProductTaxCode, but the
+      // DB-skip path continues past them. Without this call, a re-run
+      // after the Pattern A swap would leave existing live Products
+      // with NULL tax_code — automatic_tax would then fail at checkout.
+      // Idempotent: no-op when already correct; updates iff missing or
+      // different; verify-after-write asserts the field landed.
+      // Stripe call cost per skipped row: 1 retrieve (no-op case) OR
+      // 1 retrieve + 1 update + 1 retrieve (first-time backfill).
+      await ensureProductTaxCode(stripe, existing.stripe_product_id, 'txcd_10103001')
       skipped++
-      console.log(`  SKIP    ${lookupKey} (DB row id=${existing.id}, price=${existing.stripe_price_id})`)
+      console.log(`  SKIP    ${lookupKey} (DB row id=${existing.id}, price=${existing.stripe_price_id}, product=${existing.stripe_product_id})`)
       continue
     }
     const isMigration = existing !== null
