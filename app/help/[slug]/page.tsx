@@ -138,7 +138,7 @@ function ArticleJsonLd({ title, description, slug, lastUpdated, category }: { ti
     '@type': 'Article',
     headline: title,
     description,
-    author: { '@type': 'Organization', name: 'Alvarado Legacy Consulting LLC' },
+    author: { '@type': 'Organization', name: 'Alvarado Legacy Consulting LLC', alternateName: 'ShieldMyLot' },
     publisher: { '@type': 'Organization', name: 'ShieldMyLot' },
     datePublished: lastUpdated,
     dateModified: lastUpdated,

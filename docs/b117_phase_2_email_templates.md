@@ -71,7 +71,7 @@
         Questions? <a href="mailto:support@shieldmylot.com" style="color: #1E2761;">support@shieldmylot.com</a>
       </p>
       <p style="color: #999; font-family: Arial, sans-serif; font-size: 11px; margin: 8px 0 0;">
-        Product of Alvarado Legacy Consulting LLC · Houston, TX
+        Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™ · Houston, TX
       </p>
     </td>
   </tr>
@@ -140,7 +140,7 @@
         Questions? <a href="mailto:support@shieldmylot.com" style="color: #1E2761;">support@shieldmylot.com</a>
       </p>
       <p style="color: #999; font-family: Arial, sans-serif; font-size: 11px; margin: 8px 0 0;">
-        Product of Alvarado Legacy Consulting LLC · Houston, TX
+        Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™ · Houston, TX
       </p>
     </td>
   </tr>
@@ -209,7 +209,7 @@
         Questions? <a href="mailto:support@shieldmylot.com" style="color: #1E2761;">support@shieldmylot.com</a>
       </p>
       <p style="color: #999; font-family: Arial, sans-serif; font-size: 11px; margin: 8px 0 0;">
-        Product of Alvarado Legacy Consulting LLC · Houston, TX
+        Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™ · Houston, TX
       </p>
     </td>
   </tr>

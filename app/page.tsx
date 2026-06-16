@@ -80,6 +80,7 @@ export default function Landing() {
             "provider": {
               "@type": "Organization",
               "name": "Alvarado Legacy Consulting LLC",
+              "alternateName": "ShieldMyLot",
               "url": "https://shieldmylot.com"
             },
             "serviceType": "Parking Enforcement & Property Management Platform",
@@ -374,7 +375,7 @@ export default function Landing() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 24, marginBottom: 40 }}>
             {/* Block 1 — About the company */}
             <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 32 }}>
-              <h3 style={{ color: TEXT, fontSize: 18, fontWeight: 700, margin: '0 0 14px' }}>A product of Alvarado Legacy Consulting LLC</h3>
+              <h3 style={{ color: TEXT, fontSize: 18, fontWeight: 700, margin: '0 0 14px' }}>Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™</h3>
               <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 14px' }}>
                 ShieldMyLot is built and operated by Alvarado Legacy Consulting LLC, a Houston-based consulting firm specializing in operational software for Texas businesses.
               </p>
@@ -518,7 +519,7 @@ export default function Landing() {
           </div>
         </div>
         <div style={{ maxWidth: 1100, margin: '28px auto 0', paddingTop: 20, borderTop: `1px solid ${BORDER}`, display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'center' }}>
-          <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>© 2026 ShieldMyLot™ · A product of Alvarado Legacy Consulting LLC · All rights reserved</p>
+          <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>© 2026 Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™ · All rights reserved</p>
           <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>Licensed for Texas operations · Harris County jurisdiction</p>
         </div>
       </footer>

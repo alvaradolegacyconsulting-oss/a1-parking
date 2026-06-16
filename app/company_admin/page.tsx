@@ -3807,7 +3807,7 @@ export default function CompanyAdminPortal() {
         </div>
 
         <div style={{ textAlign:'center', marginTop:'12px', paddingBottom:'20px' }}>
-          <p style={{ color:'#2a2f3d', fontSize:'11px', margin:'0' }}>Powered by ShieldMyLot · A product of Alvarado Legacy Consulting LLC</p>
+          <p style={{ color:'#2a2f3d', fontSize:'11px', margin:'0' }}>Powered by Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™</p>
         </div>
 
       </div>

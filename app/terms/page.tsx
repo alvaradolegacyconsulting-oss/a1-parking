@@ -59,7 +59,7 @@ export default function Terms() {
           ))}
         </div>
 
-        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'24px' }}>ShieldMyLot · A product of Alvarado Legacy Consulting LLC</p>
+        <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'24px' }}>Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™</p>
       </div>
     </main>
   )

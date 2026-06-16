@@ -321,7 +321,7 @@ function RedeemInner() {
         )}
 
         <p style={{ textAlign: 'center', color: MUTED, fontSize: 11, marginTop: 28 }}>
-          © 2026 ShieldMyLot™ · A product of Alvarado Legacy Consulting LLC
+          © 2026 Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™
         </p>
       </div>
     </main>
