@@ -90,13 +90,13 @@ After confirmation, your new tier's limits and features are active. You can imme
 
 **Immediate:**
 - Higher capacity limits (you can add more properties, drivers, etc.)
-- Newly-unlocked feature flags (advanced analytics, Towbook export, etc.)
+- Newly-unlocked feature flags (advanced analytics, tow records CSV export, etc.)
 - Plan tab updates to show new tier
 
 **Gradual:**
 - Your team needs to be trained on new features they couldn't access before
 - Operational workflows may shift to take advantage of new capabilities
-- Premium features may have setup associated with them (e.g., training your team on advanced analytics, configuring Towbook integration)
+- Premium features may have setup associated with them (e.g., training your team on advanced analytics, wiring tow records CSV export into your back-office tools)
 
 ---
 

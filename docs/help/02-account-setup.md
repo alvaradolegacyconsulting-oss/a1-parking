@@ -49,7 +49,7 @@ Fill in or verify these fields:
 - **Phone number** — Your main business line. Make this the number you want residents and visitors to call.
 
 **Recommended:**
-- **Business hours** — When your team is reachable. Used to set expectations on tow ticket pages and dispute response timelines.
+- **Business hours** — When your team is reachable. Used to set expectations on tow ticket pages.
 - **Operating area** — Cities or regions you serve. Texas only at this time.
 
 **Optional:**
@@ -60,19 +60,19 @@ Click **Save** after each section.
 
 ---
 
-## Upload your company logo
+## Upload your own logo
 
-Your logo appears on:
+Your logo (the one you supply — we don't design one for you) appears on:
 - Tow tickets (printed and digital)
 - The login page (subtly, beside the ShieldMyLot branding)
 - Resident portal pages for your properties
 
-**Logo requirements:**
-- Format: PNG or JPG
-- Maximum file size: 2 MB
-- Recommended dimensions: 400x400 pixels minimum, square aspect ratio
-- Transparent background preferred (PNG with alpha channel)
-- Avoid logos with very thin lines — they may not reproduce well on tow tickets
+**Upload specs:**
+- Format: PNG or JPG (any image format is accepted, but PNG/JPG render most reliably)
+- Maximum file size: 2 MB (hard limit; upload will be rejected above this)
+- Recommended dimensions: 400×400 pixels minimum, square aspect ratio
+- Transparent background recommended (PNG with alpha channel) — looks cleanest beside dark or light surrounds
+- Avoid logos with very thin lines — they may not reproduce well on printed tow tickets
 
 To upload:
 1. Settings tab → Logo section
@@ -90,14 +90,13 @@ ShieldMyLot uses a B2B support model:
 - **Your customers** (residents, drivers, property managers at your client properties) contact **you** for support.
 - **You** contact **ShieldMyLot** for platform-level issues.
 
-Your support contact information tells your customers how to reach you when they have questions about a tow, dispute, or visitor pass.
+Your support contact information tells your customers how to reach you when they have questions about a tow or visitor pass.
 
 **Configure:**
 - **Support email** — A monitored inbox (e.g., support@yourcompany.com or operations@yourcompany.com). Don't use a personal email.
-- **Support phone** — The number for after-hours tow callouts, dispute calls, etc.
-- **Dispute response timeline** — How quickly you respond to dispute filings. Texas Chapter 2308 has its own dispute timeline requirements; your published response timeline should match or be shorter.
+- **Support phone** — The number for after-hours tow callouts and general operator-customer contact.
 
-These contact details appear on tow tickets, dispute pages, and the public visitor pass page.
+These contact details appear on tow tickets and the public visitor pass page.
 
 ---
 
@@ -132,7 +131,7 @@ What to verify:
 - **Track type** is correct (Enforcement vs. Property Management)
 - **Property limit** matches your expected usage
 - **Driver limit** (Enforcement only) matches your operational team size
-- **Other feature flags** (analytics, Towbook export, etc.) are what you expect
+- **Other feature flags** (analytics, tow records CSV export, etc.) are what you expect
 
 If something looks wrong, contact support@shieldmylot.com immediately. Tier configuration errors are easier to fix at setup than after you've started using the platform heavily.
 

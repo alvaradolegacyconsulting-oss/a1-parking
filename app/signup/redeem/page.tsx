@@ -76,6 +76,11 @@ function RedeemInner() {
   const [password, setPassword] = useState('')
   const [submission, setSubmission] = useState<Submission>({ kind: 'editing' })
 
+  // 2026-06-17 site-cleanup extension — when no ?code= present, accept paste
+  // instead of dead-ending. Site CTA "Have a proposal code? Activate here →"
+  // links here without a code, so users without the email link need a way in.
+  const [pastedCode, setPastedCode] = useState('')
+
   // Resend cooldown (pre-flight #5). Starts at 30s after first send to avoid
   // over_email_send_rate_limit. Resets each successful resend.
   const [resendCooldown, setResendCooldown] = useState(0)
@@ -212,7 +217,38 @@ function RedeemInner() {
           </div>
         )}
 
-        {validation.kind === 'invalid' && (() => {
+        {validation.kind === 'invalid' && validation.reason === 'missing_code' && (
+          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 28 }}>
+            <h2 style={{ color: TEXT, fontSize: 20, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>Enter your proposal code</h2>
+            <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', lineHeight: 1.6, margin: '0 0 18px' }}>
+              The code is in your proposal email or PDF. If you have the activation link, just open that instead.
+            </p>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Proposal code</label>
+            <input type="text" autoComplete="off" style={inputStyle} value={pastedCode}
+              onChange={e => setPastedCode(e.target.value)}
+              placeholder="e.g. ACME-AB12"
+              onKeyDown={e => {
+                if (e.key === 'Enter' && pastedCode.trim()) {
+                  window.location.href = `/signup/redeem?code=${encodeURIComponent(pastedCode.trim())}`
+                }
+              }} />
+            <button
+              onClick={() => {
+                if (pastedCode.trim()) {
+                  window.location.href = `/signup/redeem?code=${encodeURIComponent(pastedCode.trim())}`
+                }
+              }}
+              disabled={!pastedCode.trim()}
+              style={{ width: '100%', marginTop: 14, background: pastedCode.trim() ? GOLD : '#1e2535', color: pastedCode.trim() ? '#0a0d14' : '#555', fontWeight: 700, fontSize: 15, padding: '13px', border: 'none', borderRadius: 10, cursor: pastedCode.trim() ? 'pointer' : 'not-allowed' }}>
+              Continue →
+            </button>
+            <p style={{ color: MUTED, fontSize: 12, textAlign: 'center', margin: '16px 0 0' }}>
+              Can’t find your code? <a href="mailto:support@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none' }}>Contact support</a>
+            </p>
+          </div>
+        )}
+
+        {validation.kind === 'invalid' && validation.reason !== 'missing_code' && (() => {
           const copy = invalidCopy(validation.reason)
           return (
             <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 28 }}>

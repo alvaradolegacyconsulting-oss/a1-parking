@@ -193,7 +193,7 @@ Every action a driver takes is logged in the platform's audit trail:
 - Post-confirmation media changes
 
 This trail is visible to Company Admins and is important for:
-- Defending disputes (proof of what evidence was captured and when)
+- Evidence integrity (proof of what was captured and when, for any later review)
 - Performance management (which drivers submit clean evidence consistently)
 - Compliance documentation (Chapter 2308 record retention)
 - Investigation if a driver's actions are ever questioned

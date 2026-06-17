@@ -69,7 +69,7 @@ Each limit displays current usage next to the cap, e.g., "Properties: 4 of 5" or
 Beyond the numeric limits, your tier determines which capabilities your account has access to. These aren't settings anyone turns on or off — they're included (or not) based entirely on your tier. If a capability is part of your tier, it's available to your whole company automatically. If it's not part of your tier, upgrading is the way to unlock it.
 
 - **Advanced analytics** — Detailed reporting beyond basic violation counts (Growth+/Professional+)
-- **Towbook CSV export** — Integration with Towbook fleet management software (Growth+)
+- **Tow records CSV export** — Download your tow records as a CSV file for use in your own back-office tools (Growth+)
 - **API access (read-only)** — Programmatic access to your data for custom integrations (Legacy/Enterprise)
 - **Leasing agent role** — Additional user role for read-mostly portal access (Growth+/Professional+)
 - **AI-powered docs search** — Smart search across the help center that surfaces answers in context (Growth+/Professional+)
@@ -116,13 +116,13 @@ Common signals that you've outgrown your current tier:
 If you have 13 of 15 properties on Growth, you're close to needing Legacy. Wait until you actually need #16, but plan ahead.
 
 **Your drivers are hitting photo or video caps regularly**
-If drivers report "the cap is too low for tough disputes," upgrading the tier gives them more headroom.
+If drivers report "the cap is too low for tough tows" or "I need more video time on these," upgrading the tier gives them more evidence headroom.
 
 **You want analytics you can't currently access**
 Growth (advanced analytics) gives substantially more visibility than Starter. If you're flying blind on operational metrics, upgrade.
 
-**You want Towbook integration**
-Available on Growth and above. If you're using Towbook today and importing tickets manually, the upgrade pays for itself quickly.
+**You want CSV export of your tow records**
+Available on Growth and above. If you're importing tow data into your own back-office tools today and copying it by hand, the upgrade lets you download a clean CSV instead.
 
 **You want AI-powered docs search**
 Available on Growth and above. If your team spends time hunting through documentation for answers, smart search gets them to relevant information faster.
@@ -140,7 +140,7 @@ Less common, but valid:
 If you're at 6 properties and using Growth (limit 15), downgrading to Starter could save money. But Starter's lower limits (3 drivers, 30s video, 3 photos per violation) may not work for you operationally.
 
 **You don't use the higher-tier features**
-If you're on Legacy but never use Towbook export or the video tutorial library, you may be over-paying.
+If you're on Legacy but never use tow records CSV export or the video tutorial library, you may be over-paying.
 
 **Important:** Downgrading isn't instant. If you currently have 10 properties and downgrade to Starter (limit 5), you don't automatically lose 5 properties — but you can't add any new ones until you deactivate down to 5. Plan downgrades carefully.
 
@@ -156,7 +156,6 @@ Regardless of tier, every customer gets:
 - **Soft-delete with audit** for evidence (photos, videos) — Enforcement only
 - **Texas Chapter 2308 workflow features** — Available regardless of tier (compliance with the law remains the operator's responsibility)
 - **Customer data security** — Same encryption, same access controls
-- **Dispute workflow** — Resident dispute filing and manager response
 - **Mobile-friendly portals** — All roles can use their portal on phone, tablet, or computer
 - **Support access** — Email support; response time varies by tier
 
@@ -189,7 +188,7 @@ Still unsure? Talk to us at support@shieldmylot.com. We'll look at your operatio
 | Photos per violation | 3 | 10 | Unlimited |
 | Video duration | 30s | 60s | 120s |
 | Advanced analytics | — | ✓ | ✓ |
-| Towbook CSV export | — | ✓ | ✓ |
+| Tow records CSV export | — | ✓ | ✓ |
 | Leasing agent role | — | ✓ | ✓ |
 | AI-powered docs search | — | ✓ | ✓ |
 | Premium video tutorial library | — | — | ✓ |

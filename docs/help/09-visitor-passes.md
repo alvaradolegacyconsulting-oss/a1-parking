@@ -222,7 +222,7 @@ Yes. Visitor passes don't have to be for someone else's vehicle — they're for 
 Issue a follow-up pass when the first one expires. Subject to the per-plate concurrent limit (if "concurrent" means overlapping; if the first pass has expired, a new pass isn't concurrent).
 
 **Can I issue a pass retroactively (for a visit that already happened)?**
-Not typically — passes are forward-looking. If a visitor was towed and shouldn't have been, the right path is the dispute workflow (see [Managing Disputes](../shared/12-managing-disputes.md)), not a retroactive pass.
+Not typically — passes are forward-looking. If a visitor was towed and shouldn't have been, that's something to take up with the towing operator directly, not something a retroactive pass solves.
 
 **How do I handle a one-time large event (wedding, holiday party)?**
 For events where you expect many visitor vehicles:

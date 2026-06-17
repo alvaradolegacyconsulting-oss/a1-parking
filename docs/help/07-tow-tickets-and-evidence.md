@@ -4,7 +4,7 @@ category: "Enforcement Track"
 audience: ["driver", "manager", "company_admin"]
 tier_required: "any"
 last_updated: "2026-05-20"
-related: ["submitting-violations", "managing-disputes", "understanding-your-tier"]
+related: ["submitting-violations", "texas-chapter-2308", "understanding-your-tier"]
 ---
 
 # Tow Tickets and Evidence
@@ -19,7 +19,7 @@ After confirmation, several things become available:
 - Tow ticket generation
 - Evidence retention and review
 - Post-confirmation media management (with audit trail)
-- Towbook CSV export (Growth+ tiers)
+- Tow records CSV export (Growth+ tiers)
 
 ---
 
@@ -63,7 +63,7 @@ Not every violation results in a tow. Some scenarios:
 - The driver decided the violation didn't warrant towing (e.g., expired permit on a vehicle that's otherwise authorized)
 - The property requested no tow on this specific incident
 
-For these cases, the violation record stays in the system as documentation, but no tow ticket is generated. The violation appears in manager and resident portals normally; the dispute workflow still applies if the owner challenges the violation.
+For these cases, the violation record stays in the system as documentation, but no tow ticket is generated. The violation appears in manager and resident portals normally; if the vehicle owner later challenges the violation off-system, the record + audit trail are your evidence package.
 
 ---
 
@@ -147,13 +147,13 @@ The photo or video returns to the visible violation card.
 - **Modify** an existing photo or video (rotate, crop, edit) — only add new ones or soft-delete existing ones
 - **Hide** the audit trail — every action is permanent in the audit log
 
-These limits exist because evidence integrity is essential. Confirmed violations may be reviewed in disputes, legal proceedings, or compliance audits — the chain of custody must be defensible.
+These limits exist because evidence integrity is essential. Confirmed violations may be reviewed later, in legal proceedings, or in compliance audits — the chain of custody must be defensible.
 
 ---
 
-## Towbook CSV export (Growth+ tiers)
+## Tow records CSV export (Growth+ tiers)
 
-If your company uses Towbook fleet management software, ShieldMyLot can export your violation data in a Towbook-compatible CSV format.
+ShieldMyLot can download your tow records as a CSV file, so you can use them in your own back-office tools, spreadsheets, or accounting software.
 
 This feature is available on:
 - Enforcement: Growth tier and above
@@ -163,29 +163,28 @@ This feature is available on:
 
 1. Company Admin portal → Violations tab
 2. Filter by date range or other criteria
-3. Click **Export to Towbook CSV**
+3. Click **Export tow records (CSV)**
 4. Save the CSV file
-5. Import into Towbook through their standard import workflow
 
 ### What's included
 
-The CSV export includes the standard Towbook fields:
+The CSV export includes:
 - Violation timestamp
-- Vehicle plate, state, color, make, model
+- Vehicle plate, state, year, color, make, model
 - Property name and address
-- Violation type
-- Driver name (submitter)
-- Tow ticket reference (if applicable)
+- Violation type and location notes
+- Storage facility name, address, phone
+- Tow fee
+- Driver name and license number
+- Free-text notes
 
-The CSV is plain text and can be reviewed before import. You can edit it in Excel or any spreadsheet tool if needed.
+The CSV is plain text and opens in Excel, Numbers, Google Sheets, or any spreadsheet tool.
 
 ### Limitations
 
-- Photos and videos are not exported in the CSV — only references. Photos must be downloaded separately if Towbook needs them.
+- Photos and videos are not exported in the CSV — only references. Download photos separately if you need them outside the platform.
 - Exports include only confirmed violations, not drafts
 - Soft-deleted media is not included in the reference list (only visible media)
-
-If you're not using Towbook, ignore this section — the platform works fully without external integration.
 
 ---
 
@@ -197,7 +196,6 @@ Texas Chapter 2308 (the Texas Towing and Booting Act) has specific requirements 
 - Generating compliant tow tickets
 - Maintaining unalterable audit trails
 - Retaining records for the required retention period
-- Providing dispute workflow timeline tracking
 
 For the full compliance picture, see [Texas Chapter 2308](../compliance/16-texas-chapter-2308.md).
 
@@ -223,7 +221,7 @@ Texas Chapter 2308 includes specific transparency requirements. Residents (the v
 **Can a driver edit a violation after confirming it?**
 No. Confirmed violations are locked from the driver. If a violation has wrong details, contact your manager or company admin immediately — they have tools to manage the situation. Do not submit a duplicate violation.
 
-**How long does Towbook CSV export take to generate?**
+**How long does the tow records CSV export take to generate?**
 For most companies, a CSV export with up to 1,000 violations generates in under 10 seconds. Larger exports may take longer. If an export times out, narrow the date range and try again.
 
 **Where are the photos and videos actually stored?**
@@ -236,7 +234,6 @@ Not as a customer-side action. Confirmed violations are part of the permanent re
 
 ## Next steps
 
-- Understand the dispute workflow that follows some violations: [Managing Disputes](../shared/12-managing-disputes.md)
 - Review Texas compliance specifics: [Texas Chapter 2308](../compliance/16-texas-chapter-2308.md)
 - Train your team on the submission workflow: [Submitting Violations](06-submitting-violations.md)
 

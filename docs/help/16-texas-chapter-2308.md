@@ -4,7 +4,7 @@ category: "Compliance"
 audience: ["company_admin", "manager"]
 tier_required: "any"
 last_updated: "2026-05-26"
-related: ["adding-properties", "submitting-violations", "tow-tickets-and-evidence", "managing-disputes"]
+related: ["adding-properties", "submitting-violations", "tow-tickets-and-evidence"]
 attorney_review_required: true
 ---
 
@@ -152,7 +152,7 @@ Vehicle owners have specific rights under Chapter 2308 to dispute a tow.
 > - Refund and remediation requirements
 > - Specific Chapter 2308 sections governing disputes
 
-**What ShieldMyLot does:** The platform provides a dispute workflow where residents can file disputes directly through their portal, managers can respond with documented reasoning, and the audit trail tracks the full exchange. See [Managing Disputes](../shared/12-managing-disputes.md) for the operational details.
+**What ShieldMyLot does:** The platform captures and retains the violation record + photos + video + audit trail that document what happened and when. If a vehicle owner later challenges a tow under Chapter 2308 — through the towing operator, the property owner, or a court — those records are the operator's evidence package. Disputes themselves are handled off-system, through the channels the law specifies (operator, storage facility, hearing if requested), not inside ShieldMyLot.
 
 **What you should do:**
 - Respond to dispute filings within Chapter 2308 timelines
@@ -222,14 +222,8 @@ Concrete platform features modeled around Chapter 2308 operational requirements 
 - Soft-delete-with-audit prevents accidental loss while maintaining chain of custody
 - Supports defending against disputes and legal challenges
 
-**Dispute workflow**
-- Structured filing by vehicle owners
-- Structured response by operators
-- Timeline tracking and audit trails
-- Documented reasoning for outcomes
-
 **Record retention**
-- Long-term retention of violations, evidence, and disputes
+- Long-term retention of violations + evidence
 - Unalterable audit trails for accountability
 
 **Driver accountability**
@@ -297,7 +291,6 @@ This section will be maintained over time as Chapter 2308 evolves.
 - **Operational guides that intersect with compliance:**
   - [Submitting Violations](../enforcement-track/06-submitting-violations.md) — Evidence quality and documentation
   - [Tow Tickets and Evidence](../enforcement-track/07-tow-tickets-and-evidence.md) — Ticket generation and evidence retention
-  - [Managing Disputes](../shared/12-managing-disputes.md) — Dispute response workflow
 
 - **Get legal counsel before:**
   - Adding non-standard violation types

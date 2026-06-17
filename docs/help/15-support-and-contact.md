@@ -4,7 +4,7 @@ category: "Shared"
 audience: ["company_admin", "manager", "leasing_agent", "driver", "resident"]
 tier_required: "any"
 last_updated: "2026-05-19"
-related: ["account-security", "managing-disputes"]
+related: ["account-security", "texas-chapter-2308"]
 ---
 
 # Support and Contact
@@ -69,7 +69,7 @@ Most driver issues are best resolved by your company admin:
 - Photo / video upload failures
 - Camera permission issues
 - Questions about exempt plates or visitor passes
-- Disputes about a violation you submitted
+- Questions about a violation you submitted
 
 ### When to contact ShieldMyLot directly
 
@@ -194,7 +194,7 @@ What counts as an emergency:
 - Active security breach
 - Data integrity issues affecting multiple customers
 - Platform fully down
-- Lost access to critical evidence with a dispute deadline approaching
+- Lost access to critical evidence with a legal deadline approaching
 
 What doesn't count as an emergency:
 - Single-user login issue (workaround: reset password)
@@ -247,7 +247,7 @@ We're not attorneys. We can't tell you how Chapter 2308 applies to your specific
 We don't decide who you should tow, what your enforcement policy should be, or how to negotiate with property owners. Those are your business decisions.
 
 **Customer disputes between residents and operators**
-We provide the workflow for disputes, but we don't take sides. If a resident and a manager disagree, that's between them (and possibly the courts).
+Disagreements between a resident and a towing operator (or between a resident and a property manager) are between those parties — and, if it escalates, possibly the courts. ShieldMyLot is the operational support layer; we don't take sides in disputes between our customers' customers.
 
 **Custom development on demand**
 We don't build custom features for individual customers as part of standard support. Enterprise-tier customers may have access to more flexibility — discuss specifics with us.
@@ -280,6 +280,5 @@ Yes, always. Email us. We genuinely want to hear what's working and what isn't. 
 
 - **Set up your support contact in your account:** [Account Setup](../getting-started/02-account-setup.md)
 - **Review your security practices:** [Account Security](14-account-security.md)
-- **For dispute-specific support:** [Managing Disputes](12-managing-disputes.md)
 
 When in doubt, email support@shieldmylot.com.

@@ -21,7 +21,7 @@ Your ShieldMyLot account holds:
 
 A compromised account could result in:
 - Privacy violations affecting your residents or customers
-- Disputed evidence being tampered with (which has legal implications under Texas Chapter 2308)
+- Evidence being tampered with (which has legal implications under Texas Chapter 2308)
 - Financial loss from fraudulent activity
 - Liability for breached data
 
@@ -184,7 +184,7 @@ Most companies have more than one person who needs admin access. Best practices:
 - Use a generic "admin@company.com" account that multiple people access
 - Give admin access to people who only need partial access (use manager or driver roles instead)
 
-Sharing accounts breaks audit trails — you can't tell who did what when two people use the same login. This becomes a real problem during disputes, investigations, or compliance reviews.
+Sharing accounts breaks audit trails — you can't tell who did what when two people use the same login. This becomes a real problem during investigations or compliance reviews.
 
 ---
 
@@ -199,7 +199,7 @@ The platform uses role-based access control (RBAC) to ensure users only see what
 | **Manager** | Properties assigned to them | Property data, residents, violations at their properties |
 | **Leasing Agent** | Same as Manager | Read-mostly; can help but not approve |
 | **Driver** | Plate lookups, their own violations | Submit violations, manage their own media |
-| **Resident** | Their own profile, vehicles, violations | Edit vehicle details, file disputes |
+| **Resident** | Their own profile, vehicles, violations | Edit vehicle details, request new vehicles |
 
 This isolation is enforced at the database level — it's not just UI hiding. A user can't access data outside their role's scope even through technical workarounds.
 

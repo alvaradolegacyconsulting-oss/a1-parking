@@ -8,7 +8,7 @@ last_updated: "2026-05-19"
 duration_seconds: 240
 heygen_embed_id: "7444cd0c109f499c8ff813b06238dc1b"
 heygen_share_url: "https://app.heygen.com/embeds/7444cd0c109f499c8ff813b06238dc1b"
-related_docs: ["resident-self-registration", "visitor-passes", "managing-disputes"]
+related_docs: ["resident-self-registration", "visitor-passes", "account-security"]
 chapters:
   - title: "Getting started as a resident"
     timestamp: 0

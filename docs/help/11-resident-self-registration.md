@@ -4,7 +4,7 @@ category: "Shared"
 audience: ["resident", "manager", "leasing_agent"]
 tier_required: "any"
 last_updated: "2026-05-20"
-related: ["resident-management", "account-security", "managing-disputes"]
+related: ["resident-management", "account-security", "texas-chapter-2308"]
 ---
 
 # Resident Self-Registration
@@ -117,9 +117,8 @@ If a violation has ever been issued for one of your registered plates, it appear
 
 - See the violation details (date, location, type, photos)
 - Watch any video evidence
-- File a dispute if you believe the violation was incorrect
 
-See [Managing Disputes](12-managing-disputes.md) if you ever need to dispute a violation.
+If you believe a violation was issued in error, contact your property manager. If a tow already happened and you want to challenge it, the right contact is the towing company that performed the tow — their contact information appears on the tow ticket and on the violation record in your portal.
 
 ### Visitor Passes (if available at your property)
 
@@ -303,6 +302,5 @@ You can reactivate a deactivated resident if they return to the property. Their 
 
 - **Residents:** Log in at https://www.shieldmylot.com/login to check your status or use your portal
 - **Managers:** See [Resident Management](../property-management-track/10-resident-management.md) for the full resident lifecycle workflow
-- **Anyone with violation disputes:** See [Managing Disputes](12-managing-disputes.md)
 
 Need help? For residents — contact your property manager first. For property managers — email support@shieldmylot.com.

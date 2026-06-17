@@ -74,7 +74,7 @@ For each property:
 
 If you have on-site staff who manage day-to-day operations, give them their own accounts.
 
-- **Property managers** are assigned to specific properties; they handle resident registration approvals, visitor pass operations, and dispute responses.
+- **Property managers** are assigned to specific properties; they handle resident registration approvals and visitor pass operations.
 - **Leasing agents** (Growth+ tiers) have read-mostly access to assist managers without making changes.
 
 ### 4. Set up resident QR codes
@@ -98,15 +98,13 @@ Once setup is complete, here's what daily operations look like:
 - **Approve resident self-registrations** — Verify new residents are real tenants and approve their account
 - **Approve vehicle additions** — When existing residents request additional vehicles
 - **Issue visitor passes manually** — For walk-in requests at the leasing office
-- **Handle dispute filings** — When residents challenge a violation
 - **Update exempt plates** — As new contractors or recurring visitors come on board
-- **Monitor unusual activity** — Watch for patterns that signal a problem (lots of visitor passes from one resident, repeated disputes from one tower, etc.)
+- **Monitor unusual activity** — Watch for patterns that signal a problem (lots of visitor passes from one resident, repeated complaints about one tower, etc.)
 
 ### Resident activities (self-service)
 
 - **Register their vehicles** during move-in
 - **Issue visitor passes** for guests, delivery services, contractors
-- **File disputes** when they believe a violation was incorrect
 - **Update their vehicle info** if they get a new car, change colors, etc.
 
 ### Tower activities (separate company)
@@ -227,9 +225,6 @@ Not currently. Properties have property-wide rules. If you have a specific compl
 **How do we handle visitor parking for events (weddings, parties, etc.)?**
 Issue visitor passes covering the event timeframe. If you'd exceed your monthly limit for that property, contact your towing partner to coordinate temporary suspension of enforcement, or upgrade your tier.
 
-**Can residents file disputes if they don't have a registered account?**
-The dispute filing flow assumes the disputant is a registered resident. If a non-resident wants to dispute a violation (e.g., a visitor who got towed), they would typically need to go through the towing company's customer service process directly, not through ShieldMyLot's dispute workflow.
-
 **Do we need to do anything when a resident moves out?**
 Yes — deactivate their account in your manager portal. This removes their vehicles from the authorized list and prevents future visitor pass issuance from their account. See [Resident Management](10-resident-management.md).
 
@@ -240,6 +235,5 @@ Yes — deactivate their account in your manager portal. This removes their vehi
 - **Set up visitor pass rules:** [Visitor Passes](09-visitor-passes.md)
 - **Manage your resident roster:** [Resident Management](10-resident-management.md)
 - **Provide QR codes to new residents:** [Resident Self-Registration](../shared/11-resident-self-registration.md)
-- **Handle disputes:** [Managing Disputes](../shared/12-managing-disputes.md)
 
 Questions about PM-track setup? Email support@shieldmylot.com.

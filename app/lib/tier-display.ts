@@ -31,6 +31,14 @@ export type TierDisplay = {
 // B55 — testimonials were removed and three Enf Legacy / PM Enterprise features
 // were rewritten away from overpromised claims (white-label / custom integrations /
 // dedicated account manager). B62 left this data shape in place.
+//
+// 2026-06-17 site cleanup — dispute-management product feature retired (architecturally
+// wrong; real disputes go through legal channels off-system, not PM-mediated). Towbook
+// CSV de-branded to "Tow records CSV export" (data portability, no third-party tool
+// name). Custom-logo-on-tow-tickets claim removed — logo is universal, not tier-gated;
+// keeping it as a tier differentiator misrepresented the product. Analytics terminology
+// collapsed to one canonical phrase: "Advanced analytics" appears once at the unlock
+// tier (Growth, Professional); upper tiers inherit via "Everything in [prev]".
 export const ENFORCEMENT_TIERS: TierDisplay[] = [
   {
     name: 'Starter', base: 129, perProp: 15, perDriver: 10,
@@ -38,11 +46,11 @@ export const ENFORCEMENT_TIERS: TierDisplay[] = [
   },
   {
     name: 'Growth', base: 149, perProp: 12, perDriver: 8, popular: true,
-    features: ['Up to 10 properties', 'Everything in Starter', 'Analytics dashboard', 'Bulk CSV upload', 'Dispute management', 'Priority email support'],
+    features: ['Up to 10 properties', 'Everything in Starter', 'Advanced analytics', 'Bulk CSV upload', 'Tow records CSV export', 'Priority email support'],
   },
   {
     name: 'Legacy', base: 199, perProp: 10, perDriver: 6,
-    features: ['Unlimited properties', 'Everything in Growth', 'Custom logo on tow tickets and resident pages', 'Advanced analytics', 'Towbook CSV export', 'Dedicated escalation path', 'Priority email support'],
+    features: ['Unlimited properties', 'Everything in Growth', 'Dedicated escalation path', 'Priority email support'],
   },
   {
     // B89: Premium — 4th Enforcement tier; contact-sales (no published
@@ -63,11 +71,11 @@ export const PROPERTY_MANAGEMENT_TIERS: TierDisplay[] = [
   },
   {
     name: 'Professional', base: 199, perProp: 15, popular: true,
-    features: ['Up to 10 properties', 'Everything in Essential', 'Analytics dashboard', 'Registration QR codes', 'Dispute management', 'Priority email support'],
+    features: ['Up to 10 properties', 'Everything in Essential', 'Advanced analytics', 'Bulk CSV upload', 'Priority email support'],
   },
   {
     name: 'Enterprise', base: 279, perProp: 10,
-    features: ['Unlimited properties', 'Everything in Professional', 'Custom logo on tow tickets and resident pages', 'Towbook CSV export', 'Dedicated escalation path', 'Priority email support'],
+    features: ['Unlimited properties', 'Everything in Professional', 'Dedicated escalation path', 'Priority email support'],
   },
 ]
 

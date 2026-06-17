@@ -55,7 +55,7 @@ If you're already at your tier's limit, you'll see an upgrade prompt instead. Se
 **Optional but recommended:**
 
 - **Property owner/contact name** — Your point of contact at the property management company or property owner.
-- **Property owner phone and email** — For dispute escalations and account issues.
+- **Property owner phone and email** — For escalations and account issues.
 - **Towing authorization expiration date** — Track when you need to renew the authorization agreement.
 - **Notes** — Any property-specific information your team should know (e.g., "Tow zone is rear lot only; do not tow from front lot").
 

@@ -98,7 +98,7 @@ export default function History() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `towbook_export_${today}.csv`
+    a.download = `tow_records_${today}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -155,13 +155,15 @@ export default function History() {
           ))}
         </div>
 
-        {/* Phase 2a: Towbook export tier-gated. history page serves any role; the
-            company_tier in localStorage decides. No admin-role escape here — admin's
-            forensic export path remains the CA portal where role flows naturally. */}
+        {/* Phase 2a: tow records CSV export tier-gated (Growth+ on enforcement; off on PM).
+            history page serves any role; the company_tier in localStorage decides. No
+            admin-role escape here — admin's forensic export path remains the CA portal
+            where role flows naturally. Internal flag/fn name kept (TOWBOOK_CSV_EXPORT /
+            exportTowbook) to minimize churn; user-facing surfaces de-branded 2026-06-17. */}
         {hasFeature(FEATURE_FLAGS.TOWBOOK_CSV_EXPORT, getCompanyContext()) === true && (
           <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'16px' }}>
             <button onClick={exportTowbook} style={{ background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', padding:'8px 14px', fontSize:'12px', cursor:'pointer', fontFamily:'Arial' }}>
-              ↓ Export for Towbook
+              ↓ Export tow records (CSV)
             </button>
           </div>
         )}

@@ -19,7 +19,7 @@ A resident's journey in ShieldMyLot typically looks like this:
 
 1. **Registration** — Resident self-registers (or you add them manually)
 2. **Approval** — You approve their registration
-3. **Active use** — They register vehicles, issue visitor passes, file disputes if needed
+3. **Active use** — They register vehicles, issue visitor passes, and update their info as it changes
 4. **Updates** — They request additional vehicles or update info; you approve as needed
 5. **Lease end** — When they move out, you deactivate the account
 
@@ -208,7 +208,7 @@ If a former resident returns to the property:
 3. Confirm their information is current (unit, vehicles, contact info)
 4. They can log in with their old credentials (or you can reset password if they've forgotten)
 
-Their previous history (vehicles, passes, disputes) stays linked. No need to recreate the account.
+Their previous history (vehicles, passes, violations) stays linked. No need to recreate the account.
 
 ---
 
@@ -239,7 +239,6 @@ Resident data is sensitive. Treat it with appropriate care:
 - Look up residents and their vehicles in the course of property management
 - Approve/decline registrations and vehicle requests
 - Update resident records as needed
-- Respond to dispute filings
 
 ### What you shouldn't do
 
@@ -265,7 +264,7 @@ Yes. Each resident has their own account, both linked to the same unit. They sha
 Texas doesn't currently have a comprehensive privacy law requiring deletion on request, but treating reasonable requests reasonably is good business. Contact support@shieldmylot.com to discuss the right path. We can help with data export and (in appropriate cases) deletion while preserving audit-trail integrity.
 
 **A resident's plate matches multiple violations. Can I see all their history?**
-Yes. From the resident's record, you can see all violations linked to their plates. Useful for context when responding to disputes.
+Yes. From the resident's record, you can see all violations linked to their plates. Useful for context when a resident contacts you with questions.
 
 **Can I assign a resident to multiple units?**
 Each resident is linked to one unit at a time. If they actually live across two units (rare but possible), use the larger or primary unit as their registration.
@@ -290,6 +289,5 @@ Edit the resident's record and remove the vehicle. If you're not sure (the resid
 
 - **Manage visitor passes:** [Visitor Passes](09-visitor-passes.md)
 - **Understand resident self-service:** [Resident Self-Registration](../shared/11-resident-self-registration.md)
-- **Handle disputes:** [Managing Disputes](../shared/12-managing-disputes.md)
 
 Questions about resident management? Email support@shieldmylot.com.

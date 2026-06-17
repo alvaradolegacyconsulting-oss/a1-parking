@@ -51,13 +51,12 @@ export default function Landing() {
   // writing to be quoted with company attribution.
 
   // B62.3: refined feature tiles — copy updated + tier-availability
-  // hint added to each. Six honest tiles, no overpromised claims.
+  // hint added to each. Honest tiles, no overpromised claims.
   const features = [
     { icon: '🚗', title: 'Plate-based enforcement', body: 'Every registered vehicle gets a digital permit tied to their plate. Drivers verify against the live registry in seconds.', tier: 'Available on all tiers' },
     { icon: '📱', title: 'QR code self-registration', body: 'Residents scan a property QR code, register their vehicles in minutes, and get manager approval.', tier: 'Available on all tiers' },
     { icon: '🎫', title: 'Visitor pass system', body: 'Residents issue digital visitor passes to guests. Passes auto-expire. Manager-issued passes also available.', tier: 'Available on Property Management tiers' },
-    { icon: '📊', title: 'Analytics & reporting', body: 'Track violations, pass usage, tow events, and trends across all your properties.', tier: 'Basic: All tiers · Advanced: Growth+ and Professional+' },
-    { icon: '⚖️', title: 'Dispute management', body: 'Built-in dispute workflow with full audit trail. Residents file, managers respond, all evidence retained.', tier: 'Available on all tiers' },
+    { icon: '📊', title: 'Advanced analytics', body: 'Track violations, pass usage, tow events, and trends across all your properties.', tier: 'Available on Growth+ and Professional+' },
     { icon: '🏗️', title: 'Multi-property management', body: 'Manage your entire portfolio from one login. Each property has its own rules, managers, and resident database.', tier: 'Available on all tiers (property count varies by tier)' },
   ]
 
@@ -124,10 +123,14 @@ export default function Landing() {
           Resident registration, visitor passes, violation tracking, and tow ticketing — built for Texas operators working under Chapter 2308. For towing companies and property managers.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <a href="#contact" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Request Access →</a>
+          <a href="/signup" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Sign up →</a>
+          <a href="#contact" style={{ background: CARD_BG, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Request Access →</a>
           <a href="#how-it-works" style={{ background: CARD_BG, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>See how it works</a>
         </div>
-        <p style={{ color: MUTED, fontSize: 12, marginTop: 28 }}>Licensed for Texas operations · Harris County jurisdiction</p>
+        <p style={{ color: MUTED, fontSize: 13, marginTop: 20 }}>
+          Have a proposal code? <a href="/signup/redeem" style={{ color: GOLD, textDecoration: 'none', fontWeight: 600 }}>Activate here →</a>
+        </p>
+        <p style={{ color: MUTED, fontSize: 12, marginTop: 12 }}>Licensed for Texas operations · Harris County jurisdiction</p>
       </section>
 
       {/* ── AUDIENCE SPLIT (B62.2) ── */}
@@ -150,8 +153,8 @@ export default function Landing() {
                   'Mobile-friendly violation submission with photo and video evidence',
                   'Plate scanning and exempt plate cross-reference',
                   'Tow ticket generation modeled around Texas Chapter 2308 requirements',
-                  'Towbook CSV export (Growth+ tiers)',
-                  'Full audit trails for dispute defense',
+                  'Tow records CSV export (Growth+ tiers)',
+                  'Full audit trails on every action',
                 ].map((item, i) => (
                   <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
                     <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 2 }}>✓</span>
@@ -226,7 +229,7 @@ export default function Landing() {
                   { title: 'Set up your account', body: 'Configure company profile, add property managers, verify your tier.' },
                   { title: 'Add properties', body: 'Configure visitor pass rules and exempt plate lists per property.' },
                   { title: 'Distribute QR codes', body: 'Residents scan and self-register their vehicles.' },
-                  { title: 'Manage day-to-day', body: 'Approve registrations, issue visitor passes, handle disputes.' },
+                  { title: 'Manage day-to-day', body: 'Approve registrations, issue visitor passes, coordinate with your towing partner.' },
                 ]
             ).map((step, i) => (
               <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 24, position: 'relative' }}>
@@ -390,7 +393,7 @@ export default function Landing() {
                 ShieldMyLot is shaped by the realities of Texas towing operations under Texas Occupations Code Chapter 2308 — the Texas Towing and Booting Act.
               </p>
               <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 14px' }}>
-                From tow ticket content fields to evidence capture to dispute workflows, the platform is modeled around how the work actually happens under Texas law. Operator compliance with Chapter 2308 remains your responsibility; ShieldMyLot is the operational support layer.
+                From tow ticket content fields to evidence capture to audit trails, the platform is modeled around how the work actually happens under Texas law. Operator compliance with Chapter 2308 remains your responsibility; ShieldMyLot is the operational support layer.
               </p>
               <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: 0 }}>
                 Operating outside Texas? ShieldMyLot isn&apos;t the right fit for you yet — we focus on doing one state exceptionally well rather than many states adequately.
@@ -512,7 +515,7 @@ export default function Landing() {
             </div>
             <div>
               <p style={{ color: TEXT, fontSize: 13, fontWeight: 600, margin: '0 0 12px' }}>Account</p>
-              {[['Sign in', '/login'], ['Register', '/register']].map(([label, href]) => (
+              {[['Sign in', '/login'], ['Sign up', '/signup']].map(([label, href]) => (
                 <a key={label} href={href} style={{ display: 'block', color: MUTED, fontSize: 13, textDecoration: 'none', marginBottom: 8 }}>{label}</a>
               ))}
             </div>

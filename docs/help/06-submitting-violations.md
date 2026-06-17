@@ -4,7 +4,7 @@ category: "Enforcement Track"
 audience: ["driver", "company_admin", "manager"]
 tier_required: "any"
 last_updated: "2026-05-20"
-related: ["adding-properties", "tow-tickets-and-evidence", "managing-disputes"]
+related: ["adding-properties", "tow-tickets-and-evidence", "texas-chapter-2308"]
 ---
 
 # Submitting Violations
@@ -219,7 +219,7 @@ You can technically select any property in the dropdown, but you shouldn't. The 
 ## Next steps
 
 - After confirming a violation, you may need to generate a tow ticket: [Tow Tickets and Evidence](07-tow-tickets-and-evidence.md)
-- If a resident disputes the violation: [Managing Disputes](../shared/12-managing-disputes.md)
+- If a tow is later challenged off-system, the violation record + photos + video + audit trail are your evidence package
 - For property-specific configuration: [Adding Properties](04-adding-properties.md)
 
 Questions not covered? Email support@shieldmylot.com.

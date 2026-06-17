@@ -1604,7 +1604,7 @@ export default function CompanyAdminPortal() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `towbook_export_${today}.csv`
+    a.download = `tow_records_${today}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -2494,10 +2494,13 @@ export default function CompanyAdminPortal() {
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
               <p style={{ color:'#444', fontSize:'11px', margin:'0' }}>{fvs.length} result{fvs.length !== 1 ? 's' : ''}</p>
               <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'4px' }}>
-                {/* Phase 2a: Towbook export tier-gated (Growth+ on enforcement; not available on PM). Admin always sees it. */}
+                {/* Phase 2a: tow records CSV export tier-gated (Growth+ on enforcement; not
+                    available on PM). Admin always sees it. Internal flag name kept
+                    (TOWBOOK_CSV_EXPORT) to minimize churn; user-facing surfaces de-branded
+                    2026-06-17 — see comment header on tier-display.ts. */}
                 {(role?.role === 'admin' || hasFeature(FEATURE_FLAGS.TOWBOOK_CSV_EXPORT, getCompanyContext()) === true) && (
                   <button onClick={exportTowbook} style={{ background:'#1a1f2e', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', padding:'8px 14px', fontSize:'12px', cursor:'pointer', fontFamily:'Arial' }}>
-                    ↓ Export for Towbook
+                    ↓ Export tow records (CSV)
                   </button>
                 )}
                 {exportMsg && (
@@ -3595,7 +3598,7 @@ export default function CompanyAdminPortal() {
           const FEATURE_SUMMARY: { flag: string; label: string; tracks: string }[] = [
             { flag: FEATURE_FLAGS.LEASING_AGENT_ROLE, label: 'Leasing Agent role', tracks: 'both' },
             { flag: FEATURE_FLAGS.ADVANCED_ANALYTICS, label: 'Advanced Analytics tab', tracks: 'both' },
-            { flag: FEATURE_FLAGS.TOWBOOK_CSV_EXPORT, label: 'Towbook CSV export', tracks: 'enf' },
+            { flag: FEATURE_FLAGS.TOWBOOK_CSV_EXPORT, label: 'Tow records CSV export', tracks: 'enf' },
             { flag: FEATURE_FLAGS.API_ACCESS_READ_ONLY, label: 'Read-only API access', tracks: 'enf' },
             { flag: FEATURE_FLAGS.PRIORITY_SUPPORT, label: 'Priority support', tracks: 'both' },
           ]
