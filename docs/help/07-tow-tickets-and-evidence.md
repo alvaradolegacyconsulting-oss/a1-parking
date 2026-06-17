@@ -4,7 +4,7 @@ category: "Enforcement Track"
 audience: ["driver", "manager", "company_admin"]
 tier_required: "any"
 last_updated: "2026-05-20"
-related: ["submitting-violations", "texas-chapter-2308", "understanding-your-tier"]
+related: ["submitting-violations", "understanding-your-tier", "support-and-contact"]
 ---
 
 # Tow Tickets and Evidence
@@ -197,7 +197,7 @@ Texas Chapter 2308 (the Texas Towing and Booting Act) has specific requirements 
 - Maintaining unalterable audit trails
 - Retaining records for the required retention period
 
-For the full compliance picture, see [Texas Chapter 2308](../compliance/16-texas-chapter-2308.md).
+Operator compliance with Chapter 2308 remains your responsibility — ShieldMyLot is the operational support layer, not a compliance certifier. Consult a licensed Texas attorney for specific legal questions about Chapter 2308.
 
 **Your responsibilities (not handled by the platform):**
 - Maintaining proper signage at properties (Chapter 2308 has specific signage requirements)
@@ -234,7 +234,7 @@ Not as a customer-side action. Confirmed violations are part of the permanent re
 
 ## Next steps
 
-- Review Texas compliance specifics: [Texas Chapter 2308](../compliance/16-texas-chapter-2308.md)
 - Train your team on the submission workflow: [Submitting Violations](06-submitting-violations.md)
+- Set up support contact channels for your customers: [Support and Contact](15-support-and-contact.md)
 
 Questions about tow tickets, evidence handling, or exports? Email support@shieldmylot.com.

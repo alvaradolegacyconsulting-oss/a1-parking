@@ -4,7 +4,7 @@ category: "Shared"
 audience: ["resident", "manager", "leasing_agent"]
 tier_required: "any"
 last_updated: "2026-05-20"
-related: ["resident-management", "account-security", "texas-chapter-2308"]
+related: ["resident-management", "account-security", "visitor-passes"]
 ---
 
 # Resident Self-Registration

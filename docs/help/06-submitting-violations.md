@@ -4,7 +4,7 @@ category: "Enforcement Track"
 audience: ["driver", "company_admin", "manager"]
 tier_required: "any"
 last_updated: "2026-05-20"
-related: ["adding-properties", "tow-tickets-and-evidence", "texas-chapter-2308"]
+related: ["adding-properties", "tow-tickets-and-evidence", "provisioning-drivers"]
 ---
 
 # Submitting Violations

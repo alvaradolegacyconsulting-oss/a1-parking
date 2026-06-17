@@ -4,7 +4,7 @@ category: "Shared"
 audience: ["company_admin", "manager", "leasing_agent", "driver", "resident"]
 tier_required: "any"
 last_updated: "2026-05-19"
-related: ["account-security", "texas-chapter-2308"]
+related: ["account-security", "billing-and-tier-changes"]
 ---
 
 # Support and Contact
@@ -241,7 +241,13 @@ If you have a feature you really need, let us know — we track demand patterns.
 Some things are outside ShieldMyLot's scope:
 
 **Legal advice**
-We're not attorneys. We can't tell you how Chapter 2308 applies to your specific situation. For legal questions, consult a Texas attorney specializing in property and tow law.
+We're not attorneys. We can't tell you how Chapter 2308 (or any other Texas law) applies to your specific situation. For specific legal questions:
+
+- **Texas Towing Association** — Industry organization that may have resources for members
+- **Texas Department of Licensing and Regulation (TDLR)** — Regulatory body for tow operators in Texas; provides licensing and compliance information
+- **A licensed Texas attorney** — Especially for situations involving disputes that escalate beyond standard resolution, property owner disputes about authorization or signage, insurance or liability questions, significant business decisions affecting compliance posture, or multi-state expansion considerations
+
+Don't navigate complex compliance situations without proper legal guidance.
 
 **Operational decisions**
 We don't decide who you should tow, what your enforcement policy should be, or how to negotiate with property owners. Those are your business decisions.
