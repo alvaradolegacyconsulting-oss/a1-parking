@@ -271,6 +271,19 @@ export default function AdminPortal() {
           body: JSON.stringify({ action: active ? 'activate_user' : 'deactivate_user', email: u.email }),
         })
       ))
+      // Deactivation arc — also flip user_roles.is_active for every
+      // company user so the new get_my_effective_active gate fires on
+      // stale-session PMs/leasing_agents. Single bulk UPDATE keyed on
+      // company; auth ban above is load-bearing, this is the derived-
+      // access driver. Best-effort: log on failure, don't surface.
+      const { error: urErr } = await supabase
+        .from('user_roles')
+        .update({ is_active: active })
+        .ilike('company', c.name)
+        .neq('role', 'admin')
+      if (urErr) {
+        console.error('[admin company-cascade] user_roles.is_active write failed (auth bans intact):', urErr.message, { company: c.name, active })
+      }
     }
 
     // 3. Update drivers (facilities excluded — global)
@@ -341,6 +354,20 @@ export default function AdminPortal() {
               body: JSON.stringify({ action: 'deactivate_user', email: u.email }),
             })
           ))
+          // Deactivation arc — also flip user_roles.is_active for the
+          // single-property PMs whose only assignment was this property
+          // (matches the auth-ban scope: PER-PROPERTY scoping for
+          // multi-property PMs is handled by properties.is_active +
+          // the assignment check in the helper; PMs assigned to OTHER
+          // active properties keep user_roles.is_active = true).
+          const emails = toDeactivate.map((u: any) => (u.email as string).toLowerCase())
+          const { error: urErr } = await supabase
+            .from('user_roles')
+            .update({ is_active: false })
+            .in('email', emails)
+          if (urErr) {
+            console.error('[admin property-cascade] user_roles.is_active=false write failed (auth bans intact):', urErr.message, { property: propertyName, count: emails.length })
+          }
         }
       }
       await supabase.from('residents').update({ is_active: false }).ilike('property', propertyName)
@@ -359,6 +386,18 @@ export default function AdminPortal() {
             body: JSON.stringify({ action: 'activate_user', email: u.email }),
           })
         ))
+        // Deactivation arc — restore user_roles.is_active = true for
+        // all assigned PMs (idempotent: PMs whose flag was never
+        // flipped stay at true). Mirrors the swift-handler unban
+        // shape above.
+        const emails = propertyUsers.map((u: any) => (u.email as string).toLowerCase())
+        const { error: urErr } = await supabase
+          .from('user_roles')
+          .update({ is_active: true })
+          .in('email', emails)
+        if (urErr) {
+          console.error('[admin property-cascade] user_roles.is_active=true restore failed (auth unbans intact):', urErr.message, { property: propertyName, count: emails.length })
+        }
       }
       await supabase.from('residents').update({ is_active: true }).ilike('property', propertyName)
       await supabase.from('vehicles').update({ is_active: true }).ilike('property', propertyName)

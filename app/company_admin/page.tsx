@@ -1126,6 +1126,11 @@ export default function CompanyAdminPortal() {
     setTogglingUser(email)
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
     const { data: { session } } = await supabase.auth.getSession()
+    // ── Step 1: swift-handler auth ban/unban (LOAD-BEARING) ────────
+    // This is the real access control — bans the auth.users record so
+    // the user can't log in. If it fails, do NOT proceed to step 2:
+    // a column write without an auth ban would leave the user able to
+    // log in despite the UI showing them as deactivated.
     const res = await fetch(fnBase + '/swift-handler', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
@@ -1134,9 +1139,26 @@ export default function CompanyAdminPortal() {
     const json = await res.json().catch(() => ({}))
     if (!res.ok) {
       setUserMsg(json.error || json.message || 'Failed to update user status.')
-    } else {
-      setCompanyUsers(prev => prev.map(u => u.email === email ? { ...u, is_active: activate } : u))
+      setTogglingUser(null)
+      return
     }
+    // ── Step 2: user_roles.is_active write (BEST-EFFORT) ───────────
+    // Deactivation arc — drives the new get_my_effective_active gate.
+    // Without this, the gate reads the column's default (true) and
+    // doesn't fire on stale-session PMs. The auth ban from step 1 is
+    // the real control; this column drives the derived-access chain.
+    // Best-effort: if this fails, the auth ban is still in place
+    // (load-bearing), and the engineer-side log captures the gap.
+    // Don't surface the column-write failure to the operator (the
+    // intent was already executed at the auth layer).
+    const { error: urErr } = await supabase
+      .from('user_roles')
+      .update({ is_active: activate })
+      .ilike('email', email)
+    if (urErr) {
+      console.error('[toggleUserActive] user_roles.is_active write failed (auth ban remains intact):', urErr.message, { email, activate })
+    }
+    setCompanyUsers(prev => prev.map(u => u.email === email ? { ...u, is_active: activate } : u))
     setTogglingUser(null)
   }
 

@@ -318,25 +318,37 @@ export default function ResidentPortal() {
   async function requestVehicle() {
     if (!newVehicle.plate) { alert('Plate is required'); return }
     const normalizedPlate = normalizePlate(newVehicle.plate)
-    const { error } = await supabase.from('vehicles').insert([{
-      plate: normalizedPlate,
-      state: newVehicle.state,
-      make: newVehicle.make,
-      model: newVehicle.model,
-      year: parseInt(newVehicle.year) || null,
-      color: newVehicle.color,
-      space: newVehicle.space,
-      unit: resident.unit,
-      property: resident.property,
-      // B166 — stamp owner so move-out can scope vehicle deactivation
-      // by resident_email match. Normalized to match the deactivation-
-      // time owner-trim predicate.
-      resident_email: resident?.email ? resident.email.trim().toLowerCase() : null,
-      is_active: false,
-      status: 'pending',
-    }])
-    if (error) { alert('Error: ' + error.message) }
-    else {
+    // Deactivation arc — DEFINER RPC replaces the direct .insert() path.
+    // The resident_insert_vehicles RLS policy was DROPped; this RPC is
+    // the only resident write path for vehicle requests. Body guards:
+    //   • caller is effectively active (helper checks the full chain:
+    //     user_roles.is_active + companies.account_state +
+    //     residents.is_active + properties.is_active)
+    //   • caller is a resident
+    //   • property + unit derived from residents row (not caller-supplied)
+    // Mirrors B90 v2's update_my_vehicle_cosmetic + B197 manager Add
+    // Resident pattern. Crafted REST PATCH attempts now return
+    // permission-denied (no INSERT policy for resident role).
+    const yearAsInt = newVehicle.year ? parseInt(String(newVehicle.year), 10) : null
+    const { error } = await supabase.rpc('request_my_vehicle', {
+      p_plate: normalizedPlate,
+      p_state: newVehicle.state,
+      p_make:  newVehicle.make.trim() || null,
+      p_model: newVehicle.model.trim() || null,
+      p_year:  yearAsInt,
+      p_color: newVehicle.color.trim() || null,
+    })
+    if (error) {
+      // Surface deactivation-class errors with the helper's HINT —
+      // gives the resident the right escalation path ("contact PM").
+      // Other errors (validation, network) get the raw message.
+      const msg = error.message || 'Error'
+      if (msg.includes('account_deactivated')) {
+        alert('Your account is deactivated. Contact your property manager to be reactivated before submitting a vehicle.')
+      } else {
+        alert('Error: ' + msg)
+      }
+    } else {
       await logAudit({ action: 'REQUEST_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: resident.unit, property: resident.property } })
       setRequestMsg('Vehicle submitted for Property Manager approval. You will see the status update here.')
       setShowRequestForm(false)

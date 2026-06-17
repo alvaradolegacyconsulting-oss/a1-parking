@@ -86,6 +86,33 @@ export async function evaluatePortalGate(
     return { redirected: true }
   }
 
+  // Deactivation arc — effective-active chain check. The company gate
+  // above covers the top of the chain (companies.account_state). This
+  // call covers everything below: user_roles.is_active,
+  // residents.is_active, properties.is_active, and per-property
+  // PM-assignment. Helper returns boolean; reason for false is
+  // chain-point-agnostic at this layer (the escalation screen
+  // surfaces the right contact path based on userRole).
+  //
+  // RPC failure → fail closed (same posture as the company gate).
+  // RPC returns false → redirect to /deactivated with role param so
+  // the page can show role-scoped escalation messaging.
+  const { data: effectiveActive, error: effErr } = await supabase.rpc('get_my_effective_active')
+  if (effErr) {
+    if (typeof window !== 'undefined') {
+      window.location.href = '/deactivated?reason=rpc_error'
+    }
+    return { redirected: true }
+  }
+  if (effectiveActive !== true) {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams()
+      if (userRole) params.set('role', userRole)
+      window.location.href = `/deactivated?${params.toString()}`
+    }
+    return { redirected: true }
+  }
+
   if (gate.kind === 'allow_with_banner' && gate.banner === 'past_due') {
     // Compute days remaining from past_due_grace_until; floor at 0 for
     // cron-lag edge cases where grace_until is in the past but cron
