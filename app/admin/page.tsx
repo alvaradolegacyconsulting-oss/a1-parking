@@ -934,24 +934,46 @@ export default function AdminPortal() {
                 <label style={lbl}>Support Website</label><input value={editingCompany.support_website || ''} onChange={e => setEditingCompany({...editingCompany, support_website: e.target.value})} placeholder="company.com" style={inp} />
                 <label style={lbl}>TDLR License Number (optional)</label>
                 <input value={editingCompany.tdlr_license_number || ''} onChange={e => setEditingCompany({...editingCompany, tdlr_license_number: e.target.value})} placeholder="Texas tow-company license #" style={inp} />
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
-                  <div>
-                    <label style={lbl}>Account Type</label>
-                    <select value={editingCompany.tier_type || 'enforcement'} onChange={e => setEditingCompany({...editingCompany, tier_type: e.target.value, tier: e.target.value === 'enforcement' ? 'legacy' : 'essential'})} style={inp}>
-                      <option value="enforcement">Enforcement</option>
-                      <option value="property_management">Property Management</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={lbl}>Service Tier</label>
-                    <select value={editingCompany.tier || 'legacy'} onChange={e => setEditingCompany({...editingCompany, tier: e.target.value})} style={inp}>
-                      {(editingCompany.tier_type || 'enforcement') === 'enforcement'
-                        ? <><option value="starter">Starter</option><option value="growth">Growth</option><option value="legacy">Legacy</option></>
-                        : <><option value="essential">Essential</option><option value="professional">Professional</option><option value="enterprise">Enterprise</option></>
-                      }
-                    </select>
-                  </div>
-                </div>
+                {/* B165 — tier dropdowns are DISABLED when this company has a
+                    live Stripe subscription. The admin path UPDATEs companies.tier
+                    directly with no Stripe-side cascade, so using it on a live
+                    subscriber would put the customer on a new tier in our DB
+                    while their Stripe billing continues at the OLD rate (silent
+                    until next renewal). Customer-facing forced-upgrade modal
+                    (B165 changeTier flow) is the correct path for live
+                    subscribers. Dropdowns remain editable for unattached
+                    companies (admin-onboarded, A1 today, proposal-code customers
+                    between issue and redeem) where DB-only edits are safe. */}
+                {(() => {
+                  const isLiveSubscriber = editingCompany.stripe_subscription_id != null
+                  return (
+                    <>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                        <div>
+                          <label style={lbl}>Account Type</label>
+                          <select value={editingCompany.tier_type || 'enforcement'} disabled={isLiveSubscriber} onChange={e => setEditingCompany({...editingCompany, tier_type: e.target.value, tier: e.target.value === 'enforcement' ? 'legacy' : 'essential'})} style={{ ...inp, opacity: isLiveSubscriber ? 0.5 : 1, cursor: isLiveSubscriber ? 'not-allowed' : 'pointer' }}>
+                            <option value="enforcement">Enforcement</option>
+                            <option value="property_management">Property Management</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={lbl}>Service Tier</label>
+                          <select value={editingCompany.tier || 'legacy'} disabled={isLiveSubscriber} onChange={e => setEditingCompany({...editingCompany, tier: e.target.value})} style={{ ...inp, opacity: isLiveSubscriber ? 0.5 : 1, cursor: isLiveSubscriber ? 'not-allowed' : 'pointer' }}>
+                            {(editingCompany.tier_type || 'enforcement') === 'enforcement'
+                              ? <><option value="starter">Starter</option><option value="growth">Growth</option><option value="legacy">Legacy</option></>
+                              : <><option value="essential">Essential</option><option value="professional">Professional</option><option value="enterprise">Enterprise</option></>
+                            }
+                          </select>
+                        </div>
+                      </div>
+                      {isLiveSubscriber && (
+                        <p style={{ color: '#fbbf24', fontSize: 11, margin: '6px 0 0', lineHeight: 1.5 }}>
+                          ⓘ Live Stripe subscriber — tier change must go through the customer-facing upgrade flow so it cascades to billing. This dropdown is editable only for unattached companies (no <code>stripe_subscription_id</code>).
+                        </p>
+                      )}
+                    </>
+                  )
+                })()}
                 <div>
                   <label style={{ ...lbl, display:'flex', alignItems:'center', gap:'8px' }}>
                     Color Theme

@@ -47,6 +47,7 @@ import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationR
 // B71: decline-and-proceed interstitial — symmetric to driver portal.
 import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS } from '../components/DeclineReasonModal'
 import PostConfirmationEditModal from '../components/PostConfirmationEditModal'
+import { TierUpgradeModal, type TierUpgradeContext, nextWithinTrackTier } from '../components/TierUpgradeModal'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
@@ -72,6 +73,12 @@ export default function CompanyAdminPortal() {
   // B144 (B66.5 commit 4.3): invite status map (email → 'activated'|'invited'|'unknown')
   // populated after fetchCompanyUsers via POST /api/admin/invite-status.
   const [inviteStatuses, setInviteStatuses] = useState<Record<string, 'activated' | 'invited' | 'unknown'>>({})
+  // B165 — forced-upgrade modal state. Populated at cap-hit moments.
+  // pendingRetry holds the action the customer was trying to take when
+  // they hit the cap; runs after the modal reports success so the
+  // original add resumes.
+  const [tierUpgradeCtx, setTierUpgradeCtx] = useState<TierUpgradeContext | null>(null)
+  const [pendingTierUpgradeRetry, setPendingTierUpgradeRetry] = useState<(() => void) | null>(null)
   // B144: per-email 60s resend disable (timestamp when disable expires).
   const [resendDisabledUntil, setResendDisabledUntil] = useState<Record<string, number>>({})
   const [resendingEmail, setResendingEmail] = useState<string | null>(null)
@@ -621,13 +628,40 @@ export default function CompanyAdminPortal() {
     setProperties(data || [])
   }
 
+  // B165 — open the forced-upgrade modal at a cap-hit moment. Pre-fills
+  // the next within-track tier; if customer's already at the top tier,
+  // shows the legacy "limit reached" message instead (no upgrade path).
+  function offerForcedUpgrade(triggerReason: string, retry: () => void): boolean {
+    const ctx = getCompanyContext()
+    const currentTier = (ctx.tier || '').toLowerCase()
+    const currentTrack = (ctx.tier_type === 'pm' ? 'property_management' : ctx.tier_type) as 'enforcement' | 'property_management'
+    const nextTier = nextWithinTrackTier(currentTier, currentTrack)
+    const companyId = getCachedCompanyId()
+    if (!nextTier || !companyId) return false
+    setTierUpgradeCtx({
+      companyId,
+      currentTier,
+      targetTier: nextTier,
+      targetTrack: currentTrack,
+      triggerReason,
+    })
+    setPendingTierUpgradeRetry(() => retry)
+    return true
+  }
+
   async function saveProperty() {
     if (!newProperty.name) { setPropMsg('Property name is required'); return }
     const ctx = getCompanyContext()
     const activeCount = properties.filter(p => p.is_active).length
     if (!isUnderLimit(FEATURE_FLAGS.MAX_PROPERTIES, activeCount, ctx)) {
       const limit = getLimit(FEATURE_FLAGS.MAX_PROPERTIES, ctx)
-      setPropMsg(`Property limit reached (${limit}). Upgrade your tier to add more.`)
+      const opened = offerForcedUpgrade(
+        `You're at your ${limit}-property limit. Upgrade to continue.`,
+        () => { setPropMsg(''); saveProperty() },
+      )
+      if (!opened) {
+        setPropMsg(`Property limit reached (${limit}). Contact support to expand your account.`)
+      }
       return
     }
     setPropMsg('')
@@ -792,7 +826,13 @@ export default function CompanyAdminPortal() {
       const currentActiveCount = properties.filter(p => p.is_active).length
       if (!isUnderLimit(FEATURE_FLAGS.MAX_PROPERTIES, currentActiveCount, ctx)) {
         const limit = getLimit(FEATURE_FLAGS.MAX_PROPERTIES, ctx)
-        setPropMsg(`Property limit reached (${limit}). Upgrade your tier to reactivate this one.`)
+        const opened = offerForcedUpgrade(
+          `You're at your ${limit}-property limit. Upgrade to reactivate this property.`,
+          () => { setPropMsg(''); togglePropertyActive(prop) },
+        )
+        if (!opened) {
+          setPropMsg(`Property limit reached (${limit}). Contact support to expand your account.`)
+        }
         return
       }
     }
@@ -984,7 +1024,13 @@ export default function CompanyAdminPortal() {
       const activeCount = companyDrivers.filter(d => d.is_active).length
       if (!isUnderLimit(FEATURE_FLAGS.MAX_DRIVERS, activeCount, ctx)) {
         const limit = getLimit(FEATURE_FLAGS.MAX_DRIVERS, ctx)
-        setDriverMsg(`Driver limit reached (${limit}). Upgrade your tier to add more.`)
+        const opened = offerForcedUpgrade(
+          `You're at your ${limit}-driver limit. Upgrade to continue.`,
+          () => { setDriverMsg(''); createDriver() },
+        )
+        if (!opened) {
+          setDriverMsg(`Driver limit reached (${limit}). Contact support to expand your account.`)
+        }
         return
       }
     }
@@ -1073,7 +1119,13 @@ export default function CompanyAdminPortal() {
         const currentActiveCount = companyDrivers.filter(d => d.is_active).length
         if (!isUnderLimit(FEATURE_FLAGS.MAX_DRIVERS, currentActiveCount, ctx)) {
           const limit = getLimit(FEATURE_FLAGS.MAX_DRIVERS, ctx)
-          setDriverMsg(`Driver limit reached (${limit}). Upgrade your tier to reactivate this one.`)
+          const opened = offerForcedUpgrade(
+            `You're at your ${limit}-driver limit. Upgrade to reactivate this driver.`,
+            () => { setDriverMsg(''); toggleDriverActive(driver) },
+          )
+          if (!opened) {
+            setDriverMsg(`Driver limit reached (${limit}). Contact support to expand your account.`)
+          }
           return
         }
       }
@@ -3920,6 +3972,25 @@ export default function CompanyAdminPortal() {
             setDeclineModal(null)
             setViolation(v => ({ ...v, property: selectedProperty?.name || '' }))
             setShowViolation(true)
+          }}
+        />
+      )}
+
+      {/* B165 — forced-upgrade modal. Opens at cap-hit moments (4 sites:
+          saveProperty + togglePropertyActive + createDriver + toggleDriverActive).
+          onSuccess retries the original add action that hit the cap. */}
+      {tierUpgradeCtx && (
+        <TierUpgradeModal
+          ctx={tierUpgradeCtx}
+          onClose={() => {
+            setTierUpgradeCtx(null)
+            setPendingTierUpgradeRetry(null)
+          }}
+          onSuccess={() => {
+            const retry = pendingTierUpgradeRetry
+            setTierUpgradeCtx(null)
+            setPendingTierUpgradeRetry(null)
+            if (retry) retry()
           }}
         />
       )}
