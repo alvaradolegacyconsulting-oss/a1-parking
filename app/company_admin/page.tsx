@@ -1210,6 +1210,20 @@ export default function CompanyAdminPortal() {
     if (urErr) {
       console.error('[toggleUserActive] user_roles.is_active write failed (auth ban remains intact):', urErr.message, { email, activate })
     }
+    // ── Step 3: audit log (deactivation arc follow-up) ──────────────
+    // Auth ban + column write attempted at this point. Log the intent
+    // regardless of the (best-effort) column write — the load-bearing
+    // ban happened. Matches CA portal convention exactly: snake_case
+    // action label (`deactivate_user` / `activate_user`) mirrors the
+    // adjacent `deactivate_property` / `deactivate_driver` precedents
+    // in this file. Do NOT use SCREAMING_SNAKE here — that's the B60
+    // drift; matching local convention is the discipline. The
+    // column_write_failed field lets later audits detect the gap
+    // class (intent logged but column never reflected).
+    await auditLog(activate ? 'activate_user' : 'deactivate_user', 'user_roles', email, {
+      email, is_active: activate,
+      column_write_failed: !!urErr,
+    })
     setCompanyUsers(prev => prev.map(u => u.email === email ? { ...u, is_active: activate } : u))
     setTogglingUser(null)
   }
