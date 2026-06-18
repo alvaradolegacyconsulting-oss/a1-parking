@@ -294,7 +294,7 @@ Deactivated residents:
 - Can no longer issue visitor passes
 - Have their registered vehicles flagged as deactivated (drivers see the deactivation status during enforcement decisions)
 
-You can reactivate a deactivated resident if they return to the property. Their previous data stays intact.
+If a deactivated resident returns to the property, you can reactivate them from the Residents tab — find the deactivated row (use the "Show All" toggle if needed) and click **Reactivate**. Reactivation restores their access and their own previously-deactivated vehicles. It does not automatically restore visitor passes, or vehicles that were removed by a unit-vacancy cascade (when an entire unit was vacated by deactivating the last resident on it). Review the Vehicles tab after reactivating if you need to restore a vehicle that came in under a different owner; visitor passes need to be reissued.
 
 ---
 

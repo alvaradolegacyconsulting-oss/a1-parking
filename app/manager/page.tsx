@@ -791,6 +791,115 @@ export default function ManagerPortal() {
     fetchResidents(manager.name)
   }
 
+  async function reactivateResident(id: string) {
+    // B206 — accidental-deactivation undo path. Manager-portal only; same
+    // RLS as deactivateResident (residents_manager_update +
+    // manager_update_vehicles, both symmetric on is_active value).
+    //
+    // Cascade choice: option (iii) owner-trim-symmetric. Restores ONLY
+    // vehicles where (resident_email, unit, property) matches this
+    // resident — mirrors B166's trim shape, opposite direction. Does NOT
+    // touch B150-cascade-swept un-owned vehicles (a roommate's
+    // independently-deactivated car must not silently come back).
+    //
+    // Surface the gap: count un-owned cascade-swept vehicles on this
+    // (unit, property) so the confirm + the audit row both expose the
+    // side-effect honestly. The manager can review the Vehicles tab to
+    // restore a unit-cascade casualty if needed.
+    const { data: r } = await supabase.from('residents').select('email, unit, property').eq('id', id).maybeSingle()
+    if (!r?.email || !r?.unit || !r?.property) {
+      alert('Could not load resident details. Refresh and try again.')
+      return
+    }
+    const email = r.email.trim().toLowerCase()
+    const unit = r.unit.trim()
+    const property = r.property.trim()
+    if (!email || !unit || !property) {
+      alert('Resident has incomplete data. Cannot reactivate safely.')
+      return
+    }
+
+    // Pre-confirm counts. Cheap; informational only. Real numbers for the
+    // audit row come from the post-UPDATE result (handles TOCTOU drift if
+    // a vehicle gets touched between SELECT and UPDATE).
+    const escUnit = escapeIlikeValue(unit)
+    const escProperty = escapeIlikeValue(property)
+    const { count: ownerStampedCount } = await supabase
+      .from('vehicles')
+      .select('id', { count: 'exact', head: true })
+      .eq('resident_email', email)
+      .ilike('unit', escUnit)
+      .ilike('property', escProperty)
+      .eq('is_active', false)
+    const { count: totalInactiveOnUnit } = await supabase
+      .from('vehicles')
+      .select('id', { count: 'exact', head: true })
+      .ilike('unit', escUnit)
+      .ilike('property', escProperty)
+      .eq('is_active', false)
+    const willRestore = ownerStampedCount ?? 0
+    const wontRestore = Math.max(0, (totalInactiveOnUnit ?? 0) - willRestore)
+
+    const confirmMsg = wontRestore > 0
+      ? `Reactivate this resident? Their own previously-deactivated vehicle${willRestore === 1 ? '' : 's'} (${willRestore}) will be reactivated. ${wontRestore} other vehicle${wontRestore === 1 ? '' : 's'} on this unit ${wontRestore === 1 ? 'was' : 'were'} removed by a unit-vacancy cascade and will NOT be auto-restored — review the Vehicles tab if needed.`
+      : `Reactivate this resident? Their own previously-deactivated vehicle${willRestore === 1 ? '' : 's'} (${willRestore}) will be reactivated.`
+    if (!confirm(confirmMsg)) return
+
+    // 1. Flip residents.is_active=true (single row by id — same shape as deactivate).
+    await supabase.from('residents').update({ is_active: true }).eq('id', id)
+
+    // 2. Owner-trim-symmetric vehicle restore. Mirrors B166's
+    // trimDepartedResidentVehicles predicate exactly, opposite direction.
+    // Wildcard-escape discipline matches the deactivate path. Does NOT
+    // touch un-owned vehicles (B150 cascade casualties stay deactivated).
+    let restoredVehicles: { id: number; plate: string }[] = []
+    if (willRestore > 0) {
+      const { data: restored, error: vErr } = await supabase
+        .from('vehicles')
+        .update({ is_active: true })
+        .eq('resident_email', email)
+        .ilike('unit', escUnit)
+        .ilike('property', escProperty)
+        .eq('is_active', false)
+        .select('id, plate')
+      if (vErr) {
+        console.error('[B206-reactivate-vehicles-restore-failed]', { id, email, unit, property, error: vErr.message })
+      } else {
+        restoredVehicles = (restored as { id: number; plate: string }[]) || []
+      }
+    }
+
+    // 3. Audit with BOTH halves of the picture so forensic trace shows
+    // what came back AND what didn't. SCREAMING_SNAKE matches the
+    // adjacent DEACTIVATE_RESIDENT precedent in this same file (manager-
+    // portal convention; do NOT drift to CA's snake_case here — B60).
+    //
+    // Action label: REACTIVATE_RESIDENT (not ACTIVATE_RESIDENT) keeps
+    // this specifically about UNDOING a prior deactivation — stays
+    // distinct from the first-time approval path (APPROVE_RESIDENT)
+    // when querying audit_logs later.
+    //
+    // Note on vehicles_not_restored: this count may include NULL-owner
+    // vehicles (rows where vehicles.resident_email is NULL — possible
+    // from forward-only stamp history or B166 pre-migration duplicates).
+    // No owner-scoped restore can recover those; they need manual
+    // Vehicles-tab review regardless. Near-zero for A1 (post-wipe data
+    // is freshly stamped). Documentation only — not a fix.
+    await logAudit({
+      action: 'REACTIVATE_RESIDENT',
+      table_name: 'residents',
+      record_id: id,
+      new_values: {
+        is_active: true,
+        property: manager.name,
+        vehicles_restored: restoredVehicles.length,
+        vehicles_not_restored: wontRestore,
+        restored_plates: restoredVehicles.map(v => v.plate),
+      },
+    })
+    fetchResidents(manager.name)
+  }
+
   // B166 — owner-trim. Flips vehicles.is_active=false for the departed
   // resident's vehicles, scoped to (resident_email, property, unit). One
   // field flip covers both halves of the defect: privacy (resident-portal
@@ -1699,6 +1808,8 @@ export default function ManagerPortal() {
                         style={{ flex:1, padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial', fontWeight:'bold' }}>Edit</button>
                       {r.is_active && <button onClick={() => deactivateResident(r.id)}
                         style={{ padding:'7px 12px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Deactivate</button>}
+                      {!r.is_active && <button onClick={() => reactivateResident(r.id)}
+                        style={{ padding:'7px 12px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Reactivate</button>}
                     </>
                   )}
                   <button onClick={() => { setResetPwTarget(resetPwTarget === r.email ? null : r.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
