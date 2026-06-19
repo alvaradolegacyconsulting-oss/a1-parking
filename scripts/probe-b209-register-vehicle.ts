@@ -57,7 +57,11 @@ interface Persona {
   email: string
   password: string
   authUserId: string
-  accessToken: string
+  // Full session object — @supabase/ssr expects the COMPLETE session JSON
+  // (access_token + refresh_token + expires_at + expires_in + token_type +
+  // user) in the cookie value, not just the access_token. Synthesizing a
+  // partial cookie shape causes getUser() to silently reject the session.
+  session: any
 }
 
 async function spawnPersona(suffix: string): Promise<Persona> {
@@ -69,8 +73,6 @@ async function spawnPersona(suffix: string): Promise<Persona> {
   if (cErr || !created.user) throw new Error(`spawnPersona ${suffix}: ${cErr?.message ?? 'no user'}`)
   cleanup.push(async () => { await admin.auth.admin.deleteUser(created.user!.id).catch(() => {}) })
 
-  // Acquire access_token by signing in (anon client). This is the
-  // session JWT the route will see via Cookie.
   const anon = createClient(supabaseUrl, supabaseAnonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
@@ -80,7 +82,7 @@ async function spawnPersona(suffix: string): Promise<Persona> {
   return {
     email, password,
     authUserId: created.user.id,
-    accessToken: signedIn.session.access_token,
+    session: signedIn.session,
   }
 }
 
@@ -110,20 +112,25 @@ interface RouteResponse {
   body: any
 }
 
-async function callRoute(accessToken: string | null, payload: any): Promise<RouteResponse> {
-  // Supabase's auth cookie name in this project's config:
-  // sb-<project_ref>-auth-token. We send the access_token via a
-  // synthesized cookie that createSupabaseServerClient will read.
-  // (The route uses createServerClient which calls getUser() against
-  // the JWT it finds in the cookie store.)
+async function callRoute(session: any | null, payload: any): Promise<RouteResponse> {
+  // Supabase SSR cookie format. The @supabase/ssr client writes the auth
+  // session as a single cookie named sb-<project_ref>-auth-token. Recent
+  // versions support BOTH plain JSON and base64-prefixed base64 encoding;
+  // older versions only plain JSON. We send plain JSON for compatibility.
+  //
+  // CRITICAL: the cookie value must be the COMPLETE session shape
+  // (access_token, refresh_token, expires_in, expires_at, token_type,
+  // user). A partial shape causes getUser() to silently fail validation,
+  // returning user=null and the route 401s.
+  //
+  // For larger sessions (~4KB+ when the user_metadata is heavy), the SSR
+  // client splits across chunks (sb-<ref>-auth-token.0, .1, .2). Our test
+  // sessions are well under that threshold so a single cookie suffices.
   const projectRef = supabaseUrl.split('//')[1].split('.')[0]
   const cookieName = `sb-${projectRef}-auth-token`
-  // Cookie value shape Supabase expects: a JSON object stringified with the access_token field.
-  const cookieValue = accessToken
-    ? encodeURIComponent(JSON.stringify({ access_token: accessToken, token_type: 'bearer' }))
-    : ''
+  const cookieValue = session ? encodeURIComponent(JSON.stringify(session)) : ''
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (accessToken) headers.Cookie = `${cookieName}=${cookieValue}`
+  if (session) headers.Cookie = `${cookieName}=${cookieValue}`
 
   const res = await fetch(`${baseUrl}/api/register/companion-vehicle`, {
     method: 'POST',
@@ -175,7 +182,7 @@ async function caseNoResidentsRow() {
     // This simulates a between-steps race where signInWithPassword
     // landed but the residents insert hasn't fired yet, OR a future
     // bug where the residents insert was skipped.
-    const r = await callRoute(persona.accessToken, {
+    const r = await callRoute(persona.session, {
       vehicles: [{ plate: 'ORPH1', state: 'TX', make: 'Honda', model: 'Civic', color: 'silver' }],
     })
     const pass = r.status === 400 && r.body?.ok === false && r.body?.error_class === 'no_residents_row'
@@ -208,8 +215,10 @@ async function caseValidScope() {
     const unit = `B209-${RUN_TAG.slice(-3)}`     // unique per probe run
     await spawnFixtureResident('valid', persona.email, property, unit)
 
-    const plates = [`B209${RUN_TAG.slice(-3)}A`, `B209${RUN_TAG.slice(-3)}B`]
-    const r = await callRoute(persona.accessToken, {
+    // Plates uppercase to match route's normalizePlate output — assertions
+    // use .in('plate', plates) which is case-sensitive against the stored row.
+    const plates = [`B209${RUN_TAG.slice(-3).toUpperCase()}A`, `B209${RUN_TAG.slice(-3).toUpperCase()}B`]
+    const r = await callRoute(persona.session, {
       vehicles: plates.map(p => ({
         plate: p,
         state: 'TX',
@@ -273,9 +282,9 @@ async function caseScopeSpoof() {
     const persona = await spawnPersona('spoof')
     await spawnFixtureResident('spoof', persona.email, 'Bayou Heights Apartments', `B209-${RUN_TAG.slice(-3)}-SPOOF`)
 
-    const plate = `SPOOF${RUN_TAG.slice(-3)}`
+    const plate = `SPOOF${RUN_TAG.slice(-3).toUpperCase()}`
     const targetVictimEmail = `b209-VICTIM-${RUN_TAG}@example.com`  // does not exist; doesn't matter — body field is ignored
-    const r = await callRoute(persona.accessToken, {
+    const r = await callRoute(persona.session, {
       vehicles: [{ plate, state: 'TX' }],
       // Try to inject scope via body. The route ignores these (uses
       // residents-row-derived scope only).
