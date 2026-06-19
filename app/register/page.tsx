@@ -18,6 +18,11 @@ function RegisterForm() {
   const [step, setStep] = useState(1)
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
+  // B209 — tow-stakes gap copy surfaced after registration if any
+  // vehicle insert failed in the server-side companion-vehicle route.
+  // Renders prominently in the success screen (not a footnote) because
+  // the downstream consequence is the resident's car getting TOWED.
+  const [vehicleGapMessage, setVehicleGapMessage] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
@@ -132,23 +137,63 @@ function RegisterForm() {
         }])
       }
 
-      for (const v of vehicles) {
-        if (!v.plate.trim()) continue
-        await supabase.from('vehicles').insert([{
-          plate: normalizePlate(v.plate),
+      // B209 — server-side companion-vehicle route. The previous
+      // client-side direct .from('vehicles').insert() relied on the
+      // resident_insert_vehicles RLS policy, which was DROPped by the
+      // cascading-deactivation arc (7da03d2, 2026-06-17) — every public
+      // self-register with a vehicle was silently permission-denied
+      // because the old call site had no error capture.
+      //
+      // The route uses an admin (service-role) client that bypasses
+      // RLS, with scope (unit, property, resident_email) derived
+      // server-side from the just-inserted residents row — the body
+      // carries ONLY the cosmetic fields (plate/state/make/model/year/
+      // color), no caller-supplied scope.
+      //
+      // Soft-fail discipline (B167 pattern): per-vehicle insert failure
+      // does NOT roll back the registration. The route returns 200 with
+      // a soft-fail aggregate; we surface vehicleGapMessage on the
+      // success screen — tow-stakes copy, NOT a generic save-failure
+      // footnote (the resident's car is otherwise tow-eligible until
+      // they add it via the portal).
+      const submittableVehicles = vehicles
+        .filter((v: any) => typeof v.plate === 'string' && v.plate.trim().length > 0)
+        .map((v: any) => ({
+          plate: v.plate,
           state: v.state,
-          make: v.make.trim() || null,
-          model: v.model.trim() || null,
-          year: parseInt(v.year) || null,
-          color: v.color.trim() || null,
-          unit: account.unit.trim(),
-          property: property || null,
-          // B166 — stamp owner. account.email already lowercased+trimmed
-          // for the residents/user_roles inserts above; mirror it here.
-          resident_email: account.email.trim().toLowerCase(),
-          is_active: false,
-          status: 'pending',
-        }])
+          make: v.make,
+          model: v.model,
+          year: v.year ? parseInt(v.year, 10) : null,
+          color: v.color,
+        }))
+      if (submittableVehicles.length > 0) {
+        try {
+          const res = await fetch('/api/register/companion-vehicle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vehicles: submittableVehicles }),
+          })
+          if (!res.ok) {
+            // Route-level failure (401, 500, network). Treat ALL submitted
+            // plates as not-registered for the gap message — the route
+            // either rejected the call or never got far enough to insert.
+            const failedPlates = submittableVehicles.map(v => normalizePlate(v.plate))
+            console.error('[B209-route-error]', { status: res.status })
+            setVehicleGapMessage(
+              `⚠ Your vehicle${failedPlates.length === 1 ? '' : 's'} (${failedPlates.join(', ')}) ${failedPlates.length === 1 ? 'is' : 'are'} NOT yet registered and could be towed if parked at your property. Sign in to your resident portal now and submit ${failedPlates.length === 1 ? 'it' : 'each'} through "Request a Vehicle" — it only takes a minute and you'll see status updates as your manager approves.`
+            )
+          } else {
+            const body = await res.json().catch(() => ({}))
+            if (body?.gap_message) setVehicleGapMessage(body.gap_message)
+          }
+        } catch (fetchErr) {
+          // Network-class failure. Same soft-fail treatment.
+          const failedPlates = submittableVehicles.map(v => normalizePlate(v.plate))
+          console.error('[B209-route-fetch-failed]', { error: (fetchErr as Error).message })
+          setVehicleGapMessage(
+            `⚠ Your vehicle${failedPlates.length === 1 ? '' : 's'} (${failedPlates.join(', ')}) ${failedPlates.length === 1 ? 'is' : 'are'} NOT yet registered and could be towed if parked at your property. Sign in to your resident portal now and submit ${failedPlates.length === 1 ? 'it' : 'each'} through "Request a Vehicle" — it only takes a minute and you'll see status updates as your manager approves.`
+          )
+        }
       }
 
       // B155.2 F4 — consent capture is legal-evidence (proof of ToS/
@@ -185,7 +230,7 @@ function RegisterForm() {
   if (done) {
     return (
       <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-        <div style={{ maxWidth:'420px', width:'100%', textAlign:'center' }}>
+        <div style={{ maxWidth:'460px', width:'100%', textAlign:'center' }}>
           <div style={{ background:'#0d1f0d', border:'1px solid #2e7d32', borderRadius:'16px', padding:'40px 32px' }}>
             <div style={{ fontSize:'48px', marginBottom:'16px' }}>✓</div>
             <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'20px', margin:'0 0 12px' }}>Registration Submitted!</p>
@@ -195,6 +240,19 @@ function RegisterForm() {
             </p>
             {property && <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Property: {property}</p>}
           </div>
+          {/* B209 — unmissable tow-stakes warning. Rendered as a high-
+              contrast warning band immediately below the success card,
+              ABOVE the back-to-login link, so the resident can't dismiss
+              the success screen without seeing it. Copy lives in the
+              gap_message field (server-built for single/multiple plate
+              cases, network-failure fallback built client-side). */}
+          {vehicleGapMessage && (
+            <div role="alert" style={{ background:'#3a1a08', border:'2px solid #f59e0b', borderRadius:'14px', padding:'18px 22px', marginTop:'20px', textAlign:'left' }}>
+              <p style={{ color:'#fbbf24', fontWeight:'bold', fontSize:'13px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 10px' }}>Action required — tow risk</p>
+              <p style={{ color:'#fef3c7', fontSize:'14px', lineHeight:'1.65', margin:'0 0 14px' }}>{vehicleGapMessage}</p>
+              <a href="/login" style={{ display:'inline-block', background:'#f59e0b', color:'#0f1117', fontWeight:'bold', fontSize:'13px', padding:'9px 18px', borderRadius:'8px', textDecoration:'none' }}>Sign in and register your vehicle →</a>
+            </div>
+          )}
           <a href="/login" style={{ display:'block', marginTop:'20px', color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>← Back to Login</a>
         </div>
       </main>
