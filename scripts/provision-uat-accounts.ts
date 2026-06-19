@@ -138,7 +138,13 @@ const USERS: UserSpec[] = [
   ]),
   { email: `alvaradolegacyconsulting+uat${ES}-manager@gmail.com`,  password: `UAT2026!${PS}MG`, role: 'manager',        scopeProperty: true  },
   { email: `alvaradolegacyconsulting+uat${ES}-leasing@gmail.com`,  password: `UAT2026!${PS}LE`, role: 'leasing_agent',  scopeProperty: true  },
-  { email: `alvaradolegacyconsulting+uat${ES}-resident@gmail.com`, password: `UAT2026!${PS}RE`, role: 'resident',       scopeProperty: true  },
+  { email: `alvaradolegacyconsulting+uat${ES}-resident@gmail.com`,    password: `UAT2026!${PS}RE`,  role: 'resident',       scopeProperty: true  },
+  // 2nd resident so the manager Residents tab shows a list (>1 item),
+  // not a singleton view. Different unit (2B) — keeps the rehearsal
+  // realistic (apartment-property tester sees multiple distinct units).
+  // No edge-case fixtures (shared unit / NULL owner) — that's separate
+  // regression tooling, not baked into the A1 rehearsal environment.
+  { email: `alvaradolegacyconsulting+uat${ES}-resident2@gmail.com`,   password: `UAT2026!${PS}R2`,  role: 'resident',       scopeProperty: true  },
 ]
 
 interface VehicleSpec {
@@ -338,21 +344,31 @@ async function main() {
     }
   }
 
-  // ── 5b. residents row (for the resident user) ─────────────────────
-  const residentUser = USERS.find(u => u.role === 'resident')!
-  const { data: existingResident } = await supabase
-    .from('residents')
-    .select('id')
-    .ilike('email', residentUser.email)
-    .maybeSingle()
-  if (existingResident) {
-    console.log(`  ✓ residents row for ${residentUser.email} exists (id=${existingResident.id})`)
-  } else {
+  // ── 5b. residents rows (1 per resident user, each on distinct unit) ──
+  // Two resident users on two units — surfaces "list of residents" in
+  // the manager Residents tab (was a singleton view pre-2026-06-19).
+  // First resident keeps RESIDENT_UNIT (the original UAT seed); second
+  // gets RESIDENT_B_UNIT below.
+  const RESIDENT_B_UNIT = '2B'
+  const residentUsers = USERS.filter(u => u.role === 'resident')
+  for (let i = 0; i < residentUsers.length; i++) {
+    const ru = residentUsers[i]
+    const unit = i === 0 ? RESIDENT_UNIT : RESIDENT_B_UNIT
+    const displayName = i === 0 ? 'UAT Resident' : 'UAT Resident B'
+    const { data: existingResident } = await supabase
+      .from('residents')
+      .select('id')
+      .ilike('email', ru.email)
+      .maybeSingle()
+    if (existingResident) {
+      console.log(`  ✓ residents row for ${ru.email} exists (id=${existingResident.id})`)
+      continue
+    }
     const { error } = await supabase.from('residents').insert([{
-      email: residentUser.email,
-      name: 'UAT Resident',
-      phone: '713-555-0102',
-      unit: RESIDENT_UNIT,
+      email: ru.email,
+      name: displayName,
+      phone: i === 0 ? '713-555-0102' : '713-555-0103',
+      unit,
       property: PROPERTY_NAME,
       company: COMPANY_NAME,
       is_active: true,
@@ -360,12 +376,27 @@ async function main() {
       texas_confirmed: true,
       texas_confirmed_at: new Date().toISOString(),
     }])
-    if (error) console.error('  ✗ residents INSERT failed:', error.message)
-    else console.log(`  ✓ residents row created for ${residentUser.email} (unit ${RESIDENT_UNIT})`)
+    if (error) console.error(`  ✗ residents INSERT failed for ${ru.email}:`, error.message)
+    else console.log(`  ✓ residents row created for ${ru.email} (unit ${unit})`)
   }
 
-  // ── 6. Seed vehicles (2, both active/approved) ────────────────────
-  console.log(`\n[6/6] Seed vehicles (2)`)
+  // ── 6. Seed vehicles (2, both owned by residentA, active/approved) ──
+  // B209-aligned (2026-06-19): resident_email STAMPED at insert time.
+  // Pre-fix, this script was creating NULL-owner vehicles — the same
+  // NULL-owner class that B206 reactivation hit (Bob Brown's vehicles
+  // didn't trim because they were never stamped). Now stamped so the
+  // owner-trim discipline (B166) + reactivation flow (B206) work on
+  // UAT seeds the same way they do on production-flow inserts.
+  //
+  // is_active=true/status='active' is INTENTIONAL — UAT seeds are
+  // pre-approved so testers can exercise downstream flows (driver
+  // scan-plate, resident portal, manager Residents tab) without first
+  // walking through approval queue. This is NOT the /register
+  // pending-approval posture; B209 fixed the latter, this seed is
+  // operator-provisioned shortcut for rehearsal.
+  const residentAUser = USERS.find(u => u.role === 'resident')!
+  const residentAEmail = residentAUser.email.toLowerCase()
+  console.log(`\n[6/7] Seed vehicles (2, owned by ${residentAEmail})`)
   for (const v of SEED_VEHICLES) {
     const { data: existing } = await supabase
       .from('vehicles')
@@ -387,11 +418,48 @@ async function main() {
       color: v.color,
       unit: RESIDENT_UNIT,
       property: PROPERTY_NAME,
+      // B209 alignment — owner stamp (B166 discipline). lowercased
+      // per the convention all forward-stamping paths use.
+      resident_email: residentAEmail,
       is_active: true,
       status: 'active',
     }])
     if (error) console.error(`  ✗ vehicle ${v.plate} INSERT failed:`, error.message)
     else console.log(`  ✓ vehicle ${v.plate} created (${v.year} ${v.color} ${v.make} ${v.model})`)
+  }
+
+  // ── 7. Seed visitor pass (1, active, residentA's unit) ────────────
+  // One active pass for surface visibility — tester sees the Visitor
+  // Passes tab populated, not empty. Single pass keeps cast minimal
+  // (no expired-pass-filter regression matrix — that's separate
+  // tooling). Matches the visitor_passes schema columns confirmed
+  // 2026-06-19 against production.
+  console.log(`\n[7/7] Seed visitor pass (1, active, unit ${RESIDENT_UNIT})`)
+  const seedPassPlate = `UATVP01`
+  const { data: existingPass } = await supabase
+    .from('visitor_passes')
+    .select('id, plate')
+    .eq('plate', seedPassPlate)
+    .ilike('property', PROPERTY_NAME)
+    .eq('is_active', true)
+    .maybeSingle()
+  if (existingPass) {
+    console.log(`  ✓ visitor pass ${seedPassPlate} exists (id=${existingPass.id})`)
+  } else {
+    const durationHours = 24
+    const expiresAt = new Date(Date.now() + durationHours * 3600 * 1000).toISOString()
+    const { error } = await supabase.from('visitor_passes').insert([{
+      plate: seedPassPlate,
+      visitor_name: 'UAT Visitor',
+      visiting_unit: RESIDENT_UNIT,
+      vehicle_desc: 'Blue Honda Civic',
+      duration_hours: durationHours,
+      expires_at: expiresAt,
+      is_active: true,
+      property: PROPERTY_NAME,
+    }])
+    if (error) console.error(`  ✗ visitor pass INSERT failed:`, error.message)
+    else console.log(`  ✓ visitor pass ${seedPassPlate} created (expires ${expiresAt})`)
   }
 
   // ── HAND-OFF SUMMARY ──────────────────────────────────────────────
