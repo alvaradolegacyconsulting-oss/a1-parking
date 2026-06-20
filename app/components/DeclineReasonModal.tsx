@@ -35,8 +35,13 @@ const OTHER_NOTE_MIN_LENGTH = 10
 
 interface Props {
   plate: string
-  authorizedAs: 'resident' | 'visitor'
-  /** Description fragment shown in the banner ("active resident at Unit 12B", "active visitor pass visiting Unit 7"). Caller composes from scan result. */
+  // B214: 'guest' added for manager-vetted multi-week guest authorizations
+  // (guest_authorizations table). Same B71 override semantics — even a
+  // vetted guest's vehicle can still violate location/manner (fire lane,
+  // handicap, etc.) and needs the structured decline-reason capture before
+  // the violation form opens.
+  authorizedAs: 'resident' | 'visitor' | 'guest'
+  /** Description fragment shown in the banner ("active resident at Unit 12B", "active visitor pass visiting Unit 7", "authorized guest visiting Unit 503"). Caller composes from scan result. */
   authorizedDetail?: string
   onCancel: () => void
   onConfirm: (reason: DeclineReason, note: string | null) => void
@@ -56,7 +61,10 @@ export default function DeclineReasonModal({ plate, authorizedAs, authorizedDeta
     onConfirm(reason as DeclineReason, note.trim().length > 0 ? note.trim() : null)
   }
 
-  const authorizedLabel = authorizedAs === 'resident' ? 'active resident' : 'active visitor pass'
+  const authorizedLabel =
+    authorizedAs === 'resident' ? 'active resident'
+    : authorizedAs === 'visitor' ? 'active visitor pass'
+    : 'authorized guest'
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>

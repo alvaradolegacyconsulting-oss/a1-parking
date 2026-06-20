@@ -54,7 +54,9 @@ export default function DriverPortal() {
   // a modal collects a structured reason before the form opens. The chosen
   // reason + note are then locked in for the submission (persisted to
   // violations.decline_reason / decline_reason_note + was_authorized_at_time).
-  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor'; detail: string } | null>(null)
+  // B214: 'guest' added for guest_authorized plate scans (manager-vetted
+  // multi-week authorizations). Same B71 override path as resident/visitor.
+  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor' | 'guest'; detail: string } | null>(null)
   const [pendingDecline, setPendingDecline] = useState<{ reason: DeclineReason; note: string | null } | null>(null)
   const [photos, setPhotos] = useState<File[]>([])
   const [violationVideo, setViolationVideo] = useState<File|null>(null)
@@ -370,6 +372,31 @@ export default function DriverPortal() {
         : expiredVeh.status === 'declined' ? 'declined'
         : 'expired'
       setSearching(false); setResult({ status: resultStatus, data: { ...expiredVeh, _space_notes: spaceNotes } }); return
+    }
+
+    // B214 — guest_authorizations stage 2.5 of the enforcement cascade.
+    // Inserts BETWEEN vehicles (stages 1+2) and visitor_passes (stage 3) so
+    // a vetted guest's plate is recognized BEFORE the visitor-pass check
+    // (which would otherwise return notfound for a plate the manager
+    // explicitly authorized). Date predicate matches the table's primary
+    // index (is_active+status+start_date+end_date) for an index-only scan.
+    //
+    // .order(end_date desc).limit(1).maybeSingle() handles the overlap case
+    // (Finding 2): if two authorizations are simultaneously active for the
+    // same plate+property, surface the longer-running one. No hard unique
+    // constraint exists by design (overlap can be legit) — this just keeps
+    // the cascade deterministic when the soft-overlap-warning at create
+    // time (commit 3) isn't honored.
+    const todayIso = new Date().toISOString().split('T')[0]
+    const { data: guestAuth } = await supabase
+      .from('guest_authorizations').select('*')
+      .ilike('plate', clean).ilike('property', selectedProperty)
+      .eq('is_active', true).eq('status', 'active')
+      .lte('start_date', todayIso).gte('end_date', todayIso)
+      .order('end_date', { ascending: false })
+      .limit(1).maybeSingle()
+    if (guestAuth) {
+      setSearching(false); setResult({ status: 'guest_authorized', data: guestAuth }); return
     }
 
     const { data: pass } = await supabase.from('visitor_passes').select('*')
@@ -1171,8 +1198,12 @@ export default function DriverPortal() {
               {result && (
                 <div style={{
                   marginTop: '0', padding: '16px', borderRadius: '10px',
-                  background: result.status === 'authorized' ? '#061406' : result.status === 'visitor' ? '#150f00' : '#140404',
-                  border: `1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'visitor' ? '#a16207' : '#991b1b'}`
+                  // B214: guest_authorized = blue (distinct from green=resident,
+                  // orange=visitor). LOUD distinction per Jose 2026-06-20 —
+                  // guest_authorized is the newest status with no driver muscle
+                  // memory; tow-by-default risk is highest here.
+                  background: result.status === 'authorized' ? '#061406' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
+                  border: `1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
                 }}>
                   {result.status === 'authorized' && (
                     <>
@@ -1187,6 +1218,39 @@ export default function DriverPortal() {
                           (fire lane, handicap, blocked access). Issue Violation
                           opens the decline-reason interstitial first. */}
                       <button onClick={() => setDeclineModal({ authorizedAs: 'resident', detail: result.data.unit ? `at Unit ${result.data.unit}` : '' })}
+                        style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                        Issue Violation (location/manner override)
+                      </button>
+                    </>
+                  )}
+
+                  {result.status === 'guest_authorized' && (
+                    <>
+                      {/* B214: vetted multi-week guest authorization (manager-
+                          created via /api/.../create-guest-authorization RPC).
+                          LOUD "DO NOT TOW" banner is load-bearing — this is
+                          the newest status with no driver muscle memory; the
+                          unambiguous-beats-subtle directive (Jose 2026-06-20)
+                          is to prevent tow-by-default when a driver sees an
+                          unfamiliar panel.
+
+                          Issue Violation button is the gold-outline B71-parity
+                          override (NOT the red tow button) — a vetted guest
+                          can still violate location/manner (fire lane, etc.),
+                          but it routes through the decline-reason modal first. */}
+                      <p style={{ color: '#3b82f6', fontWeight: 'bold', fontSize: '17px', margin: '0 0 8px' }}>✓ AUTHORIZED GUEST</p>
+                      <div style={{ background: '#1e3a5f', borderLeft: '4px solid #3b82f6', padding: '12px 14px', borderRadius: '6px', marginBottom: '14px' }}>
+                        <p style={{ color: 'white', fontSize: '16px', fontWeight: 'bold', margin: '0 0 4px', letterSpacing: '0.02em' }}>DO NOT TOW</p>
+                        <p style={{ color: '#bfdbfe', fontSize: '12px', margin: '0', lineHeight: '1.5' }}>Manager-authorized guest. Valid through <strong style={{ color: 'white' }}>{result.data.end_date}</strong>.</p>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
+                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Guest</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.guest_name}</span></div>
+                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>{result.data.visiting_unit ? 'Visiting Unit' : 'Type'}</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.visiting_unit || result.data.non_resident_reason}</span></div>
+                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Authorized From</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.start_date}</span></div>
+                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Authorized Through</span><br /><span style={{ color: '#3b82f6', fontSize: '13px', fontWeight: 'bold' }}>{result.data.end_date}</span></div>
+                        <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Approved by</span><br /><span style={{ color: '#aaa', fontSize: '12px' }}>{result.data.created_by_email}</span></div>
+                      </div>
+                      <button onClick={() => setDeclineModal({ authorizedAs: 'guest', detail: result.data.visiting_unit ? `visiting Unit ${result.data.visiting_unit}` : (result.data.non_resident_reason ? `(${result.data.non_resident_reason})` : '') })}
                         style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>

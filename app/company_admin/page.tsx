@@ -121,7 +121,9 @@ export default function CompanyAdminPortal() {
   const [showViolation, setShowViolation] = useState(false)
   const [violation, setViolation] = useState({ type: '', location: '', notes: '', property: '', vehicle_color: '', vehicle_make: '', vehicle_model: '', vehicle_year: '' })
   // B71: decline-and-proceed state. Mirrors driver/page.tsx semantics.
-  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor'; detail: string } | null>(null)
+  // B214: 'guest' added for guest_authorized plate scans (manager-vetted
+  // multi-week authorizations). Same B71 override path as resident/visitor.
+  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor' | 'guest'; detail: string } | null>(null)
   const [pendingDecline, setPendingDecline] = useState<{ reason: DeclineReason; note: string | null } | null>(null)
   const [photos, setPhotos] = useState<File[]>([])
   const [violationVideo, setViolationVideo] = useState<File|null>(null)
@@ -1342,6 +1344,26 @@ export default function CompanyAdminPortal() {
     }
 
     const propNames = properties.map((p: any) => p.name)
+
+    // B214 — guest_authorizations stage 2.5 of the enforcement cascade.
+    // CA-portal variant: scoped via .in('property', propNames) to ALL of the
+    // CA's company's properties (CA scans cross-property; driver's variant
+    // is single-property). Date predicate matches the table's primary index.
+    // .order(end_date desc).limit(1).maybeSingle() handles the overlap case
+    // (Finding 2) — surfaces the longer-running auth if two are simultaneously
+    // active for the same plate.
+    const todayIso = new Date().toISOString().split('T')[0]
+    const { data: guestAuth } = await supabase
+      .from('guest_authorizations').select('*')
+      .ilike('plate', clean).in('property', propNames)
+      .eq('is_active', true).eq('status', 'active')
+      .lte('start_date', todayIso).gte('end_date', todayIso)
+      .order('end_date', { ascending: false })
+      .limit(1).maybeSingle()
+    if (guestAuth) {
+      setSearching(false); setResult({ status: 'guest_authorized', data: guestAuth }); return
+    }
+
     const { data: passData } = await supabase.from('visitor_passes').select('*')
       .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString())
       .in('property', propNames).single()
@@ -2330,8 +2352,11 @@ export default function CompanyAdminPortal() {
 
               {result && (
                 <div style={{ marginTop:'16px', padding:'16px', borderRadius:'10px',
-                  background: result.status === 'authorized' ? '#061406' : result.status === 'visitor' ? '#150f00' : '#140404',
-                  border:`1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'visitor' ? '#a16207' : '#991b1b'}`
+                  // B214: guest_authorized = blue (parity with driver portal).
+                  // LOUD distinction per Jose 2026-06-20 — newest status, no
+                  // muscle memory, tow-by-default risk is highest here.
+                  background: result.status === 'authorized' ? '#061406' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
+                  border:`1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
                 }}>
                   {result.status === 'authorized' && (
                     <>
@@ -2344,6 +2369,32 @@ export default function CompanyAdminPortal() {
                       </div>
                       {/* B71: authorized-plate override. Same flow as driver portal. */}
                       <button onClick={() => setDeclineModal({ authorizedAs:'resident', detail: result.data.unit ? `at Unit ${result.data.unit}` : '' })}
+                        style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                        Issue Violation (location/manner override)
+                      </button>
+                    </>
+                  )}
+                  {result.status === 'guest_authorized' && (
+                    <>
+                      {/* B214: vetted multi-week guest authorization. LOUD
+                          "DO NOT TOW" banner per Jose 2026-06-20 — same shape
+                          as driver portal so CA + driver see identical
+                          unambiguous copy when a guest-authorized plate is
+                          scanned. */}
+                      <p style={{ color:'#3b82f6', fontWeight:'bold', fontSize:'17px', margin:'0 0 8px' }}>✓ AUTHORIZED GUEST</p>
+                      <div style={{ background:'#1e3a5f', borderLeft:'4px solid #3b82f6', padding:'12px 14px', borderRadius:'6px', marginBottom:'14px' }}>
+                        <p style={{ color:'white', fontSize:'16px', fontWeight:'bold', margin:'0 0 4px', letterSpacing:'0.02em' }}>DO NOT TOW</p>
+                        <p style={{ color:'#bfdbfe', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>Manager-authorized guest. Valid through <strong style={{ color:'white' }}>{result.data.end_date}</strong>.</p>
+                      </div>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Guest</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.guest_name}</span></div>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>{result.data.visiting_unit ? 'Visiting Unit' : 'Type'}</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.visiting_unit || result.data.non_resident_reason}</span></div>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Property</span><br /><span style={{ color:'#3b82f6', fontSize:'13px', fontWeight:'bold' }}>{result.data.property}</span></div>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Authorized From</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.start_date}</span></div>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Authorized Through</span><br /><span style={{ color:'#3b82f6', fontSize:'13px', fontWeight:'bold' }}>{result.data.end_date}</span></div>
+                        <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Approved by</span><br /><span style={{ color:'#aaa', fontSize:'12px' }}>{result.data.created_by_email}</span></div>
+                      </div>
+                      <button onClick={() => setDeclineModal({ authorizedAs:'guest', detail: result.data.visiting_unit ? `visiting Unit ${result.data.visiting_unit}` : (result.data.non_resident_reason ? `(${result.data.non_resident_reason})` : '') })}
                         style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
