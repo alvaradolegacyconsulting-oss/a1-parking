@@ -50,14 +50,17 @@ import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 //   caller can't supply a different unit/property/email to scope an
 //   insert into someone else's space.
 //
-// CAPTCHA INSERTION POINT (tomorrow's B-number)
-//   The first action slot in POST() below is reserved for the
-//   Turnstile /siteverify check (commented placeholder). When CAPTCHA
-//   build lands, that check verifies the Cloudflare token BEFORE the
-//   auth lookup. Adding it does not restructure the rest of this
-//   route; it just gates the entry. See CAPTCHA preflight report
-//   2026-06-19 for the 9-row smoke matrix that protects against
-//   B198/B205/B117 cross-context regressions when CAPTCHA lands.
+// CAPTCHA — VERIFIED UPSTREAM at /api/register/captcha-verify
+//   By the time this route runs, the caller has a valid session that only
+//   exists because they cleared CAPTCHA upstream — /register's submit
+//   handler calls /api/register/captcha-verify FIRST (before swift-handler);
+//   if that gate fails, the flow aborts and no auth.users row is created,
+//   no signInWithPassword happens, no session exists. So by the time the
+//   client's fetch lands here, the active session IS the proof that
+//   CAPTCHA passed. This route trusts the session as the proof and does
+//   NOT verify a token itself — verifying again would fail by design
+//   because Turnstile tokens are single-use. The captcha-verify wrapper
+//   is single-responsibility (verify-and-200, or 4xx/5xx + abort).
 //
 // SOFT-FAIL DISCIPLINE (B167 pattern, sharpened per B209 sign-off)
 //   Per-vehicle insert failures DO NOT roll back the user/resident/role
@@ -123,15 +126,12 @@ function buildGapMessage(failedPlates: string[]): string {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse<SuccessResponse | ErrorResponse>> {
-  // ── 1. CAPTCHA verify (TOMORROW's B-number — placeholder slot) ──
-  // const captchaToken = (await req.clone().json().catch(() => ({})))?.captchaToken
-  // const captchaOk = await verifyTurnstile(captchaToken)
-  // if (!captchaOk) {
-  //   return NextResponse.json(
-  //     { ok: false, error: 'CAPTCHA verification failed.', error_class: 'captcha_failed' },
-  //     { status: 400 },
-  //   )
-  // }
+  // ── 1. CAPTCHA — verified upstream, NOT here ─────────────────────
+  // See header docblock. /api/register/captcha-verify ran first and
+  // returned 200 before the /register flow reached swift-handler →
+  // signInWithPassword → THIS route. The active session below is the
+  // proof that CAPTCHA passed. Re-verifying the single-use Turnstile
+  // token here would fail by design.
 
   // ── 2. Auth — cookie-bound supabase client → auth.getUser() ──
   let supabase

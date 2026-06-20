@@ -11,7 +11,7 @@
 // with intended_tier in user_metadata → user receives email → clicks
 // link → /signup/verify resumes the flow.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { ENFORCEMENT_TIERS, PROPERTY_MANAGEMENT_TIERS, TierTrack, TierDisplay } from '../lib/tier-display'
 import { TIER_CONFIG, TIER_PRICING } from '../lib/tier-config'
@@ -23,6 +23,7 @@ import {
   PRIVACY_VERSION,
 } from '../lib/legal-versions'
 import { validatePassword } from '../lib/password-rules'
+import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -81,6 +82,14 @@ export default function SignupTierPicker() {
   const [privacyChecked, setPrivacyChecked] = useState(false)
   const [submission, setSubmission] = useState<Submission>({ kind: 'editing' })
 
+  // CAPTCHA (Cloudflare Turnstile, Managed mode). Token set by widget callback;
+  // cleared on expire or post-submit-error. Token is single-use — every submit
+  // attempt needs a fresh challenge, which is why we reset the widget on error.
+  // Supabase verifies the token server-side via the Dashboard CAPTCHA toggle
+  // (Jose flips after deploy) — no /siteverify call from this page.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileHandle>(null)
+
   const tiers = useMemo(() => selfServeTiers(track), [track])
   useEffect(() => {
     // Reset tier when track changes to avoid carrying a stale tier across tracks.
@@ -118,12 +127,24 @@ export default function SignupTierPicker() {
   const propertyCountOk = pCount >= 1 && !propertyLimitReached
   const driverCountOk = track === 'pm' || (dCount >= 1 && !driverLimitReached)
   const companyNameOk = companyName.trim().length > 0
+  // captchaToken added to allOk so Submit disables until the widget callback fires.
   const allOk = companyNameOk && emailOk && !passwordErr && propertyCountOk && driverCountOk
-    && attestChecked && tosChecked && privacyChecked
+    && attestChecked && tosChecked && privacyChecked && !!captchaToken
 
   // ── Submit ────────────────────────────────────────────────────────
   async function submit() {
     if (!allOk) return
+    // Explicit captchaToken guard — matches the defensive shape used by
+    // /signup/redeem, /register, and /visitor. allOk's !!captchaToken
+    // already covers the disabled button, but an explicit guard inside
+    // submit() means all four forms read the same way (no "why is
+    // /signup defensively shaped differently?" question for the next
+    // reader). Also lets us surface a clear error message rather than
+    // relying on the captchaToken! non-null assertion below.
+    if (!captchaToken) {
+      setSubmission({ kind: 'error', message: 'Please complete the CAPTCHA challenge below before submitting.' })
+      return
+    }
     setSubmission({ kind: 'submitting' })
     const trimmedEmail = email.trim().toLowerCase()
     const intendedTier = {
@@ -143,6 +164,12 @@ export default function SignupTierPicker() {
       password,
       options: {
         emailRedirectTo,
+        // CAPTCHA — Supabase verifies the token against Cloudflare server-side
+        // before creating auth.users. Requires the Supabase Dashboard CAPTCHA
+        // toggle to be ON (Jose flips after this deploy lands). With the toggle
+        // OFF, Supabase ignores captchaToken — same code works pre- and post-
+        // toggle, so the deploy → toggle ordering is safe.
+        captchaToken,
         // intended_tier rides in user_metadata (mirrors B65's
         // proposal_code pattern). /signup/verify reads this to render
         // the tier summary + drive the create-checkout-session call.
@@ -161,7 +188,18 @@ export default function SignupTierPicker() {
     })
 
     if (error) {
-      setSubmission({ kind: 'error', message: error.message || 'Sign-up failed. Please try again.' })
+      // CAPTCHA failure surfaces with a captcha-related message from Supabase.
+      // Reset the widget so the user can re-challenge without a page reload
+      // (Turnstile tokens are single-use; every submit needs a fresh token).
+      const msg = error.message || 'Sign-up failed. Please try again.'
+      const isCaptcha = /captcha|verification/i.test(msg)
+      if (isCaptcha) {
+        turnstileRef.current?.reset()
+        setCaptchaToken(null)
+        setSubmission({ kind: 'error', message: 'CAPTCHA verification failed. Please complete the challenge below and try again.' })
+      } else {
+        setSubmission({ kind: 'error', message: msg })
+      }
       return
     }
     // B65 pattern: empty identities array means email is already confirmed
@@ -353,6 +391,20 @@ export default function SignupTierPicker() {
             {track === 'enforcement' && ` + $${perDriverMonthly}/driver × ${dCount}`}
             {cycle === 'annual' && ' × 10 months (annual prepay)'}
           </p>
+        </div>
+
+        {/* CAPTCHA — Cloudflare Turnstile (Managed). Sits above Submit so the
+            user clears the challenge before they can click. Widget callback
+            sets captchaToken; expiry/error clears it so Submit re-disables. */}
+        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 18, marginBottom: 18 }}>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>7. Confirm you&apos;re human</p>
+          <TurnstileWidget
+            ref={turnstileRef}
+            onVerify={setCaptchaToken}
+            onExpire={() => setCaptchaToken(null)}
+            onError={() => setCaptchaToken(null)}
+            action="signup"
+          />
         </div>
 
         {/* SUBMIT */}

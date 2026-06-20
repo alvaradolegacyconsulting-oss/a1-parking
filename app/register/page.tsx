@@ -1,9 +1,10 @@
 'use client'
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { useResolvedLogo } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
+import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY']
 
@@ -33,6 +34,15 @@ function RegisterForm() {
   const [account, setAccount] = useState({ email: '', password: '', confirm: '', name: '', phone: '', unit: '' })
   const [vehicles, setVehicles] = useState<any[]>([])
 
+  // CAPTCHA — gated server-side via /api/register/captcha-verify (called FIRST
+  // in submit, BEFORE the swift-handler user-create). Distinct from native
+  // /signup which passes captchaToken to supabase.auth.signUp options;
+  // /register uses swift-handler (Edge Function for admin user-create) which
+  // is not native-CAPTCHA-capable, hence the wrapper-route gate.
+  // Token is single-use; reset on failure so the user can re-challenge.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileHandle>(null)
+
   useEffect(() => {
     setCompanyLogo(localStorage.getItem('company_logo'))
     setCompanyName(localStorage.getItem('company_name'))
@@ -61,6 +71,12 @@ function RegisterForm() {
     setSubmitting(true)
     setError('')
     try {
+      if (!captchaToken) {
+        setError('Please complete the CAPTCHA challenge below before submitting.')
+        setSubmitting(false)
+        return
+      }
+
       const { data: existing } = await supabase
         .from('residents')
         .select('id')
@@ -68,6 +84,34 @@ function RegisterForm() {
         .single()
       if (existing) {
         setError('An account with this email already exists. Please log in instead.')
+        setSubmitting(false)
+        return
+      }
+
+      // CAPTCHA verify — server-side gate BEFORE swift-handler. /register
+      // uses swift-handler (Edge Function) for user creation, which is not
+      // native-CAPTCHA-capable, so the wrapper-route verifies the token
+      // first. If verify fails, abort the flow (NO swift-handler call, NO
+      // auth.users row).
+      try {
+        const verifyRes = await fetch('/api/register/captcha-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ captchaToken }),
+        })
+        if (!verifyRes.ok) {
+          const body = await verifyRes.json().catch(() => ({}))
+          // Token is single-use — reset the widget so the user can re-challenge.
+          turnstileRef.current?.reset()
+          setCaptchaToken(null)
+          setError(body?.error || 'CAPTCHA verification failed. Please try again.')
+          setSubmitting(false)
+          return
+        }
+      } catch (verifyErr) {
+        turnstileRef.current?.reset()
+        setCaptchaToken(null)
+        setError('CAPTCHA service is temporarily unavailable. Please try again in a moment.')
         setSubmitting(false)
         return
       }
@@ -438,9 +482,23 @@ function RegisterForm() {
                 </span>
               </label>
 
+              {/* CAPTCHA — Cloudflare Turnstile (Managed). Gates submit; the
+                  /api/register/captcha-verify wrapper validates the token
+                  server-side BEFORE the swift-handler user-create. */}
+              <div style={{ marginTop:'16px', marginBottom:'16px' }}>
+                <p style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>Confirm you&apos;re human</p>
+                <TurnstileWidget
+                  ref={turnstileRef}
+                  onVerify={setCaptchaToken}
+                  onExpire={() => setCaptchaToken(null)}
+                  onError={() => setCaptchaToken(null)}
+                  action="register"
+                />
+              </div>
+
               {(() => {
                 const allChecked = tosChecked
-                const disabled = submitting || !allChecked
+                const disabled = submitting || !allChecked || !captchaToken
                 return (
                   <div style={{ display:'flex', gap:'8px' }}>
                     <button onClick={() => { setError(''); setStep(2) }}

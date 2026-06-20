@@ -10,9 +10,10 @@
 // /verify surface that runs the activation RPC). No company-info form
 // (B65.4). Re-validation of the code on /verify is also B65.4.
 
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../../supabase'
+import { TurnstileWidget, type TurnstileHandle } from '../../components/TurnstileWidget'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -75,6 +76,13 @@ function RedeemInner() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submission, setSubmission] = useState<Submission>({ kind: 'editing' })
+
+  // CAPTCHA (Cloudflare Turnstile, Managed). Same shape as /signup —
+  // Supabase verifies the token server-side via the Dashboard CAPTCHA
+  // toggle. Token is single-use; reset on submit error so the user can
+  // re-challenge without a page reload.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileHandle>(null)
 
   // 2026-06-17 site-cleanup extension — when no ?code= present, accept paste
   // instead of dead-ending. Site CTA "Have a proposal code? Activate here →"
@@ -148,11 +156,20 @@ function RedeemInner() {
     setSubmission({ kind: 'submitting' })
     const trimmedEmail = email.trim().toLowerCase()
 
+    if (!captchaToken) {
+      setSubmission({ kind: 'error', message: 'Please complete the CAPTCHA challenge below.' })
+      return
+    }
+
     const { data, error } = await supabase.auth.signUp({
       email: trimmedEmail,
       password,
       options: {
         emailRedirectTo: buildRedirectTo(),
+        // CAPTCHA — Supabase verifies against Cloudflare server-side
+        // via the Dashboard CAPTCHA toggle. Same code shape pre- and
+        // post-toggle, so deploy → toggle ordering is safe.
+        captchaToken,
         // Pre-flight #8: proposal code rides in user_metadata, NOT the
         // emailRedirectTo URL, to avoid colliding with the PKCE flow's own
         // ?code=<flow_code> param that Supabase appends to the redirect.
@@ -161,7 +178,16 @@ function RedeemInner() {
     })
 
     if (error) {
-      setSubmission({ kind: 'error', message: error.message || 'Sign-up failed. Please try again.' })
+      const msg = error.message || 'Sign-up failed. Please try again.'
+      const isCaptcha = /captcha|verification/i.test(msg)
+      if (isCaptcha) {
+        // Turnstile tokens are single-use; reset so the user can re-challenge.
+        turnstileRef.current?.reset()
+        setCaptchaToken(null)
+        setSubmission({ kind: 'error', message: 'CAPTCHA verification failed. Please complete the challenge below and try again.' })
+      } else {
+        setSubmission({ kind: 'error', message: msg })
+      }
       return
     }
     // Pre-flight #2 — detect the obfuscated "already-confirmed user" response.
@@ -298,14 +324,26 @@ function RedeemInner() {
                 placeholder="At least 8 characters" />
               <p style={{ color: MUTED, fontSize: 11, margin: '6px 0 0' }}>Minimum 8 characters.</p>
 
+              {/* CAPTCHA — Cloudflare Turnstile (Managed). Same shape as /signup. */}
+              <div style={{ marginTop: 16 }}>
+                <label style={{ ...labelStyle, marginTop: 0 }}>Confirm you&apos;re human</label>
+                <TurnstileWidget
+                  ref={turnstileRef}
+                  onVerify={setCaptchaToken}
+                  onExpire={() => setCaptchaToken(null)}
+                  onError={() => setCaptchaToken(null)}
+                  action="redeem"
+                />
+              </div>
+
               {submission.kind === 'error' && (
                 <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, padding: '10px 12px', marginTop: 14 }}>
                   <p style={{ color: '#f44336', fontSize: 13, margin: 0 }}>{submission.message}</p>
                 </div>
               )}
 
-              <button onClick={submit} disabled={submission.kind === 'submitting'}
-                style={{ width: '100%', marginTop: 18, background: submission.kind === 'submitting' ? '#555' : GOLD, color: submission.kind === 'submitting' ? '#888' : '#0a0d14', fontWeight: 700, fontSize: 15, padding: '13px', border: 'none', borderRadius: 10, cursor: submission.kind === 'submitting' ? 'not-allowed' : 'pointer' }}>
+              <button onClick={submit} disabled={submission.kind === 'submitting' || !captchaToken}
+                style={{ width: '100%', marginTop: 18, background: submission.kind === 'submitting' || !captchaToken ? '#555' : GOLD, color: submission.kind === 'submitting' || !captchaToken ? '#888' : '#0a0d14', fontWeight: 700, fontSize: 15, padding: '13px', border: 'none', borderRadius: 10, cursor: submission.kind === 'submitting' || !captchaToken ? 'not-allowed' : 'pointer' }}>
                 {submission.kind === 'submitting' ? 'Sending verification…' : 'Send verification email'}
               </button>
 

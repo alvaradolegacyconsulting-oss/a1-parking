@@ -1,10 +1,11 @@
 'use client'
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
+import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 
 function VisitorForm() {
   const searchParams = useSearchParams()
@@ -56,6 +57,13 @@ function VisitorForm() {
   })
   const [limitStatus, setLimitStatus] = useState<PlateLimitStatus | null>(null)
 
+  // CAPTCHA — /visitor is anon (no auth session). Token sent to the new
+  // /api/visitor/create-pass wrapper which verifies via Cloudflare /siteverify
+  // server-side, then calls create_visitor_pass RPC. RPC body unchanged.
+  // Token is single-use; reset on failure so the user can re-challenge.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileHandle>(null)
+
   // B19: query per-plate active-pass count on plate change so the user
   // sees the limit before submit. Debounced 400ms.
   useEffect(() => {
@@ -73,6 +81,10 @@ function VisitorForm() {
   async function submitPass() {
     if (!form.plate || !form.unit) {
       alert('Please enter your license plate and the unit you are visiting')
+      return
+    }
+    if (!captchaToken) {
+      setPlateError('Please complete the CAPTCHA challenge below before submitting.')
       return
     }
     setLoading(true)
@@ -99,17 +111,48 @@ function VisitorForm() {
     // (enforce_visitor_pass_limit) — fires inside create_visitor_pass.
     // Submit-time errors are caught below via parseLimitTriggerError.
 
-    // B74: anon INSERT swapped to SECURITY DEFINER create_visitor_pass RPC.
-    // RPC also writes the VISITOR_TOS_ACCEPTED audit_logs row atomically
-    // (previously a separate anon INSERT on audit_logs).
-    const { error } = await supabase.rpc('create_visitor_pass', {
-      p_plate: plate,
-      p_visitor_name: form.name,
-      p_visiting_unit: form.unit,
-      p_property: propertyName,
-      p_vehicle_desc: form.vehicle_desc,
-      p_duration_hours: parseInt(form.duration),
-    })
+    // CAPTCHA — anon flow uses /api/visitor/create-pass wrapper instead
+    // of direct RPC (B74 set up the RPC; this wraps it with /siteverify).
+    // Wrapper verifies the Turnstile token server-side, then calls the
+    // RPC via service-role. RPC body (visitor_pass_limit trigger,
+    // VISITOR_TOS_ACCEPTED audit row) is unchanged.
+    let error: { message: string } | null = null
+    try {
+      const res = await fetch('/api/visitor/create-pass', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          captchaToken,
+          plate,
+          visitor_name: form.name,
+          visiting_unit: form.unit,
+          property: propertyName,
+          vehicle_desc: form.vehicle_desc,
+          duration_hours: parseInt(form.duration),
+        }),
+      })
+      const body = await res.json().catch(() => ({} as { error?: string; error_class?: string }))
+      if (!res.ok) {
+        // CAPTCHA failure → reset widget so user can re-challenge.
+        // Token is single-use; cannot replay. network_error included because
+        // a Cloudflare /siteverify timeout leaves the user holding a stale
+        // single-use token — without reset, the retry would fail 'rejected'
+        // on the next attempt (Cloudflare may have actually consumed the
+        // token during the timeout window), forcing an extra confusing
+        // failure cycle before the widget refreshes.
+        if (
+          body?.error_class === 'rejected' ||
+          body?.error_class === 'missing_token' ||
+          body?.error_class === 'network_error'
+        ) {
+          turnstileRef.current?.reset()
+          setCaptchaToken(null)
+        }
+        error = { message: body?.error || 'Could not create visitor pass. Please try again.' }
+      }
+    } catch (fetchErr) {
+      error = { message: (fetchErr as Error).message || 'Network error. Please try again.' }
+    }
 
     setLoading(false)
     if (error) {
@@ -311,10 +354,24 @@ function VisitorForm() {
             </span>
           </label>
 
+          {/* CAPTCHA — Cloudflare Turnstile (Managed). /visitor is anon, so the
+              token is sent to /api/visitor/create-pass which verifies via
+              /siteverify server-side before calling create_visitor_pass. */}
+          <div style={{ marginBottom:'16px' }}>
+            <p style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>Confirm you&apos;re human</p>
+            <TurnstileWidget
+              ref={turnstileRef}
+              onVerify={setCaptchaToken}
+              onExpire={() => setCaptchaToken(null)}
+              onError={() => setCaptchaToken(null)}
+              action="visitor"
+            />
+          </div>
+
           <button
             onClick={submitPass}
-            disabled={loading || !form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus)}
-            style={{ width:'100%', padding:'14px', background: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus)) ? '#555' : '#C9A227', color: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus)) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus)) ? 'not-allowed' : 'pointer' }}
+            disabled={loading || !form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken}
+            style={{ width:'100%', padding:'14px', background: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken) ? '#555' : '#C9A227', color: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken) ? 'not-allowed' : 'pointer' }}
           >
             {loading ? 'Activating Pass...' : 'Get Visitor Pass'}
           </button>
