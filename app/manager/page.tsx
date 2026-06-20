@@ -10,6 +10,16 @@ import { logAudit } from '../lib/audit'
 import { hasFeature, getCompanyContext } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import SupportContact from '../components/SupportContact'
+import {
+  type GuestAuth,
+  GUEST_AUTH_MAX_DAYS,
+  todayIso,
+  addDays,
+  daysUntilExpiry,
+  isExpiringSoon,
+  findOverlappingActiveAuth,
+  fetchActiveGuestAuths,
+} from '../lib/guest-auth'
 import CredentialsModal from '../components/CredentialsModal'
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
@@ -73,6 +83,29 @@ export default function ManagerPortal() {
   const [passLimit, setPassLimit] = useState('')
   const [exemptPlates, setExemptPlates] = useState<string[]>([])
   const [newExemptPlate, setNewExemptPlate] = useState('')
+
+  // ── B214: Guest Authorizations state ──
+  // List, create-form, renew-modal, and revoke-modal state isolated to this
+  // tab. Loaded lazily when the tab activates (see useEffect below) so
+  // the active-list query doesn't run on every manager-portal mount.
+  const [guestAuths, setGuestAuths] = useState<GuestAuth[]>([])
+  const [showAddGuestAuth, setShowAddGuestAuth] = useState(false)
+  const [newGuestAuth, setNewGuestAuth] = useState({
+    guest_name: '', plate: '', state: 'TX', make: '', model: '', color: '',
+    visiting_type: 'resident' as 'resident' | 'non_resident',
+    visiting_unit: '', resident_email: '', non_resident_reason: '',
+    start_date: todayIso(), end_date: addDays(todayIso(), 14),
+  })
+  const [guestAuthOverlapWarning, setGuestAuthOverlapWarning] = useState<GuestAuth | null>(null)
+  const [guestAuthSubmitting, setGuestAuthSubmitting] = useState(false)
+  const [guestAuthError, setGuestAuthError] = useState('')
+  // Revoke modal target + reason; null when closed.
+  const [revokeGuestAuthTarget, setRevokeGuestAuthTarget] = useState<GuestAuth | null>(null)
+  const [revokeReason, setRevokeReason] = useState('')
+  // Renew modal target + dates; null when closed. Defaults set to continuous
+  // coverage (new_start = source.end_date) per Jose lock 2026-06-20.
+  const [renewGuestAuthTarget, setRenewGuestAuthTarget] = useState<GuestAuth | null>(null)
+  const [renewDates, setRenewDates] = useState({ start_date: '', end_date: '' })
   const [settingsMsg, setSettingsMsg] = useState('')
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [auditDateFilter, setAuditDateFilter] = useState('week')
@@ -107,6 +140,10 @@ export default function ManagerPortal() {
   useEffect(() => { if (activeTab === 'activity' && manager) fetchActivityLogs() }, [activeTab, manager])
   useEffect(() => { if (activeTab === 'disputes' && manager) fetchDisputes(manager.name) }, [activeTab, manager])
   useEffect(() => { if (activeTab === 'insights' && manager) fetchInsights() }, [activeTab, manager])
+  // B214: lazy-load guest auths on tab activation. Re-fetches when the manager
+  // switches properties (manager.name change) so the list always reflects the
+  // currently-viewed property's scope.
+  useEffect(() => { if (activeTab === 'guest-auth' && manager) refetchGuestAuths() }, [activeTab, manager])
   useEffect(() => {
     if (editingSpace) {
       setPlateQuery(editingSpace.assigned_to_plate || '')
@@ -213,6 +250,108 @@ export default function ManagerPortal() {
     await supabase.from('dispute_requests').update({ status: 'resolved', pm_decision: 'resolved', pm_note: disputeNotes[d.id] || null, resolved_at: new Date().toISOString() }).eq('id', d.id)
     await logAudit({ action: 'DISPUTE_RESOLVED', table_name: 'dispute_requests', record_id: d.id, new_values: { status: 'resolved', pm_note: disputeNotes[d.id] } })
     fetchDisputes(manager.name)
+  }
+
+  // ── B214: Guest Authorizations handlers ──────────────────────────────
+  async function refetchGuestAuths() {
+    if (!manager?.name) return
+    const list = await fetchActiveGuestAuths(supabase, { property: manager.name })
+    setGuestAuths(list)
+  }
+
+  // Pre-submit overlap check (Finding 2). Returns true if the form may
+  // proceed; surfaces the warning (non-blocking) if an overlap exists.
+  // Caller decides whether to short-circuit based on user confirm.
+  async function checkGuestAuthOverlap(): Promise<GuestAuth | null> {
+    if (!manager?.name || !newGuestAuth.plate || !newGuestAuth.start_date || !newGuestAuth.end_date) return null
+    const overlap = await findOverlappingActiveAuth(supabase, {
+      plate: newGuestAuth.plate,
+      property: manager.name,
+      startDate: newGuestAuth.start_date,
+      endDate: newGuestAuth.end_date,
+    })
+    setGuestAuthOverlapWarning(overlap)
+    return overlap
+  }
+
+  async function submitGuestAuth() {
+    setGuestAuthError('')
+    setGuestAuthSubmitting(true)
+    try {
+      if (!newGuestAuth.guest_name.trim()) { setGuestAuthError('Guest name required'); return }
+      const normalized = normalizePlate(newGuestAuth.plate)
+      if (!normalized) { setGuestAuthError('Plate required'); return }
+      if (newGuestAuth.visiting_type === 'resident' && !newGuestAuth.visiting_unit.trim()) {
+        setGuestAuthError('Visiting unit required for resident-guest authorization'); return
+      }
+      if (newGuestAuth.visiting_type === 'non_resident' && !newGuestAuth.non_resident_reason.trim()) {
+        setGuestAuthError('Reason required for non-resident authorization'); return
+      }
+      if (!newGuestAuth.start_date || !newGuestAuth.end_date) { setGuestAuthError('Start and end dates required'); return }
+      if (newGuestAuth.end_date < newGuestAuth.start_date) { setGuestAuthError('End date must be on or after start date'); return }
+      const span = daysUntilExpiry(newGuestAuth.end_date) - daysUntilExpiry(newGuestAuth.start_date) + 1
+      if (span > GUEST_AUTH_MAX_DAYS) { setGuestAuthError(`Maximum ${GUEST_AUTH_MAX_DAYS} days per grant`); return }
+
+      // Named params (Jose lock 2026-06-20: positional 12-arg create is a
+      // transposition trap; keys must match the RPC signature exactly).
+      const { error } = await supabase.rpc('create_guest_authorization', {
+        p_plate: normalized,
+        p_state: newGuestAuth.state || 'TX',
+        p_vehicle_make: newGuestAuth.make.trim() || null,
+        p_vehicle_model: newGuestAuth.model.trim() || null,
+        p_vehicle_color: newGuestAuth.color.trim() || null,
+        p_guest_name: newGuestAuth.guest_name.trim(),
+        p_visiting_unit: newGuestAuth.visiting_type === 'resident' ? newGuestAuth.visiting_unit.trim() : null,
+        p_resident_email: newGuestAuth.visiting_type === 'resident' ? (newGuestAuth.resident_email.trim().toLowerCase() || null) : null,
+        p_non_resident_reason: newGuestAuth.visiting_type === 'non_resident' ? newGuestAuth.non_resident_reason.trim() : null,
+        p_property: manager.name,
+        p_start_date: newGuestAuth.start_date,
+        p_end_date: newGuestAuth.end_date,
+      })
+      if (error) { setGuestAuthError(error.message); return }
+      // Reset form + refresh list
+      setNewGuestAuth({
+        guest_name: '', plate: '', state: 'TX', make: '', model: '', color: '',
+        visiting_type: 'resident', visiting_unit: '', resident_email: '', non_resident_reason: '',
+        start_date: todayIso(), end_date: addDays(todayIso(), 14),
+      })
+      setGuestAuthOverlapWarning(null)
+      setShowAddGuestAuth(false)
+      await refetchGuestAuths()
+    } finally {
+      setGuestAuthSubmitting(false)
+    }
+  }
+
+  async function submitRenewGuestAuth() {
+    if (!renewGuestAuthTarget) return
+    if (!renewDates.start_date || !renewDates.end_date) { setGuestAuthError('Both renewal dates required'); return }
+    if (renewDates.end_date < renewDates.start_date) { setGuestAuthError('End must be on or after start'); return }
+    const span = daysUntilExpiry(renewDates.end_date) - daysUntilExpiry(renewDates.start_date) + 1
+    if (span > GUEST_AUTH_MAX_DAYS) { setGuestAuthError(`Maximum ${GUEST_AUTH_MAX_DAYS} days per renewal`); return }
+    const { error } = await supabase.rpc('renew_guest_authorization', {
+      p_source_id: renewGuestAuthTarget.id,
+      p_new_start_date: renewDates.start_date,
+      p_new_end_date: renewDates.end_date,
+    })
+    if (error) { setGuestAuthError(error.message); return }
+    setRenewGuestAuthTarget(null)
+    setRenewDates({ start_date: '', end_date: '' })
+    setGuestAuthError('')
+    await refetchGuestAuths()
+  }
+
+  async function submitRevokeGuestAuth() {
+    if (!revokeGuestAuthTarget) return
+    const { error } = await supabase.rpc('revoke_guest_authorization', {
+      p_id: revokeGuestAuthTarget.id,
+      p_reason: revokeReason.trim() || null,
+    })
+    if (error) { setGuestAuthError(error.message); return }
+    setRevokeGuestAuthTarget(null)
+    setRevokeReason('')
+    setGuestAuthError('')
+    await refetchGuestAuths()
   }
 
   async function savePassLimit() {
@@ -1239,6 +1378,12 @@ export default function ManagerPortal() {
           </button>
           <button style={tabStyle('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
+          {/* B214 — manager-vetted multi-week guest authorizations. Sits next
+              to Visitors because both surface "who is allowed on the property
+              right now beyond the registered residents" — but different
+              record type: visitor passes are anon/24h, guest auths are
+              manager-vetted/multi-week. */}
+          <button style={tabStyle('guest-auth')} onClick={() => setActiveTab('guest-auth')}>Authorized Guests</button>
           {/* B75 (was B70 PM_PLATE_LOOKUP): Plate Lookup tab — visible on
               every tier across both tracks (manual lookup is a baseline
               utility). Admin always sees it (parity with other tier-gated
@@ -2181,6 +2326,290 @@ export default function ManagerPortal() {
                 </div>
               ))
             }
+          </div>
+        )}
+
+
+        {/* AUTHORIZED GUESTS (B214) — manager-vetted multi-week vehicle authorizations.
+            Two visible sub-sections: (1) collapsible "+ New" create form with overlap
+            soft-warning, (2) active list with renew/revoke per card. */}
+        {activeTab === 'guest-auth' && (
+          <div>
+            {/* HEADER + NEW BUTTON */}
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
+              <p style={{ color:'#888', fontSize:'12px', margin:'0' }}>Multi-week guest authorizations for {manager?.name}. Auto-expire on end date.</p>
+              <button onClick={() => setShowAddGuestAuth(s => !s)}
+                style={{ padding:'7px 13px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                {showAddGuestAuth ? '× Close' : '+ New Authorization'}
+              </button>
+            </div>
+
+            {/* CREATE FORM */}
+            {showAddGuestAuth && (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px', fontWeight:'bold' }}>New guest authorization</p>
+
+                <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Guest name *</label>
+                <input value={newGuestAuth.guest_name} onChange={e => setNewGuestAuth({ ...newGuestAuth, guest_name: e.target.value })} style={inputStyle} placeholder="Sarah Chen" />
+
+                <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:'10px' }}>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Plate *</label>
+                    <input value={newGuestAuth.plate}
+                      onChange={e => setNewGuestAuth({ ...newGuestAuth, plate: e.target.value.toUpperCase() })}
+                      onBlur={() => { setNewGuestAuth(n => ({ ...n, plate: normalizePlate(n.plate) })); checkGuestAuthOverlap() }}
+                      style={{ ...inputStyle, fontFamily:'Courier New' }} placeholder="ABC1234" />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>State</label>
+                    <input value={newGuestAuth.state} onChange={e => setNewGuestAuth({ ...newGuestAuth, state: e.target.value.toUpperCase().slice(0, 2) })} style={inputStyle} maxLength={2} />
+                  </div>
+                </div>
+
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px' }}>
+                  <div><label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Make</label><input value={newGuestAuth.make} onChange={e => setNewGuestAuth({ ...newGuestAuth, make: e.target.value })} style={inputStyle} placeholder="Toyota" /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Model</label><input value={newGuestAuth.model} onChange={e => setNewGuestAuth({ ...newGuestAuth, model: e.target.value })} style={inputStyle} placeholder="Camry" /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Color</label><input value={newGuestAuth.color} onChange={e => setNewGuestAuth({ ...newGuestAuth, color: e.target.value })} style={inputStyle} placeholder="Silver" /></div>
+                </div>
+
+                {/* Visiting type toggle */}
+                <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Authorization type</label>
+                <div style={{ display:'flex', gap:'8px', marginTop:'6px', marginBottom:'10px' }}>
+                  <button type="button" onClick={() => setNewGuestAuth({ ...newGuestAuth, visiting_type: 'resident' })}
+                    style={{ flex:1, padding:'8px', background: newGuestAuth.visiting_type === 'resident' ? '#C9A227' : '#1e2535', color: newGuestAuth.visiting_type === 'resident' ? '#0f1117' : '#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                    Resident's guest
+                  </button>
+                  <button type="button" onClick={() => setNewGuestAuth({ ...newGuestAuth, visiting_type: 'non_resident' })}
+                    style={{ flex:1, padding:'8px', background: newGuestAuth.visiting_type === 'non_resident' ? '#C9A227' : '#1e2535', color: newGuestAuth.visiting_type === 'non_resident' ? '#0f1117' : '#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                    Non-resident (vendor / contractor)
+                  </button>
+                </div>
+
+                {newGuestAuth.visiting_type === 'resident' && (
+                  <>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Visiting unit *</label>
+                    <select value={newGuestAuth.visiting_unit}
+                      onChange={e => {
+                        const u = e.target.value
+                        // Auto-pick the resident's email if there's exactly one at this unit.
+                        const atUnit = residents.filter(r => r.unit === u && r.is_active !== false)
+                        const email = atUnit.length === 1 ? atUnit[0].email : ''
+                        setNewGuestAuth({ ...newGuestAuth, visiting_unit: u, resident_email: email })
+                      }}
+                      style={inputStyle}>
+                      <option value=''>— Select unit —</option>
+                      {/* Unique active-resident units, sorted */}
+                      {Array.from(new Set(residents.filter(r => r.is_active !== false).map(r => r.unit))).sort().map(u => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </select>
+                    {/* If multiple residents at the chosen unit, force a pick */}
+                    {newGuestAuth.visiting_unit && residents.filter(r => r.unit === newGuestAuth.visiting_unit && r.is_active !== false).length > 1 && (
+                      <>
+                        <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Hosting resident *</label>
+                        <select value={newGuestAuth.resident_email}
+                          onChange={e => setNewGuestAuth({ ...newGuestAuth, resident_email: e.target.value })} style={inputStyle}>
+                          <option value=''>— Select resident —</option>
+                          {residents.filter(r => r.unit === newGuestAuth.visiting_unit && r.is_active !== false).map(r => (
+                            <option key={r.email} value={r.email}>{r.name || r.email} ({r.email})</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {newGuestAuth.visiting_type === 'non_resident' && (
+                  <>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Reason *</label>
+                    <textarea value={newGuestAuth.non_resident_reason} onChange={e => setNewGuestAuth({ ...newGuestAuth, non_resident_reason: e.target.value })}
+                      placeholder="e.g., HVAC contractor — weekly service; Property landscaper — May-July contract"
+                      style={{ ...inputStyle, minHeight:'60px', resize:'vertical', fontFamily:'Arial' }} />
+                  </>
+                )}
+
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Start date *</label>
+                    <input type="date" value={newGuestAuth.start_date}
+                      min={todayIso()}
+                      onChange={e => { setNewGuestAuth({ ...newGuestAuth, start_date: e.target.value }); setGuestAuthOverlapWarning(null) }}
+                      onBlur={checkGuestAuthOverlap}
+                      style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>End date *</label>
+                    <input type="date" value={newGuestAuth.end_date}
+                      min={newGuestAuth.start_date || todayIso()}
+                      max={newGuestAuth.start_date ? addDays(newGuestAuth.start_date, GUEST_AUTH_MAX_DAYS) : undefined}
+                      onChange={e => { setNewGuestAuth({ ...newGuestAuth, end_date: e.target.value }); setGuestAuthOverlapWarning(null) }}
+                      onBlur={checkGuestAuthOverlap}
+                      style={inputStyle} />
+                  </div>
+                </div>
+                <p style={{ color:'#555', fontSize:'10px', margin:'0 0 10px' }}>Maximum {GUEST_AUTH_MAX_DAYS} days per grant. Use Renew for longer stays (preserves audit chain).</p>
+
+                {/* OVERLAP SOFT-WARNING (Finding 2 from B214 preflight). Non-blocking;
+                    surfaces an existing active auth so the manager confirms intent.
+                    Does NOT prevent submit — overlap can be legit (a guest's car at
+                    the same plate has a new owner mid-stay, etc.). */}
+                {guestAuthOverlapWarning && (
+                  <div style={{ background:'#3a2a08', border:'1px solid #f59e0b', borderRadius:'8px', padding:'10px 12px', marginBottom:'10px' }}>
+                    <p style={{ color:'#fbbf24', fontSize:'12px', margin:'0 0 4px', fontWeight:'bold' }}>⚠ Overlapping active authorization</p>
+                    <p style={{ color:'#fde68a', fontSize:'11px', margin:'0', lineHeight:'1.5' }}>
+                      An active authorization for plate <strong>{guestAuthOverlapWarning.plate}</strong> at this property already exists (guest: {guestAuthOverlapWarning.guest_name}, through {guestAuthOverlapWarning.end_date}). Submitting this form will create a second authorization alongside it.
+                    </p>
+                  </div>
+                )}
+
+                {guestAuthError && (
+                  <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'10px 12px', marginBottom:'10px' }}>
+                    <p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{guestAuthError}</p>
+                  </div>
+                )}
+
+                <div style={{ display:'flex', gap:'8px' }}>
+                  <button onClick={() => { setShowAddGuestAuth(false); setGuestAuthError(''); setGuestAuthOverlapWarning(null) }}
+                    style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                    Cancel
+                  </button>
+                  <button onClick={submitGuestAuth} disabled={guestAuthSubmitting}
+                    style={{ flex:1, padding:'10px', background: guestAuthSubmitting ? '#555' : '#C9A227', color: guestAuthSubmitting ? '#888' : '#0f1117', border:'none', borderRadius:'6px', cursor: guestAuthSubmitting ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                    {guestAuthSubmitting ? 'Creating…' : 'Create authorization'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ACTIVE LIST */}
+            {guestAuths.length === 0 ? (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
+                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No active guest authorizations</p>
+              </div>
+            ) : guestAuths.map(g => {
+              const expSoon = isExpiringSoon(g.end_date)
+              const daysLeft = daysUntilExpiry(g.end_date)
+              return (
+                <div key={g.id} style={{ background:'#161b26', border:`1px solid ${expSoon ? '#f59e0b' : '#2a2f3d'}`, borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
+                    <p style={{ color:'#3b82f6', fontFamily:'Courier New', fontSize:'18px', fontWeight:'bold', margin:'0' }}>{g.plate}</p>
+                    <span style={{ background: expSoon ? '#3a2a08' : '#0a1628', color: expSoon ? '#fbbf24' : '#3b82f6', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>
+                      {expSoon ? `Expires in ${daysLeft}d` : 'Active'}
+                    </span>
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px', marginBottom:'10px' }}>
+                    <div><span style={{ color:'#555' }}>Guest</span><br/><span style={{ color:'#aaa' }}>{g.guest_name}</span></div>
+                    <div><span style={{ color:'#555' }}>{g.visiting_unit ? 'Visiting Unit' : 'Type'}</span><br/><span style={{ color:'#aaa' }}>{g.visiting_unit || g.non_resident_reason}</span></div>
+                    <div><span style={{ color:'#555' }}>From</span><br/><span style={{ color:'#aaa' }}>{g.start_date}</span></div>
+                    <div><span style={{ color:'#555' }}>Through</span><br/><span style={{ color: expSoon ? '#fbbf24' : '#3b82f6', fontWeight:'bold' }}>{g.end_date}</span></div>
+                    <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Approved by</span><br/><span style={{ color:'#888', fontSize:'11px' }}>{g.created_by_email}</span></div>
+                  </div>
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => {
+                        // Renew default per Jose lock 2026-06-20: new_start = source.end_date
+                        // (continuous coverage — no gap where guest is unauthorized).
+                        // new_end = new_start + 14 (sensible default, capped at +60 by RPC).
+                        setRenewGuestAuthTarget(g)
+                        setRenewDates({ start_date: g.end_date, end_date: addDays(g.end_date, 14) })
+                        setGuestAuthError('')
+                      }}
+                      style={{ flex:1, padding:'8px', background:'#1e2535', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                      Renew
+                    </button>
+                    <button onClick={() => { setRevokeGuestAuthTarget(g); setRevokeReason(''); setGuestAuthError('') }}
+                      style={{ flex:1, padding:'8px', background:'#1e2535', color:'#f44336', border:'1px solid #991b1b', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                      Revoke
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+
+            {/* RENEW MODAL — new linked record (preserves audit chain).
+                Defaults: new_start = source.end_date (continuous coverage,
+                Jose lock 2026-06-20); new_end = source.end_date + 14d. */}
+            {renewGuestAuthTarget && (
+              <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                  <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Renew authorization</p>
+                  <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}>
+                    <strong style={{ fontFamily:'Courier New', color:'#3b82f6' }}>{renewGuestAuthTarget.plate}</strong> — {renewGuestAuthTarget.guest_name}
+                  </p>
+                  <p style={{ color:'#888', fontSize:'12px', margin:'0 0 14px' }}>Current: {renewGuestAuthTarget.start_date} → {renewGuestAuthTarget.end_date}</p>
+
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+                    <div>
+                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>New start *</label>
+                      <input type="date" value={renewDates.start_date}
+                        onChange={e => setRenewDates({ ...renewDates, start_date: e.target.value })}
+                        style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>New end *</label>
+                      <input type="date" value={renewDates.end_date}
+                        min={renewDates.start_date}
+                        max={renewDates.start_date ? addDays(renewDates.start_date, GUEST_AUTH_MAX_DAYS) : undefined}
+                        onChange={e => setRenewDates({ ...renewDates, end_date: e.target.value })}
+                        style={inputStyle} />
+                    </div>
+                  </div>
+                  <p style={{ color:'#555', fontSize:'10px', margin:'0 0 10px' }}>Defaults to continuous coverage from current end. Max {GUEST_AUTH_MAX_DAYS} days per renewal.</p>
+
+                  {guestAuthError && (
+                    <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'8px 10px', marginBottom:'10px' }}>
+                      <p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{guestAuthError}</p>
+                    </div>
+                  )}
+
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => { setRenewGuestAuthTarget(null); setGuestAuthError('') }}
+                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                      Cancel
+                    </button>
+                    <button onClick={submitRenewGuestAuth}
+                      style={{ flex:1, padding:'10px', background:'#3b82f6', color:'white', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                      Renew
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* REVOKE MODAL — soft-required reason (optional in RPC, but
+                ergonomically prompted; nothing prevents an empty reason). */}
+            {revokeGuestAuthTarget && (
+              <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                <div style={{ background:'#161b26', border:'1px solid #991b1b', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                  <p style={{ color:'#f44336', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Revoke authorization</p>
+                  <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}>
+                    <strong style={{ fontFamily:'Courier New', color:'#f59e0b' }}>{revokeGuestAuthTarget.plate}</strong> — {revokeGuestAuthTarget.guest_name}
+                  </p>
+                  <p style={{ color:'#888', fontSize:'12px', margin:'0 0 14px' }}>This immediately strips the vehicle&apos;s authorization. Re-instatement requires a new create or renew.</p>
+
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Reason (optional, recorded in audit log)</label>
+                  <textarea value={revokeReason} onChange={e => setRevokeReason(e.target.value)}
+                    placeholder="e.g., Guest left early; Resident relocated; Vehicle no longer at property"
+                    style={{ ...inputStyle, minHeight:'60px', resize:'vertical', fontFamily:'Arial' }} />
+
+                  {guestAuthError && (
+                    <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'8px 10px', marginBottom:'10px' }}>
+                      <p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{guestAuthError}</p>
+                    </div>
+                  )}
+
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => { setRevokeGuestAuthTarget(null); setRevokeReason(''); setGuestAuthError('') }}
+                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                      Cancel
+                    </button>
+                    <button onClick={submitRevokeGuestAuth}
+                      style={{ flex:1, padding:'10px', background:'#991b1b', color:'white', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                      Revoke
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
