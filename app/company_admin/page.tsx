@@ -249,6 +249,17 @@ export default function CompanyAdminPortal() {
   const [revokeReason, setRevokeReason] = useState('')
   const [renewGuestAuthTarget, setRenewGuestAuthTarget] = useState<GuestAuth | null>(null)
   const [renewDates, setRenewDates] = useState({ start_date: '', end_date: '' })
+  // CA-only loading flag for the on-demand residents fetch (per Jose
+  // 2026-06-20 carry-forward 2: "loading" state prevents the empty unit list
+  // mid-fetch from being read as "this property has no residents").
+  const [caGuestAuthResidentsLoading, setCaGuestAuthResidentsLoading] = useState(false)
+  // B214 commit 4: renewal-patterns oversight (Q6 cheap insurance). Lazy-
+  // loaded only when the collapsible section opens; chain-aware view filters
+  // to >= 2 renewals so single renewals don't surface as noise.
+  const [longChains, setLongChains] = useState<any[]>([])
+  const [longChainsLoading, setLongChainsLoading] = useState(false)
+  const [longChainsLoaded, setLongChainsLoaded] = useState(false)
+  const [showRenewalPatterns, setShowRenewalPatterns] = useState(false)
   const [analyticsRange, setAnalyticsRange] = useState('6mo')
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false)
   const [caAnalytics, setCAAnalytics] = useState<any>(null)
@@ -278,13 +289,20 @@ export default function CompanyAdminPortal() {
   // company properties (cross-property; manager portal is single-property).
   useEffect(() => { if (activeTab === 'guest-auth' && properties.length > 0) refetchGuestAuths() }, [activeTab, properties])
   // When the form's property dropdown changes, refetch residents at that
-  // property to populate the unit dropdown options.
+  // property to populate the unit dropdown options. caGuestAuthResidentsLoading
+  // prevents the empty unit list mid-fetch from being read as "this property
+  // has no residents" (Jose carry-forward 2 2026-06-20).
   useEffect(() => {
-    if (!newGuestAuth.property) { setCaGuestAuthResidents([]); return }
+    if (!newGuestAuth.property) { setCaGuestAuthResidents([]); setCaGuestAuthResidentsLoading(false); return }
     let cancelled = false
+    setCaGuestAuthResidentsLoading(true)
     ;(async () => {
-      const { data } = await supabase.from('residents').select('email, name, unit, is_active').ilike('property', newGuestAuth.property).order('unit')
-      if (!cancelled) setCaGuestAuthResidents(data || [])
+      try {
+        const { data } = await supabase.from('residents').select('email, name, unit, is_active').ilike('property', newGuestAuth.property).order('unit')
+        if (!cancelled) setCaGuestAuthResidents(data || [])
+      } finally {
+        if (!cancelled) setCaGuestAuthResidentsLoading(false)
+      }
     })()
     return () => { cancelled = true }
   }, [newGuestAuth.property])
@@ -730,6 +748,26 @@ export default function CompanyAdminPortal() {
     setRevokeReason('')
     setGuestAuthError('')
     await refetchGuestAuths()
+  }
+
+  // B214 commit 4: Q6 oversight report — chains with >= 2 renewals (i.e.,
+  // 3+ grants total). Chain-aware via the guest_auth_long_chains view's
+  // recursive renewed_from_id walk (Jose lock 2026-06-20: a normal renewal
+  // creates one chain, not multiple overlapping grants — the view treats it
+  // as one logical chain so legit renewals don't read as duplicates).
+  //
+  // Lazy: fires only when the manager actually expands the section. No
+  // pre-fetch on tab activation (saves a query for the common case where
+  // no one cares about renewal patterns on a given visit).
+  async function loadLongChains() {
+    setLongChainsLoading(true)
+    try {
+      const { data } = await supabase.from('guest_auth_long_chains').select('*')
+      setLongChains(data || [])
+      setLongChainsLoaded(true)
+    } finally {
+      setLongChainsLoading(false)
+    }
   }
 
   // Phase 2a: standalone fetch for the Plan tab. Refreshes driver count
@@ -2995,9 +3033,13 @@ export default function CompanyAdminPortal() {
                         const email = atUnit.length === 1 ? atUnit[0].email : ''
                         setNewGuestAuth({ ...newGuestAuth, visiting_unit: u, resident_email: email })
                       }}
-                      disabled={!newGuestAuth.property}
+                      disabled={!newGuestAuth.property || caGuestAuthResidentsLoading}
                       style={inp}>
-                      <option value=''>{newGuestAuth.property ? '— Select unit —' : 'Select a property first'}</option>
+                      <option value=''>
+                        {!newGuestAuth.property ? 'Select a property first'
+                          : caGuestAuthResidentsLoading ? 'Loading residents…'
+                          : '— Select unit —'}
+                      </option>
                       {Array.from(new Set(caGuestAuthResidents.filter((r: any) => r.is_active !== false).map((r: any) => r.unit))).sort().map((u: any) => (
                         <option key={u} value={u}>{u}</option>
                       ))}
@@ -3119,6 +3161,78 @@ export default function CompanyAdminPortal() {
                 </div>
               )
             })}
+
+            {/* ── RENEWAL PATTERNS (B214 commit 4, Q6 oversight) ──
+                Collapsible CA-only sub-section. Surfaces plates that have
+                been renewed 2+ times (3+ grants total = 90+ days possible).
+                Chain-aware: a single plate renewed 3x reads as ONE chain
+                with renewal_count_excl_root=3, NOT as 4 overlapping grants
+                (the intentional renewal-window overlap that the cascade
+                handles via order-by-end-date-desc).
+
+                Manager portal does NOT show this — it's a cross-property
+                oversight tool, belongs at company-admin altitude. Lazy fetch
+                on first expand. */}
+            <div style={{ marginTop:'16px', borderTop:'1px solid #2a2f3d', paddingTop:'14px' }}>
+              <button onClick={() => {
+                  const nextOpen = !showRenewalPatterns
+                  setShowRenewalPatterns(nextOpen)
+                  if (nextOpen && !longChainsLoaded) loadLongChains()
+                }}
+                style={{ width:'100%', padding:'10px 14px', background:'#1e2535', color:'#aaa', border:'1px solid #2a2f3d', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', textAlign:'left' }}>
+                {showRenewalPatterns ? '▼' : '▸'} Renewal patterns (oversight)
+                {longChainsLoaded && longChains.length > 0 && (
+                  <span style={{ marginLeft:'8px', background:'#3a2a08', color:'#fbbf24', padding:'2px 8px', borderRadius:'10px', fontSize:'10px' }}>
+                    {longChains.length}
+                  </span>
+                )}
+              </button>
+
+              {showRenewalPatterns && (
+                <div style={{ marginTop:'10px', background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                  <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px', lineHeight:'1.5' }}>
+                    Plates with <strong>3+ total grants</strong> (root + 2 or more renewals) across all your company&apos;s properties. Chain-aware — a single guest renewed multiple times reads as one chain, not multiple overlapping grants. Surfaces the &quot;guest authorization as fake residency&quot; pattern if it ever happens.
+                  </p>
+
+                  {longChainsLoading ? (
+                    <p style={{ color:'#555', fontSize:'12px', margin:'0', textAlign:'center', padding:'14px' }}>Loading renewal chains…</p>
+                  ) : longChains.length === 0 ? (
+                    <p style={{ color:'#555', fontSize:'12px', margin:'0', textAlign:'center', padding:'14px' }}>No long renewal chains found. Clean.</p>
+                  ) : (
+                    <div style={{ overflowX:'auto' }}>
+                      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                        <thead>
+                          <tr style={{ background:'#0f1117', color:'#888', textTransform:'uppercase', fontSize:'10px', letterSpacing:'0.05em' }}>
+                            <th style={{ padding:'8px', textAlign:'left' }}>Plate</th>
+                            <th style={{ padding:'8px', textAlign:'left' }}>Property</th>
+                            <th style={{ padding:'8px', textAlign:'left' }}>Current guest</th>
+                            <th style={{ padding:'8px', textAlign:'right' }}>Renewals</th>
+                            <th style={{ padding:'8px', textAlign:'right' }}>Total days</th>
+                            <th style={{ padding:'8px', textAlign:'left' }}>Window</th>
+                            <th style={{ padding:'8px', textAlign:'left' }}>Approved by</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {longChains.map((c: any) => (
+                            <tr key={c.root_id} style={{ borderTop:'1px solid #2a2f3d' }}>
+                              <td style={{ padding:'8px', fontFamily:'Courier New', color:'#3b82f6', fontWeight:'bold' }}>{c.plate}</td>
+                              <td style={{ padding:'8px', color:'#aaa' }}>{c.property}</td>
+                              <td style={{ padding:'8px', color:'#aaa' }}>{c.current_guest_name}</td>
+                              <td style={{ padding:'8px', color:'#fbbf24', fontWeight:'bold', textAlign:'right' }}>{c.renewal_count_excl_root}</td>
+                              <td style={{ padding:'8px', color:'#aaa', textAlign:'right' }}>{c.total_days_authorized}</td>
+                              <td style={{ padding:'8px', color:'#888', fontSize:'11px' }}>{c.first_grant_start} → {c.latest_end}</td>
+                              <td style={{ padding:'8px', color:'#888', fontSize:'11px' }}>
+                                {(c.creator_emails as string[]).join(', ')}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* RENEW MODAL */}
             {renewGuestAuthTarget && (
