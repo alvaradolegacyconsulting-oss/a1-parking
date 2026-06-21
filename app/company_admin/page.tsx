@@ -2556,15 +2556,19 @@ export default function CompanyAdminPortal() {
                 }}>
                   {result.status === 'authorized' && (
                     <>
+                      {/* Spaces v1 PII sweep (Jose 2026-06-21): Unit REMOVED
+                          for CA parity with driver. CA users access PII via
+                          dedicated tabs (Residents, Manage); the plate-lookup
+                          surface is consistent across portals — space and
+                          vehicle, not identity. Modal detail emptied. */}
                       <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'16px', margin:'0 0 12px' }}>✓ AUTHORIZED</p>
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
-                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Unit</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.unit}</span></div>
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Space</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.space || '—'}</span></div>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Property</span><br /><span style={{ color:'#4caf50', fontSize:'13px' }}>{result.data.property}</span></div>
                         <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Vehicle</span><br /><span style={{ color:'white', fontSize:'13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
-                        <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Property</span><br /><span style={{ color:'#4caf50', fontSize:'13px' }}>{result.data.property}</span></div>
                       </div>
                       {/* B71: authorized-plate override. Same flow as driver portal. */}
-                      <button onClick={() => setDeclineModal({ authorizedAs:'resident', detail: result.data.unit ? `at Unit ${result.data.unit}` : '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAs:'resident', detail: '' })}
                         style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -2582,15 +2586,25 @@ export default function CompanyAdminPortal() {
                         <p style={{ color:'white', fontSize:'16px', fontWeight:'bold', margin:'0 0 4px', letterSpacing:'0.02em' }}>DO NOT TOW</p>
                         <p style={{ color:'#bfdbfe', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>Manager-authorized guest. Valid through <strong style={{ color:'white' }}>{result.data.end_date}</strong>.</p>
                       </div>
+                      {/* Spaces v1 PII sweep (Jose 2026-06-21, STRICT): CA
+                          mirror of driver block — Guest name + Visiting Unit
+                          + Approved-by REMOVED. non_resident_reason KEPT
+                          (why-authorized context). Property kept (operational,
+                          not PII). Dates kept. Modal detail keeps only
+                          non_resident_reason. */}
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
-                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Guest</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.guest_name}</span></div>
-                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>{result.data.visiting_unit ? 'Visiting Unit' : 'Type'}</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.visiting_unit || result.data.non_resident_reason}</span></div>
+                        {result.data.non_resident_reason && (
+                          <div style={{ gridColumn:'span 2' }}>
+                            <span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Type</span><br />
+                            <span style={{ color:'white', fontSize:'13px' }}>{result.data.non_resident_reason}</span>
+                          </div>
+                        )}
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Property</span><br /><span style={{ color:'#3b82f6', fontSize:'13px', fontWeight:'bold' }}>{result.data.property}</span></div>
+                        <div></div>
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Authorized From</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.start_date}</span></div>
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Authorized Through</span><br /><span style={{ color:'#3b82f6', fontSize:'13px', fontWeight:'bold' }}>{result.data.end_date}</span></div>
-                        <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Approved by</span><br /><span style={{ color:'#aaa', fontSize:'12px' }}>{result.data.created_by_email}</span></div>
                       </div>
-                      <button onClick={() => setDeclineModal({ authorizedAs:'guest', detail: result.data.visiting_unit ? `visiting Unit ${result.data.visiting_unit}` : (result.data.non_resident_reason ? `(${result.data.non_resident_reason})` : '') })}
+                      <button onClick={() => setDeclineModal({ authorizedAs:'guest', detail: result.data.non_resident_reason ? `(${result.data.non_resident_reason})` : '' })}
                         style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -2612,15 +2626,17 @@ export default function CompanyAdminPortal() {
                   )}
                   {result.status === 'visitor' && (
                     <>
+                      {/* Spaces v1 PII sweep (Jose 2026-06-21): Visiting Unit
+                          + Visitor Name REMOVED for CA parity with driver.
+                          Modal detail emptied. */}
                       <p style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'16px', margin:'0 0 12px' }}>✓ VISITOR PASS ACTIVE</p>
-                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
-                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Visiting Unit</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.visiting_unit}</span></div>
-                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Visitor Name</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.visitor_name || '—'}</span></div>
-                        <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Expires</span><br /><span style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'13px' }}>{new Date(result.data.expires_at).toLocaleString()}</span></div>
+                      <div style={{ marginBottom:'14px' }}>
+                        <span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Expires</span><br />
+                        <span style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'13px' }}>{new Date(result.data.expires_at).toLocaleString()}</span>
                       </div>
                       <p style={{ color:'#f59e0b', fontSize:'11px', margin:'0 0 12px', fontWeight:'bold' }}>Do not tow for unauthorized status — active visitor pass.</p>
                       {/* B71: location/manner override on active visitor pass. */}
-                      <button onClick={() => setDeclineModal({ authorizedAs:'visitor', detail: result.data.visiting_unit ? `visiting Unit ${result.data.visiting_unit}` : '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAs:'visitor', detail: '' })}
                         style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
