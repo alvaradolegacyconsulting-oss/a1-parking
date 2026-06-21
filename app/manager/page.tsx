@@ -20,6 +20,25 @@ import {
   findOverlappingActiveAuth,
   fetchActiveGuestAuths,
 } from '../lib/guest-auth'
+// Spaces v1 — dashboard-primary architecture with filtered/paginated list.
+// All mutations route through the 6 DEFINER RPCs (assign/reassign/free/
+// generate/decommission/update_space_metadata). NO direct table writes
+// (the legacy saveSpace() direct UPDATE has been removed; B225-class
+// write closed by construction).
+import {
+  type Space,
+  type SpaceType,
+  type ListFilters,
+  type ResidentOption,
+  SPACE_TYPES,
+  TYPE_LABELS,
+  PAGE_SIZE_MOBILE,
+  PAGE_SIZE_DESKTOP,
+  fetchOccupancyDashboard,
+  fetchSpacesList,
+  fetchActiveResidentsAtProperty,
+  residentDisplay,
+} from '../lib/spaces'
 import CredentialsModal from '../components/CredentialsModal'
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
@@ -70,10 +89,38 @@ export default function ManagerPortal() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [isReadOnly, setIsReadOnly] = useState(false)
   // C2: post-confirmation media edit modal
-  const [spaces, setSpaces] = useState<any[]>([])
-  const [editingSpace, setEditingSpace] = useState<any>(null)
-  const [spaceError, setSpaceError] = useState('')
-  const [hoveredSpaceId, setHoveredSpaceId] = useState<string | null>(null)
+  // ── Spaces v1 (commit 3) — dashboard-primary state ──
+  // Old saveSpace()/editingSpace/hoveredSpaceId state DELETED — all writes
+  // now flow through the 6 DEFINER RPCs (assign/reassign/free/generate/
+  // decommission/update_space_metadata) via the modal handlers below.
+  const [occupancy, setOccupancy] = useState<Awaited<ReturnType<typeof fetchOccupancyDashboard>> | null>(null)
+  const [spacesList, setSpacesList] = useState<Space[]>([])
+  const [spacesListTotal, setSpacesListTotal] = useState(0)
+  const [spacesListLoading, setSpacesListLoading] = useState(false)
+  const [spacesFilters, setSpacesFilters] = useState<ListFilters>({
+    type: null,                  // null = All
+    status: 'available',         // default per Jose lock — answers "what can I assign?" zero-click
+    showInactive: false,
+    search: '',
+  })
+  const [spacesPage, setSpacesPage] = useState(0)
+  const [spacesPageSize, setSpacesPageSize] = useState<number>(PAGE_SIZE_DESKTOP)
+  const [spacesResidents, setSpacesResidents] = useState<ResidentOption[]>([])
+  const [spacesError, setSpacesError] = useState('')
+  const [flaggedMigrationCount, setFlaggedMigrationCount] = useState(0)
+  // Per-modal target + form state — one slot per RPC, matches B214 pattern
+  const [targetAdd, setTargetAdd] = useState(false)
+  const [addForm, setAddForm] = useState<{ type: SpaceType }>({ type: 'carport' })
+  const [targetAssign, setTargetAssign] = useState<Space | null>(null)
+  const [assignFormEmail, setAssignFormEmail] = useState('')
+  const [targetReassign, setTargetReassign] = useState<Space | null>(null)
+  const [reassignFormEmail, setReassignFormEmail] = useState('')
+  const [targetFree, setTargetFree] = useState<Space | null>(null)
+  const [targetDecommission, setTargetDecommission] = useState<Space | null>(null)
+  const [targetEdit, setTargetEdit] = useState<Space | null>(null)
+  const [editForm, setEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean }>({
+    label: '', description: '', type: 'carport', is_bundled: false,
+  })
   const [vehicleSearch, setVehicleSearch] = useState('')
   const [residentSearch, setResidentSearch] = useState('')
   const [violationSearch, setViolationSearch] = useState('')
@@ -125,9 +172,11 @@ export default function ManagerPortal() {
   const [resetPwTarget, setResetPwTarget] = useState<string | null>(null)
   const [resetPwForm, setResetPwForm] = useState({ newPw: '', confirmPw: '' })
   const [resetPwMsg, setResetPwMsg] = useState('')
-  const [plateQuery, setPlateQuery] = useState('')
-  const [plateSuggestions, setPlateSuggestions] = useState<any[]>([])
-  const [plateMsg, setPlateMsg] = useState<{ text: string; type: 'error' | 'warning' } | null>(null)
+  // ── plateQuery/plateSuggestions/plateMsg DELETED (Spaces v1 commit 3) ──
+  // These were the old saveSpace() per-modal plate-search state — only used
+  // by the deleted editingSpace modal. The Plate Lookup tab uses its own
+  // distinctly-named lookupPlate/lookupBusy/lookupResult/lookupError state
+  // (see L118-121) and is unaffected.
   const [showActiveResidents, setShowActiveResidents] = useState(true)
   const [showActiveVehicles, setShowActiveVehicles] = useState(true)
   const [disputes, setDisputes] = useState<any[]>([])
@@ -144,15 +193,32 @@ export default function ManagerPortal() {
   // switches properties (manager.name change) so the list always reflects the
   // currently-viewed property's scope.
   useEffect(() => { if (activeTab === 'guest-auth' && manager) refetchGuestAuths() }, [activeTab, manager])
+  // ── Spaces v1 (commit 3) effects ──
+  // 1. Adaptive page size — 25 mobile / 50 desktop. Matches the locked
+  //    UX requirement; resets pagination to page 0 on size change.
   useEffect(() => {
-    if (editingSpace) {
-      setPlateQuery(editingSpace.assigned_to_plate || '')
-    } else {
-      setPlateQuery('')
-    }
-    setPlateSuggestions([])
-    setPlateMsg(null)
-  }, [editingSpace?.id])
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(max-width: 768px)')
+    const apply = (matches: boolean) => { setSpacesPageSize(matches ? PAGE_SIZE_MOBILE : PAGE_SIZE_DESKTOP); setSpacesPage(0) }
+    apply(mq.matches)
+    const handler = (e: MediaQueryListEvent) => apply(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+  // 2. Dashboard refetch on tab activation. Aggregate queries; no row data.
+  useEffect(() => { if (activeTab === 'spaces' && manager) refetchSpacesDashboard() }, [activeTab, manager])
+  // 3. List refetch on tab activation OR filter/page change. SERVER-SIDE
+  //    filtered + LIMIT-paginated. NEVER fetches all rows.
+  useEffect(() => {
+    if (activeTab !== 'spaces' || !manager) return
+    refetchSpacesList()
+  }, [activeTab, manager, spacesFilters, spacesPage, spacesPageSize])
+  // 4. Residents-at-property for assign/reassign dropdowns + resident-search.
+  //    Loaded once on tab activation.
+  useEffect(() => {
+    if (activeTab !== 'spaces' || !manager) return
+    fetchActiveResidentsAtProperty(supabase, manager.name).then(setSpacesResidents)
+  }, [activeTab, manager])
   useEffect(() => {
     if (manager) {
       setPassLimit(manager.visitor_pass_limit != null ? String(manager.visitor_pass_limit) : '')
@@ -230,7 +296,10 @@ export default function ManagerPortal() {
     fetchViolations(property)
     fetchPasses(property)
     fetchResidents(property)
-    fetchSpaces(property)
+    // fetchSpaces removed (Spaces v1 commit 3) — Spaces tab loads its own
+    // data lazily on tab activation via refetchSpacesDashboard/List
+    // (dashboard aggregate + filtered paginated list). Removed from the
+    // mount-time fetch fan-out so cold load doesn't pull 126+ rows.
     fetchDisputes(property)
   }
 
@@ -386,83 +455,125 @@ export default function ManagerPortal() {
     }
   }
 
-  async function fetchSpaces(property: string) {
-    const { data } = await supabase.from('spaces').select('*').ilike('property', property).order('space_number')
-    setSpaces(data || [])
+  // ── Spaces v1 (commit 3) handlers ──────────────────────────────────
+  // The 4 old handlers (fetchSpaces / handlePlateSearch / selectPlate /
+  // saveSpace) DELETED. The saveSpace() direct UPDATE was the B225-class
+  // write — every mutation now flows through one of the 6 DEFINER RPCs:
+  //   • generate_spaces_from_pool  (submitAddSingleSpace, count=1)
+  //   • assign_space               (submitAssignSpace)
+  //   • reassign_space             (submitReassignSpace)
+  //   • free_space                 (submitFreeSpace)
+  //   • decommission_space         (submitDecommissionSpace)
+  //   • update_space_metadata      (submitEditMetadata)
+
+  async function refetchSpacesDashboard() {
+    if (!manager?.name) return
+    const dash = await fetchOccupancyDashboard(supabase, manager.name)
+    setOccupancy(dash)
+    // Inert defensive banner count (commit 1 produced 0 flagged rows in v1;
+    // future per-customer rollouts may flag multi-residency unit assignments)
+    const { count: flagged } = await supabase
+      .from('spaces').select('*', { count: 'exact', head: true })
+      .ilike('property', manager.name).not('migration_note', 'is', null)
+    setFlaggedMigrationCount(flagged ?? 0)
   }
 
-  async function handlePlateSearch(query: string) {
-    setPlateQuery(query)
-    setEditingSpace({ ...editingSpace, assigned_to_plate: query })
-    setPlateMsg(null)
-    setPlateSuggestions([])
-    if (query.length < 2) return
-    const { data } = await supabase
-      .from('vehicles')
-      .select('*')
-      .ilike('property', manager.name)
-      .ilike('plate', `%${query}%`)
-      .in('status', ['active', 'pending'])
-      .limit(8)
-    const results = data || []
-    setPlateSuggestions(results)
-    if (results.length === 0 && query.length >= 3) {
-      setPlateMsg({ text: 'This plate is not registered. Please add the vehicle first before assigning a space.', type: 'warning' })
+  async function refetchSpacesList() {
+    if (!manager?.name) return
+    setSpacesListLoading(true)
+    try {
+      const { rows, totalCount } = await fetchSpacesList(supabase, manager.name, spacesFilters, spacesPage, spacesPageSize)
+      setSpacesList(rows)
+      setSpacesListTotal(totalCount)
+    } finally {
+      setSpacesListLoading(false)
     }
   }
 
-  function selectPlate(plate: string) {
-    const conflict = spaces.find(s =>
-      s.id !== editingSpace.id &&
-      s.status === 'occupied' &&
-      s.assigned_to_plate?.toLowerCase() === plate.toLowerCase()
-    )
-    if (conflict) {
-      setPlateMsg({ text: `This plate is already assigned to Space ${conflict.space_number}. Release that space first or choose a different plate.`, type: 'error' })
-      setPlateSuggestions([])
-      setPlateQuery(plate)
-      setEditingSpace({ ...editingSpace, assigned_to_plate: plate })
-      return
-    }
-    setEditingSpace({ ...editingSpace, assigned_to_plate: plate })
-    setPlateQuery(plate)
-    setPlateSuggestions([])
-    setPlateMsg(null)
+  async function submitAddSingleSpace() {
+    setSpacesError('')
+    // Named params per Jose lock — single ad-hoc add, count pinned at 1.
+    // Auto-name from type prefix. NOT a bulk path (that lives in CA commit 4).
+    const { error } = await supabase.rpc('generate_spaces_from_pool', {
+      p_property: manager.name,
+      p_type: addForm.type,
+      p_count: 1,
+      p_label_prefix: null,        // null → RPC auto-derives from type
+    })
+    if (error) { setSpacesError(error.message); return }
+    setTargetAdd(false)
+    setAddForm({ type: 'carport' })
+    await refetchSpacesDashboard()
+    await refetchSpacesList()
   }
 
-  async function saveSpace() {
-    if (!editingSpace) return
-    setSpaceError('')
+  async function submitAssignSpace() {
+    if (!targetAssign) return
+    setSpacesError('')
+    const { error } = await supabase.rpc('assign_space', {
+      p_space_id: targetAssign.id,
+      p_resident_email: assignFormEmail,
+    })
+    if (error) { setSpacesError(error.message); return }
+    setTargetAssign(null)
+    setAssignFormEmail('')
+    await refetchSpacesDashboard()
+    await refetchSpacesList()
+  }
 
-    const isOccupied = editingSpace.status === 'occupied'
-    const isReleasing = editingSpace.status === 'available'
+  async function submitReassignSpace() {
+    if (!targetReassign) return
+    setSpacesError('')
+    const { error } = await supabase.rpc('reassign_space', {
+      p_space_id: targetReassign.id,
+      p_new_resident_email: reassignFormEmail,
+    })
+    if (error) { setSpacesError(error.message); return }
+    setTargetReassign(null)
+    setReassignFormEmail('')
+    await refetchSpacesDashboard()
+    await refetchSpacesList()
+  }
 
-    if (isOccupied && editingSpace.assigned_to_plate) {
-      const conflict = spaces.find(s =>
-        s.id !== editingSpace.id &&
-        s.status === 'occupied' &&
-        s.assigned_to_plate?.toLowerCase() === editingSpace.assigned_to_plate?.toLowerCase()
-      )
-      if (conflict) {
-        setSpaceError(`Space ${conflict.space_number} is already assigned to ${conflict.assigned_to_unit || '—'} - ${conflict.assigned_to_plate}`)
-        return
-      }
-    }
+  async function submitFreeSpace() {
+    if (!targetFree) return
+    setSpacesError('')
+    const { error } = await supabase.rpc('free_space', {
+      p_space_id: targetFree.id,
+      p_reason: 'manual_free',
+    })
+    if (error) { setSpacesError(error.message); return }
+    setTargetFree(null)
+    await refetchSpacesDashboard()
+    await refetchSpacesList()
+  }
 
-    const updates: any = {
-      status: editingSpace.status,
-      notes: editingSpace.notes ?? '',
-      location_notes: editingSpace.location_notes || null,
-      assigned_to_unit: isReleasing ? null : editingSpace.assigned_to_unit,
-      assigned_to_plate: isReleasing ? null : editingSpace.assigned_to_plate,
-    }
+  async function submitDecommissionSpace() {
+    if (!targetDecommission) return
+    setSpacesError('')
+    const { error } = await supabase.rpc('decommission_space', {
+      p_space_id: targetDecommission.id,
+    })
+    if (error) { setSpacesError(error.message); return }
+    setTargetDecommission(null)
+    await refetchSpacesDashboard()
+    await refetchSpacesList()
+  }
 
-    const { error } = await supabase.from('spaces').update(updates).eq('id', editingSpace.id)
-    if (error) { alert('Error: ' + error.message) }
-    else {
-      await logAudit({ action: 'EDIT_SPACE', table_name: 'spaces', record_id: editingSpace.id, new_values: { space_number: editingSpace.space_number, status: editingSpace.status, assigned_to_unit: editingSpace.assigned_to_unit, assigned_to_plate: editingSpace.assigned_to_plate, property: manager.name } })
-      setEditingSpace(null); fetchSpaces(manager.name)
-    }
+  async function submitEditMetadata() {
+    if (!targetEdit) return
+    setSpacesError('')
+    const { error } = await supabase.rpc('update_space_metadata', {
+      p_space_id: targetEdit.id,
+      p_label: editForm.label,
+      p_description: editForm.description || null,
+      p_type: editForm.type,
+      p_is_bundled: editForm.is_bundled,
+    })
+    if (error) { setSpacesError(error.message); return }
+    setTargetEdit(null)
+    await refetchSpacesDashboard()
+    await refetchSpacesList()
   }
 
   // B70: Plate Lookup — calls the SECURITY DEFINER pm_plate_lookup RPC.
@@ -1585,171 +1696,350 @@ export default function ManagerPortal() {
         )}
 
         {/* SPACES */}
+        {/* SPACES v1 (commit 3) — dashboard-primary + filtered/paginated list.
+            Architecture: NEVER renders all N spaces in one grid. Default
+            fetch returns ≤ pageSize rows (25 mobile / 50 desktop). All
+            mutations route through the 6 DEFINER RPCs via the modal
+            handlers above. */}
         {activeTab === 'spaces' && (
           <div>
-            {spaces.length === 0 ? (
-              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
-                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No spaces found for this property</p>
-              </div>
-            ) : (
-              <>
-                {/* Visual grid */}
-                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'14px' }}>
-                  <div style={{ display:'flex', gap:'12px', marginBottom:'10px', flexWrap:'wrap' }}>
-                    {[{color:'#4caf50', bg:'#1a3a1a', label:'Available'},{color:'#f44336', bg:'#3a1a1a', label:'Occupied'},{color:'#C9A227', bg:'#2a1e00', label:'Reserved'}].map(l => (
-                      <div key={l.label} style={{ display:'flex', alignItems:'center', gap:'5px' }}>
-                        <div style={{ width:'12px', height:'12px', borderRadius:'3px', background:l.bg, border:`1px solid ${l.color}` }} />
-                        <span style={{ color:'#aaa', fontSize:'11px' }}>{l.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(52px, 1fr))', gap:'6px' }}>
-                    {spaces.map((s) => {
-                      const isOccupied = s.status === 'occupied'
-                      const isReserved = s.status === 'reserved'
-                      const borderColor = isOccupied ? '#f44336' : isReserved ? '#C9A227' : '#4caf50'
-                      const bgColor = isOccupied ? '#3a1a1a' : isReserved ? '#2a1e00' : '#1a3a1a'
-                      const isHovered = hoveredSpaceId === s.id
-                      return (
-                        <div key={s.id}
-                          onClick={() => setHoveredSpaceId(isHovered ? null : s.id)}
-                          style={{ background:bgColor, border:`2px solid ${borderColor}`, borderRadius:'6px', padding:'6px 4px', textAlign:'center', cursor:'pointer', position:'relative', userSelect:'none' }}>
-                          <span style={{ color:'white', fontSize:'10px', fontWeight:'bold', display:'block', lineHeight:'1.2' }}>{s.space_number}</span>
-                          {s.location_notes && (
-                            <p style={{ color:'#666', fontSize:'10px', margin:'2px 0 0', fontStyle:'italic', lineHeight:'1.3' }}>{s.location_notes}</p>
-                          )}
-                          {isHovered && (isOccupied || isReserved) && (
-                            <div style={{ position:'absolute', top:'calc(100% + 4px)', left:'50%', transform:'translateX(-50%)', background:'#0f1117', border:'1px solid #3a4055', borderRadius:'6px', padding:'6px 8px', zIndex:20, minWidth:'110px', pointerEvents:'none' }}>
-                              <p style={{ color:'#aaa', fontSize:'10px', margin:'0', whiteSpace:'nowrap' }}>
-                                {isOccupied ? `${s.assigned_to_unit || '—'} · ${s.assigned_to_plate || '—'}` : (s.notes || 'Reserved')}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* Space list */}
-                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', overflow:'hidden' }}>
-                  {/* Header row */}
-                  <div style={{ display:'grid', gridTemplateColumns:'80px 80px 1fr 1fr 28px', gap:'8px', padding:'8px 12px', borderBottom:'1px solid #2a2f3d', background:'#1e2535' }}>
-                    {['Space','Status','Unit','Plate',''].map((h,i) => (
-                      <span key={i} style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>{h}</span>
-                    ))}
-                  </div>
-
-                  {spaces.map((s) => (
-                    <div key={s.id}>
-                      <div style={{ display:'grid', gridTemplateColumns:'80px 80px 1fr 1fr 28px', gap:'8px', padding:'10px 12px', borderBottom:'1px solid #1e2535', alignItems:'center' }}>
-                        <span style={{ color:'white', fontWeight:'bold', fontSize:'12px', fontFamily:'Courier New' }}>{s.space_number}</span>
-                        <span style={{
-                          fontSize:'10px', fontWeight:'bold', padding:'2px 7px', borderRadius:'8px', textAlign:'center',
-                          background: s.status === 'occupied' ? '#3a1a1a' : s.status === 'reserved' ? '#2a1e00' : '#1a3a1a',
-                          color: s.status === 'occupied' ? '#f44336' : s.status === 'reserved' ? '#C9A227' : '#4caf50',
-                        }}>{s.status}</span>
-                        <span style={{ color:'#aaa', fontSize:'12px' }}>{s.assigned_to_unit || '—'}</span>
-                        <span style={{ color:'#aaa', fontSize:'12px', fontFamily: s.assigned_to_plate ? 'Courier New' : undefined }}>{s.assigned_to_plate || '—'}</span>
-                        {!isReadOnly && (
-                          <button
-                            onClick={() => { setEditingSpace({ ...s }); setSpaceError('') }}
-                            style={{ padding:'3px 7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', fontFamily:'Arial' }}>
-                            Edit
+            {/* ① OCCUPANCY DASHBOARD — visually dominant, primary read.
+                Cards are clickable: clicking "3 open" filters the list
+                below to that type+status; clicking "47 assigned" filters
+                to that type+status. Zero-click drill-down. */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+              <p style={{ color:'#888', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 10px' }}>Reserved spaces</p>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(100px, 1fr))', gap:'8px' }}>
+                {SPACE_TYPES.map(t => {
+                  const c = occupancy?.byType[t] ?? { total:0, assigned:0, available:0 }
+                  return (
+                    <div key={t} style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px' }}>
+                      <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 4px', textTransform:'uppercase', letterSpacing:'0.05em' }}>{TYPE_LABELS[t]}</p>
+                      <p style={{ color:'white', fontSize:'18px', fontWeight:'bold', margin:'0 0 2px' }}>{c.assigned}/{c.total}</p>
+                      <p style={{ color:'#666', fontSize:'10px', margin:'0 0 6px' }}>assigned</p>
+                      {c.total > 0 && (
+                        <>
+                          <button onClick={() => { setSpacesFilters({ ...spacesFilters, type:t, status:'assigned' }); setSpacesPage(0) }}
+                            style={{ display:'block', width:'100%', padding:'4px 0', background:'transparent', color:'#3b82f6', border:'none', cursor:'pointer', fontSize:'10px', textAlign:'left' }}>
+                            {c.assigned} assigned ↓
                           </button>
-                        )}
-                      </div>
-
-                      {/* Inline edit form */}
-                      {editingSpace?.id === s.id && (
-                        <div style={{ background:'#0f1117', borderBottom:'1px solid #2a2f3d', padding:'14px 12px' }}>
-                          <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', margin:'0 0 12px' }}>Editing Space {s.space_number}</p>
-
-                          {spaceError && (
-                            <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
-                              <p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spaceError}</p>
-                            </div>
-                          )}
-
-                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Status</label>
-                          <select
-                            value={editingSpace.status}
-                            onChange={e => setEditingSpace({ ...editingSpace, status: e.target.value })}
-                            style={inputStyle}>
-                            <option value='available'>Available</option>
-                            <option value='occupied'>Occupied</option>
-                            <option value='reserved'>Reserved</option>
-                          </select>
-
-                          {editingSpace.status !== 'available' && (
-                            <>
-                              <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Assigned Unit</label>
-                              <input
-                                value={editingSpace.assigned_to_unit || ''}
-                                onChange={e => setEditingSpace({ ...editingSpace, assigned_to_unit: e.target.value })}
-                                placeholder="Apt 214"
-                                style={inputStyle} />
-
-                              <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Assigned Plate</label>
-                              <div style={{ position:'relative' }}>
-                                <input
-                                  value={plateQuery}
-                                  onChange={e => handlePlateSearch(e.target.value.toUpperCase())}
-                                  placeholder="Type plate to search..."
-                                  style={{ ...inputStyle, fontFamily:'Courier New', fontWeight:'bold' }}
-                                />
-                                {plateSuggestions.length > 0 && (
-                                  <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', zIndex:10, maxHeight:'160px', overflowY:'auto', boxShadow:'0 4px 12px rgba(0,0,0,0.4)' }}>
-                                    {plateSuggestions.map((v, i) => (
-                                      <div key={i} onClick={() => selectPlate(v.plate)}
-                                        style={{ padding:'8px 12px', cursor:'pointer', borderBottom:'1px solid #2a2f3d', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                                        <span style={{ fontFamily:'Courier New', fontWeight:'bold', fontSize:'13px', color:'#C9A227' }}>{v.plate}</span>
-                                        <span style={{ color:'#888', fontSize:'11px' }}>{v.unit} · {v.color} {v.make}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                              {plateMsg && (
-                                <div style={{ background: plateMsg.type === 'error' ? '#3a1a1a' : '#1a1a0a', border:`1px solid ${plateMsg.type === 'error' ? '#b71c1c' : '#a16207'}`, borderRadius:'6px', padding:'7px 10px', marginTop:'4px' }}>
-                                  <p style={{ color: plateMsg.type === 'error' ? '#f44336' : '#fbbf24', fontSize:'11px', margin:'0' }}>{plateMsg.text}</p>
-                                </div>
-                              )}
-                            </>
-                          )}
-
-                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Notes</label>
-                          <input
-                            value={editingSpace.notes || ''}
-                            onChange={e => setEditingSpace({ ...editingSpace, notes: e.target.value })}
-                            placeholder="Optional notes"
-                            style={inputStyle} />
-
-                          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Location Notes (optional)</label>
-                          <textarea
-                            rows={2}
-                            value={editingSpace.location_notes || ''}
-                            onChange={e => setEditingSpace({ ...editingSpace, location_notes: e.target.value })}
-                            placeholder="e.g. Building A near elevator, Lot B row 3, Covered parking level 2"
-                            style={{ ...inputStyle, resize:'vertical', fontFamily:'Arial' }} />
-
-                          <div style={{ display:'flex', gap:'8px', marginTop:'4px' }}>
-                            <button onClick={saveSpace} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'7px', cursor:'pointer' }}>Save</button>
-                            <button onClick={() => { setEditingSpace(null); setSpaceError('') }} style={{ padding:'9px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Notes row if no edit open */}
-                      {editingSpace?.id !== s.id && s.notes && (
-                        <div style={{ padding:'4px 12px 8px', borderBottom:'1px solid #1e2535' }}>
-                          <span style={{ color:'#555', fontSize:'10px' }}>{s.notes}</span>
-                        </div>
+                          <button onClick={() => { setSpacesFilters({ ...spacesFilters, type:t, status:'available' }); setSpacesPage(0) }}
+                            style={{ display:'block', width:'100%', padding:'4px 0', background:'transparent', color:c.available > 0 ? '#4caf50' : '#555', border:'none', cursor:'pointer', fontSize:'10px', textAlign:'left' }}>
+                            {c.available} open ↓
+                          </button>
+                        </>
                       )}
                     </div>
-                  ))}
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* ② VISITOR — one number, never rows (per locked design) */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <div>
+                <p style={{ color:'#888', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>Visitor</p>
+                <p style={{ color:'white', fontSize:'15px', margin:'0' }}>
+                  <strong>{occupancy?.activeVisitorPasses ?? 0}</strong>
+                  <span style={{ color:'#888' }}> / {occupancy?.visitorCapacity ?? '—'} in use</span>
+                  {occupancy?.visitorCapacity != null && occupancy.visitorCapacity > 0 && (
+                    <span style={{ color:'#666', fontSize:'11px', marginLeft:'8px' }}>({Math.round((occupancy.activeVisitorPasses / occupancy.visitorCapacity) * 100)}%)</span>
+                  )}
+                </p>
+              </div>
+              <button onClick={() => setActiveTab('visitors')}
+                style={{ padding:'6px 12px', background:'transparent', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold' }}>
+                Visitors tab →
+              </button>
+            </div>
+
+            {/* ⚠ Migration banner — inert in v1 (commit 1 backfill produced 0
+                flagged rows); kept as defensive scaffolding for future
+                per-customer rollouts that import legacy assignments */}
+            {flaggedMigrationCount > 0 && (
+              <div style={{ background:'#3a2a08', border:'1px solid #f59e0b', borderRadius:'10px', padding:'10px 14px', marginBottom:'14px' }}>
+                <p style={{ color:'#fbbf24', fontSize:'12px', margin:'0', fontWeight:'bold' }}>
+                  ⚠ {flaggedMigrationCount} spaces need manual assignment — migration flagged multi-residency units that couldn&apos;t auto-assign.
+                  {' '}<button onClick={() => { setSpacesFilters({ ...spacesFilters, type:null, status:null, search:'' }); setSpacesPage(0) }}
+                    style={{ background:'transparent', color:'#fbbf24', border:'none', textDecoration:'underline', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Show only flagged →</button>
+                </p>
+              </div>
+            )}
+
+            {/* ③ FILTERED LIST — search + filters + dense table + pagination.
+                Default filter (status=Available) cuts the typical 150 → ~9
+                on tab open. LIMIT is structural (pageSize constant, NOT a
+                user-toggleable input — Jose Check 2 lock 2026-06-21). */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+              <div style={{ display:'flex', gap:'8px', marginBottom:'10px', alignItems:'center', flexWrap:'wrap' }}>
+                <input
+                  value={spacesFilters.search}
+                  onChange={e => { setSpacesFilters({ ...spacesFilters, search: e.target.value }); setSpacesPage(0) }}
+                  placeholder="🔍 Search label or resident name..."
+                  style={{ ...inputStyle, marginBottom:0, flex:'1 1 200px' }} />
+                {!isReadOnly && (
+                  <button onClick={() => { setTargetAdd(true); setSpacesError('') }}
+                    style={{ padding:'8px 14px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', whiteSpace:'nowrap' }}>
+                    + New space
+                  </button>
+                )}
+              </div>
+              <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center', flexWrap:'wrap', fontSize:'12px' }}>
+                <span style={{ color:'#666', fontSize:'10px', textTransform:'uppercase' }}>Type:</span>
+                <select value={spacesFilters.type ?? ''}
+                  onChange={e => { setSpacesFilters({ ...spacesFilters, type: (e.target.value || null) as SpaceType | null }); setSpacesPage(0) }}
+                  style={{ ...inputStyle, marginBottom:0, padding:'5px 8px', width:'auto' }}>
+                  <option value=''>All</option>
+                  {SPACE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                </select>
+                <span style={{ color:'#666', fontSize:'10px', textTransform:'uppercase', marginLeft:'8px' }}>Status:</span>
+                <select value={spacesFilters.status ?? ''}
+                  onChange={e => { setSpacesFilters({ ...spacesFilters, status: (e.target.value || null) as 'available'|'assigned'|null }); setSpacesPage(0) }}
+                  style={{ ...inputStyle, marginBottom:0, padding:'5px 8px', width:'auto' }}>
+                  <option value=''>All</option>
+                  <option value='available'>Available</option>
+                  <option value='assigned'>Assigned</option>
+                </select>
+                <label style={{ display:'flex', alignItems:'center', gap:'5px', marginLeft:'8px', cursor:'pointer' }}>
+                  <input type='checkbox' checked={spacesFilters.showInactive}
+                    onChange={e => { setSpacesFilters({ ...spacesFilters, showInactive: e.target.checked }); setSpacesPage(0) }} />
+                  <span style={{ color:'#aaa', fontSize:'11px' }}>Show inactive</span>
+                </label>
+              </div>
+
+              {/* Dense table — no tiles. Cards reflow on mobile via the CSS grid. */}
+              {spacesListLoading ? (
+                <p style={{ color:'#555', fontSize:'12px', textAlign:'center', padding:'24px' }}>Loading spaces…</p>
+              ) : spacesList.length === 0 ? (
+                <p style={{ color:'#555', fontSize:'12px', textAlign:'center', padding:'24px' }}>
+                  No spaces match the current filter.
+                  {spacesFilters.search && <span style={{ display:'block', marginTop:'4px', fontSize:'11px' }}>Try clearing the search or widening the type/status filters.</span>}
+                </p>
+              ) : (
+                <>
+                  <div style={{ overflowX:'auto' }}>
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                      <thead>
+                        <tr style={{ background:'#0f1117', color:'#666', textTransform:'uppercase', fontSize:'10px', letterSpacing:'0.05em' }}>
+                          <th style={{ padding:'8px', textAlign:'left' }}>Label</th>
+                          <th style={{ padding:'8px', textAlign:'left' }}>Type</th>
+                          <th style={{ padding:'8px', textAlign:'left' }}>Status</th>
+                          <th style={{ padding:'8px', textAlign:'left' }}>Assigned to</th>
+                          <th style={{ padding:'8px', textAlign:'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {spacesList.map(s => (
+                          <tr key={s.id} style={{ borderTop:'1px solid #2a2f3d', opacity: s.is_active ? 1 : 0.55 }}>
+                            <td style={{ padding:'8px', fontFamily:'Courier New', color:'#C9A227', fontWeight:'bold' }}>{s.label}</td>
+                            <td style={{ padding:'8px', color:'#aaa' }}>{TYPE_LABELS[s.type] ?? s.type}</td>
+                            <td style={{ padding:'8px' }}>
+                              <span style={{ fontSize:'10px', fontWeight:'bold', padding:'2px 7px', borderRadius:'8px',
+                                background: s.status === 'assigned' ? '#0a1e3a' : s.status === 'available' ? '#0a3a1e' : '#1a1a1a',
+                                color: s.status === 'assigned' ? '#3b82f6' : s.status === 'available' ? '#4caf50' : '#888',
+                              }}>{s.status}</span>
+                              {!s.is_active && <span style={{ marginLeft:'4px', fontSize:'10px', color:'#666' }}>(inactive)</span>}
+                            </td>
+                            <td style={{ padding:'8px', color:'#aaa' }}>{residentDisplay(s.assigned_to_resident_email, spacesResidents)}</td>
+                            <td style={{ padding:'8px', textAlign:'right' }}>
+                              {!isReadOnly && (
+                                <>
+                                  {s.status === 'available' && s.is_active && (
+                                    <button onClick={() => { setTargetAssign(s); setAssignFormEmail(''); setSpacesError('') }}
+                                      style={{ padding:'4px 8px', background:'#3b82f6', color:'white', border:'none', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
+                                      Assign
+                                    </button>
+                                  )}
+                                  {s.status === 'assigned' && s.is_active && (
+                                    <button onClick={() => { setTargetReassign(s); setReassignFormEmail(''); setSpacesError('') }}
+                                      style={{ padding:'4px 8px', background:'#1e2535', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
+                                      Reassign
+                                    </button>
+                                  )}
+                                  {s.status === 'assigned' && s.is_active && (
+                                    <button onClick={() => { setTargetFree(s); setSpacesError('') }}
+                                      style={{ padding:'4px 8px', background:'#1e2535', color:'#f59e0b', border:'1px solid #f59e0b', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
+                                      Free
+                                    </button>
+                                  )}
+                                  <button onClick={() => { setTargetEdit(s); setEditForm({ label:s.label, description:s.description ?? '', type:s.type, is_bundled:s.is_bundled }); setSpacesError('') }}
+                                    style={{ padding:'4px 8px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
+                                    Edit
+                                  </button>
+                                  {s.status === 'available' && s.is_active && (
+                                    <button onClick={() => { setTargetDecommission(s); setSpacesError('') }}
+                                      style={{ padding:'4px 8px', background:'#1e2535', color:'#f44336', border:'1px solid #991b1b', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
+                                      Decommission
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Pagination — adaptive page size (25 mobile / 50 desktop) */}
+                  {spacesListTotal > spacesPageSize && (
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:'12px', fontSize:'11px' }}>
+                      <span style={{ color:'#888' }}>
+                        Page {spacesPage + 1} of {Math.max(1, Math.ceil(spacesListTotal / spacesPageSize))} · {spacesListTotal} total
+                      </span>
+                      <div style={{ display:'flex', gap:'6px' }}>
+                        <button onClick={() => setSpacesPage(Math.max(0, spacesPage - 1))} disabled={spacesPage === 0}
+                          style={{ padding:'5px 10px', background:'#1e2535', color: spacesPage === 0 ? '#444' : '#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor: spacesPage === 0 ? 'not-allowed' : 'pointer', fontSize:'11px' }}>
+                          ← Prev
+                        </button>
+                        <button onClick={() => setSpacesPage(spacesPage + 1)} disabled={(spacesPage + 1) * spacesPageSize >= spacesListTotal}
+                          style={{ padding:'5px 10px', background:'#1e2535', color: (spacesPage + 1) * spacesPageSize >= spacesListTotal ? '#444' : '#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor: (spacesPage + 1) * spacesPageSize >= spacesListTotal ? 'not-allowed' : 'pointer', fontSize:'11px' }}>
+                          Next →
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* ──────────────────────────────────────────────────────────
+                Modals — 6 mutation surfaces, each wired to one RPC
+                (assign / reassign / free / generate / decommission /
+                update_space_metadata). No direct table writes.
+                ────────────────────────────────────────────────────────── */}
+
+            {/* ADD modal — single ad-hoc, count=1, auto-named */}
+            {targetAdd && (
+              <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                  <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px', fontWeight:'bold' }}>Add new space</p>
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Type *</label>
+                  <select value={addForm.type} onChange={e => setAddForm({ type: e.target.value as SpaceType })} style={inputStyle}>
+                    {SPACE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                  </select>
+                  <p style={{ color:'#666', fontSize:'11px', margin:'0 0 14px', lineHeight:'1.4' }}>
+                    Label will auto-generate as the next sequential number for this type. You can rename via the Edit modal after.
+                  </p>
+                  {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => { setTargetAdd(false); setSpacesError('') }}
+                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                    <button onClick={submitAddSingleSpace}
+                      style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Add space</button>
+                  </div>
                 </div>
-              </>
+              </div>
+            )}
+
+            {/* ASSIGN modal */}
+            {targetAssign && (
+              <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                  <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Assign space</p>
+                  <p style={{ color:'white', fontSize:'14px', margin:'0 0 12px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{targetAssign.label}</strong> · {TYPE_LABELS[targetAssign.type] ?? targetAssign.type}</p>
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Resident *</label>
+                  <select value={assignFormEmail} onChange={e => setAssignFormEmail(e.target.value)} style={inputStyle}>
+                    <option value=''>— Select resident —</option>
+                    {spacesResidents.map(r => <option key={r.email} value={r.email}>{r.name || r.email} · Unit {r.unit}</option>)}
+                  </select>
+                  {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => { setTargetAssign(null); setSpacesError('') }}
+                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                    <button onClick={submitAssignSpace} disabled={!assignFormEmail}
+                      style={{ flex:1, padding:'10px', background: assignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: assignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Assign</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* REASSIGN modal */}
+            {targetReassign && (
+              <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                  <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Reassign space</p>
+                  <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{targetReassign.label}</strong> · {TYPE_LABELS[targetReassign.type]}</p>
+                  <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px' }}>Currently: {residentDisplay(targetReassign.assigned_to_resident_email, spacesResidents)}</p>
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>New resident *</label>
+                  <select value={reassignFormEmail} onChange={e => setReassignFormEmail(e.target.value)} style={inputStyle}>
+                    <option value=''>— Select new resident —</option>
+                    {spacesResidents.map(r => <option key={r.email} value={r.email}>{r.name || r.email} · Unit {r.unit}</option>)}
+                  </select>
+                  {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => { setTargetReassign(null); setSpacesError('') }}
+                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                    <button onClick={submitReassignSpace} disabled={!reassignFormEmail}
+                      style={{ flex:1, padding:'10px', background: reassignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: reassignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Reassign</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* FREE modal — confirm only */}
+            {targetFree && (
+              <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                <div style={{ background:'#161b26', border:'1px solid #f59e0b', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                  <p style={{ color:'#f59e0b', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Free space</p>
+                  <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{targetFree.label}</strong></p>
+                  <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>Free this space from {residentDisplay(targetFree.assigned_to_resident_email, spacesResidents)}? It returns to available; the assignment history is preserved.</p>
+                  {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => { setTargetFree(null); setSpacesError('') }}
+                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                    <button onClick={submitFreeSpace}
+                      style={{ flex:1, padding:'10px', background:'#f59e0b', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Free</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* DECOMMISSION modal — confirm only */}
+            {targetDecommission && (
+              <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                <div style={{ background:'#161b26', border:'1px solid #991b1b', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                  <p style={{ color:'#f44336', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Decommission space</p>
+                  <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{targetDecommission.label}</strong></p>
+                  <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>Mark this space as inactive (history-only). It disappears from the active operational view but the row + audit trail remain.</p>
+                  {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => { setTargetDecommission(null); setSpacesError('') }}
+                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                    <button onClick={submitDecommissionSpace}
+                      style={{ flex:1, padding:'10px', background:'#991b1b', color:'white', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Decommission</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* EDIT METADATA modal — all-fields-required contract */}
+            {targetEdit && (
+              <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                  <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px', fontWeight:'bold' }}>Edit space metadata</p>
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Label *</label>
+                  <input value={editForm.label} onChange={e => setEditForm({ ...editForm, label: e.target.value })} style={inputStyle} placeholder="e.g. CP-12" />
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Type *</label>
+                  <select value={editForm.type} onChange={e => setEditForm({ ...editForm, type: e.target.value as SpaceType })} style={inputStyle}>
+                    {SPACE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                  </select>
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Description (location + reference-only price)</label>
+                  <textarea value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                    placeholder="e.g. North lot row 3 · ref $50/mo (not billed)"
+                    style={{ ...inputStyle, minHeight:'50px', resize:'vertical', fontFamily:'Arial' }} />
+                  <label style={{ display:'flex', alignItems:'center', gap:'6px', cursor:'pointer', margin:'4px 0 12px' }}>
+                    <input type='checkbox' checked={editForm.is_bundled} onChange={e => setEditForm({ ...editForm, is_bundled: e.target.checked })} />
+                    <span style={{ color:'#aaa', fontSize:'12px' }}>Bundled / paid (reference flag)</span>
+                  </label>
+                  {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => { setTargetEdit(null); setSpacesError('') }}
+                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                    <button onClick={submitEditMetadata}
+                      style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Save</button>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         )}
