@@ -240,7 +240,7 @@ async function main() {
       city: PROPERTY_CITY,
       state: PROPERTY_STATE,
       zip: PROPERTY_ZIP,
-      total_spaces: PROPERTY_TOTAL_SPACES,
+      visitor_capacity: PROPERTY_TOTAL_SPACES,
       is_active: true,
     }])
     if (error) { console.error('  ✗ property INSERT failed:', error.message); process.exit(2) }

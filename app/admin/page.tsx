@@ -25,7 +25,7 @@ export default function AdminPortal() {
   const [propertySearch, setPropertySearch] = useState('')
   const [showAddProperty, setShowAddProperty] = useState(false)
   const [editingProperty, setEditingProperty] = useState<any>(null)
-  const [newProperty, setNewProperty] = useState({ name:'', company:'', address:'', city:'', state:'TX', zip:'', total_spaces:'', pm_name:'', pm_phone:'', pm_email:'', is_active:true })
+  const [newProperty, setNewProperty] = useState({ name:'', company:'', address:'', city:'', state:'TX', zip:'', visitor_capacity:'', pm_name:'', pm_phone:'', pm_email:'', is_active:true })
 
   const [users, setUsers] = useState<any[]>([])
   const [userSearch, setUserSearch] = useState('')
@@ -310,17 +310,17 @@ export default function AdminPortal() {
 
   async function addProperty() {
     if (!newProperty.name) { alert('Name is required'); return }
-    const payload = { ...newProperty, total_spaces: parseInt(newProperty.total_spaces) || null }
+    const payload = { ...newProperty, visitor_capacity: parseInt(newProperty.visitor_capacity) || null }
     const { data, error } = await supabase.from('properties').insert([payload]).select().single()
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'ADD_PROPERTY', 'properties', data.id, payload)
     setShowAddProperty(false)
-    setNewProperty({ name:'', company:'', address:'', city:'', state:'TX', zip:'', total_spaces:'', pm_name:'', pm_phone:'', pm_email:'', is_active:true })
+    setNewProperty({ name:'', company:'', address:'', city:'', state:'TX', zip:'', visitor_capacity:'', pm_name:'', pm_phone:'', pm_email:'', is_active:true })
     fetchProperties()
   }
 
   async function saveProperty() {
-    const payload = { ...editingProperty, total_spaces: parseInt(editingProperty.total_spaces) || null }
+    const payload = { ...editingProperty, visitor_capacity: parseInt(editingProperty.visitor_capacity) || null }
     const { error } = await supabase.from('properties').update(payload).eq('id', editingProperty.id)
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'EDIT_PROPERTY', 'properties', editingProperty.id, payload)
@@ -1050,7 +1050,7 @@ export default function AdminPortal() {
                   <div><label style={lbl}>City</label><input value={newProperty.city} onChange={e => setNewProperty({...newProperty, city: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>State</label><input value={newProperty.state} onChange={e => setNewProperty({...newProperty, state: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>Zip</label><input value={newProperty.zip} onChange={e => setNewProperty({...newProperty, zip: e.target.value})} style={inp} /></div>
-                  <div><label style={lbl}>Total Spaces</label><input type="number" value={newProperty.total_spaces} onChange={e => setNewProperty({...newProperty, total_spaces: e.target.value})} style={inp} /></div>
+                  <div><label style={lbl}>Visitor Capacity</label><input type="number" value={newProperty.visitor_capacity} onChange={e => setNewProperty({...newProperty, visitor_capacity: e.target.value})} style={inp} /></div>
                   <div style={{ gridColumn:'span 2' }}><label style={lbl}>PM Name</label><input value={newProperty.pm_name} onChange={e => setNewProperty({...newProperty, pm_name: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>PM Phone</label><input value={newProperty.pm_phone} onChange={e => setNewProperty({...newProperty, pm_phone: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>PM Email</label><input value={newProperty.pm_email} onChange={e => setNewProperty({...newProperty, pm_email: e.target.value})} style={inp} /></div>
@@ -1079,7 +1079,7 @@ export default function AdminPortal() {
                   <div><label style={lbl}>City</label><input value={editingProperty.city || ''} onChange={e => setEditingProperty({...editingProperty, city: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>State</label><input value={editingProperty.state || ''} onChange={e => setEditingProperty({...editingProperty, state: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>Zip</label><input value={editingProperty.zip || ''} onChange={e => setEditingProperty({...editingProperty, zip: e.target.value})} style={inp} /></div>
-                  <div><label style={lbl}>Total Spaces</label><input type="number" value={editingProperty.total_spaces || ''} onChange={e => setEditingProperty({...editingProperty, total_spaces: e.target.value})} style={inp} /></div>
+                  <div><label style={lbl}>Visitor Capacity</label><input type="number" value={editingProperty.visitor_capacity || ''} onChange={e => setEditingProperty({...editingProperty, visitor_capacity: e.target.value})} style={inp} /></div>
                   <div style={{ gridColumn:'span 2' }}><label style={lbl}>PM Name</label><input value={editingProperty.pm_name || ''} onChange={e => setEditingProperty({...editingProperty, pm_name: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>PM Phone</label><input value={editingProperty.pm_phone || ''} onChange={e => setEditingProperty({...editingProperty, pm_phone: e.target.value})} style={inp} /></div>
                   <div><label style={lbl}>PM Email</label><input value={editingProperty.pm_email || ''} onChange={e => setEditingProperty({...editingProperty, pm_email: e.target.value})} style={inp} /></div>
@@ -1103,7 +1103,7 @@ export default function AdminPortal() {
                 </div>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px', fontSize:'11px', marginBottom:'10px' }}>
                   <div><span style={{ color:'#555' }}>Address</span><br/><span style={{ color:'#aaa' }}>{[p.address, p.city, p.state].filter(Boolean).join(', ') || '—'}</span></div>
-                  <div><span style={{ color:'#555' }}>Spaces</span><br/><span style={{ color:'#aaa' }}>{p.total_spaces || '—'}</span></div>
+                  <div><span style={{ color:'#555' }}>Visitor cap.</span><br/><span style={{ color:'#aaa' }}>{p.visitor_capacity || '—'}</span></div>
                   <div><span style={{ color:'#555' }}>PM</span><br/><span style={{ color:'#aaa' }}>{p.pm_name || '—'}</span></div>
                 </div>
                 <div style={{ display:'flex', gap:'6px' }}>

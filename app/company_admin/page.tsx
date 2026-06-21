@@ -52,6 +52,24 @@ import {
   findOverlappingActiveAuth,
   fetchActiveGuestAuths,
 } from '../lib/guest-auth'
+// Spaces v1 commit 4 — same dashboard-primary architecture as manager portal.
+// CA variant: property selector at top; per-property single-view (NOT a
+// cross-property aggregate per Jose 2026-06-21 #1 lock). All mutations route
+// through the 6 DEFINER RPCs.
+import {
+  type Space,
+  type SpaceType,
+  type ListFilters,
+  type ResidentOption,
+  SPACE_TYPES,
+  TYPE_LABELS,
+  PAGE_SIZE_MOBILE,
+  PAGE_SIZE_DESKTOP,
+  fetchOccupancyDashboard,
+  fetchSpacesList,
+  fetchActiveResidentsAtProperty,
+  residentDisplay,
+} from '../lib/spaces'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
@@ -185,7 +203,7 @@ export default function CompanyAdminPortal() {
   // B51a: new properties can optionally land with expiration date + notes at
   // create time. PDF upload deferred to the Edit form because Storage paths
   // depend on the property_id, which doesn't exist until after INSERT.
-  const [newProperty, setNewProperty] = useState({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
+  const [newProperty, setNewProperty] = useState({ name: '', address: '', city: '', state: '', zip: '', visitor_capacity: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
   const [propMsg, setPropMsg] = useState('')
   const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
 
@@ -260,6 +278,50 @@ export default function CompanyAdminPortal() {
   const [longChainsLoading, setLongChainsLoading] = useState(false)
   const [longChainsLoaded, setLongChainsLoaded] = useState(false)
   const [showRenewalPatterns, setShowRenewalPatterns] = useState(false)
+
+  // ── Spaces v1 (commit 4) — CA cross-property dashboard + per-property single-view ──
+  // Property form's per-type space-pool counts. Single shared state used by
+  // BOTH create + edit forms (whichever is open). Add-only / additive per
+  // Jose lock #3 — RPC skips existing labels; lowered counts silently no-op.
+  const [spacePoolCounts, setSpacePoolCounts] = useState<Record<SpaceType, string>>({
+    regular: '', carport: '', garage: '', covered: '', handicap: '', employee: '',
+  })
+  const [spacePoolSubmitting, setSpacePoolSubmitting] = useState(false)
+  // Promise.allSettled results modal — surfaces per-type outcome after the
+  // properties write succeeds. Atomic-feel without forcing N sequential calls.
+  const [spacePoolResults, setSpacePoolResults] = useState<{
+    property: string
+    results: Array<{ type: SpaceType; status: 'success' | 'skipped' | 'failed'; count?: number; error?: string }>
+  } | null>(null)
+
+  // CA Spaces tab state (mirrors manager Spaces tab; property selector
+  // gates everything else). Single-property view per Jose lock #1.
+  const [caSelectedSpacesProperty, setCaSelectedSpacesProperty] = useState<string>('')
+  const [caOccupancy, setCaOccupancy] = useState<Awaited<ReturnType<typeof fetchOccupancyDashboard>> | null>(null)
+  const [caSpacesList, setCaSpacesList] = useState<Space[]>([])
+  const [caSpacesListTotal, setCaSpacesListTotal] = useState(0)
+  const [caSpacesListLoading, setCaSpacesListLoading] = useState(false)
+  const [caSpacesFilters, setCaSpacesFilters] = useState<ListFilters>({
+    type: null, status: 'available', showInactive: false, search: '',
+  })
+  const [caSpacesPage, setCaSpacesPage] = useState(0)
+  const [caSpacesPageSize, setCaSpacesPageSize] = useState<number>(PAGE_SIZE_DESKTOP)
+  const [caSpacesResidents, setCaSpacesResidents] = useState<ResidentOption[]>([])
+  const [caSpacesError, setCaSpacesError] = useState('')
+  const [caFlaggedMigrationCount, setCaFlaggedMigrationCount] = useState(0)
+  const [caTargetAdd, setCaTargetAdd] = useState(false)
+  const [caAddForm, setCaAddForm] = useState<{ type: SpaceType }>({ type: 'carport' })
+  const [caTargetAssign, setCaTargetAssign] = useState<Space | null>(null)
+  const [caAssignFormEmail, setCaAssignFormEmail] = useState('')
+  const [caTargetReassign, setCaTargetReassign] = useState<Space | null>(null)
+  const [caReassignFormEmail, setCaReassignFormEmail] = useState('')
+  const [caTargetFree, setCaTargetFree] = useState<Space | null>(null)
+  const [caTargetDecommission, setCaTargetDecommission] = useState<Space | null>(null)
+  const [caTargetEdit, setCaTargetEdit] = useState<Space | null>(null)
+  const [caEditForm, setCaEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean }>({
+    label: '', description: '', type: 'carport', is_bundled: false,
+  })
+
   const [analyticsRange, setAnalyticsRange] = useState('6mo')
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false)
   const [caAnalytics, setCAAnalytics] = useState<any>(null)
@@ -288,6 +350,40 @@ export default function CompanyAdminPortal() {
   // B214: lazy-load guest auths on tab activation. CA scope = all active
   // company properties (cross-property; manager portal is single-property).
   useEffect(() => { if (activeTab === 'guest-auth' && properties.length > 0) refetchGuestAuths() }, [activeTab, properties])
+  // ── Spaces v1 (commit 4) CA effects ──
+  // Adaptive pageSize (25 mobile / 50 desktop) — same constants as manager.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(max-width: 768px)')
+    const apply = (m: boolean) => { setCaSpacesPageSize(m ? PAGE_SIZE_MOBILE : PAGE_SIZE_DESKTOP); setCaSpacesPage(0) }
+    apply(mq.matches)
+    const h = (e: MediaQueryListEvent) => apply(e.matches)
+    mq.addEventListener('change', h)
+    return () => mq.removeEventListener('change', h)
+  }, [])
+  // Property selector default — when the spaces tab activates AND no property
+  // is yet selected, default to the first active company property so the
+  // dashboard renders immediately. CA can switch via the dropdown.
+  useEffect(() => {
+    if (activeTab !== 'spaces' || caSelectedSpacesProperty) return
+    const firstActive = properties.find(p => p.is_active)
+    if (firstActive) setCaSelectedSpacesProperty(firstActive.name)
+  }, [activeTab, properties, caSelectedSpacesProperty])
+  // Dashboard refetch on property selection
+  useEffect(() => {
+    if (activeTab !== 'spaces' || !caSelectedSpacesProperty) return
+    caRefetchSpacesDashboard()
+  }, [activeTab, caSelectedSpacesProperty])
+  // List refetch on filter/page/property change
+  useEffect(() => {
+    if (activeTab !== 'spaces' || !caSelectedSpacesProperty) return
+    caRefetchSpacesList()
+  }, [activeTab, caSelectedSpacesProperty, caSpacesFilters, caSpacesPage, caSpacesPageSize])
+  // Residents pool for assign/reassign dropdowns
+  useEffect(() => {
+    if (activeTab !== 'spaces' || !caSelectedSpacesProperty) { setCaSpacesResidents([]); return }
+    fetchActiveResidentsAtProperty(supabase, caSelectedSpacesProperty).then(setCaSpacesResidents)
+  }, [activeTab, caSelectedSpacesProperty])
   // When the form's property dropdown changes, refetch residents at that
   // property to populate the unit dropdown options. caGuestAuthResidentsLoading
   // prevents the empty unit list mid-fetch from being read as "this property
@@ -770,6 +866,153 @@ export default function CompanyAdminPortal() {
     }
   }
 
+  // ── Spaces v1 commit 4 — property-form per-type pool helper ───────
+  // Fires Promise.allSettled over the non-zero type counts. Builds the
+  // results-modal payload (per-type status + count or error). NON-FATAL —
+  // properties write has already succeeded; this is the secondary phase.
+  // Idempotent (RPC skips existing labels), safe to retry the failed types.
+  async function runSpacePoolGenerate(propertyName: string, retryTypes?: SpaceType[]) {
+    setSpacePoolSubmitting(true)
+    try {
+      const typesToRun = (retryTypes ?? SPACE_TYPES).filter(t => {
+        const v = parseInt(spacePoolCounts[t] || '0', 10)
+        return Number.isFinite(v) && v > 0
+      })
+      // Parallel — N ≤ 6, no concurrency issue. Each generate_spaces_from_pool
+      // call is atomic (its own transaction).
+      const settled = await Promise.allSettled(typesToRun.map(t =>
+        supabase.rpc('generate_spaces_from_pool', {
+          p_property: propertyName,
+          p_type: t,
+          p_count: parseInt(spacePoolCounts[t] || '0', 10),
+          p_label_prefix: null,
+        }).then(({ data, error }) => ({ type: t, data, error }))
+      ))
+      // Build per-type results
+      const results: Array<{ type: SpaceType; status: 'success'|'skipped'|'failed'; count?: number; error?: string }> = []
+      // Include skipped (count=0) for all 6 types when not retrying — the
+      // results modal shows the full picture, not just what was attempted.
+      if (!retryTypes) {
+        for (const t of SPACE_TYPES) {
+          const v = parseInt(spacePoolCounts[t] || '0', 10)
+          if (!Number.isFinite(v) || v <= 0) {
+            results.push({ type: t, status: 'skipped' })
+          }
+        }
+      }
+      settled.forEach((r, idx) => {
+        const t = typesToRun[idx]
+        if (r.status === 'fulfilled') {
+          if (r.value.error) {
+            results.push({ type: t, status: 'failed', error: r.value.error.message })
+          } else {
+            results.push({ type: t, status: 'success', count: (r.value.data as number) ?? 0 })
+          }
+        } else {
+          results.push({ type: t, status: 'failed', error: r.reason?.message ?? 'Unknown error' })
+        }
+      })
+      setSpacePoolResults({ property: propertyName, results })
+    } finally {
+      setSpacePoolSubmitting(false)
+    }
+  }
+
+  // ── Spaces v1 commit 4 — CA Spaces tab fetchers + 6 RPC submitters ──
+  // Same shape as the manager Spaces tab handlers; parameterized by
+  // caSelectedSpacesProperty (from the property selector dropdown).
+  // Single-property view per Jose lock #1 (no cross-property aggregate).
+  async function caRefetchSpacesDashboard() {
+    if (!caSelectedSpacesProperty) return
+    const dash = await fetchOccupancyDashboard(supabase, caSelectedSpacesProperty)
+    setCaOccupancy(dash)
+    const { count: flagged } = await supabase
+      .from('spaces').select('*', { count: 'exact', head: true })
+      .ilike('property', caSelectedSpacesProperty).not('migration_note', 'is', null)
+    setCaFlaggedMigrationCount(flagged ?? 0)
+  }
+
+  async function caRefetchSpacesList() {
+    if (!caSelectedSpacesProperty) return
+    setCaSpacesListLoading(true)
+    try {
+      const { rows, totalCount } = await fetchSpacesList(supabase, caSelectedSpacesProperty, caSpacesFilters, caSpacesPage, caSpacesPageSize)
+      setCaSpacesList(rows)
+      setCaSpacesListTotal(totalCount)
+    } finally {
+      setCaSpacesListLoading(false)
+    }
+  }
+
+  async function caSubmitAddSingleSpace() {
+    setCaSpacesError('')
+    const { error } = await supabase.rpc('generate_spaces_from_pool', {
+      p_property: caSelectedSpacesProperty, p_type: caAddForm.type, p_count: 1, p_label_prefix: null,
+    })
+    if (error) { setCaSpacesError(error.message); return }
+    setCaTargetAdd(false); setCaAddForm({ type: 'carport' })
+    await caRefetchSpacesDashboard(); await caRefetchSpacesList()
+  }
+
+  async function caSubmitAssignSpace() {
+    if (!caTargetAssign) return
+    setCaSpacesError('')
+    const { error } = await supabase.rpc('assign_space', {
+      p_space_id: caTargetAssign.id, p_resident_email: caAssignFormEmail,
+    })
+    if (error) { setCaSpacesError(error.message); return }
+    setCaTargetAssign(null); setCaAssignFormEmail('')
+    await caRefetchSpacesDashboard(); await caRefetchSpacesList()
+  }
+
+  async function caSubmitReassignSpace() {
+    if (!caTargetReassign) return
+    setCaSpacesError('')
+    const { error } = await supabase.rpc('reassign_space', {
+      p_space_id: caTargetReassign.id, p_new_resident_email: caReassignFormEmail,
+    })
+    if (error) { setCaSpacesError(error.message); return }
+    setCaTargetReassign(null); setCaReassignFormEmail('')
+    await caRefetchSpacesDashboard(); await caRefetchSpacesList()
+  }
+
+  async function caSubmitFreeSpace() {
+    if (!caTargetFree) return
+    setCaSpacesError('')
+    const { error } = await supabase.rpc('free_space', {
+      p_space_id: caTargetFree.id, p_reason: 'manual_free',
+    })
+    if (error) { setCaSpacesError(error.message); return }
+    setCaTargetFree(null)
+    await caRefetchSpacesDashboard(); await caRefetchSpacesList()
+  }
+
+  async function caSubmitDecommissionSpace() {
+    if (!caTargetDecommission) return
+    setCaSpacesError('')
+    const { error } = await supabase.rpc('decommission_space', {
+      p_space_id: caTargetDecommission.id,
+    })
+    if (error) { setCaSpacesError(error.message); return }
+    setCaTargetDecommission(null)
+    await caRefetchSpacesDashboard(); await caRefetchSpacesList()
+  }
+
+  async function caSubmitEditMetadata() {
+    if (!caTargetEdit) return
+    setCaSpacesError('')
+    const { error } = await supabase.rpc('update_space_metadata', {
+      p_space_id: caTargetEdit.id,
+      p_label: caEditForm.label,
+      p_description: caEditForm.description || null,
+      p_type: caEditForm.type,
+      p_is_bundled: caEditForm.is_bundled,
+    })
+    if (error) { setCaSpacesError(error.message); return }
+    setCaTargetEdit(null)
+    await caRefetchSpacesDashboard(); await caRefetchSpacesList()
+  }
+
   // Phase 2a: standalone fetch for the Plan tab. Refreshes driver count
   // (so usage doesn't depend on whether the user visited Manage) and
   // computes per-property visitor-pass usage for the current calendar
@@ -862,7 +1105,7 @@ export default function CompanyAdminPortal() {
       name: newProperty.name, address: newProperty.address || null,
       city: newProperty.city || null, state: newProperty.state || null,
       zip: newProperty.zip || null,
-      total_spaces: newProperty.total_spaces ? parseInt(newProperty.total_spaces) : null,
+      visitor_capacity: newProperty.visitor_capacity ? parseInt(newProperty.visitor_capacity) : null,
       pm_name: newProperty.pm_name || null, pm_phone: newProperty.pm_phone || null,
       pm_email: newProperty.pm_email || null, company: role?.company, is_active: true,
       // B51a: optional auth fields at create time. PDF upload deferred to Edit form.
@@ -885,9 +1128,19 @@ export default function CompanyAdminPortal() {
     }
 
     setPropMsg('Property added!')
-    setNewProperty({ name: '', address: '', city: '', state: '', zip: '', total_spaces: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
+    setNewProperty({ name: '', address: '', city: '', state: '', zip: '', visitor_capacity: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
     setShowAddProperty(false)
     await reloadProperties()
+
+    // Spaces v1 commit 4 — fire per-type space pool generation if any
+    // non-zero counts were entered. Promise.allSettled inside the helper
+    // surfaces per-type results in a modal. Property is already saved;
+    // pool generation is the secondary phase (non-fatal if any type fails).
+    const anyPoolCount = SPACE_TYPES.some(t => parseInt(spacePoolCounts[t] || '0', 10) > 0)
+    if (anyPoolCount) {
+      await runSpacePoolGenerate(newProperty.name)
+      setSpacePoolCounts({ regular: '', carport: '', garage: '', covered: '', handicap: '', employee: '' })
+    }
   }
 
   async function updateProperty() {
@@ -898,7 +1151,7 @@ export default function CompanyAdminPortal() {
     // doesn't choke on '' and notes don't store empty strings as data.
     const normalizedFields = {
       ...fields,
-      total_spaces: fields.total_spaces ? parseInt(fields.total_spaces) : null,
+      visitor_capacity: fields.visitor_capacity ? parseInt(fields.visitor_capacity) : null,
       authorization_expiration_date: fields.authorization_expiration_date || null,
       authorization_notes: fields.authorization_notes || null,
     }
@@ -935,8 +1188,20 @@ export default function CompanyAdminPortal() {
     }
 
     setPropMsg('Property updated!')
+    const editedPropertyName = editingProperty.name  // capture for pool gen below
     setEditingProperty(null)
     await reloadProperties()
+
+    // Spaces v1 commit 4 — same per-type pool generation as create path.
+    // Additive (RPC skips existing labels per Jose lock #3). If CA entered
+    // 50 carports on a property already at 30, the RPC generates CP-31..CP-80
+    // (50 new). Lowered counts no-op silently. NO decrement path; removal
+    // is per-space decommission via the Spaces tab.
+    const anyPoolCount = SPACE_TYPES.some(t => parseInt(spacePoolCounts[t] || '0', 10) > 0)
+    if (anyPoolCount) {
+      await runSpacePoolGenerate(editedPropertyName)
+      setSpacePoolCounts({ regular: '', carport: '', garage: '', covered: '', handicap: '', employee: '' })
+    }
   }
 
   // B51a: standalone PDF handlers. Each does its own DB UPDATE + audit log,
@@ -2463,6 +2728,10 @@ export default function CompanyAdminPortal() {
               property dropdown sources from CA's own company's ACTIVE
               properties only (Jose lock 2026-06-20). */}
           <button style={tab('guest-auth')} onClick={() => setActiveTab('guest-auth')}>Authorized Guests</button>
+          {/* Spaces v1 commit 4 — CA cross-property single-view tab with
+              property selector. Sibling to manager Spaces tab; uses the same
+              app/lib/spaces.ts helpers + same 6 RPC mutation surfaces. */}
+          <button style={tab('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
           <button style={tab('qrcodes')} onClick={() => setActiveTab('qrcodes')}>QR Codes</button>
           <button style={tab('manage')} onClick={() => { setActiveTab('manage'); if (!manageLoaded) loadManageData() }}>Manage</button>
           {/* Phase 2a: Analytics tab tier-gated (Growth+ / Professional+). Admin always sees it. */}
@@ -3335,6 +3604,320 @@ export default function CompanyAdminPortal() {
           </div>
         )}
 
+        {/* ── SPACES v1 commit 4 — CA cross-property single-view ── */}
+        {activeTab === 'spaces' && (
+          <div>
+            {/* Property selector (CA's company's active properties only) */}
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'14px' }}>
+              <label style={lbl}>Property</label>
+              <select value={caSelectedSpacesProperty}
+                onChange={e => { setCaSelectedSpacesProperty(e.target.value); setCaSpacesPage(0) }}
+                style={inp}>
+                <option value=''>— Select a property —</option>
+                {properties.filter(p => p.is_active).map(p => (
+                  <option key={p.id} value={p.name}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {!caSelectedSpacesProperty ? (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
+                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>Select a property above to view its spaces.</p>
+              </div>
+            ) : (
+              <>
+                {/* Dashboard cards */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                  <p style={{ color:'#888', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 10px' }}>Reserved spaces</p>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(100px, 1fr))', gap:'8px' }}>
+                    {SPACE_TYPES.map(t => {
+                      const c = caOccupancy?.byType[t] ?? { total:0, assigned:0, available:0 }
+                      return (
+                        <div key={t} style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px' }}>
+                          <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 4px', textTransform:'uppercase', letterSpacing:'0.05em' }}>{TYPE_LABELS[t]}</p>
+                          <p style={{ color:'white', fontSize:'18px', fontWeight:'bold', margin:'0 0 2px' }}>{c.assigned}/{c.total}</p>
+                          <p style={{ color:'#666', fontSize:'10px', margin:'0 0 6px' }}>assigned</p>
+                          {c.total > 0 && (
+                            <>
+                              <button onClick={() => { setCaSpacesFilters({ ...caSpacesFilters, type:t, status:'assigned' }); setCaSpacesPage(0) }}
+                                style={{ display:'block', width:'100%', padding:'4px 0', background:'transparent', color:'#3b82f6', border:'none', cursor:'pointer', fontSize:'10px', textAlign:'left' }}>{c.assigned} assigned ↓</button>
+                              <button onClick={() => { setCaSpacesFilters({ ...caSpacesFilters, type:t, status:'available' }); setCaSpacesPage(0) }}
+                                style={{ display:'block', width:'100%', padding:'4px 0', background:'transparent', color:c.available > 0 ? '#4caf50' : '#555', border:'none', cursor:'pointer', fontSize:'10px', textAlign:'left' }}>{c.available} open ↓</button>
+                            </>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Visitor metric */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'14px' }}>
+                  <p style={{ color:'#888', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>Visitor</p>
+                  <p style={{ color:'white', fontSize:'15px', margin:'0' }}>
+                    <strong>{caOccupancy?.activeVisitorPasses ?? 0}</strong>
+                    <span style={{ color:'#888' }}> / {caOccupancy?.visitorCapacity ?? '—'} in use</span>
+                    {caOccupancy?.visitorCapacity != null && caOccupancy.visitorCapacity > 0 && (
+                      <span style={{ color:'#666', fontSize:'11px', marginLeft:'8px' }}>({Math.round((caOccupancy.activeVisitorPasses / caOccupancy.visitorCapacity) * 100)}%)</span>
+                    )}
+                  </p>
+                </div>
+
+                {/* Migration banner (inert in v1) */}
+                {caFlaggedMigrationCount > 0 && (
+                  <div style={{ background:'#3a2a08', border:'1px solid #f59e0b', borderRadius:'10px', padding:'10px 14px', marginBottom:'14px' }}>
+                    <p style={{ color:'#fbbf24', fontSize:'12px', margin:'0', fontWeight:'bold' }}>⚠ {caFlaggedMigrationCount} spaces need manual assignment.</p>
+                  </div>
+                )}
+
+                {/* Filters + list */}
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                  <div style={{ display:'flex', gap:'8px', marginBottom:'10px', alignItems:'center', flexWrap:'wrap' }}>
+                    <input value={caSpacesFilters.search}
+                      onChange={e => { setCaSpacesFilters({ ...caSpacesFilters, search: e.target.value }); setCaSpacesPage(0) }}
+                      placeholder="🔍 Search label or resident name..." style={{ ...inp, marginBottom:0, flex:'1 1 200px' }} />
+                    <button onClick={() => { setCaTargetAdd(true); setCaSpacesError('') }}
+                      style={{ padding:'8px 14px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', whiteSpace:'nowrap' }}>+ New space</button>
+                  </div>
+                  <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center', flexWrap:'wrap', fontSize:'12px' }}>
+                    <span style={{ color:'#666', fontSize:'10px', textTransform:'uppercase' }}>Type:</span>
+                    <select value={caSpacesFilters.type ?? ''}
+                      onChange={e => { setCaSpacesFilters({ ...caSpacesFilters, type: (e.target.value || null) as SpaceType | null }); setCaSpacesPage(0) }}
+                      style={{ ...inp, marginBottom:0, padding:'5px 8px', width:'auto' }}>
+                      <option value=''>All</option>
+                      {SPACE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                    </select>
+                    <span style={{ color:'#666', fontSize:'10px', textTransform:'uppercase', marginLeft:'8px' }}>Status:</span>
+                    <select value={caSpacesFilters.status ?? ''}
+                      onChange={e => { setCaSpacesFilters({ ...caSpacesFilters, status: (e.target.value || null) as 'available'|'assigned'|null }); setCaSpacesPage(0) }}
+                      style={{ ...inp, marginBottom:0, padding:'5px 8px', width:'auto' }}>
+                      <option value=''>All</option><option value='available'>Available</option><option value='assigned'>Assigned</option>
+                    </select>
+                    <label style={{ display:'flex', alignItems:'center', gap:'5px', marginLeft:'8px', cursor:'pointer' }}>
+                      <input type='checkbox' checked={caSpacesFilters.showInactive}
+                        onChange={e => { setCaSpacesFilters({ ...caSpacesFilters, showInactive: e.target.checked }); setCaSpacesPage(0) }} />
+                      <span style={{ color:'#aaa', fontSize:'11px' }}>Show inactive</span>
+                    </label>
+                  </div>
+
+                  {caSpacesListLoading ? (
+                    <p style={{ color:'#555', fontSize:'12px', textAlign:'center', padding:'24px' }}>Loading spaces…</p>
+                  ) : caSpacesList.length === 0 ? (
+                    <p style={{ color:'#555', fontSize:'12px', textAlign:'center', padding:'24px' }}>No spaces match the current filter.</p>
+                  ) : (
+                    <>
+                      <div style={{ overflowX:'auto' }}>
+                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                          <thead>
+                            <tr style={{ background:'#0f1117', color:'#666', textTransform:'uppercase', fontSize:'10px', letterSpacing:'0.05em' }}>
+                              <th style={{ padding:'8px', textAlign:'left' }}>Label</th>
+                              <th style={{ padding:'8px', textAlign:'left' }}>Type</th>
+                              <th style={{ padding:'8px', textAlign:'left' }}>Status</th>
+                              <th style={{ padding:'8px', textAlign:'left' }}>Assigned to</th>
+                              <th style={{ padding:'8px', textAlign:'right' }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {caSpacesList.map(s => (
+                              <tr key={s.id} style={{ borderTop:'1px solid #2a2f3d', opacity: s.is_active ? 1 : 0.55 }}>
+                                <td style={{ padding:'8px', fontFamily:'Courier New', color:'#C9A227', fontWeight:'bold' }}>{s.label}</td>
+                                <td style={{ padding:'8px', color:'#aaa' }}>{TYPE_LABELS[s.type] ?? s.type}</td>
+                                <td style={{ padding:'8px' }}>
+                                  <span style={{ fontSize:'10px', fontWeight:'bold', padding:'2px 7px', borderRadius:'8px',
+                                    background: s.status === 'assigned' ? '#0a1e3a' : s.status === 'available' ? '#0a3a1e' : '#1a1a1a',
+                                    color: s.status === 'assigned' ? '#3b82f6' : s.status === 'available' ? '#4caf50' : '#888',
+                                  }}>{s.status}</span>
+                                  {!s.is_active && <span style={{ marginLeft:'4px', fontSize:'10px', color:'#666' }}>(inactive)</span>}
+                                </td>
+                                <td style={{ padding:'8px', color:'#aaa' }}>{residentDisplay(s.assigned_to_resident_email, caSpacesResidents)}</td>
+                                <td style={{ padding:'8px', textAlign:'right' }}>
+                                  {s.status === 'available' && s.is_active && (
+                                    <button onClick={() => { setCaTargetAssign(s); setCaAssignFormEmail(''); setCaSpacesError('') }}
+                                      style={{ padding:'4px 8px', background:'#3b82f6', color:'white', border:'none', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Assign</button>
+                                  )}
+                                  {s.status === 'assigned' && s.is_active && (
+                                    <button onClick={() => { setCaTargetReassign(s); setCaReassignFormEmail(''); setCaSpacesError('') }}
+                                      style={{ padding:'4px 8px', background:'#1e2535', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Reassign</button>
+                                  )}
+                                  {s.status === 'assigned' && s.is_active && (
+                                    <button onClick={() => { setCaTargetFree(s); setCaSpacesError('') }}
+                                      style={{ padding:'4px 8px', background:'#1e2535', color:'#f59e0b', border:'1px solid #f59e0b', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Free</button>
+                                  )}
+                                  <button onClick={() => { setCaTargetEdit(s); setCaEditForm({ label:s.label, description:s.description ?? '', type:s.type, is_bundled:s.is_bundled }); setCaSpacesError('') }}
+                                    style={{ padding:'4px 8px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Edit</button>
+                                  {s.status === 'available' && s.is_active && (
+                                    <button onClick={() => { setCaTargetDecommission(s); setCaSpacesError('') }}
+                                      style={{ padding:'4px 8px', background:'#1e2535', color:'#f44336', border:'1px solid #991b1b', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Decommission</button>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {caSpacesListTotal > caSpacesPageSize && (
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:'12px', fontSize:'11px' }}>
+                          <span style={{ color:'#888' }}>Page {caSpacesPage + 1} of {Math.max(1, Math.ceil(caSpacesListTotal / caSpacesPageSize))} · {caSpacesListTotal} total</span>
+                          <div style={{ display:'flex', gap:'6px' }}>
+                            <button onClick={() => setCaSpacesPage(Math.max(0, caSpacesPage - 1))} disabled={caSpacesPage === 0}
+                              style={{ padding:'5px 10px', background:'#1e2535', color: caSpacesPage === 0 ? '#444' : '#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor: caSpacesPage === 0 ? 'not-allowed' : 'pointer', fontSize:'11px' }}>← Prev</button>
+                            <button onClick={() => setCaSpacesPage(caSpacesPage + 1)} disabled={(caSpacesPage + 1) * caSpacesPageSize >= caSpacesListTotal}
+                              style={{ padding:'5px 10px', background:'#1e2535', color: (caSpacesPage + 1) * caSpacesPageSize >= caSpacesListTotal ? '#444' : '#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor: (caSpacesPage + 1) * caSpacesPageSize >= caSpacesListTotal ? 'not-allowed' : 'pointer', fontSize:'11px' }}>Next →</button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* 6 modals — same shape as manager Spaces tab, ca-prefixed state */}
+                {caTargetAdd && (
+                  <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                    <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                      <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px', fontWeight:'bold' }}>Add new space</p>
+                      <label style={lbl}>Type *</label>
+                      <select value={caAddForm.type} onChange={e => setCaAddForm({ type: e.target.value as SpaceType })} style={inp}>
+                        {SPACE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                      </select>
+                      <p style={{ color:'#666', fontSize:'11px', margin:'0 0 14px', lineHeight:'1.4' }}>Label auto-generates. Rename via Edit after.</p>
+                      {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => { setCaTargetAdd(false); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                        <button onClick={caSubmitAddSingleSpace} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Add space</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {caTargetAssign && (
+                  <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                    <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                      <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Assign space</p>
+                      <p style={{ color:'white', fontSize:'14px', margin:'0 0 12px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetAssign.label}</strong> · {TYPE_LABELS[caTargetAssign.type] ?? caTargetAssign.type}</p>
+                      <label style={lbl}>Resident *</label>
+                      <select value={caAssignFormEmail} onChange={e => setCaAssignFormEmail(e.target.value)} style={inp}>
+                        <option value=''>— Select resident —</option>
+                        {caSpacesResidents.map(r => <option key={r.email} value={r.email}>{r.name || r.email} · Unit {r.unit}</option>)}
+                      </select>
+                      {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => { setCaTargetAssign(null); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                        <button onClick={caSubmitAssignSpace} disabled={!caAssignFormEmail} style={{ flex:1, padding:'10px', background: caAssignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: caAssignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Assign</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {caTargetReassign && (
+                  <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                    <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                      <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Reassign space</p>
+                      <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetReassign.label}</strong> · {TYPE_LABELS[caTargetReassign.type]}</p>
+                      <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px' }}>Currently: {residentDisplay(caTargetReassign.assigned_to_resident_email, caSpacesResidents)}</p>
+                      <label style={lbl}>New resident *</label>
+                      <select value={caReassignFormEmail} onChange={e => setCaReassignFormEmail(e.target.value)} style={inp}>
+                        <option value=''>— Select new resident —</option>
+                        {caSpacesResidents.map(r => <option key={r.email} value={r.email}>{r.name || r.email} · Unit {r.unit}</option>)}
+                      </select>
+                      {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => { setCaTargetReassign(null); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                        <button onClick={caSubmitReassignSpace} disabled={!caReassignFormEmail} style={{ flex:1, padding:'10px', background: caReassignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: caReassignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Reassign</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {caTargetFree && (
+                  <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                    <div style={{ background:'#161b26', border:'1px solid #f59e0b', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                      <p style={{ color:'#f59e0b', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Free space</p>
+                      <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetFree.label}</strong></p>
+                      <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>Free this space from {residentDisplay(caTargetFree.assigned_to_resident_email, caSpacesResidents)}? Returns to available; history preserved.</p>
+                      {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => { setCaTargetFree(null); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                        <button onClick={caSubmitFreeSpace} style={{ flex:1, padding:'10px', background:'#f59e0b', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Free</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {caTargetDecommission && (
+                  <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                    <div style={{ background:'#161b26', border:'1px solid #991b1b', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                      <p style={{ color:'#f44336', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Decommission space</p>
+                      <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetDecommission.label}</strong></p>
+                      <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>Mark inactive (history-only). Row + audit trail remain.</p>
+                      {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => { setCaTargetDecommission(null); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                        <button onClick={caSubmitDecommissionSpace} style={{ flex:1, padding:'10px', background:'#991b1b', color:'white', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Decommission</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {caTargetEdit && (
+                  <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+                    <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                      <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px', fontWeight:'bold' }}>Edit space metadata</p>
+                      <label style={lbl}>Label *</label>
+                      <input value={caEditForm.label} onChange={e => setCaEditForm({ ...caEditForm, label: e.target.value })} style={inp} />
+                      <label style={lbl}>Type *</label>
+                      <select value={caEditForm.type} onChange={e => setCaEditForm({ ...caEditForm, type: e.target.value as SpaceType })} style={inp}>
+                        {SPACE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                      </select>
+                      <label style={lbl}>Description (location + reference-only price)</label>
+                      <textarea value={caEditForm.description} onChange={e => setCaEditForm({ ...caEditForm, description: e.target.value })}
+                        style={{ ...inp, minHeight:'50px', resize:'vertical', fontFamily:'Arial' }} />
+                      <label style={{ display:'flex', alignItems:'center', gap:'6px', cursor:'pointer', margin:'4px 0 12px' }}>
+                        <input type='checkbox' checked={caEditForm.is_bundled} onChange={e => setCaEditForm({ ...caEditForm, is_bundled: e.target.checked })} />
+                        <span style={{ color:'#aaa', fontSize:'12px' }}>Bundled / paid (reference flag)</span>
+                      </label>
+                      {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={() => { setCaTargetEdit(null); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                        <button onClick={caSubmitEditMetadata} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Save</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Spaces v1 commit 4 — per-type pool results modal (Promise.allSettled
+            outcome from property create/edit form). Surfaces per-type success/
+            skip/fail with retry-failed-only action. */}
+        {spacePoolResults && (
+          <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'14px', padding:'22px', maxWidth:'480px', width:'100%' }}>
+              <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Space pool results</p>
+              <p style={{ color:'white', fontSize:'14px', margin:'0 0 14px' }}>Property: <strong>{spacePoolResults.property}</strong></p>
+              <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 14px', marginBottom:'14px' }}>
+                {spacePoolResults.results.map((r) => (
+                  <div key={r.type} style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', padding:'4px 0', borderBottom:'1px solid #1e2535' }}>
+                    <span style={{ color:'#aaa', fontSize:'12px', minWidth:'80px' }}>{TYPE_LABELS[r.type]}</span>
+                    {r.status === 'success' && <span style={{ color:'#4caf50', fontSize:'12px' }}>✓ {r.count} generated</span>}
+                    {r.status === 'skipped' && <span style={{ color:'#666', fontSize:'12px' }}>— skipped (count was 0)</span>}
+                    {r.status === 'failed' && <span style={{ color:'#f44336', fontSize:'11px', maxWidth:'280px', textAlign:'right' }}>✗ {r.error}</span>}
+                  </div>
+                ))}
+              </div>
+              <div style={{ display:'flex', gap:'8px' }}>
+                <button onClick={() => setSpacePoolResults(null)}
+                  style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Close</button>
+                {spacePoolResults.results.some(r => r.status === 'failed') && (
+                  <button onClick={async () => {
+                      const failedTypes = spacePoolResults.results.filter(r => r.status === 'failed').map(r => r.type)
+                      const propertyName = spacePoolResults.property
+                      setSpacePoolResults(null)
+                      await runSpacePoolGenerate(propertyName, failedTypes)
+                    }}
+                    style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Retry failed</button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── QR CODES ── */}
         {activeTab === 'qrcodes' && (
           <div>
@@ -3486,7 +4069,7 @@ export default function CompanyAdminPortal() {
                       { key:'city', label:'City', placeholder:'Houston' },
                       { key:'state', label:'State', placeholder:'TX' },
                       { key:'zip', label:'ZIP Code', placeholder:'77001' },
-                      { key:'total_spaces', label:'Total Spaces', placeholder:'120' },
+                      { key:'visitor_capacity', label:'Visitor Capacity', placeholder:'120' },
                       { key:'pm_name', label:'Property Manager Name', placeholder:'John Smith' },
                       { key:'pm_phone', label:'PM Phone', placeholder:'(713) 555-0123' },
                       { key:'pm_email', label:'PM Email', placeholder:'pm@example.com' },
@@ -3508,9 +4091,31 @@ export default function CompanyAdminPortal() {
                       <label style={lbl}>Notes</label>
                       <textarea value={newProperty.authorization_notes} maxLength={1000} onChange={e => setNewProperty({ ...newProperty, authorization_notes: e.target.value })} placeholder="Renewal terms, contact info, special conditions, etc." style={{ ...inp, minHeight:'60px', resize:'vertical' }} />
                     </div>
+                    {/* Spaces v1 commit 4 — per-type reserved space pool (optional).
+                        Fires generate_spaces_from_pool RPC per non-zero count after
+                        the property is saved. Add-only / additive — no decrement
+                        path (per Jose lock #3); remove a space via the Spaces tab
+                        Decommission action. Auto-generates labels e.g. CP-1..CP-50. */}
+                    <div style={{ marginTop:'8px', padding:'10px 12px', background:'#0d1520', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                      <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 4px' }}>Reserved space pool (optional)</p>
+                      <p style={{ color:'#555', fontSize:'10px', margin:'0 0 8px', fontStyle:'italic' }}>Enter how many spaces of each type to generate. Labels auto-assign (CP-1, G-1, etc.). You can rename via the Spaces tab. <strong>Add-only</strong>: lowering a number does NOT remove existing spaces — use Decommission for that.</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))', gap:'8px' }}>
+                        {SPACE_TYPES.map(t => (
+                          <div key={t}>
+                            <label style={{ ...lbl, fontSize:'10px' }}>{TYPE_LABELS[t]}</label>
+                            <input type="number" min="0" value={spacePoolCounts[t]}
+                              onChange={e => setSpacePoolCounts({ ...spacePoolCounts, [t]: e.target.value })}
+                              placeholder="0" style={inp} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                     <div style={{ display:'flex', gap:'8px' }}>
-                      <button onClick={saveProperty} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Save Property</button>
-                      <button onClick={() => { setShowAddProperty(false); setPropMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                      <button onClick={saveProperty} disabled={spacePoolSubmitting}
+                        style={{ flex:1, padding:'11px', background: spacePoolSubmitting ? '#555' : '#C9A227', color: spacePoolSubmitting ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: spacePoolSubmitting ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
+                        {spacePoolSubmitting ? 'Generating spaces…' : 'Save Property'}
+                      </button>
+                      <button onClick={() => { setShowAddProperty(false); setPropMsg(''); setSpacePoolCounts({ regular: '', carport: '', garage: '', covered: '', handicap: '', employee: '' }) }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                     </div>
                   </div>
                 )}
@@ -3525,7 +4130,7 @@ export default function CompanyAdminPortal() {
                         <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>{prop.name}</p>
                         {prop.address && <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{prop.address}{prop.city ? `, ${prop.city}` : ''}{prop.state ? ` ${prop.state}` : ''}{prop.zip ? ` ${prop.zip}` : ''}</p>}
                         {prop.pm_name && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>PM: {prop.pm_name}{prop.pm_phone ? ` · ${prop.pm_phone}` : ''}</p>}
-                        {prop.total_spaces && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{prop.total_spaces} spaces</p>}
+                        {prop.visitor_capacity && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{prop.visitor_capacity} visitor cap.</p>}
                         {/* B51a: authorization summary line. Click "View PDF" → server signs URL */}
                         {prop.authorization_pdf_path ? (
                           <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>
@@ -3544,7 +4149,7 @@ export default function CompanyAdminPortal() {
                     </div>
                     {isCA && (
                       <div style={{ display:'flex', gap:'6px', marginTop:'10px' }}>
-                        <button onClick={() => { setEditingProperty({ ...prop, total_spaces: prop.total_spaces ? String(prop.total_spaces) : '' }); setPropMsg('') }}
+                        <button onClick={() => { setEditingProperty({ ...prop, visitor_capacity: prop.visitor_capacity ? String(prop.visitor_capacity) : '' }); setPropMsg('') }}
                           style={{ flex:1, padding:'7px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Edit</button>
                         <button onClick={() => togglePropertyActive(prop)}
                           style={{ flex:1, padding:'7px', background: prop.is_active ? '#3a1a1a' : '#1a3a1a', color: prop.is_active ? '#f44336' : '#4caf50', border:`1px solid ${prop.is_active ? '#b71c1c' : '#2e7d32'}`, borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
@@ -3557,7 +4162,7 @@ export default function CompanyAdminPortal() {
                         {[
                           { key:'name', label:'Name *' }, { key:'address', label:'Address' },
                           { key:'city', label:'City' }, { key:'state', label:'State' },
-                          { key:'zip', label:'ZIP' }, { key:'total_spaces', label:'Total Spaces' },
+                          { key:'zip', label:'ZIP' }, { key:'visitor_capacity', label:'Visitor Capacity' },
                           { key:'pm_name', label:'PM Name' }, { key:'pm_phone', label:'PM Phone' },
                           { key:'pm_email', label:'PM Email' },
                         ].map(f => (
@@ -3613,9 +4218,30 @@ export default function CompanyAdminPortal() {
                           `companies/${(editingProperty.company || 'company').toLowerCase().replace(/\s+/g,'-')}-logo`,
                           `prop_${editingProperty.id}`
                         )}
+                        {/* Spaces v1 commit 4 — per-type reserved space pool (additive on EDIT).
+                            Defaults to 0 / "add N more" per Jose lock #3. RPC skips
+                            existing labels; lowered count silently no-ops. Decrement
+                            path explicitly NOT supported — removal is per-space Decommission. */}
+                        <div style={{ marginTop:'8px', padding:'10px 12px', background:'#161b26', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                          <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 4px' }}>Reserved space pool — add more</p>
+                          <p style={{ color:'#555', fontSize:'10px', margin:'0 0 8px', fontStyle:'italic' }}>Adds N more spaces of each type after Save. Labels auto-assign sequentially. <strong>Lowering a number does NOT remove existing spaces</strong> — use the Spaces tab&apos;s Decommission action.</p>
+                          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(110px, 1fr))', gap:'8px' }}>
+                            {SPACE_TYPES.map(t => (
+                              <div key={t}>
+                                <label style={{ ...lbl, fontSize:'10px' }}>{TYPE_LABELS[t]}</label>
+                                <input type="number" min="0" value={spacePoolCounts[t]}
+                                  onChange={e => setSpacePoolCounts({ ...spacePoolCounts, [t]: e.target.value })}
+                                  placeholder="0" style={inp} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                         <div style={{ display:'flex', gap:'6px' }}>
-                          <button onClick={updateProperty} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Save Changes</button>
-                          <button onClick={() => setEditingProperty(null)} style={{ padding:'9px 10px', background:'#1e2535', color:'#aaa', fontSize:'11px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                          <button onClick={updateProperty} disabled={spacePoolSubmitting}
+                            style={{ flex:1, padding:'9px', background: spacePoolSubmitting ? '#555' : '#C9A227', color: spacePoolSubmitting ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor: spacePoolSubmitting ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
+                            {spacePoolSubmitting ? 'Generating spaces…' : 'Save Changes'}
+                          </button>
+                          <button onClick={() => { setEditingProperty(null); setSpacePoolCounts({ regular: '', carport: '', garage: '', covered: '', handicap: '', employee: '' }) }} style={{ padding:'9px 10px', background:'#1e2535', color:'#aaa', fontSize:'11px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                         </div>
                       </div>
                     )}

@@ -121,6 +121,13 @@ export default function ManagerPortal() {
   const [editForm, setEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean }>({
     label: '', description: '', type: 'carport', is_bundled: false,
   })
+  // ── Resident-approval optional assign-space dropdowns (commit 4) ──
+  // Optional per Jose lock 2026-06-21: "approval ≠ assignment; most
+  // residents hold zero spaces." Pool refetched alongside the spaces
+  // dashboard data (status='available' filter, top 100).
+  const [availableSpacesForAssign, setAvailableSpacesForAssign] = useState<Space[]>([])
+  const [pendingResidentAssignSpaceId, setPendingResidentAssignSpaceId] = useState<Record<string, string>>({})
+  const [newResidentAssignSpaceId, setNewResidentAssignSpaceId] = useState<string>('')
   const [vehicleSearch, setVehicleSearch] = useState('')
   const [residentSearch, setResidentSearch] = useState('')
   const [violationSearch, setViolationSearch] = useState('')
@@ -476,6 +483,15 @@ export default function ManagerPortal() {
       .from('spaces').select('*', { count: 'exact', head: true })
       .ilike('property', manager.name).not('migration_note', 'is', null)
     setFlaggedMigrationCount(flagged ?? 0)
+    // Available-spaces pool for the resident-approval assign-on-approve
+    // dropdowns (commit 4). Top 100 available spaces; manager-level property
+    // unlikely to have more available at once.
+    const { rows: available } = await fetchSpacesList(
+      supabase, manager.name,
+      { type: null, status: 'available', showInactive: false, search: '' },
+      0, 100,
+    )
+    setAvailableSpacesForAssign(available)
   }
 
   async function refetchSpacesList() {
@@ -779,8 +795,29 @@ export default function ManagerPortal() {
         message_id: emailResult.message_id,
       },
     })
+    // Spaces v1 commit 4 — OPTIONAL assign-space step. Manager picked a
+    // space in the pending-row dropdown → call assign_space RPC after the
+    // resident UPDATE succeeds. NON-FATAL per Jose 2026-06-21 lock:
+    // "approval ≠ assignment, most residents hold zero spaces" — if the
+    // assign fails (e.g., space taken between dropdown-load and submit),
+    // resident approval stays; manager can assign via the Spaces tab.
+    const pickedSpaceId = pendingResidentAssignSpaceId[r.id]
+    if (pickedSpaceId) {
+      const { error: assignErr } = await supabase.rpc('assign_space', {
+        p_space_id: parseInt(pickedSpaceId),
+        p_resident_email: (r.email ?? '').toLowerCase(),
+      })
+      if (assignErr) {
+        // Soft alert — resident approval already committed; assign failed.
+        alert(`Resident approved, but space assignment failed: ${assignErr.message}\n\nYou can assign a space later via the Spaces tab.`)
+      }
+      setPendingResidentAssignSpaceId(prev => { const c = { ...prev }; delete c[r.id]; return c })
+    }
     setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
     fetchResidents(manager.name)
+    // Refresh spaces dashboard + available-pool so the freshly-assigned
+    // space disappears from the assign dropdowns for other pending rows.
+    if (pickedSpaceId) await refetchSpacesDashboard()
   }
 
   async function declineResident(r: any) {
@@ -988,6 +1025,22 @@ export default function ManagerPortal() {
       return
     }
 
+    // Spaces v1 commit 4 — OPTIONAL assign-space on resident-add. Same
+    // non-fatal pattern as approveResident. Resident is already committed
+    // at this point; assign failure surfaces a soft alert, manager can
+    // assign later via the Spaces tab.
+    if (newResidentAssignSpaceId) {
+      const { error: assignErr } = await supabase.rpc('assign_space', {
+        p_space_id: parseInt(newResidentAssignSpaceId),
+        p_resident_email: targetEmail,
+      })
+      if (assignErr) {
+        alert(`Resident created, but space assignment failed: ${assignErr.message}\n\nYou can assign a space later via the Spaces tab.`)
+      } else {
+        await refetchSpacesDashboard()
+      }
+      setNewResidentAssignSpaceId('')
+    }
     await logAudit({
       action: 'RESIDENT_CREATED_WITH_AUTH',
       table_name: 'residents',
@@ -2083,6 +2136,25 @@ export default function ManagerPortal() {
                       placeholder="e.g. Welcome! or Missing documentation."
                       style={{ ...inputStyle, marginTop:'4px', marginBottom:'10px' }}
                     />
+                    {/* Spaces v1 commit 4 — OPTIONAL assign-space dropdown.
+                        Empty selection = approve without space assignment
+                        (the default; "approval ≠ assignment" per Jose lock).
+                        Dropdown populated from available-spaces pool refreshed
+                        alongside the spaces dashboard data. */}
+                    {availableSpacesForAssign.length > 0 && (
+                      <>
+                        <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Assign space (optional)</label>
+                        <select
+                          value={pendingResidentAssignSpaceId[r.id] || ''}
+                          onChange={e => setPendingResidentAssignSpaceId(prev => ({ ...prev, [r.id]: e.target.value }))}
+                          style={{ ...inputStyle, marginTop:'4px', marginBottom:'10px' }}>
+                          <option value=''>— No space assignment —</option>
+                          {availableSpacesForAssign.map(s => (
+                            <option key={s.id} value={String(s.id)}>{s.label} · {TYPE_LABELS[s.type] ?? s.type}</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
                     {!isReadOnly && (
                       <div style={{ display:'flex', gap:'8px' }}>
                         <button onClick={() => approveResident(r)}
@@ -2131,9 +2203,26 @@ export default function ManagerPortal() {
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Year</label><input value={newResident.vehicle_year} onChange={e => setNewResident({...newResident, vehicle_year: e.target.value})} placeholder="2022" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Color</label><input value={newResident.vehicle_color} onChange={e => setNewResident({...newResident, vehicle_color: e.target.value})} placeholder="Black" style={inputStyle} /></div>
                 </div>
+                {/* Spaces v1 commit 4 — OPTIONAL assign-space step on add.
+                    Empty = add resident without space; same "approval ≠
+                    assignment" lock. Dropdown sourced from the available-
+                    spaces pool refreshed alongside the dashboard. */}
+                {availableSpacesForAssign.length > 0 && (
+                  <div style={{ borderTop:'1px solid #2a2f3d', paddingTop:'10px', marginTop:'10px' }}>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Assign space (optional)</label>
+                    <select value={newResidentAssignSpaceId}
+                      onChange={e => setNewResidentAssignSpaceId(e.target.value)}
+                      style={{ ...inputStyle, marginTop:'4px' }}>
+                      <option value=''>— No space assignment —</option>
+                      {availableSpacesForAssign.map(s => (
+                        <option key={s.id} value={String(s.id)}>{s.label} · {TYPE_LABELS[s.type] ?? s.type}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div style={{ display:'flex', gap:'8px' }}>
                   <button onClick={addResident} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Add Resident</button>
-                  <button onClick={() => setShowAddResident(false)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                  <button onClick={() => { setShowAddResident(false); setNewResidentAssignSpaceId('') }} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                 </div>
               </div>
             )}
