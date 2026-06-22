@@ -1,6 +1,7 @@
 'use client'
 import React, { useState } from 'react'
 import { supabase } from '../supabase'
+import { displayTowReason } from '../lib/tow-reasons'
 
 // B175 — Violation void dialog.
 //
@@ -140,7 +141,7 @@ export default function ViolationVoidDialog({
           {violationType ? (
             <div style={summaryRow}>
               <span style={summaryLabel}>Type</span>
-              <span style={summaryValue}>{violationType}</span>
+              <span style={summaryValue}>{displayTowReason(violationType)}</span>
             </div>
           ) : null}
         </div>

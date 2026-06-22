@@ -5,6 +5,7 @@ import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
+import { displayTowReason } from '../lib/tow-reasons'
 import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
 // B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
 import { evaluatePortalGate } from '../lib/portal-account-gate'
@@ -806,7 +807,7 @@ export default function ResidentPortal() {
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
                     <div>
                       <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
-                      <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{v.violation_type || '—'}</p>
+                      <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{displayTowReason(v.violation_type)}</p>
                     </div>
                     <div style={{ textAlign:'right' }}>
                       <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>

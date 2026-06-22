@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import MediaRemovalDialog, { RemoverRole } from './MediaRemovalDialog'
 import ViolationVoidDialog from './ViolationVoidDialog'
+import { displayTowReason } from '../lib/tow-reasons'
 
 // B13/B18 Commit C2 — post-confirmation edit modal.
 // Reused by manager + CA portals. Opens with a known violationId,
@@ -193,7 +194,7 @@ export default function PostConfirmationEditModal({
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <div>
                   <p style={fieldLabel}>Type</p>
-                  <p style={fieldVal}>{violation.violation_type || '—'}</p>
+                  <p style={fieldVal}>{displayTowReason(violation.violation_type)}</p>
                 </div>
                 <div>
                   <p style={fieldLabel}>Property</p>

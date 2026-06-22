@@ -39,6 +39,7 @@ import { gateAccountState, AccountState } from '../lib/account-state'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { normalizePlate } from '../lib/plate'
+import { TOW_REASONS, RESTRICTED_ON_OVERRIDE, displayTowReason, type TowReasonCode } from '../lib/tow-reasons'
 // B214 — guest_authorizations shared helpers (anti-drift; same source of
 // truth as manager portal). CA form's property dropdown sources from CA's
 // own company's active properties only (Jose lock 2026-06-20).
@@ -2112,7 +2113,7 @@ export default function CompanyAdminPortal() {
       if (!inPeriod) return false
       if (!violationSearch) return true
       const q = violationSearch.toLowerCase()
-      return v.plate?.toLowerCase().includes(q) || v.violation_type?.toLowerCase().includes(q) || v.location?.toLowerCase().includes(q)
+      return v.plate?.toLowerCase().includes(q) || displayTowReason(v.violation_type).toLowerCase().includes(q) || v.location?.toLowerCase().includes(q)
     })
   }
 
@@ -2137,7 +2138,7 @@ export default function CompanyAdminPortal() {
       const time = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12: true })
       return [
         date, time, v.plate, v.state || '', v.vehicle_year || '', v.vehicle_color || '', v.vehicle_make || '', v.vehicle_model || '',
-        v.violation_type || '', v.location || '', v.property || '',
+        displayTowReason(v.violation_type), v.location || '', v.property || '',
         v.tow_storage_name || '', v.tow_storage_address || '', v.tow_storage_phone || '',
         v.tow_fee || '', v.driver_name || '', v.driver_license || '', v.notes || '',
       ].map(escapeCsv).join(',')
@@ -2188,7 +2189,10 @@ export default function CompanyAdminPortal() {
       byProp[p].violations++
       if (v.tow_ticket_generated) byProp[p].tows++
       const k = mk(new Date(v.created_at)); byMonthMap[k] = (byMonthMap[k] || 0) + 1
-      const t = v.violation_type || 'Unknown'; byType[t] = (byType[t] || 0) + 1
+      // Analytics groupby — bucket by LABEL so old freetext "Fire Lane"
+      // rows + new code "fire_lane" rows aggregate together (both resolve
+      // to label "Fire Lane" via displayTowReason).
+      const t = displayTowReason(v.violation_type); byType[t] = (byType[t] || 0) + 1
     })
 
     const monthLabels: { label: string; key: string }[] = []
@@ -2326,7 +2330,7 @@ export default function CompanyAdminPortal() {
       // even a state var in CA portal — line was a latent ReferenceError).
       `Vehicle: ${[v.vehicle_year, v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join(' ') || '—'}`,
       ``,`VIOLATION`,
-      `Type: ${v.violation_type || '—'}`,`Location: ${v.location || '—'}`,
+      `Type: ${displayTowReason(v.violation_type)}`,`Location: ${v.location || '—'}`,
       `Property: ${v.property || '—'}`,`Notes: ${v.notes || 'None'}`,
       ``,`STORAGE / IMPOUND`,`Facility: ${storage?.name || '—'}`,
       `Address: ${storage?.address || '—'}`,`Phone: ${storage?.phone || '—'}`,
@@ -2376,7 +2380,7 @@ export default function CompanyAdminPortal() {
         ${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).length ? `<div class="f"><label>Make / Model / Color</label><span>${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join('  ·  ')}</span></div>` : ''}
       </div></div>
       <div class="sec"><div class="sh">Violation</div><div class="g2">
-        <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
+        <div class="f"><label>Type</label><span>${displayTowReason(v.violation_type)}</span></div>
         <div class="f"><label>Location / Space</label><span>${v.location || '—'}</span></div>
         <div class="f" style="grid-column:span 2"><label>Notes</label><span>${v.notes || 'No additional notes.'}</span></div>
       </div></div>
@@ -2772,7 +2776,7 @@ export default function CompanyAdminPortal() {
                 : violations.slice(0, 5).map((v, i) => (
                   <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
                     <span style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'13px', fontWeight:'bold' }}>{v.plate}</span>
-                    <span style={{ color:'#aaa', fontSize:'12px' }}>{v.violation_type || '—'}</span>
+                    <span style={{ color:'#aaa', fontSize:'12px' }}>{displayTowReason(v.violation_type)}</span>
                     <span style={{ color:'#555', fontSize:'11px' }}>{new Date(v.created_at).toLocaleDateString()}</span>
                   </div>
                 ))
@@ -2954,16 +2958,15 @@ export default function CompanyAdminPortal() {
                   )}
 
                   <label style={lbl}>Violation Type *</label>
+                  {/* Tow-reason standardization (2026-06-22): inline list
+                      REMOVED; renders from app/lib/tow-reasons.ts. Option
+                      value = code. RESTRICTED_ON_OVERRIDE filter replaces
+                      the old !pendingDecline conditional. */}
                   <select value={violation.type} onChange={e => setViolation({ ...violation, type: e.target.value })} style={inp}>
                     <option value=''>Select type...</option>
-                    {!pendingDecline && <option>No Parking Permit</option>}
-                    {!pendingDecline && <option>Expired Visitor Pass</option>}
-                    <option>Wrong Space / Unauthorized Space</option>
-                    <option>Fire Lane</option>
-                    <option>Handicap Zone</option>
-                    <option>Blocking Driveway</option>
-                    <option>Double Parked</option>
-                    <option>Abandoned Vehicle</option>
+                    {TOW_REASONS
+                      .filter(r => !(pendingDecline && RESTRICTED_ON_OVERRIDE.has(r.code as TowReasonCode)))
+                      .map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
                   </select>
                   <label style={lbl}>Space / Location</label>
                   <input value={violation.location} onChange={e => setViolation({ ...violation, location: e.target.value })} placeholder="e.g. Space A-14, North lot" style={inp} />
@@ -3127,7 +3130,7 @@ export default function CompanyAdminPortal() {
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
                   <div>
                     <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
-                    <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{v.violation_type || '—'}</p>
+                    <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{displayTowReason(v.violation_type)}</p>
                   </div>
                   <div style={{ textAlign:'right' }}>
                     <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>

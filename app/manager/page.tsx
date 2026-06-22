@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
+import { displayTowReason } from '../lib/tow-reasons'
 // B70 → B75: manual plate lookup tab. hasFeature(MANAGER_PLATE_LOOKUP)
 // gates visibility; the pm_plate_lookup RPC enforces role + property
 // scoping server-side regardless. Flag is true on every tier across
@@ -1363,7 +1364,7 @@ export default function ManagerPortal() {
       if (!violationSearch) return true
       const q = violationSearch.toLowerCase()
       const qPlate = normalizePlate(violationSearch)
-      return (qPlate && normalizePlate(v.plate).includes(qPlate)) || v.violation_type?.toLowerCase().includes(q) || v.location?.toLowerCase().includes(q)
+      return (qPlate && normalizePlate(v.plate).includes(qPlate)) || displayTowReason(v.violation_type).toLowerCase().includes(q) || v.location?.toLowerCase().includes(q)
     })
   }
 
@@ -1572,7 +1573,7 @@ export default function ManagerPortal() {
               : violations.slice(0,3).map((v,i) => (
                 <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
                   <span style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'13px', fontWeight:'bold' }}>{v.plate}</span>
-                  <span style={{ color:'#aaa', fontSize:'12px' }}>{v.violation_type}</span>
+                  <span style={{ color:'#aaa', fontSize:'12px' }}>{displayTowReason(v.violation_type)}</span>
                   <span style={{ color:'#555', fontSize:'11px' }}>{new Date(v.created_at).toLocaleDateString()}</span>
                 </div>
               ))}
@@ -2402,7 +2403,7 @@ export default function ManagerPortal() {
                     <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
                   </div>
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px' }}>
-                    <div><span style={{ color:'#555' }}>Type</span><br/><span style={{ color:'#aaa' }}>{v.violation_type || '—'}</span></div>
+                    <div><span style={{ color:'#555' }}>Type</span><br/><span style={{ color:'#aaa' }}>{displayTowReason(v.violation_type)}</span></div>
                     <div><span style={{ color:'#555' }}>Location</span><br/><span style={{ color:'#aaa' }}>{v.location || '—'}</span></div>
                     {v.notes && <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Notes</span><br/><span style={{ color:'#aaa' }}>{v.notes}</span></div>}
                   </div>
@@ -3018,7 +3019,7 @@ export default function ManagerPortal() {
                   <div style={{ background:'#0f1117', borderRadius:'7px', padding:'10px 12px', marginBottom:'10px', fontSize:'12px' }}>
                     <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 6px' }}>Violation</p>
                     <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', margin:'0 0 4px' }}>{violations.find(v => v.id === d.violation_id)?.plate || '—'}</p>
-                    <p style={{ color:'#aaa', fontSize:'11px', margin:'0' }}>{violations.find(v => v.id === d.violation_id)?.violation_type || '—'} · {violations.find(v => v.id === d.violation_id)?.created_at ? new Date(violations.find(v => v.id === d.violation_id).created_at).toLocaleDateString() : ''}</p>
+                    <p style={{ color:'#aaa', fontSize:'11px', margin:'0' }}>{displayTowReason(violations.find(v => v.id === d.violation_id)?.violation_type)} · {violations.find(v => v.id === d.violation_id)?.created_at ? new Date(violations.find(v => v.id === d.violation_id).created_at).toLocaleDateString() : ''}</p>
                   </div>
                   <div style={{ marginBottom:'10px' }}>
                     <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>Reason</p>

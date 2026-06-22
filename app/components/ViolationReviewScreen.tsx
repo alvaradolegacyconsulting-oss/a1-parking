@@ -1,6 +1,7 @@
 'use client'
 import React, { useState } from 'react'
 import MediaRemovalDialog, { RemoverRole } from './MediaRemovalDialog'
+import { displayTowReason } from '../lib/tow-reasons'
 
 // B18 Commit B — review-before-confirm screen.
 // B13/B18 Commit C1 — extended with per-photo + video soft-delete
@@ -117,7 +118,7 @@ export default function ViolationReviewScreen({
       <div style={{ ...card, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
         <div>
           <p style={fieldLabel}>Type</p>
-          <p style={fieldVal}>{violation.violation_type || '—'}</p>
+          <p style={fieldVal}>{displayTowReason(violation.violation_type)}</p>
         </div>
         <div>
           <p style={fieldLabel}>Property</p>

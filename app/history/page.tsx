@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import { getCompanyContext, hasFeature } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
+import { displayTowReason } from '../lib/tow-reasons'
 
 export default function History() {
   const [violations, setViolations] = useState<any[]>([])
@@ -17,7 +18,7 @@ export default function History() {
     return violations.filter(v =>
       v.plate?.toLowerCase().includes(q) ||
       v.property?.toLowerCase().includes(q) ||
-      v.violation_type?.toLowerCase().includes(q) ||
+      displayTowReason(v.violation_type).toLowerCase().includes(q) ||
       v.location?.toLowerCase().includes(q)
     )
   }
@@ -87,7 +88,7 @@ export default function History() {
       const time = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12: true })
       return [
         date, time, v.plate, v.state || '', v.vehicle_year || '', v.vehicle_color || '', v.vehicle_make || '', v.vehicle_model || '',
-        v.violation_type || '', v.location || '', v.property || '',
+        displayTowReason(v.violation_type), v.location || '', v.property || '',
         v.tow_storage_name || '', v.tow_storage_address || '', v.tow_storage_phone || '',
         v.tow_fee || '', v.driver_name || '', v.driver_license || '', v.notes || '',
       ].map(escapeCsv).join(',')
@@ -208,7 +209,7 @@ export default function History() {
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
               <div>
                 <p style={{ color:'#555', fontSize:'11px', margin:'0', textTransform:'uppercase', letterSpacing:'0.06em' }}>Violation</p>
-                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0 0' }}>{v.violation_type || '—'}</p>
+                <p style={{ color:'#aaa', fontSize:'13px', margin:'4px 0 0' }}>{displayTowReason(v.violation_type)}</p>
               </div>
               <div>
                 <p style={{ color:'#555', fontSize:'11px', margin:'0', textTransform:'uppercase', letterSpacing:'0.06em' }}>Property</p>

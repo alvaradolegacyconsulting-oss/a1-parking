@@ -11,6 +11,29 @@
 // migrations/20260522_b70_b71_polish_pass.sql. Keep this list in sync
 // with the SQL CHECK if you ever add a value (e.g., `abandoned` if
 // Jose's "route through other with note" guidance changes).
+//
+// ─── DELIBERATE TWO-VOCABULARY SPLIT (Option A, Jose 2026-06-22) ───
+// This file's 6 codes (decline_reason column, CHECK-enforced) and the
+// 14 codes in app/lib/tow-reasons.ts (violation_type column, freetext)
+// are INTENTIONALLY separate vocabularies — different columns answering
+// different questions on the same violations row.
+//
+//   decline_reason  = "this plate was AUTHORIZED at scan; why are you
+//                      overriding to ticket it anyway?" (B71 context;
+//                      narrow location/manner subset)
+//   violation_type  = "what was the parking infraction?" (every ticket
+//                      carries one; full 14-code curated set)
+//
+// Near-collisions are by-design coexistence, not drift:
+//   reserved_space (here) ↔ reserved_parking (tow-reasons.ts)
+//   handicap_violation    ↔ handicap_zone
+//   blocked_access        ↔ blocking_access
+//
+// Unifying would require migrating the existing CHECK + backfilling
+// rows — both explicitly forbidden by the no-migration / no-backfill
+// locks. See app/lib/tow-reasons.ts header for the full rationale,
+// including the reporting note that "all wrong-space-type violations"
+// queries MUST check BOTH columns.
 
 import { useState } from 'react'
 

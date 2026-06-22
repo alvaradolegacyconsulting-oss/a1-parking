@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
+import { TOW_REASONS, RESTRICTED_ON_OVERRIDE, displayTowReason, type TowReasonCode } from '../lib/tow-reasons'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationReviewScreen'
@@ -721,7 +722,7 @@ export default function DriverPortal() {
       list = list.filter(v =>
         (qPlate && normalizePlate(v.plate).includes(qPlate)) ||
         v.property?.toLowerCase().includes(q) ||
-        v.violation_type?.toLowerCase().includes(q) ||
+        displayTowReason(v.violation_type).toLowerCase().includes(q) ||
         v.driver_name?.toLowerCase().includes(q)
       )
     }
@@ -776,7 +777,7 @@ export default function DriverPortal() {
       `Vehicle: ${[v.vehicle_year, v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join(' ') || '—'}`,
       ``,
       `VIOLATION`,
-      `Type: ${v.violation_type || '—'}`,
+      `Type: ${displayTowReason(v.violation_type)}`,
       `Location: ${v.location || '—'}`,
       `Property: ${v.property || '—'}`,
       `Notes: ${v.notes || 'None'}`,
@@ -852,7 +853,7 @@ export default function DriverPortal() {
       <div class="sec">
         <div class="sh">Violation</div>
         <div class="g2">
-          <div class="f"><label>Type</label><span>${v.violation_type || '—'}</span></div>
+          <div class="f"><label>Type</label><span>${displayTowReason(v.violation_type)}</span></div>
           <div class="f"><label>Location / Space</label><span>${v.location || '—'}</span></div>
           <div class="f" style="grid-column:span 2"><label>Notes</label><span>${v.notes || 'No additional notes.'}</span></div>
         </div>
@@ -1360,20 +1361,19 @@ export default function DriverPortal() {
                   )}
 
                   <label style={lbl}>Violation Type *</label>
+                  {/* Tow-reason standardization (2026-06-22): inline 8-option
+                      list REMOVED; renders from app/lib/tow-reasons.ts (14
+                      curated codes + RESTRICTED_ON_OVERRIDE set replacing
+                      the old !pendingDecline conditional on the 3 codes
+                      that contradict the authorized-plate premise). Option
+                      `value` is the CODE; the form-state holds the code;
+                      submit stores the code in violations.violation_type.
+                      Old freetext rows render correctly via displayTowReason. */}
                   <select value={violation.type} onChange={e => setViolation({ ...violation, type: e.target.value })} style={inp}>
                     <option value=''>Select type...</option>
-                    {/* B71: when overriding an authorized plate, the
-                        "authorization" types (No Parking Permit / Expired
-                        Visitor Pass) make no sense — the plate IS authorized.
-                        Only location/manner types appear. */}
-                    {!pendingDecline && <option>No Parking Permit</option>}
-                    {!pendingDecline && <option>Expired Visitor Pass</option>}
-                    <option>Wrong Space / Unauthorized Space</option>
-                    <option>Fire Lane</option>
-                    <option>Handicap Zone</option>
-                    <option>Blocking Driveway</option>
-                    <option>Double Parked</option>
-                    <option>Abandoned Vehicle</option>
+                    {TOW_REASONS
+                      .filter(r => !(pendingDecline && RESTRICTED_ON_OVERRIDE.has(r.code as TowReasonCode)))
+                      .map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
                   </select>
 
                   <label style={lbl}>Space / Location</label>
@@ -1575,7 +1575,7 @@ export default function DriverPortal() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
                   <div>
                     <p style={{ color: '#f44336', fontFamily: 'Courier New', fontSize: '20px', fontWeight: 'bold', margin: '0' }}>{v.plate}</p>
-                    <p style={{ color: '#aaa', fontSize: '11px', margin: '3px 0 0' }}>{v.violation_type || '—'}</p>
+                    <p style={{ color: '#aaa', fontSize: '11px', margin: '3px 0 0' }}>{displayTowReason(v.violation_type)}</p>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <p style={{ color: '#555', fontSize: '11px', margin: '0' }}>{new Date(v.created_at).toLocaleDateString()}</p>

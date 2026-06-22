@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { redirect } from 'next/navigation'
+import { displayTowReason } from '../../../lib/tow-reasons'
 
 // Property-manager authenticated tow-ticket view (price-stripped, storage kept).
 //
@@ -152,7 +153,7 @@ function PmTicketView({ violation: v, photos }: { violation: PmViolation; photos
         </Section>
 
         <Section title="Violation">
-          <Field label="Type" value={v.violation_type || '—'} />
+          <Field label="Type" value={displayTowReason(v.violation_type)} />
           <Field label="Location / Space" value={v.location || '—'} />
           <Field label="Notes" value={v.notes || 'No additional notes.'} span2 />
           <Field label="Observed" value={createdAt} />

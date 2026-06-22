@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { displayTowReason } from '../../../lib/tow-reasons'
 
 // Public read-only tow-ticket view (capability URL).
 //
@@ -178,7 +179,7 @@ function TicketView({ violation: v, photos }: { violation: ViolationRow; photos:
 
         {/* Violation */}
         <Section title="Violation">
-          <Field label="Type" value={v.violation_type || '—'} />
+          <Field label="Type" value={displayTowReason(v.violation_type)} />
           <Field label="Location / Space" value={v.location || '—'} />
           <Field label="Notes" value={v.notes || 'No additional notes.'} span2 />
         </Section>
