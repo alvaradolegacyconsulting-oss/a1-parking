@@ -60,13 +60,26 @@ export interface Space {
   description: string | null
   status: string  // 'available' | 'assigned' (+ transient 'occupied'/'reserved' tolerated by CHECK during rollout)
   is_active: boolean
-  assigned_to_resident_email: string | null
-  assigned_at: string | null
-  assigned_by_email: string | null
+  // v1.1 multi-resident: ties live in space_residents join table. The legacy
+  // assigned_to_resident_email column is dual-written by the new RPCs during
+  // the deprecation window (commit-1 migration 20260622_spaces_v1_1_...) —
+  // populated when the set has exactly 1 resident, NULL when 0 or 2+. Do
+  // NOT read this column for new code; use the `residents` array below
+  // (sourced from space_residents). The column drops in a follow-on cleanup
+  // after v1.1 readers prove moved.
+  assigned_to_resident_email: string | null  // DEPRECATED v1.1
+  assigned_at: string | null                  // legacy (single-assignment timestamp)
+  assigned_by_email: string | null            // legacy (single-assignment actor)
   is_bundled: boolean
   created_at: string
   created_by_email: string
   migration_note: string | null
+
+  // v1.1 multi-resident — the explicit-tie set, loaded via space_residents
+  // join. Attached by fetchSpacesList per row (batch query: one round-trip
+  // per page of spaces, ≤pageSize lookups). Order: alphabetical by name.
+  // EMPTY ARRAY is a valid state (space has 0 ties → status='available').
+  residents: ResidentOption[]
 }
 
 // ── Pagination ──────────────────────────────────────────────────────
@@ -213,10 +226,100 @@ export async function fetchSpacesList(
     .range(page * pageSize, page * pageSize + pageSize - 1)
 
   const { data, count } = await q
+  const rawRows = (data ?? []) as Omit<Space, 'residents'>[]
+
+  // v1.1 multi-resident: batch-load the residents array for every space on
+  // this page. ONE round-trip via space_residents .in(space_id, ...) then a
+  // SECOND round-trip via residents .in(email, ...) to resolve display
+  // info. Worst case: 2 extra queries returning ≤ pageSize × cap rows
+  // (pageSize=50, cap=2 → max 100 rows). Cheap.
+  const residentsBySpaceId = await fetchSpaceResidentsForList(
+    supabase,
+    property,
+    rawRows.map(s => s.id),
+  )
+  const rows: Space[] = rawRows.map(s => ({
+    ...s,
+    residents: residentsBySpaceId.get(s.id) ?? [],
+  }))
+
   return {
-    rows: (data ?? []) as Space[],
+    rows,
     totalCount: count ?? 0,
   }
+}
+
+// ── v1.1 multi-resident: space_residents helpers ────────────────────
+
+// Batch-load residents for a page of spaces. Returns a Map keyed by
+// space_id with the resolved ResidentOption[] (alphabetical by name).
+// Used by fetchSpacesList. Two round-trips: (1) space_residents to find
+// the email-set per space, (2) residents to resolve display info.
+//
+// INVARIANT REMINDER: this is REFERENCE-DATA loading. An empty array
+// for a space means "no ties" (render dash); it does NOT signal
+// unauthorized — authorization is vehicle-level, independent of space.
+async function fetchSpaceResidentsForList(
+  supabase: SupabaseClient,
+  property: string,
+  spaceIds: number[],
+): Promise<Map<number, ResidentOption[]>> {
+  const result = new Map<number, ResidentOption[]>()
+  if (spaceIds.length === 0) return result
+
+  // (1) Get all (space_id, resident_email) pairs for these spaces.
+  const { data: ties } = await supabase
+    .from('space_residents')
+    .select('space_id, resident_email')
+    .in('space_id', spaceIds)
+  if (!ties || ties.length === 0) return result
+
+  // (2) Resolve each unique email to a full ResidentOption via the
+  // residents table, scoped to this property (defensive — should match
+  // by construction since the space.property = resident.property invariant
+  // is enforced by assign_space).
+  const uniqueEmails = Array.from(new Set(ties.map(t => (t.resident_email ?? '').toLowerCase()).filter(Boolean)))
+  const { data: residentRows } = await supabase
+    .from('residents')
+    .select('email, name, unit')
+    .ilike('property', property)
+    .in('email', uniqueEmails)
+  const residentByEmail = new Map<string, ResidentOption>()
+  for (const r of (residentRows ?? [])) {
+    const email = (r.email ?? '').toLowerCase()
+    residentByEmail.set(email, {
+      email,
+      name: r.name ?? '',
+      unit: r.unit ?? '',
+    })
+  }
+
+  // (3) Compose: for each space_id, list its resolved residents (alpha by name).
+  for (const tie of ties) {
+    const email = (tie.resident_email ?? '').toLowerCase()
+    if (!email) continue
+    const resolved = residentByEmail.get(email) ?? { email, name: '', unit: '' }
+    const list = result.get(tie.space_id) ?? []
+    list.push(resolved)
+    result.set(tie.space_id, list)
+  }
+  for (const [k, list] of result) {
+    list.sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email))
+    result.set(k, list)
+  }
+  return result
+}
+
+// Fetch the residents tied to a single space (used by modals that
+// operate on one space at a time — assign/free/reassign-via-2-clicks).
+// Returns the resolved ResidentOption[] (alphabetical by name).
+export async function fetchSpaceResidents(
+  supabase: SupabaseClient,
+  spaceId: number,
+  property: string,
+): Promise<ResidentOption[]> {
+  const map = await fetchSpaceResidentsForList(supabase, property, [spaceId])
+  return map.get(spaceId) ?? []
 }
 
 // ── Residents-at-property helper (used by assign/reassign dropdowns) ──
@@ -244,13 +347,31 @@ export async function fetchActiveResidentsAtProperty(
   }))
 }
 
-// ── Resident display helper for list rows ───────────────────────────
-// Given a space's assigned_to_resident_email + the loaded residents list,
-// return a display string ("Sarah Chen · Unit 207"). Used in the list
-// table's ASSIGNED RESIDENT column. The residents list is already loaded
-// for the assign/reassign dropdowns — this helper just lookups, doesn't
-// fetch.
+// ── Resident display helpers ────────────────────────────────────────
+//
+// v1.1 multi-resident: residentDisplayList is the NEW primary helper.
+// Renders an array of resolved ResidentOption[] (the shape attached to
+// every Space row by fetchSpacesList). Commits 3+4 migrate the 9 reader
+// sites from the legacy email-based residentDisplay → residentDisplayList.
+//
+// Empty array → "—" (dash). EMPTY-ARRAY STATE IS A VALID REFERENCE-DATA
+// ABSENCE per the locked invariant — NOT a deauthorization signal.
+//
+// Single resident → "Sarah Chen · Unit 207"
+// Multi resident (cap=2) → "Sarah Chen · Unit 207, Marco Diaz · Unit 207"
+//   (alphabetical by name; sort happens in fetchSpaceResidentsForList)
+export function residentDisplayList(residents: ResidentOption[]): string {
+  if (!residents || residents.length === 0) return '—'
+  return residents
+    .map(r => `${r.name || r.email}${r.unit ? ` · Unit ${r.unit}` : ''}`)
+    .join(', ')
+}
 
+// Legacy single-email helper. Pre-v1.1 callers in manager + CA portals
+// still use this; commits 3+4 migrate them to residentDisplayList. The
+// helper stays available through the deprecation window so commit 2
+// ships standalone without breaking existing callers. Drops in the
+// cleanup migration that removes spaces.assigned_to_resident_email.
 export function residentDisplay(email: string | null, residents: ResidentOption[]): string {
   if (!email) return '—'
   const r = residents.find(x => x.email === email.toLowerCase())
