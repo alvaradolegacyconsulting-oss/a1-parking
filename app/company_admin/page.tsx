@@ -69,8 +69,10 @@ import {
   fetchOccupancyDashboard,
   fetchSpacesList,
   fetchActiveResidentsAtProperty,
-  residentDisplay,
+  residentDisplay,     // legacy single-email helper; kept for any remaining legacy reader
+  residentDisplayList, // v1.1 multi-resident list-version (CA reader sites migrate to this)
 } from '../lib/spaces'
+import SearchableResidentPicker, { type SearchableResidentPickerResult } from '../components/SearchableResidentPicker'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
@@ -313,10 +315,13 @@ export default function CompanyAdminPortal() {
   const [caTargetAdd, setCaTargetAdd] = useState(false)
   const [caAddForm, setCaAddForm] = useState<{ type: SpaceType }>({ type: 'carport' })
   const [caTargetAssign, setCaTargetAssign] = useState<Space | null>(null)
+  // v1.1: caAssignFormEmail is set by SearchableResidentPicker's onSelect.
   const [caAssignFormEmail, setCaAssignFormEmail] = useState('')
-  const [caTargetReassign, setCaTargetReassign] = useState<Space | null>(null)
-  const [caReassignFormEmail, setCaReassignFormEmail] = useState('')
+  // v1.1 multi-resident: caTargetReassign / caReassignFormEmail DROPPED.
+  // "Reassign" is ambiguous in set-world; manager UX = 2 explicit clicks.
   const [caTargetFree, setCaTargetFree] = useState<Space | null>(null)
+  // v1.1: per-resident free target. null = whole-space mode.
+  const [caFreeResidentEmail, setCaFreeResidentEmail] = useState<string | null>(null)
   const [caTargetDecommission, setCaTargetDecommission] = useState<Space | null>(null)
   const [caTargetEdit, setCaTargetEdit] = useState<Space | null>(null)
   const [caEditForm, setCaEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean }>({
@@ -966,25 +971,23 @@ export default function CompanyAdminPortal() {
     await caRefetchSpacesDashboard(); await caRefetchSpacesList()
   }
 
-  async function caSubmitReassignSpace() {
-    if (!caTargetReassign) return
-    setCaSpacesError('')
-    const { error } = await supabase.rpc('reassign_space', {
-      p_space_id: caTargetReassign.id, p_new_resident_email: caReassignFormEmail,
-    })
-    if (error) { setCaSpacesError(error.message); return }
-    setCaTargetReassign(null); setCaReassignFormEmail('')
-    await caRefetchSpacesDashboard(); await caRefetchSpacesList()
-  }
+  // v1.1: caSubmitReassignSpace DROPPED. Manager UX = 2 explicit clicks
+  // (per-resident free + assign). Same as the manager portal in commit 3.
 
+  // v1.1: caSubmitFreeSpace gains optional p_resident_email routing.
+  //   caFreeResidentEmail=null → whole-space free
+  //   caFreeResidentEmail set  → per-resident remove
+  // INVARIANT: never touches vehicles or residents.is_active.
   async function caSubmitFreeSpace() {
     if (!caTargetFree) return
     setCaSpacesError('')
     const { error } = await supabase.rpc('free_space', {
-      p_space_id: caTargetFree.id, p_reason: 'manual_free',
+      p_space_id:       caTargetFree.id,
+      p_reason:         'manual_free',
+      p_resident_email: caFreeResidentEmail,
     })
     if (error) { setCaSpacesError(error.message); return }
-    setCaTargetFree(null)
+    setCaTargetFree(null); setCaFreeResidentEmail(null)
     await caRefetchSpacesDashboard(); await caRefetchSpacesList()
   }
 
@@ -3732,18 +3735,18 @@ export default function CompanyAdminPortal() {
                                   }}>{s.status}</span>
                                   {!s.is_active && <span style={{ marginLeft:'4px', fontSize:'10px', color:'#666' }}>(inactive)</span>}
                                 </td>
-                                <td style={{ padding:'8px', color:'#aaa' }}>{residentDisplay(s.assigned_to_resident_email, caSpacesResidents)}</td>
+                                <td style={{ padding:'8px', color:'#aaa' }}>{residentDisplayList(s.residents)}</td>
                                 <td style={{ padding:'8px', textAlign:'right' }}>
-                                  {s.status === 'available' && s.is_active && (
+                                  {/* v1.1: cap-aware Assign (set < 2). Reassign DROPPED.
+                                      Free shown when residents.length > 0. Matches commit-3 manager shape. */}
+                                  {s.residents.length < 2 && s.is_active && (
                                     <button onClick={() => { setCaTargetAssign(s); setCaAssignFormEmail(''); setCaSpacesError('') }}
-                                      style={{ padding:'4px 8px', background:'#3b82f6', color:'white', border:'none', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Assign</button>
+                                      style={{ padding:'4px 8px', background:'#3b82f6', color:'white', border:'none', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
+                                      {s.residents.length === 0 ? 'Assign' : '+ Add resident'}
+                                    </button>
                                   )}
-                                  {s.status === 'assigned' && s.is_active && (
-                                    <button onClick={() => { setCaTargetReassign(s); setCaReassignFormEmail(''); setCaSpacesError('') }}
-                                      style={{ padding:'4px 8px', background:'#1e2535', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Reassign</button>
-                                  )}
-                                  {s.status === 'assigned' && s.is_active && (
-                                    <button onClick={() => { setCaTargetFree(s); setCaSpacesError('') }}
+                                  {s.residents.length > 0 && s.is_active && (
+                                    <button onClick={() => { setCaTargetFree(s); setCaFreeResidentEmail(null); setCaSpacesError('') }}
                                       style={{ padding:'4px 8px', background:'#1e2535', color:'#f59e0b', border:'1px solid #f59e0b', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Free</button>
                                   )}
                                   <button onClick={() => { setCaTargetEdit(s); setCaEditForm({ label:s.label, description:s.description ?? '', type:s.type, is_bundled:s.is_bundled }); setCaSpacesError('') }}
@@ -3791,53 +3794,118 @@ export default function CompanyAdminPortal() {
                     </div>
                   </div>
                 )}
+                {/* ASSIGN modal — v1.1 multi-resident: SearchableResidentPicker
+                    + chips for existing ties (cap=2 advisory, server enforces).
+                    INVARIANT: assigning a resident only adds a tie; it does
+                    NOT touch the resident's vehicles or authorization. */}
                 {caTargetAssign && (
                   <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                    <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
-                      <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Assign space</p>
+                    <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'460px', width:'100%' }}>
+                      <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>{caTargetAssign.residents.length === 0 ? 'Assign space' : '+ Add resident to space'}</p>
                       <p style={{ color:'white', fontSize:'14px', margin:'0 0 12px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetAssign.label}</strong> · {TYPE_LABELS[caTargetAssign.type] ?? caTargetAssign.type}</p>
-                      <label style={lbl}>Resident *</label>
-                      <select value={caAssignFormEmail} onChange={e => setCaAssignFormEmail(e.target.value)} style={inp}>
-                        <option value=''>— Select resident —</option>
-                        {caSpacesResidents.map(r => <option key={r.email} value={r.email}>{r.name || r.email} · Unit {r.unit}</option>)}
-                      </select>
-                      {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
-                      <div style={{ display:'flex', gap:'8px' }}>
-                        <button onClick={() => { setCaTargetAssign(null); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
-                        <button onClick={caSubmitAssignSpace} disabled={!caAssignFormEmail} style={{ flex:1, padding:'10px', background: caAssignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: caAssignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Assign</button>
+
+                      {caTargetAssign.residents.length > 0 && (
+                        <div style={{ marginBottom:'14px' }}>
+                          <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 6px' }}>Currently tied ({caTargetAssign.residents.length}/2)</p>
+                          <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
+                            {caTargetAssign.residents.map(r => (
+                              <span key={r.email} style={{ background:'#0a1e3a', color:'#3b82f6', padding:'4px 8px', borderRadius:'12px', fontSize:'11px', display:'inline-flex', alignItems:'center', gap:'5px' }}>
+                                {r.name || r.email}{r.unit ? ` · ${r.unit}` : ''}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {caTargetAssign.residents.length >= 2 ? (
+                        <p style={{ color:'#fbbf24', fontSize:'12px', margin:'0 0 14px', padding:'10px', background:'#1a1400', border:'1px solid #a16207', borderRadius:'6px' }}>
+                          This space is at the 2-resident cap. Remove one resident before adding another (via the row&apos;s Free button → per-resident).
+                        </p>
+                      ) : (
+                        <>
+                          <label style={lbl}>{caTargetAssign.residents.length === 0 ? 'Resident *' : 'Add another resident *'}</label>
+                          <SearchableResidentPicker
+                            property={caTargetAssign.property}
+                            excludeEmails={caTargetAssign.residents.map(r => r.email)}
+                            onSelect={(r: SearchableResidentPickerResult) => setCaAssignFormEmail(r.email)}
+                            placeholder="Search name, unit, or plate…"
+                            autoFocus
+                          />
+                          {caAssignFormEmail && (
+                            <p style={{ color:'#4caf50', fontSize:'11px', margin:'8px 0 0' }}>
+                              Selected: <strong>{caAssignFormEmail}</strong>
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginTop:'10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
+                      <div style={{ display:'flex', gap:'8px', marginTop:'14px' }}>
+                        <button onClick={() => { setCaTargetAssign(null); setCaAssignFormEmail(''); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>{caTargetAssign.residents.length >= 2 ? 'Close' : 'Cancel'}</button>
+                        {caTargetAssign.residents.length < 2 && (
+                          <button onClick={caSubmitAssignSpace} disabled={!caAssignFormEmail} style={{ flex:1, padding:'10px', background: caAssignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: caAssignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Add</button>
+                        )}
                       </div>
                     </div>
                   </div>
                 )}
-                {caTargetReassign && (
-                  <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                    <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
-                      <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Reassign space</p>
-                      <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetReassign.label}</strong> · {TYPE_LABELS[caTargetReassign.type]}</p>
-                      <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px' }}>Currently: {residentDisplay(caTargetReassign.assigned_to_resident_email, caSpacesResidents)}</p>
-                      <label style={lbl}>New resident *</label>
-                      <select value={caReassignFormEmail} onChange={e => setCaReassignFormEmail(e.target.value)} style={inp}>
-                        <option value=''>— Select new resident —</option>
-                        {caSpacesResidents.map(r => <option key={r.email} value={r.email}>{r.name || r.email} · Unit {r.unit}</option>)}
-                      </select>
-                      {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
-                      <div style={{ display:'flex', gap:'8px' }}>
-                        <button onClick={() => { setCaTargetReassign(null); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
-                        <button onClick={caSubmitReassignSpace} disabled={!caReassignFormEmail} style={{ flex:1, padding:'10px', background: caReassignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: caReassignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Reassign</button>
-                      </div>
-                    </div>
-                  </div>
-                )}
+
+                {/* REASSIGN modal — DROPPED (v1.1 multi-resident).
+                    Manager UX = 2 explicit clicks (per-resident free + add). */}
+
+                {/* FREE modal — v1.1 multi-resident: whole-space OR per-resident.
+                    INVARIANT: removing a tie NEVER touches vehicles or the
+                    resident's authorization. */}
                 {caTargetFree && (
                   <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                    <div style={{ background:'#161b26', border:'1px solid #f59e0b', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                    <div style={{ background:'#161b26', border:'1px solid #f59e0b', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
                       <p style={{ color:'#f59e0b', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Free space</p>
-                      <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetFree.label}</strong></p>
-                      <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>Free this space from {residentDisplay(caTargetFree.assigned_to_resident_email, caSpacesResidents)}? Returns to available; history preserved.</p>
+                      <p style={{ color:'white', fontSize:'14px', margin:'0 0 12px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetFree.label}</strong></p>
+
+                      {caTargetFree.residents.length === 0 ? (
+                        <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>This space already has no residents tied.</p>
+                      ) : caTargetFree.residents.length === 1 ? (
+                        <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>
+                          Free this space from <strong style={{ color:'white' }}>{caTargetFree.residents[0].name || caTargetFree.residents[0].email}</strong>?
+                          Space returns to available. Resident&apos;s vehicles + authorization are untouched.
+                        </p>
+                      ) : (
+                        <>
+                          <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 10px' }}>This space has multiple residents tied. Pick one to remove, or free the whole space.</p>
+                          <div style={{ marginBottom:'14px' }}>
+                            {caTargetFree.residents.map(r => (
+                              <label key={r.email} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 10px', background: caFreeResidentEmail === r.email ? '#1e3a5f' : '#0f1117', border: `1px solid ${caFreeResidentEmail === r.email ? '#3b82f6' : '#2a2f3d'}`, borderRadius:'6px', marginBottom:'4px', cursor:'pointer' }}>
+                                <input type="radio" name="ca-free-resident" checked={caFreeResidentEmail === r.email} onChange={() => setCaFreeResidentEmail(r.email)} />
+                                <span style={{ color:'white', fontSize:'13px' }}>{r.name || r.email}</span>
+                                {r.unit && <span style={{ color:'#666', fontSize:'11px' }}>· Unit {r.unit}</span>}
+                              </label>
+                            ))}
+                            <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 10px', background: caFreeResidentEmail === null ? '#3a2a08' : '#0f1117', border: `1px solid ${caFreeResidentEmail === null ? '#f59e0b' : '#2a2f3d'}`, borderRadius:'6px', marginTop:'6px', cursor:'pointer' }}>
+                              <input type="radio" name="ca-free-resident" checked={caFreeResidentEmail === null} onChange={() => setCaFreeResidentEmail(null)} />
+                              <span style={{ color:'#fbbf24', fontSize:'13px', fontWeight:'bold' }}>Free entire space (remove all {caTargetFree.residents.length} residents)</span>
+                            </label>
+                          </div>
+                        </>
+                      )}
+
                       {caSpacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{caSpacesError}</p></div>}
                       <div style={{ display:'flex', gap:'8px' }}>
-                        <button onClick={() => { setCaTargetFree(null); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
-                        <button onClick={caSubmitFreeSpace} style={{ flex:1, padding:'10px', background:'#f59e0b', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Free</button>
+                        <button onClick={() => { setCaTargetFree(null); setCaFreeResidentEmail(null); setCaSpacesError('') }} style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
+                        {caTargetFree.residents.length > 0 && (
+                          <button
+                            onClick={() => {
+                              // 1-resident state: auto-pick that resident for per-resident free
+                              // (UX equivalent to "free outright" but writes the per-resident audit).
+                              // N-resident state: respect the radio selection.
+                              if (caTargetFree.residents.length === 1 && caFreeResidentEmail === null) {
+                                setCaFreeResidentEmail(caTargetFree.residents[0].email)
+                              }
+                              caSubmitFreeSpace()
+                            }}
+                            style={{ flex:1, padding:'10px', background:'#f59e0b', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                            {caFreeResidentEmail === null && caTargetFree.residents.length > 1 ? 'Free entire space' : 'Remove'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
