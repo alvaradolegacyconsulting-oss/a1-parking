@@ -38,8 +38,11 @@ import {
   fetchOccupancyDashboard,
   fetchSpacesList,
   fetchActiveResidentsAtProperty,
-  residentDisplay,
+  residentDisplay,     // legacy single-email helper; still used for pre-v1.1 callers (none after this commit)
+  residentDisplayList, // v1.1 multi-resident list-version (the 3 reader sites in this file migrate to this)
 } from '../lib/spaces'
+import SearchableResidentPicker, { type SearchableResidentPickerResult } from '../components/SearchableResidentPicker'
+import DeactivateResidentModal, { type CoResident } from '../components/DeactivateResidentModal'
 import CredentialsModal from '../components/CredentialsModal'
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
@@ -113,10 +116,28 @@ export default function ManagerPortal() {
   const [targetAdd, setTargetAdd] = useState(false)
   const [addForm, setAddForm] = useState<{ type: SpaceType }>({ type: 'carport' })
   const [targetAssign, setTargetAssign] = useState<Space | null>(null)
+  // v1.1: assignFormEmail is set by SearchableResidentPicker's onSelect
+  // callback (picker writes the picked resident's email; submit reads it).
   const [assignFormEmail, setAssignFormEmail] = useState('')
-  const [targetReassign, setTargetReassign] = useState<Space | null>(null)
-  const [reassignFormEmail, setReassignFormEmail] = useState('')
+  // v1.1 multi-resident: targetReassign / reassignFormEmail DROPPED.
+  // "Reassign" is ambiguous in set-world; manager UX = 2 explicit clicks
+  // (remove old via free-modal per-resident, add new via assign-modal).
   const [targetFree, setTargetFree] = useState<Space | null>(null)
+  // v1.1: optional per-resident free target. When set, the free modal
+  // operates in per-resident mode and calls free_space(id, reason, email).
+  // When null, free modal operates in whole-space mode (legacy behavior).
+  const [freeResidentEmail, setFreeResidentEmail] = useState<string | null>(null)
+  // v1.1: deactivate-resident modal state. Replaces the old confirm()
+  // at deactivateResident entry. When set, opens DeactivateResidentModal
+  // with co-residents at the target's unit pre-loaded for opt-in cascade.
+  const [targetDeactivate, setTargetDeactivate] = useState<{
+    id: string
+    email: string
+    name: string
+    unit: string
+    coResidents: CoResident[]
+  } | null>(null)
+  const [deactivateBusy, setDeactivateBusy] = useState(false)
   const [targetDecommission, setTargetDecommission] = useState<Space | null>(null)
   const [targetEdit, setTargetEdit] = useState<Space | null>(null)
   const [editForm, setEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean }>({
@@ -524,6 +545,10 @@ export default function ManagerPortal() {
     await refetchSpacesList()
   }
 
+  // v1.1 multi-resident: submitAssignSpace adds one resident to the
+  // target space's tie set via assign_space RPC (set-add semantics,
+  // server-side cap=2 enforced). Picker-driven — callers set both
+  // targetAssign + assignFormEmail before invoking.
   async function submitAssignSpace() {
     if (!targetAssign) return
     setSpacesError('')
@@ -538,29 +563,33 @@ export default function ManagerPortal() {
     await refetchSpacesList()
   }
 
-  async function submitReassignSpace() {
-    if (!targetReassign) return
-    setSpacesError('')
-    const { error } = await supabase.rpc('reassign_space', {
-      p_space_id: targetReassign.id,
-      p_new_resident_email: reassignFormEmail,
-    })
-    if (error) { setSpacesError(error.message); return }
-    setTargetReassign(null)
-    setReassignFormEmail('')
-    await refetchSpacesDashboard()
-    await refetchSpacesList()
-  }
+  // v1.1 multi-resident: submitReassignSpace DROPPED. Manager UX is
+  // 2 explicit clicks (remove via free-modal per-resident; add via
+  // assign-modal). Set-world makes "reassign" ambiguous; explicit
+  // remove + add matches the explicit-tying philosophy.
 
+  // v1.1 multi-resident: submitFreeSpace gains optional p_resident_email
+  // routing. Whole-space mode (freeResidentEmail=null) calls the RPC
+  // with NULL email → DELETE all ties + status='available'. Per-resident
+  // mode (freeResidentEmail set) calls with the email → DELETE one tie;
+  // auto-free only if last. INVARIANT: never touches vehicles or
+  // residents.is_active — space tie removal is independent of resident
+  // authorization (whose vehicle stays authorized regardless).
   async function submitFreeSpace() {
     if (!targetFree) return
     setSpacesError('')
+    // v1.1: optional p_resident_email routing.
+    //   freeResidentEmail=null → whole-space free (DELETE all ties)
+    //   freeResidentEmail set  → per-resident remove (DELETE that one tie;
+    //                            auto-free only if last)
     const { error } = await supabase.rpc('free_space', {
-      p_space_id: targetFree.id,
-      p_reason: 'manual_free',
+      p_space_id:       targetFree.id,
+      p_reason:         'manual_free',
+      p_resident_email: freeResidentEmail,
     })
     if (error) { setSpacesError(error.message); return }
     setTargetFree(null)
+    setFreeResidentEmail(null)
     await refetchSpacesDashboard()
     await refetchSpacesList()
   }
@@ -1075,24 +1104,83 @@ export default function ManagerPortal() {
     }
   }
 
+  // v1.1 multi-resident: deactivateResident now opens DeactivateResidentModal
+  // (replaces the old confirm()) so the manager can opt-in to deactivate
+  // co-residents at the same unit in one orchestrated action. The actual
+  // per-resident deactivation work lives in runOneDeactivate (called by
+  // runDeactivateBatch, one call per chosen email). The space-tie cleanup
+  // is handled by the residents_deactivate_free_spaces DB trigger
+  // (commit-1 migration) — not the client.
   async function deactivateResident(id: string) {
-    if (!confirm('Deactivate this resident?')) return
-    // B150 + B166 — lookup (email, unit, property) BEFORE deactivation so
-    // we can (B166) owner-trim the departed resident's vehicles and then
-    // (B150) gate-check unit occupancy for the cascade. Pulling email
-    // from the resident's own row (per Jose's note) defends against any
-    // formatting mismatch between residents and vehicles.
-    const { data: r } = await supabase.from('residents').select('email, unit, property').eq('id', id).maybeSingle()
-    await supabase.from('residents').update({ is_active: false }).eq('id', id)
-    await logAudit({ action: 'DEACTIVATE_RESIDENT', table_name: 'residents', record_id: id, new_values: { is_active: false, property: manager.name } })
-    // B166 owner-trim runs FIRST (per-owner). B150 cascade runs after
-    // and sweeps any remaining un-owned vehicles if the unit fully
-    // vacates. Composition: roommate stays → B166 hides only departed
-    // owner's; B150 no-ops. Full vacancy → B166 hides owned; B150
-    // sweeps the rest.
+    // Lookup the target's (email, unit, property) first; we need unit to
+    // load co-residents and we need email/property for the trigger to fire
+    // cleanly when runOneDeactivate writes residents.is_active=false.
+    const { data: r } = await supabase.from('residents').select('email, name, unit, property').eq('id', id).maybeSingle()
+    if (!r?.email || !r?.unit) {
+      alert('Could not load resident details. Refresh and try again.')
+      return
+    }
+    // Co-residents at the same unit (active only; exclude the target itself).
+    const { data: coRows } = await supabase
+      .from('residents')
+      .select('email, name')
+      .ilike('unit', escapeIlikeValue(r.unit.trim()))
+      .ilike('property', escapeIlikeValue(r.property?.trim() || manager.name))
+      .eq('is_active', true)
+      .neq('id', id)
+    const coResidents: CoResident[] = (coRows ?? [])
+      .filter(c => c.email && c.email.toLowerCase() !== r.email.toLowerCase())
+      .map(c => ({ email: c.email.toLowerCase(), name: c.name ?? '' }))
+
+    setTargetDeactivate({
+      id,
+      email: r.email.toLowerCase(),
+      name: r.name ?? '',
+      unit: r.unit,
+      coResidents,
+    })
+    setDeactivateBusy(false)
+  }
+
+  // Per-resident deactivation (the work that used to live in
+  // deactivateResident's body). Called once per email by runDeactivateBatch
+  // — target first, then any opted-in co-residents. Each invocation fires
+  // the residents_deactivate_free_spaces DB trigger which handles space-tie
+  // cleanup atomically; the client only handles vehicle owner-trim + the
+  // B150 unit-vacancy cascade as it did before v1.1.
+  async function runOneDeactivate(residentId: string) {
+    const { data: r } = await supabase.from('residents').select('email, unit, property').eq('id', residentId).maybeSingle()
+    await supabase.from('residents').update({ is_active: false }).eq('id', residentId)
+    await logAudit({ action: 'DEACTIVATE_RESIDENT', table_name: 'residents', record_id: residentId, new_values: { is_active: false, property: manager.name } })
+    // B166 owner-trim + B150 cascade (unchanged from pre-v1.1).
+    // Space-tie cleanup is now DB-trigger-driven (commit-1 migration);
+    // no free_space client call needed.
     await trimDepartedResidentVehicles(r?.email, r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
     await cascadeVehiclesIfUnitVacant(r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
-    fetchResidents(manager.name)
+  }
+
+  // Orchestrates: target + any opted-in co-residents. Sequential (a manager
+  // rarely cascades more than 2-3) so individual failures are isolated and
+  // the trigger fires once per call. After all done, refetch + close modal.
+  async function runDeactivateBatch(alsoEmails: string[]) {
+    if (!targetDeactivate) return
+    setDeactivateBusy(true)
+    try {
+      // 1. Target first.
+      await runOneDeactivate(targetDeactivate.id)
+      // 2. Each opted-in co-resident — look up their id by email to call runOneDeactivate.
+      for (const email of alsoEmails) {
+        const { data: co } = await supabase.from('residents')
+          .select('id').eq('email', email).eq('is_active', true).maybeSingle()
+        if (co?.id) await runOneDeactivate(co.id)
+      }
+    } finally {
+      setTargetDeactivate(null)
+      setDeactivateBusy(false)
+      fetchResidents(manager.name)
+      await refetchSpacesDashboard()
+      await refetchSpacesList()
+    }
   }
 
   async function reactivateResident(id: string) {
@@ -1894,24 +1982,21 @@ export default function ManagerPortal() {
                               }}>{s.status}</span>
                               {!s.is_active && <span style={{ marginLeft:'4px', fontSize:'10px', color:'#666' }}>(inactive)</span>}
                             </td>
-                            <td style={{ padding:'8px', color:'#aaa' }}>{residentDisplay(s.assigned_to_resident_email, spacesResidents)}</td>
+                            <td style={{ padding:'8px', color:'#aaa' }}>{residentDisplayList(s.residents)}</td>
                             <td style={{ padding:'8px', textAlign:'right' }}>
                               {!isReadOnly && (
                                 <>
-                                  {s.status === 'available' && s.is_active && (
+                                  {/* v1.1: Assign available whenever set < cap (not just when status='available').
+                                      Server-side cap=2 enforced in assign_space; render-side hides at cap as advisory.
+                                      Reassign button DROPPED — manager UX is 2 explicit clicks (per-resident Free + Assign). */}
+                                  {s.residents.length < 2 && s.is_active && (
                                     <button onClick={() => { setTargetAssign(s); setAssignFormEmail(''); setSpacesError('') }}
                                       style={{ padding:'4px 8px', background:'#3b82f6', color:'white', border:'none', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
-                                      Assign
+                                      {s.residents.length === 0 ? 'Assign' : '+ Add resident'}
                                     </button>
                                   )}
-                                  {s.status === 'assigned' && s.is_active && (
-                                    <button onClick={() => { setTargetReassign(s); setReassignFormEmail(''); setSpacesError('') }}
-                                      style={{ padding:'4px 8px', background:'#1e2535', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
-                                      Reassign
-                                    </button>
-                                  )}
-                                  {s.status === 'assigned' && s.is_active && (
-                                    <button onClick={() => { setTargetFree(s); setSpacesError('') }}
+                                  {s.residents.length > 0 && s.is_active && (
+                                    <button onClick={() => { setTargetFree(s); setFreeResidentEmail(null); setSpacesError('') }}
                                       style={{ padding:'4px 8px', background:'#1e2535', color:'#f59e0b', border:'1px solid #f59e0b', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
                                       Free
                                     </button>
@@ -1985,67 +2070,143 @@ export default function ManagerPortal() {
               </div>
             )}
 
-            {/* ASSIGN modal */}
+            {/* ASSIGN modal — v1.1 multi-resident: searchable picker + chips
+                for existing ties (cap=2 advisory; server enforces).
+                INVARIANT: assigning a resident only adds a tie; it does
+                NOT touch the resident's vehicles or authorization. */}
             {targetAssign && (
               <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
-                  <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Assign space</p>
+                <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'460px', width:'100%' }}>
+                  <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>{targetAssign.residents.length === 0 ? 'Assign space' : '+ Add resident to space'}</p>
                   <p style={{ color:'white', fontSize:'14px', margin:'0 0 12px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{targetAssign.label}</strong> · {TYPE_LABELS[targetAssign.type] ?? targetAssign.type}</p>
-                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Resident *</label>
-                  <select value={assignFormEmail} onChange={e => setAssignFormEmail(e.target.value)} style={inputStyle}>
-                    <option value=''>— Select resident —</option>
-                    {spacesResidents.map(r => <option key={r.email} value={r.email}>{r.name || r.email} · Unit {r.unit}</option>)}
-                  </select>
-                  {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
-                  <div style={{ display:'flex', gap:'8px' }}>
-                    <button onClick={() => { setTargetAssign(null); setSpacesError('') }}
-                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
-                    <button onClick={submitAssignSpace} disabled={!assignFormEmail}
-                      style={{ flex:1, padding:'10px', background: assignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: assignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Assign</button>
+
+                  {/* Existing-ties chips — show who's already on the space */}
+                  {targetAssign.residents.length > 0 && (
+                    <div style={{ marginBottom:'14px' }}>
+                      <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 6px' }}>Currently tied ({targetAssign.residents.length}/2)</p>
+                      <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
+                        {targetAssign.residents.map(r => (
+                          <span key={r.email} style={{ background:'#0a1e3a', color:'#3b82f6', padding:'4px 8px', borderRadius:'12px', fontSize:'11px', display:'inline-flex', alignItems:'center', gap:'5px' }}>
+                            {r.name || r.email}{r.unit ? ` · ${r.unit}` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {targetAssign.residents.length >= 2 ? (
+                    <p style={{ color:'#fbbf24', fontSize:'12px', margin:'0 0 14px', padding:'10px', background:'#1a1400', border:'1px solid #a16207', borderRadius:'6px' }}>
+                      This space is at the 2-resident cap. Remove one resident before adding another (via the row&apos;s Free button → per-resident).
+                    </p>
+                  ) : (
+                    <>
+                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>{targetAssign.residents.length === 0 ? 'Resident *' : 'Add another resident *'}</label>
+                      <SearchableResidentPicker
+                        property={targetAssign.property}
+                        excludeEmails={targetAssign.residents.map(r => r.email)}
+                        onSelect={(r: SearchableResidentPickerResult) => setAssignFormEmail(r.email)}
+                        placeholder="Search name, unit, or plate…"
+                        autoFocus
+                      />
+                      {assignFormEmail && (
+                        <p style={{ color:'#4caf50', fontSize:'11px', margin:'8px 0 0' }}>
+                          Selected: <strong>{assignFormEmail}</strong>
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginTop:'10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
+                  <div style={{ display:'flex', gap:'8px', marginTop:'14px' }}>
+                    <button onClick={() => { setTargetAssign(null); setAssignFormEmail(''); setSpacesError('') }}
+                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>{targetAssign.residents.length >= 2 ? 'Close' : 'Cancel'}</button>
+                    {targetAssign.residents.length < 2 && (
+                      <button onClick={submitAssignSpace} disabled={!assignFormEmail}
+                        style={{ flex:1, padding:'10px', background: assignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: assignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Add</button>
+                    )}
                   </div>
                 </div>
               </div>
             )}
 
-            {/* REASSIGN modal */}
-            {targetReassign && (
-              <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
-                  <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Reassign space</p>
-                  <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{targetReassign.label}</strong> · {TYPE_LABELS[targetReassign.type]}</p>
-                  <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px' }}>Currently: {residentDisplay(targetReassign.assigned_to_resident_email, spacesResidents)}</p>
-                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>New resident *</label>
-                  <select value={reassignFormEmail} onChange={e => setReassignFormEmail(e.target.value)} style={inputStyle}>
-                    <option value=''>— Select new resident —</option>
-                    {spacesResidents.map(r => <option key={r.email} value={r.email}>{r.name || r.email} · Unit {r.unit}</option>)}
-                  </select>
-                  {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
-                  <div style={{ display:'flex', gap:'8px' }}>
-                    <button onClick={() => { setTargetReassign(null); setSpacesError('') }}
-                      style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
-                    <button onClick={submitReassignSpace} disabled={!reassignFormEmail}
-                      style={{ flex:1, padding:'10px', background: reassignFormEmail ? '#3b82f6' : '#555', color:'white', border:'none', borderRadius:'6px', cursor: reassignFormEmail ? 'pointer' : 'not-allowed', fontSize:'12px', fontWeight:'bold' }}>Reassign</button>
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* REASSIGN modal — DROPPED (v1.1 multi-resident). Manager UX
+                is now 2 explicit clicks: remove old via per-resident free,
+                add new via assign-modal. */}
 
-            {/* FREE modal — confirm only */}
+            {/* FREE modal — v1.1 multi-resident: whole-space OR per-resident.
+                INVARIANT: removing a tie NEVER touches vehicles or the
+                resident's authorization — only the space-tie relationship. */}
             {targetFree && (
               <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                <div style={{ background:'#161b26', border:'1px solid #f59e0b', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                <div style={{ background:'#161b26', border:'1px solid #f59e0b', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
                   <p style={{ color:'#f59e0b', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Free space</p>
-                  <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{targetFree.label}</strong></p>
-                  <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>Free this space from {residentDisplay(targetFree.assigned_to_resident_email, spacesResidents)}? It returns to available; the assignment history is preserved.</p>
+                  <p style={{ color:'white', fontSize:'14px', margin:'0 0 12px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{targetFree.label}</strong></p>
+
+                  {targetFree.residents.length === 0 ? (
+                    <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>This space already has no residents tied.</p>
+                  ) : targetFree.residents.length === 1 ? (
+                    <>
+                      <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>
+                        Free this space from <strong style={{ color:'white' }}>{targetFree.residents[0].name || targetFree.residents[0].email}</strong>?
+                        Space returns to available. Resident&apos;s vehicles + authorization are untouched.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 10px' }}>This space has multiple residents tied. Pick one to remove, or free the whole space.</p>
+                      <div style={{ marginBottom:'14px' }}>
+                        {targetFree.residents.map(r => (
+                          <label key={r.email} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 10px', background: freeResidentEmail === r.email ? '#1e3a5f' : '#0f1117', border: `1px solid ${freeResidentEmail === r.email ? '#3b82f6' : '#2a2f3d'}`, borderRadius:'6px', marginBottom:'4px', cursor:'pointer' }}>
+                            <input type="radio" name="free-resident" checked={freeResidentEmail === r.email} onChange={() => setFreeResidentEmail(r.email)} />
+                            <span style={{ color:'white', fontSize:'13px' }}>{r.name || r.email}</span>
+                            {r.unit && <span style={{ color:'#666', fontSize:'11px' }}>· Unit {r.unit}</span>}
+                          </label>
+                        ))}
+                        <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 10px', background: freeResidentEmail === null ? '#3a2a08' : '#0f1117', border: `1px solid ${freeResidentEmail === null ? '#f59e0b' : '#2a2f3d'}`, borderRadius:'6px', marginTop:'6px', cursor:'pointer' }}>
+                          <input type="radio" name="free-resident" checked={freeResidentEmail === null} onChange={() => setFreeResidentEmail(null)} />
+                          <span style={{ color:'#fbbf24', fontSize:'13px', fontWeight:'bold' }}>Free entire space (remove all {targetFree.residents.length} residents)</span>
+                        </label>
+                      </div>
+                    </>
+                  )}
+
                   {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
                   <div style={{ display:'flex', gap:'8px' }}>
-                    <button onClick={() => { setTargetFree(null); setSpacesError('') }}
+                    <button onClick={() => { setTargetFree(null); setFreeResidentEmail(null); setSpacesError('') }}
                       style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Cancel</button>
-                    <button onClick={submitFreeSpace}
-                      style={{ flex:1, padding:'10px', background:'#f59e0b', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>Free</button>
+                    {targetFree.residents.length > 0 && (
+                      <button
+                        onClick={() => {
+                          // 1-resident state: auto-pick that resident for per-resident free
+                          // (UX equivalent to "free outright" but writes the per-resident audit
+                          // for clarity). N-resident state: respect the radio selection.
+                          if (targetFree.residents.length === 1 && freeResidentEmail === null) {
+                            setFreeResidentEmail(targetFree.residents[0].email)
+                          }
+                          submitFreeSpace()
+                        }}
+                        style={{ flex:1, padding:'10px', background:'#f59e0b', color:'#0f1117', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                        {freeResidentEmail === null && targetFree.residents.length > 1 ? 'Free entire space' : 'Remove'}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* DEACTIVATE-RESIDENT modal (v1.1) — replaces the old confirm()
+                at deactivateResident entry. Pre-loaded co-residents at the
+                target's unit; default unchecked. */}
+            {targetDeactivate && (
+              <DeactivateResidentModal
+                targetResidentName={targetDeactivate.name}
+                targetResidentEmail={targetDeactivate.email}
+                targetResidentUnit={targetDeactivate.unit}
+                coResidents={targetDeactivate.coResidents}
+                isBusy={deactivateBusy}
+                onCancel={() => setTargetDeactivate(null)}
+                onConfirm={(alsoEmails) => runDeactivateBatch(alsoEmails)}
+              />
             )}
 
             {/* DECOMMISSION modal — confirm only */}
