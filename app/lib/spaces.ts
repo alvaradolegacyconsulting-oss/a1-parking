@@ -281,7 +281,7 @@ async function fetchSpaceResidentsForList(
   const uniqueEmails = Array.from(new Set(ties.map(t => (t.resident_email ?? '').toLowerCase()).filter(Boolean)))
   const { data: residentRows } = await supabase
     .from('residents')
-    .select('email, name, unit')
+    .select('email, name, unit, is_active')
     .ilike('property', property)
     .in('email', uniqueEmails)
   const residentByEmail = new Map<string, ResidentOption>()
@@ -289,16 +289,19 @@ async function fetchSpaceResidentsForList(
     const email = (r.email ?? '').toLowerCase()
     residentByEmail.set(email, {
       email,
-      name: r.name ?? '',
-      unit: r.unit ?? '',
+      name:      r.name ?? '',
+      unit:      r.unit ?? '',
+      is_active: r.is_active ?? true,
     })
   }
 
   // (3) Compose: for each space_id, list its resolved residents (alpha by name).
+  // is_active=true default on unresolved (trigger should have pruned ties to
+  // deleted residents; missing row is treated as active for safety).
   for (const tie of ties) {
     const email = (tie.resident_email ?? '').toLowerCase()
     if (!email) continue
-    const resolved = residentByEmail.get(email) ?? { email, name: '', unit: '' }
+    const resolved = residentByEmail.get(email) ?? { email, name: '', unit: '', is_active: true }
     const list = result.get(tie.space_id) ?? []
     list.push(resolved)
     result.set(tie.space_id, list)
@@ -325,9 +328,16 @@ export async function fetchSpaceResidents(
 // ── Residents-at-property helper (used by assign/reassign dropdowns) ──
 
 export interface ResidentOption {
-  email: string
-  name:  string
-  unit:  string
+  email:     string
+  name:      string
+  unit:      string
+  // v1.1 commit 6: is_active surfaced for the SpaceDetailModal so it can
+  // render an "(inactive)" tag in the rare race window where the
+  // residents_deactivate_free_spaces trigger hasn't yet pruned a tie to
+  // a freshly-deactivated resident. Non-breaking addition — existing
+  // callers (residentDisplay, residentDisplayList, SearchableResidentPicker)
+  // ignore the field. Defaults to true when the source row lacks it.
+  is_active: boolean
 }
 
 export async function fetchActiveResidentsAtProperty(
@@ -341,10 +351,63 @@ export async function fetchActiveResidentsAtProperty(
     .eq('is_active', true)
     .order('unit')
   return (data ?? []).map(r => ({
-    email: (r.email ?? '').toLowerCase(),
-    name:  r.name ?? '',
-    unit:  r.unit ?? '',
+    email:     (r.email ?? '').toLowerCase(),
+    name:      r.name ?? '',
+    unit:      r.unit ?? '',
+    is_active: true,  // helper filters to active only; field still typed
   }))
+}
+
+// v1.1 commit 6 — vehicles tied to the given resident emails at the property.
+// Used by SpaceDetailModal to render each tied resident's approved vehicles.
+// Returns a Map<lowercase-email, VehicleSummary[]> so the modal can group
+// without a second pass. Empty list returned for residents with zero matches
+// (caller handles the "no active vehicles" render branch).
+export interface VehicleSummary {
+  plate: string
+  year:  string | null
+  color: string | null
+  make:  string | null
+  model: string | null
+}
+
+export async function fetchSpaceVehicles(
+  supabase: SupabaseClient,
+  property: string,
+  residentEmails: string[],
+): Promise<Map<string, VehicleSummary[]>> {
+  const result = new Map<string, VehicleSummary[]>()
+  const lowered = residentEmails.map(e => e.toLowerCase()).filter(Boolean)
+  if (lowered.length === 0) return result
+  // Pre-seed every requested email so callers can rely on Map.get() for
+  // empty-result residents (returns [] rather than undefined).
+  for (const e of lowered) result.set(e, [])
+  const { data } = await supabase
+    .from('vehicles')
+    .select('plate, year, color, make, model, resident_email')
+    .ilike('property', property)
+    .eq('is_active', true)
+    .eq('status', 'active')
+    .in('resident_email', lowered)
+  for (const v of (data ?? [])) {
+    const email = (v.resident_email ?? '').toLowerCase()
+    if (!email) continue
+    const list = result.get(email) ?? []
+    list.push({
+      plate: v.plate ?? '',
+      year:  v.year  ?? null,
+      color: v.color ?? null,
+      make:  v.make  ?? null,
+      model: v.model ?? null,
+    })
+    result.set(email, list)
+  }
+  // Plate-asc within each resident's list (stable display order).
+  for (const [k, list] of result) {
+    list.sort((a, b) => a.plate.localeCompare(b.plate))
+    result.set(k, list)
+  }
+  return result
 }
 
 // ── Resident display helpers ────────────────────────────────────────

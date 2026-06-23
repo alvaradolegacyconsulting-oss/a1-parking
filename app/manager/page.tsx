@@ -43,6 +43,7 @@ import {
 } from '../lib/spaces'
 import SearchableResidentPicker, { type SearchableResidentPickerResult } from '../components/SearchableResidentPicker'
 import DeactivateResidentModal, { type CoResident } from '../components/DeactivateResidentModal'
+import SpaceDetailModal from '../components/SpaceDetailModal'
 import CredentialsModal from '../components/CredentialsModal'
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
@@ -139,6 +140,10 @@ export default function ManagerPortal() {
   } | null>(null)
   const [deactivateBusy, setDeactivateBusy] = useState(false)
   const [targetDecommission, setTargetDecommission] = useState<Space | null>(null)
+  // v1.1 commit 6 — SpaceDetailModal opens via the "View" affordance on each
+  // space row. The modal handles its own data loading, mutations, and busy
+  // state; this state just controls mount/unmount + which space is in focus.
+  const [targetSpaceDetail, setTargetSpaceDetail] = useState<Space | null>(null)
   const [targetEdit, setTargetEdit] = useState<Space | null>(null)
   const [editForm, setEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean }>({
     label: '', description: '', type: 'carport', is_bundled: false,
@@ -2001,6 +2006,14 @@ export default function ManagerPortal() {
                                       Free
                                     </button>
                                   )}
+                                  {/* v1.1 commit 6: View opens SpaceDetailModal — anchored on the
+                                      space, shows tied residents + their vehicles + 3 actions in one
+                                      place. Available on every row (incl. 0-resident + decommissioned)
+                                      so managers can read space history regardless of state. */}
+                                  <button onClick={() => setTargetSpaceDetail(s)}
+                                    style={{ padding:'4px 8px', background:'#0a1e3a', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
+                                    View
+                                  </button>
                                   <button onClick={() => { setTargetEdit(s); setEditForm({ label:s.label, description:s.description ?? '', type:s.type, is_bundled:s.is_bundled }); setSpacesError('') }}
                                     style={{ padding:'4px 8px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
                                     Edit
@@ -2206,6 +2219,22 @@ export default function ManagerPortal() {
                 isBusy={deactivateBusy}
                 onCancel={() => setTargetDeactivate(null)}
                 onConfirm={(alsoEmails) => runDeactivateBatch(alsoEmails)}
+              />
+            )}
+
+            {/* SPACE-DETAIL modal (v1.1 commit 6) — space-anchored detail
+                view: tied residents + their vehicles + 3 actions.
+                onMutate refetches BOTH the dashboard and the list so the
+                parent's `s.residents` cap-aware buttons stay in sync. */}
+            {targetSpaceDetail && (
+              <SpaceDetailModal
+                space={targetSpaceDetail}
+                property={manager.name}
+                onClose={() => setTargetSpaceDetail(null)}
+                onMutate={async () => {
+                  await refetchSpacesDashboard()
+                  await refetchSpacesList()
+                }}
               />
             )}
 

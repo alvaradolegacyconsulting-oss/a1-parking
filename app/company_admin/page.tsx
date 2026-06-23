@@ -73,6 +73,7 @@ import {
   residentDisplayList, // v1.1 multi-resident list-version (CA reader sites migrate to this)
 } from '../lib/spaces'
 import SearchableResidentPicker, { type SearchableResidentPickerResult } from '../components/SearchableResidentPicker'
+import SpaceDetailModal from '../components/SpaceDetailModal'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
@@ -323,6 +324,8 @@ export default function CompanyAdminPortal() {
   // v1.1: per-resident free target. null = whole-space mode.
   const [caFreeResidentEmail, setCaFreeResidentEmail] = useState<string | null>(null)
   const [caTargetDecommission, setCaTargetDecommission] = useState<Space | null>(null)
+  // v1.1 commit 6 — CA SpaceDetailModal mount state (mirrors manager).
+  const [caTargetSpaceDetail, setCaTargetSpaceDetail] = useState<Space | null>(null)
   const [caTargetEdit, setCaTargetEdit] = useState<Space | null>(null)
   const [caEditForm, setCaEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean }>({
     label: '', description: '', type: 'carport', is_bundled: false,
@@ -3749,6 +3752,10 @@ export default function CompanyAdminPortal() {
                                     <button onClick={() => { setCaTargetFree(s); setCaFreeResidentEmail(null); setCaSpacesError('') }}
                                       style={{ padding:'4px 8px', background:'#1e2535', color:'#f59e0b', border:'1px solid #f59e0b', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Free</button>
                                   )}
+                                  {/* v1.1 commit 6 — CA View opens SpaceDetailModal (same component
+                                      as manager portal). Available on every row regardless of state. */}
+                                  <button onClick={() => setCaTargetSpaceDetail(s)}
+                                    style={{ padding:'4px 8px', background:'#0a1e3a', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>View</button>
                                   <button onClick={() => { setCaTargetEdit(s); setCaEditForm({ label:s.label, description:s.description ?? '', type:s.type, is_bundled:s.is_bundled }); setCaSpacesError('') }}
                                     style={{ padding:'4px 8px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Edit</button>
                                   {s.status === 'available' && s.is_active && (
@@ -3923,6 +3930,22 @@ export default function CompanyAdminPortal() {
                       </div>
                     </div>
                   </div>
+                )}
+
+                {/* SPACE-DETAIL modal (v1.1 commit 6) — same component as
+                    manager portal. onMutate refetches both CA dashboard +
+                    list so the parent's `s.residents` cap-aware buttons
+                    stay in sync. */}
+                {caTargetSpaceDetail && (
+                  <SpaceDetailModal
+                    space={caTargetSpaceDetail}
+                    property={caTargetSpaceDetail.property}
+                    onClose={() => setCaTargetSpaceDetail(null)}
+                    onMutate={async () => {
+                      await caRefetchSpacesDashboard()
+                      await caRefetchSpacesList()
+                    }}
+                  />
                 )}
                 {caTargetEdit && (
                   <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
