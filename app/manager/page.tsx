@@ -2207,25 +2207,21 @@ export default function ManagerPortal() {
               </div>
             )}
 
-            {/* DEACTIVATE-RESIDENT modal (v1.1) — replaces the old confirm()
-                at deactivateResident entry. Pre-loaded co-residents at the
-                target's unit; default unchecked. */}
-            {targetDeactivate && (
-              <DeactivateResidentModal
-                targetResidentName={targetDeactivate.name}
-                targetResidentEmail={targetDeactivate.email}
-                targetResidentUnit={targetDeactivate.unit}
-                coResidents={targetDeactivate.coResidents}
-                isBusy={deactivateBusy}
-                onCancel={() => setTargetDeactivate(null)}
-                onConfirm={(alsoEmails) => runDeactivateBatch(alsoEmails)}
-              />
-            )}
+            {/* DEACTIVATE-RESIDENT modal — INTENTIONALLY NOT MOUNTED HERE.
+                Moved out of the Spaces-tab gate after the regression where
+                the Residents-tab Deactivate button set state but the mount
+                only rendered when activeTab === 'spaces'. The mount now
+                lives next to <CredentialsModal /> at the tab-independent
+                slot near the end of this return tree. Do not move it back. */}
 
-            {/* SPACE-DETAIL modal (v1.1 commit 6) — space-anchored detail
-                view: tied residents + their vehicles + 3 actions.
-                onMutate refetches BOTH the dashboard and the list so the
-                parent's `s.residents` cap-aware buttons stay in sync. */}
+            {/* SPACE-DETAIL modal (v1.1 commit 6) — INTENTIONALLY inside
+                the Spaces-tab gate: its trigger (the per-row "View" button
+                on the spaces list) only exists on this tab, so gating the
+                mount here is correct. If a future commit ever surfaces a
+                View affordance from another tab, move this mount to the
+                tab-independent slot too. onMutate refetches BOTH the
+                dashboard and the list so the parent's `s.residents`
+                cap-aware buttons stay in sync. */}
             {targetSpaceDetail && (
               <SpaceDetailModal
                 space={targetSpaceDetail}
@@ -3349,6 +3345,23 @@ export default function ManagerPortal() {
       </div>
       {credentials && (
         <CredentialsModal email={credentials.email} password={credentials.password} onClose={() => setCredentials(null)} />
+      )}
+      {/* DEACTIVATE-RESIDENT modal (v1.1) — replaces the old confirm() at
+          deactivateResident entry. Pre-loaded co-residents at the target's
+          unit; default unchecked. MOUNT MUST BE TAB-INDEPENDENT — its
+          trigger (Deactivate button) lives on the Residents tab; the
+          earlier mount-inside-spaces-gate was a regression caught
+          pre-smoke 2026-06-22. Keep alongside CredentialsModal. */}
+      {targetDeactivate && (
+        <DeactivateResidentModal
+          targetResidentName={targetDeactivate.name}
+          targetResidentEmail={targetDeactivate.email}
+          targetResidentUnit={targetDeactivate.unit}
+          coResidents={targetDeactivate.coResidents}
+          isBusy={deactivateBusy}
+          onCancel={() => setTargetDeactivate(null)}
+          onConfirm={(alsoEmails) => runDeactivateBatch(alsoEmails)}
+        />
       )}
     </main>
   )
