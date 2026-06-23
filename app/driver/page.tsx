@@ -345,34 +345,60 @@ export default function DriverPortal() {
     setTicketTarget(null)
     const clean = val.toUpperCase().replace(/\s/g, '').trim()
 
+    // Spaces v1.1 Q4 fix + Q5 narrow:
+    // - vehicles cascade .select() narrowed from '*' to explicit safe-column
+    //   list (drops unit + owner_email from the network payload). Keeps
+    //   resident_email as the RPC join key for the spaces lookup below.
+    //   guest_authorizations + visitor_passes .select('*') stay un-narrowed
+    //   for this commit — full closure is B225 Pattern B (recorded).
+    // - vehicles.space + space_number lookup REMOVED (broken — vehicles.space
+    //   not auto-populated by assign_space; space_number renamed to label
+    //   in commit-1 backfill so the join misses every v1.1-generated space).
+    // - Replaced with derive_space_allowed_plates DEFINER RPC: server-side
+    //   role-pinned-to-driver; projects ONLY safe-public columns
+    //   (space_label, space_description, plates[]); ZERO resident PII over
+    //   the wire by construction; returns [] when resident holds no spaces.
+    //
+    // 🔒 INVARIANT: authorization derives from the VEHICLE. An authorized
+    // vehicle whose resident holds ZERO spaces still returns 'authorized'
+    // with the space field rendering as '—'. The RPC returning [] is a
+    // valid reference-data absence, NOT a deauthorization signal.
+    const SAFE_VEHICLE_COLS = 'plate, is_active, status, year, color, make, model, property, space, resident_email'
+
     const { data: activeVeh } = await supabase
-      .from('vehicles').select('*').ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', true).single()
+      .from('vehicles').select(SAFE_VEHICLE_COLS).ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', true).single()
     if (activeVeh) {
-      let spaceNotes = null
-      if (activeVeh.space) {
-        const { data: sd } = await supabase.from('spaces').select('location_notes')
-          .ilike('space_number', activeVeh.space).ilike('property', selectedProperty).single()
-        spaceNotes = sd?.location_notes || null
-      }
-      setSearching(false); setResult({ status: 'authorized', data: { ...activeVeh, _space_notes: spaceNotes } }); return
+      const { data: assignedSpacesRaw } = await supabase.rpc('derive_space_allowed_plates', {
+        p_property:       selectedProperty,
+        p_resident_email: activeVeh.resident_email,
+      })
+      // RPC returns JSONB array; supabase-js types it as `unknown`.
+      // Empty/null both render as no space (dash) per invariant.
+      const assignedSpaces = Array.isArray(assignedSpacesRaw) ? assignedSpacesRaw : []
+      setSearching(false); setResult({ status: 'authorized', data: { ...activeVeh, _assigned_spaces: assignedSpaces } }); return
     }
 
     const { data: expiredVeh } = await supabase
-      .from('vehicles').select('*').ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', false).single()
+      .from('vehicles').select(SAFE_VEHICLE_COLS).ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', false).single()
     if (expiredVeh) {
-      let spaceNotes = null
-      if (expiredVeh.space) {
-        const { data: sd } = await supabase.from('spaces').select('location_notes')
-          .ilike('space_number', expiredVeh.space).ilike('property', selectedProperty).single()
-        spaceNotes = sd?.location_notes || null
-      }
+      // Expired/pending/declined: same RPC call (the resident's space ties
+      // are reference data regardless of vehicle is_active state — the
+      // resident is still tied to whatever they're tied to, until the
+      // residents_deactivate_free_spaces trigger fires). Returning the
+      // space list here keeps the historical context visible to the driver
+      // (helps them understand "this car USED to park in C-12").
+      const { data: assignedSpacesRaw } = await supabase.rpc('derive_space_allowed_plates', {
+        p_property:       selectedProperty,
+        p_resident_email: expiredVeh.resident_email,
+      })
+      const assignedSpaces = Array.isArray(assignedSpacesRaw) ? assignedSpacesRaw : []
       // B84: distinguish pending/declined from legacy-deactivated. Previously
       // all is_active=false rows rendered as "permit expired" regardless of
       // vehicles.status — confusing for newly-registered residents.
       const resultStatus = expiredVeh.status === 'pending' ? 'pending'
         : expiredVeh.status === 'declined' ? 'declined'
         : 'expired'
-      setSearching(false); setResult({ status: resultStatus, data: { ...expiredVeh, _space_notes: spaceNotes } }); return
+      setSearching(false); setResult({ status: resultStatus, data: { ...expiredVeh, _assigned_spaces: assignedSpaces } }); return
     }
 
     // B214 — guest_authorizations stage 2.5 of the enforcement cascade.
@@ -1209,16 +1235,45 @@ export default function DriverPortal() {
                   {result.status === 'authorized' && (
                     <>
                       {/* Spaces v1 PII sweep (Jose 2026-06-21): Unit REMOVED.
-                          Space label + location_notes (via _space_notes) KEPT
-                          per the locked privacy line — space is not PII (it's
-                          a parking spot); unit identifies a household. Modal
-                          detail string emptied so the override banner reads
-                          "active resident" without leaking the unit. */}
+                          Space label + description KEPT per the locked privacy
+                          line — space is not PII (it's a parking spot); unit
+                          identifies a household. Modal detail string emptied
+                          so the override banner reads "active resident"
+                          without leaking the unit.
+                          Spaces v1.1 commit 5 (2026-06-22): Space rendering
+                          moved below this grid, now driven by _assigned_spaces
+                          from derive_space_allowed_plates RPC (multi-resident-
+                          aware). Allowed plates per space included by design
+                          (driver's operational context). */}
                       <p style={{ color: '#4caf50', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>✓ AUTHORIZED</p>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
-                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.space || '—'}</span>{result.data._space_notes && <p style={{ color: '#888', fontSize: '11px', fontStyle: 'italic', margin: '2px 0 0' }}>{result.data._space_notes}</p>}</div>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Property</span><br /><span style={{ color: '#4caf50', fontSize: '13px' }}>{result.data.property}</span></div>
-                        <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
+                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
+                      </div>
+                      {/* Spaces v1.1: 0..N space labels via derive_space_allowed_plates RPC.
+                          Empty array = '—' (dash) — INVARIANT: vehicle authorization is
+                          INDEPENDENT of space tie. A plate authorized but with no space
+                          still shows "AUTHORIZED" above; this block just renders space
+                          reference data. Per-space allowed-plates list includes
+                          roommate plates by design (unit pays for the space). */}
+                      <div style={{ marginBottom: '14px', padding: '10px', background: '#0a1a0a', border: '1px solid #1e3a1e', borderRadius: '8px' }}>
+                        <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span>
+                        {(!result.data._assigned_spaces || result.data._assigned_spaces.length === 0) ? (
+                          <div style={{ color: '#aaa', fontSize: '13px', marginTop: '3px' }}>—</div>
+                        ) : (
+                          result.data._assigned_spaces.map((s: { space_label: string; space_description: string | null; plates: string[] }) => (
+                            <div key={s.space_label} style={{ marginTop: '6px' }}>
+                              <div style={{ color: 'white', fontSize: '14px', fontWeight: 'bold', fontFamily: 'Courier New' }}>{s.space_label}</div>
+                              {s.space_description && <p style={{ color: '#888', fontSize: '11px', fontStyle: 'italic', margin: '2px 0 0' }}>{s.space_description}</p>}
+                              {s.plates && s.plates.length > 0 && (
+                                <p style={{ color: '#888', fontSize: '11px', margin: '3px 0 0' }}>
+                                  <span style={{ textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '9px' }}>Allowed plates:</span>{' '}
+                                  <span style={{ fontFamily: 'Courier New', color: '#aaa' }}>{s.plates.join(' · ')}</span>
+                                </p>
+                              )}
+                            </div>
+                          ))
+                        )}
                       </div>
                       {/* B71: authorized vehicles can still be parked illegally
                           (fire lane, handicap, blocked access). Issue Violation
@@ -1275,15 +1330,39 @@ export default function DriverPortal() {
 
                   {(result.status === 'pending' || result.status === 'declined' || result.status === 'expired') && (
                     <>
+                      {/* Spaces v1.1 commit 5: Unit field REMOVED (closes B225's
+                          deferred sub-line — Q5 narrow drops `unit` from the
+                          vehicles payload, and the privacy invariant applies
+                          consistently across all driver-scan statuses). Space
+                          field updated to consume _assigned_spaces array.
+                          Vehicle stays. */}
                       <p style={{ color: '#ff9800', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>
                         {result.status === 'pending' ? 'AWAITING MANAGER APPROVAL'
                           : result.status === 'declined' ? 'REGISTRATION DECLINED'
                           : '⚠ PERMIT EXPIRED'}
                       </p>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
-                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Unit</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.unit}</span></div>
-                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.space || '—'}</span>{result.data._space_notes && <p style={{ color: '#888', fontSize: '11px', fontStyle: 'italic', margin: '2px 0 0' }}>{result.data._space_notes}</p>}</div>
-                        <div style={{ gridColumn: 'span 2' }}><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
+                      <div style={{ marginBottom: '14px' }}>
+                        <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br />
+                        <span style={{ color: 'white', fontSize: '13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span>
+                      </div>
+                      {/* Space reference data — same shape as authorized block.
+                          For pending/declined/expired this is historical context
+                          ("this car was tied to C-12"). Renders only if the
+                          resident still has space ties (residents_deactivate_free_spaces
+                          trigger clears ties on resident deactivation; here we just
+                          render whatever the RPC returned). */}
+                      <div style={{ marginBottom: '14px', padding: '10px', background: '#1a0a00', border: '1px solid #3a1e0a', borderRadius: '8px' }}>
+                        <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span>
+                        {(!result.data._assigned_spaces || result.data._assigned_spaces.length === 0) ? (
+                          <div style={{ color: '#aaa', fontSize: '13px', marginTop: '3px' }}>—</div>
+                        ) : (
+                          result.data._assigned_spaces.map((s: { space_label: string; space_description: string | null; plates: string[] }) => (
+                            <div key={s.space_label} style={{ marginTop: '6px' }}>
+                              <div style={{ color: 'white', fontSize: '14px', fontWeight: 'bold', fontFamily: 'Courier New' }}>{s.space_label}</div>
+                              {s.space_description && <p style={{ color: '#888', fontSize: '11px', fontStyle: 'italic', margin: '2px 0 0' }}>{s.space_description}</p>}
+                            </div>
+                          ))
+                        )}
                       </div>
                       <button onClick={() => { setViolation(v => ({ ...v, property: selectedProperty })); setShowViolation(true) }}
                         style={{ width: '100%', padding: '11px', background: '#991b1b', color: 'white', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
