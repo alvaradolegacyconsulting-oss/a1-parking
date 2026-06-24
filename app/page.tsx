@@ -1,10 +1,11 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useResolvedLogo } from './lib/logo'
-// B65.2: tier card data moved to app/lib/tier-display.ts so /signup and the
-// landing page render from the same source. No data changes — same arrays,
-// imported instead of declared inline.
-import { ENFORCEMENT_TIERS, PROPERTY_MANAGEMENT_TIERS } from './lib/tier-display'
+// 3-tier rebuild (Jose 2026-06-24): the landing page now renders the
+// single 3-card OFFERINGS view (PM-Only / Enforcement-Only / Legacy).
+// Two-track tab UI dropped; ?track= deep-link removed; FEATURE_COMPARISON
+// table added between Features and Pricing.
+import { OFFERINGS, FEATURE_COMPARISON } from './lib/tier-display'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -15,19 +16,7 @@ const MUTED = '#64748b'
 
 export default function Landing() {
   const [contact, setContact] = useState({ name: '', email: '', type: 'General inquiry', message: '' })
-  const [activeTrack, setActiveTrack] = useState<'enforcement' | 'pm'>('enforcement')
   const logoUrl = useResolvedLogo()
-
-  // B62.2: support deep-link from "Learn more about Enforcement / Property
-  // Management" links in the Audience Split section. URL params like
-  // ?track=enforcement or ?track=pm pre-select the pricing tab on mount.
-  // Plain anchor (#pricing) without param falls through to the default.
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const params = new URLSearchParams(window.location.search)
-    const t = params.get('track')
-    if (t === 'enforcement' || t === 'pm') setActiveTrack(t)
-  }, [])
 
   function sendContact() {
     const subject = encodeURIComponent(`[${contact.type}] from ${contact.name}`)
@@ -42,22 +31,16 @@ export default function Landing() {
   }
   const labelStyle: React.CSSProperties = { color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }
 
-  const enfTiers = ENFORCEMENT_TIERS
-  const pmTiers = PROPERTY_MANAGEMENT_TIERS
-
-  // B55: testimonials array removed. Section markup also removed below — see
-  // "CREDIBILITY SECTION — Phase 2 deliverable" placeholder comment. Do not
-  // re-introduce testimonials until real customers exist and have agreed in
-  // writing to be quoted with company attribution.
-
-  // B62.3: refined feature tiles — copy updated + tier-availability
-  // hint added to each. Honest tiles, no overpromised claims.
+  // Feature tiles — capability-focused (offering availability shown in the
+  // Comparison table below, not duplicated per tile). Honest copy; no
+  // overpromised claims (B55 discipline preserved).
   const features = [
-    { icon: '🚗', title: 'Plate-based enforcement', body: 'Every registered vehicle gets a digital permit tied to their plate. Drivers verify against the live registry in seconds.', tier: 'Available on all tiers' },
-    { icon: '📱', title: 'QR code self-registration', body: 'Residents scan a property QR code, register their vehicles in minutes, and get manager approval.', tier: 'Available on all tiers' },
-    { icon: '🎫', title: 'Visitor pass system', body: 'Residents issue digital visitor passes to guests. Passes auto-expire. Manager-issued passes also available.', tier: 'Available on Property Management tiers' },
-    { icon: '📊', title: 'Advanced analytics', body: 'Track violations, pass usage, tow events, and trends across all your properties.', tier: 'Available on Growth+ and Professional+' },
-    { icon: '🏗️', title: 'Multi-property management', body: 'Manage your entire portfolio from one login. Each property has its own rules, managers, and resident database.', tier: 'Available on all tiers (property count varies by tier)' },
+    { icon: '🚗', title: 'Plate-based enforcement', body: 'Every registered vehicle gets a digital permit tied to their plate. Drivers verify against the live registry in seconds.', tier: 'Enforcement-Only · Legacy' },
+    { icon: '📱', title: 'QR code self-registration', body: 'Residents scan a property QR code, register their vehicles in minutes, and get manager approval.', tier: 'PM-Only · Legacy' },
+    { icon: '🎫', title: 'Visitor pass system', body: 'Residents issue digital visitor passes to guests. Passes auto-expire. Manager-issued passes also available.', tier: 'PM-Only · Legacy (self-serve); Enforcement-Only (QR only)' },
+    { icon: '📊', title: 'Detailed analytics', body: 'Track violations, pass usage, tow events, and trends across all your properties.', tier: 'PM-Only · Legacy (basic on Enforcement-Only)' },
+    { icon: '🏗️', title: 'Multi-property management', body: 'Manage your entire portfolio from one login. Each property has its own rules, managers, and resident database.', tier: 'All offerings' },
+    { icon: '🅿️', title: 'Reserved space management', body: 'Track who has which spot, with cap-aware roommate tying. Pay-per-use ($0.50 per reserved space, zero included).', tier: 'All offerings' },
   ]
 
   return (
@@ -116,11 +99,11 @@ export default function Landing() {
           Texas Parking Management Platform
         </div>
         <h1 style={{ fontSize: 'clamp(36px, 6vw, 64px)', fontWeight: 800, lineHeight: 1.15, margin: '0 0 16px', letterSpacing: '-0.03em' }}>
-          The parking platform built for <span style={{ color: GOLD }}>Texas operators.</span>
+          One platform. <span style={{ color: GOLD }}>Manage, enforce, or both.</span>
         </h1>
         <div style={{ width: 60, height: 2, background: GOLD, margin: '0 auto 28px', opacity: 0.7 }} />
-        <p style={{ fontSize: 18, color: MUTED, maxWidth: 620, margin: '0 auto 44px', lineHeight: 1.7 }}>
-          Resident registration, visitor passes, violation tracking, and tow ticketing — built for Texas operators working under Chapter 2308. For towing companies and property managers.
+        <p style={{ fontSize: 18, color: MUTED, maxWidth: 640, margin: '0 auto 44px', lineHeight: 1.7 }}>
+          Resident registration, visitor passes, reserved-space management, plate enforcement, and tow ticketing — for Texas operators working under Chapter 2308. Three offerings: PM-Only, Enforcement-Only, and Legacy.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <a href="/signup" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Sign up →</a>
@@ -133,105 +116,78 @@ export default function Landing() {
         <p style={{ color: MUTED, fontSize: 12, marginTop: 12 }}>Licensed for Texas operations · Harris County jurisdiction</p>
       </section>
 
-      {/* ── AUDIENCE SPLIT (B62.2) ── */}
+      {/* ── ONE PRODUCT, THREE OFFERINGS — audience-mapped intro ──
+          Replaces the B62.2 "two kinds of operators" split. Each offering
+          has a clear buyer persona; cards anchor-scroll to the matching
+          Pricing card below. */}
       <section id="audiences" style={{ background: 'rgba(255,255,255,0.01)', borderTop: `1px solid ${BORDER}`, borderBottom: `1px solid ${BORDER}`, padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 48 }}>
-            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em' }}>Built for two kinds of operators</h2>
-            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '12px auto 0' }} />
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em' }}>One product, three offerings</h2>
+            <p style={{ color: MUTED, fontSize: 16, margin: '12px auto 0', maxWidth: 640, lineHeight: 1.65 }}>
+              Pick the offering that fits how you operate. Same platform underneath; what differs is which workflows are turned on.
+            </p>
+            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '20px auto 0' }} />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20 }}>
-            {/* Towing Companies card */}
-            <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 32 }}>
-              <div style={{ fontSize: 40, marginBottom: 16 }}>🚛</div>
-              <h3 style={{ color: TEXT, fontSize: 22, fontWeight: 700, margin: '0 0 12px' }}>Towing Companies</h3>
-              <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 18px' }}>
-                If you patrol properties and enforce parking rules, ShieldMyLot gives your drivers the tools to do it right.
-              </p>
-              <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 22px' }}>
-                {[
-                  'Mobile-friendly violation submission with photo and video evidence',
-                  'Plate scanning and exempt plate cross-reference',
-                  'Tow ticket generation modeled around Texas Chapter 2308 requirements',
-                  'Tow records CSV export (Growth+ tiers)',
-                  'Full audit trails on every action',
-                ].map((item, i) => (
-                  <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
-                    <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 2 }}>✓</span>
-                    <span style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.55 }}>{item}</span>
-                  </li>
-                ))}
-              </ul>
-              <a href="#pricing?track=enforcement" onClick={(e) => { e.preventDefault(); setActiveTrack('enforcement'); document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }) }}
-                style={{ color: GOLD, fontSize: 14, fontWeight: 600, textDecoration: 'none', cursor: 'pointer' }}>
-                Learn more about Enforcement →
-              </a>
-            </div>
-
-            {/* Property Managers card */}
-            <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 32 }}>
-              <div style={{ fontSize: 40, marginBottom: 16 }}>🏢</div>
-              <h3 style={{ color: TEXT, fontSize: 22, fontWeight: 700, margin: '0 0 12px' }}>Property Managers</h3>
-              <p style={{ color: MUTED, fontSize: 15, lineHeight: 1.7, margin: '0 0 18px' }}>
-                If you manage residential or commercial properties with parking, ShieldMyLot helps you set the rules and let your towing partner enforce them.
-              </p>
-              <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 22px' }}>
-                {[
-                  'QR code resident self-registration',
-                  'Visitor pass system (resident-issued or manager-issued)',
-                  'Exempt plate management per property',
-                  'Multi-property dashboard',
-                  'Coordination with your towing partner',
-                ].map((item, i) => (
-                  <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
-                    <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 2 }}>✓</span>
-                    <span style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.55 }}>{item}</span>
-                  </li>
-                ))}
-              </ul>
-              <a href="#pricing?track=pm" onClick={(e) => { e.preventDefault(); setActiveTrack('pm'); document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }) }}
-                style={{ color: GOLD, fontSize: 14, fontWeight: 600, textDecoration: 'none', cursor: 'pointer' }}>
-                Learn more about Property Management →
-              </a>
-            </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
+            {[
+              {
+                icon: '🏢',
+                offering: 'PM-Only',
+                tagline: 'For self-managed properties + HOAs',
+                blurb: 'Resident registration, visitor passes, reserved space management, and analytics — without enforcement. Coordinate with whoever does your towing.',
+                anchor: '#pricing',
+              },
+              {
+                icon: '🚛',
+                offering: 'Enforcement-Only',
+                tagline: 'For cost-conscious tow operators',
+                blurb: 'Full plate enforcement, video evidence, tow tickets, and driver workflow. Barebones PM features so residents can self-register the basics.',
+                anchor: '#pricing',
+              },
+              {
+                icon: '🏆',
+                offering: 'Legacy',
+                tagline: 'For bid-winning operators',
+                blurb: 'Full PM + full enforcement. Offer your serviced properties a complete resident platform as part of your bid — you recover the cost in enforcement.',
+                anchor: '#pricing',
+              },
+            ].map((p, i) => (
+              <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 28 }}>
+                <div style={{ fontSize: 36, marginBottom: 14 }}>{p.icon}</div>
+                <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, margin: '0 0 4px' }}>{p.offering}</p>
+                <h3 style={{ color: TEXT, fontSize: 18, fontWeight: 700, margin: '0 0 12px', lineHeight: 1.35 }}>{p.tagline}</h3>
+                <p style={{ color: MUTED, fontSize: 14, lineHeight: 1.7, margin: '0 0 18px' }}>{p.blurb}</p>
+                <a href={p.anchor} style={{ color: GOLD, fontSize: 13, fontWeight: 600, textDecoration: 'none' }}>
+                  See pricing for {p.offering} →
+                </a>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* ── HOW IT WORKS (B62.2) ── */}
+      {/* ── HOW IT WORKS — unified narrative ──
+          Track-toggle dropped in the 3-tier rebuild. Same steps work for
+          any offering; what differs is which steps are emphasized in
+          your day-to-day (PM-Only doesn't run a driver workflow;
+          Enforcement-Only doesn't run a self-serve visitor pass system). */}
       <section id="how-it-works" style={{ padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>How it works</h2>
-            <p style={{ color: MUTED, fontSize: 16, margin: '0 0 24px' }}>From signup to first violation in days, not weeks.</p>
-            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '0 auto 28px' }} />
-            {/* Reuse pricing-section tab pattern */}
-            <div style={{ display: 'inline-flex', background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 4 }}>
-              <button onClick={() => setActiveTrack('enforcement')}
-                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'enforcement' ? GOLD : 'transparent', color: activeTrack === 'enforcement' ? '#0a0d14' : MUTED }}>
-                For Enforcement
-              </button>
-              <button onClick={() => setActiveTrack('pm')}
-                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'pm' ? GOLD : 'transparent', color: activeTrack === 'pm' ? '#0a0d14' : MUTED }}>
-                For Property Management
-              </button>
-            </div>
+            <p style={{ color: MUTED, fontSize: 16, margin: '0 0 12px', maxWidth: 640, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
+              From signup to operating in days, not weeks. The same four steps regardless of offering — your enforcement / PM features turn on based on the offering you pick.
+            </p>
+            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '20px auto 0' }} />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20 }}>
-            {(activeTrack === 'enforcement'
-              ? [
-                  { title: 'Set up your account', body: 'Configure company profile, add admin users, verify your tier.' },
-                  { title: 'Add properties', body: 'Document your towing authorizations, configure exempt plates per property.' },
-                  { title: 'Provision drivers', body: 'Add field driver accounts and train them on submission workflow.' },
-                  { title: 'Start enforcing', body: 'Drivers submit violations with photo/video evidence; tickets generate automatically.' },
-                ]
-              : [
-                  { title: 'Set up your account', body: 'Configure company profile, add property managers, verify your tier.' },
-                  { title: 'Add properties', body: 'Configure visitor pass rules and exempt plate lists per property.' },
-                  { title: 'Distribute QR codes', body: 'Residents scan and self-register their vehicles.' },
-                  { title: 'Manage day-to-day', body: 'Approve registrations, issue visitor passes, coordinate with your towing partner.' },
-                ]
-            ).map((step, i) => (
+            {[
+              { title: 'Set up your account', body: 'Configure company profile, add admin + manager users, pick your offering.' },
+              { title: 'Add properties', body: 'Configure per-property rules, exempt plate lists, and reserved spaces if you assign parking.' },
+              { title: 'Provision people', body: 'Enforcement: add field drivers. PM: distribute resident QR codes for self-registration.' },
+              { title: 'Start operating', body: 'Enforcement: drivers submit violations with photo/video evidence; tickets generate automatically. PM: approve residents, manage visitor passes, coordinate with your towing partner.' },
+            ].map((step, i) => (
               <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 16, padding: 24, position: 'relative' }}>
                 <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(201,162,39,0.15)', border: `1px solid ${GOLD}`, color: GOLD, fontWeight: 700, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
                   {i + 1}
@@ -283,84 +239,109 @@ export default function Landing() {
         `}</style>
       </section>
 
-      {/* ── PRICING ── */}
+      {/* ── FEATURE COMPARISON TABLE — feature-split spec from Jose 2026-06-24.
+          Capability-by-capability matrix across the 3 offerings. Lives
+          between Features (per-feature tiles) and Pricing (per-offering
+          cards) so a buyer can map "this is what I need" → offering before
+          looking at price. */}
+      <section id="comparison" style={{ padding: '80px 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 36 }}>
+            <h2 style={{ fontSize: 32, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em' }}>Compare offerings</h2>
+            <p style={{ color: MUTED, fontSize: 15, margin: '8px 0 0', maxWidth: 600, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
+              Same platform underneath. Pick the offering whose capability set fits how you operate.
+            </p>
+            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '20px auto 0' }} />
+          </div>
+          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+                <thead>
+                  <tr style={{ background: 'rgba(201,162,39,0.06)', borderBottom: `1px solid ${BORDER}` }}>
+                    <th style={{ textAlign: 'left',  padding: '14px 18px', color: MUTED, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Capability</th>
+                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT,  fontSize: 13, fontWeight: 700 }}>PM-Only</th>
+                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT,  fontSize: 13, fontWeight: 700 }}>Enforcement-Only</th>
+                    <th style={{ textAlign: 'center', padding: '14px 18px', color: GOLD,  fontSize: 13, fontWeight: 700 }}>Legacy</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {FEATURE_COMPARISON.map((row, i) => (
+                    <tr key={i} style={{ borderBottom: i === FEATURE_COMPARISON.length - 1 ? 'none' : `1px solid ${BORDER}` }}>
+                      <td style={{ padding: '12px 18px', color: TEXT,  fontSize: 14 }}>{row.capability}</td>
+                      <td style={{ padding: '12px 18px', color: row.pmOnly          === '—' ? '#4a5568' : '#94a3b8', fontSize: 13, textAlign: 'center' }}>{row.pmOnly}</td>
+                      <td style={{ padding: '12px 18px', color: row.enforcementOnly === '—' ? '#4a5568' : '#94a3b8', fontSize: 13, textAlign: 'center' }}>{row.enforcementOnly}</td>
+                      <td style={{ padding: '12px 18px', color: row.legacy          === '—' ? '#4a5568' : '#94a3b8', fontSize: 13, textAlign: 'center' }}>{row.legacy}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── PRICING — 3-card view (Jose lock 2026-06-24).
+          Drops the two-track tab UI; renders OFFERINGS array directly.
+          Each card shows base + per-property + per-space + (per-driver
+          when applicable). Legacy card includes the operator-focused
+          pitch quote. CTAs are "Contact us" / "Get started" only —
+          self-serve checkout HOLDs until billing slice ships. */}
       <section id="pricing" style={{ padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
-            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Simple, hybrid pricing</h2>
-            <p style={{ color: MUTED, fontSize: 16, margin: '0 0 28px' }}>Base fee + per-property + per-driver. Pay for what you actually use.</p>
-            <div style={{ display: 'inline-flex', background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 4 }}>
-              <button onClick={() => setActiveTrack('enforcement')}
-                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'enforcement' ? GOLD : 'transparent', color: activeTrack === 'enforcement' ? '#0a0d14' : MUTED }}>
-                Enforcement
-              </button>
-              <button onClick={() => setActiveTrack('pm')}
-                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', background: activeTrack === 'pm' ? GOLD : 'transparent', color: activeTrack === 'pm' ? '#0a0d14' : MUTED }}>
-                Property Management
-              </button>
-            </div>
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Three offerings, one platform</h2>
+            <p style={{ color: MUTED, fontSize: 16, margin: '0 0 8px', maxWidth: 640, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
+              Base + per-property + per-reserved-space ($0.50, zero included — pay only for spaces you use). Drivers billed on enforcement offerings.
+            </p>
+            <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '20px auto 0' }} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24 }}>
-            {(activeTrack === 'enforcement' ? enfTiers : pmTiers).map((tier: any, i) => (
+            {OFFERINGS.map((tier, i) => (
               <div key={i} style={{ background: tier.popular ? 'rgba(201,162,39,0.08)' : CARD_BG, border: `1px solid ${tier.popular ? 'rgba(201,162,39,0.5)' : BORDER}`, borderRadius: 20, padding: 36, position: 'relative', boxShadow: tier.popular ? '0 0 0 1px rgba(201,162,39,0.25), 0 8px 32px rgba(201,162,39,0.06)' : 'none' }}>
-                {/* B62.4: MOST POPULAR badge integrated into card header (no longer floats above).
-                    Richer gold accent + a thin gold rule across the top of the card. */}
                 {tier.popular && (
                   <div style={{ position: 'absolute', top: 0, left: 0, right: 0, background: GOLD, color: '#0a0d14', fontSize: 11, fontWeight: 700, padding: '6px 12px', borderTopLeftRadius: 20, borderTopRightRadius: 20, letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'center' }}>
                     ★ Most Popular
                   </div>
                 )}
-                {tier.badge && !tier.popular && (
-                  <div style={{ position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: '#1e2535', color: MUTED, fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 10, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', border: `1px solid ${BORDER}` }}>
-                    {tier.badge}
-                  </div>
-                )}
-                <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: `${tier.popular ? '14px' : '0'} 0 6px` }}>{activeTrack === 'enforcement' ? 'Enforcement' : 'Property Mgmt'}</p>
-                <h3 style={{ color: TEXT, fontSize: 22, fontWeight: 700, margin: '0 0 16px' }}>{tier.name}</h3>
-                {tier.enterprise ? (
-                  <div style={{ marginBottom: 20 }}>
-                    <p style={{ color: GOLD, fontSize: 28, fontWeight: 800, margin: '0 0 6px' }}>Let's talk</p>
-                    <p style={{ color: MUTED, fontSize: 13, margin: 0, lineHeight: 1.5 }}>Tailored for hospitals, universities, and large property groups</p>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ marginBottom: 8 }}>
-                      <span style={{ color: GOLD, fontSize: 32, fontWeight: 800 }}>${tier.base}</span>
-                      <span style={{ color: MUTED, fontSize: 14 }}>/mo base</span>
-                    </div>
-                    <p style={{ color: MUTED, fontSize: 12, margin: '0 0 4px' }}>+ ${tier.perProp}/mo per property</p>
-                    {tier.perDriver && <p style={{ color: MUTED, fontSize: 12, margin: '0 0 20px' }}>+ ${tier.perDriver}/mo per driver</p>}
-                    {!tier.perDriver && <div style={{ marginBottom: 20 }} />}
-                  </>
-                )}
-                <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 20, marginBottom: 24 }}>
-                  {tier.features.map((f: string, j: number) => (
+                <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: `${tier.popular ? '14px' : '0'} 0 6px` }}>
+                  {tier.includesEnforcement && tier.includesPM ? 'PM + Enforcement' : tier.includesEnforcement ? 'Enforcement' : 'Property Management'}
+                </p>
+                <h3 style={{ color: TEXT, fontSize: 24, fontWeight: 700, margin: '0 0 16px' }}>{tier.name}</h3>
+
+                <div style={{ marginBottom: 8 }}>
+                  <span style={{ color: GOLD, fontSize: 36, fontWeight: 800 }}>${tier.base}</span>
+                  <span style={{ color: MUTED, fontSize: 14 }}>/mo base</span>
+                </div>
+                <p style={{ color: MUTED, fontSize: 12, margin: '0 0 4px' }}>+ ${tier.perProp}/mo per property</p>
+                <p style={{ color: MUTED, fontSize: 12, margin: '0 0 4px' }}>+ ${tier.perSpace?.toFixed(2)}/mo per reserved space <span style={{ color: '#4a5568' }}>(zero included)</span></p>
+                {tier.perDriver
+                  ? <p style={{ color: MUTED, fontSize: 12, margin: '0 0 20px' }}>+ ${tier.perDriver}/mo per driver</p>
+                  : <p style={{ color: '#4a5568', fontSize: 12, margin: '0 0 20px', fontStyle: 'italic' }}>No driver fee (PM-only)</p>}
+
+                <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 20, marginBottom: tier.pitchLine ? 16 : 24 }}>
+                  {tier.features.map((f, j) => (
                     <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
                       <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 1 }}>✓</span>
                       <span style={{ color: '#94a3b8', fontSize: 14 }}>{f}</span>
                     </div>
                   ))}
                 </div>
-                {tier.enterprise ? (
-                  <a href="mailto:support@shieldmylot.com?subject=ShieldMyLot Enterprise Inquiry"
-                    style={{ display: 'block', textAlign: 'center', background: CARD_BG, color: TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${BORDER}` }}>
-                    Contact us →
-                  </a>
-                ) : (
-                  <a href="#contact" style={{ display: 'block', textAlign: 'center', background: tier.popular ? GOLD : CARD_BG, color: tier.popular ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${tier.popular ? GOLD : BORDER}` }}>
-                    Request Access
-                  </a>
+
+                {tier.pitchLine && (
+                  <blockquote style={{ background: 'rgba(201,162,39,0.06)', border: `1px solid rgba(201,162,39,0.25)`, borderLeft: `3px solid ${GOLD}`, borderRadius: 8, padding: '12px 14px', margin: '0 0 22px', color: '#cbd5e1', fontSize: 13, lineHeight: 1.6, fontStyle: 'italic' }}>
+                    {tier.pitchLine}
+                  </blockquote>
                 )}
+
+                <a href="#contact" style={{ display: 'block', textAlign: 'center', background: tier.popular ? GOLD : CARD_BG, color: tier.popular ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${tier.popular ? GOLD : BORDER}` }}>
+                  {tier.popular ? 'Get started' : 'Contact us'} →
+                </a>
               </div>
             ))}
           </div>
-          {/* B89: B55 callout removed. Premium is now a 4th tier card in
-              ENFORCEMENT_TIERS rendered via the tier.enterprise: true branch
-              above (the dead branch B55 left in place). PM Enterprise stays
-              as a real-pricing tier and does NOT use that branch. */}
           <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 28 }}>
-            Annual billing available — save 2 months. 14-day money-back guarantee on all plans.
+            Working numbers — finalized before public launch. Self-serve checkout opens when billing wires; for now, reach out via Contact below to start.
           </p>
         </div>
       </section>
