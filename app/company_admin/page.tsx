@@ -87,6 +87,34 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, R
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
 
+// B219 Layer 2a — violation status display + filter configuration.
+// Single source for the 4 in-scope status values (matches the CHECK
+// constraint from migration 20260624_b219_violation_status_lifecycle.sql).
+// 'void' is NOT a status value (Gate 6 orthogonality — voided_at IS NOT
+// NULL is the source of truth for voidness, queried separately).
+const STATUS_OPTIONS = [
+  { value: 'new',        label: 'New',        color: '#888',    bg: '#1e2535' },
+  { value: 'tow_ticket', label: 'Tow Ticket', color: '#C9A227', bg: '#1a1f00' },
+  { value: 'resolved',   label: 'Resolved',   color: '#4caf50', bg: '#0a3a1e' },
+  { value: 'disputed',   label: 'Disputed',   color: '#ff9800', bg: '#3a2a00' },
+] as const
+type StatusValue = typeof STATUS_OPTIONS[number]['value']
+
+function getStatusConfig(status: string | null | undefined) {
+  return STATUS_OPTIONS.find(o => o.value === (status || 'new')) ?? STATUS_OPTIONS[0]
+}
+
+// Filter strip values — voided rows visible only in 'all' per the locked
+// "voided = orthogonal terminal state" decision (Gate 4 confirmed
+// 2026-06-24). Default is 'open' (A1's original "see what's pending" ask).
+const STATUS_FILTER_OPTIONS = [
+  { k: 'open',     l: 'Open'     },
+  { k: 'resolved', l: 'Resolved' },
+  { k: 'disputed', l: 'Disputed' },
+  { k: 'all',      l: 'All'      },
+] as const
+type StatusFilterValue = typeof STATUS_FILTER_OPTIONS[number]['k']
+
 export default function CompanyAdminPortal() {
   const [user, setUser] = useState<any>(null)
   const [role, setRole] = useState<any>(null)
@@ -189,6 +217,10 @@ export default function CompanyAdminPortal() {
   const [violations, setViolations] = useState<any[]>([])
   const [violationDisputes, setViolationDisputes] = useState<any[]>([])
   const [violationFilter, setViolationFilter] = useState('today')
+  // B219 Layer 2a — status filter (open/resolved/disputed/all).
+  // Default 'open' matches A1's original "see what's pending" ask.
+  // Voided rows are EXCLUDED from open/resolved/disputed; visible only in 'all'.
+  const [violationStatusFilter, setViolationStatusFilter] = useState<StatusFilterValue>('open')
   const [violationSearch, setViolationSearch] = useState('')
   const [passes, setPasses] = useState<any[]>([])
 
@@ -1997,6 +2029,46 @@ export default function CompanyAdminPortal() {
     setTicketTarget(confirmed); setSelectedStorage(''); setTowFee(''); setMileage('')
   }
 
+  // B219 Layer 2a — change a violation's status via the DEFINER RPC.
+  // Per Gate 3 (Jose 2026-06-24): REFETCH after mutation, not optimistic.
+  // Reasons: one mutation pattern across the file (matches existing CA
+  // convention `await rpc(); fetchViolations(prop)`); audit/legal-weight
+  // display should be server-confirmed; avoids the rollback-flash when
+  // a row marked Resolved drops out of the Open filter then snaps back
+  // on an RPC error. Latency on a single property's list is negligible.
+  //
+  // RPC return-path coverage (every error surface gets a clean message,
+  // none silently swallowed):
+  //   unauthenticated / no_role_assigned / role_not_authorized
+  //   / no_company_assigned / invalid_status / not_found
+  //   / cross_company_denied / voided_row_immutable
+  async function changeViolationStatus(violationId: number, newStatus: StatusValue) {
+    const { data, error } = await supabase.rpc('set_violation_status', {
+      p_violation_id: violationId,
+      p_new_status:   newStatus,
+    })
+    if (error) {
+      alert('Could not change status: ' + error.message)
+      return
+    }
+    if (data?.error) {
+      const messages: Record<string, string> = {
+        unauthenticated:       'Session expired. Please log in again.',
+        no_role_assigned:      'Your account has no role assigned. Contact your admin.',
+        role_not_authorized:   'Only company admins can change violation status.',
+        no_company_assigned:   'Your account has no company assigned. Contact your admin.',
+        invalid_status:        data.hint || 'Invalid status value.',
+        not_found:             'Violation not found (may have been deleted).',
+        cross_company_denied:  'This violation belongs to a different company.',
+        voided_row_immutable:  'Cannot change status of a voided violation.',
+      }
+      alert(messages[data.error] || `Error: ${data.error}`)
+      return
+    }
+    // Server-confirmed refetch (Gate 3 — refetch, not optimistic).
+    if (selectedProperty) fetchViolations(selectedProperty.name)
+  }
+
   async function editFromReview() {
     // Discard the unconfirmed row entirely so the user submits cleanly on
     // the next round. CASCADE drops photo rows. Storage objects orphan
@@ -2114,9 +2186,25 @@ export default function CompanyAdminPortal() {
     const week = new Date(); week.setDate(week.getDate() - 7)
     const sixmo = new Date(); sixmo.setMonth(sixmo.getMonth() - 6)
     return violations.filter(v => {
+      // Date predicate (existing)
       const d = new Date(v.created_at)
       const inPeriod = violationFilter === 'today' ? d >= today : violationFilter === 'week' ? d >= week : d >= sixmo
       if (!inPeriod) return false
+
+      // B219 Layer 2a status predicate. Voided rows excluded from
+      // open/resolved/disputed; visible only in 'all' per Gate 4 lock.
+      const status   = v.status || 'new'
+      const isVoided = v.voided_at != null
+      if (violationStatusFilter === 'open') {
+        if (isVoided || !['new', 'tow_ticket'].includes(status)) return false
+      } else if (violationStatusFilter === 'resolved') {
+        if (isVoided || status !== 'resolved') return false
+      } else if (violationStatusFilter === 'disputed') {
+        if (isVoided || status !== 'disputed') return false
+      }
+      // 'all' — no status predicate; voided rows visible with VOIDED badge
+
+      // Search predicate (existing)
       if (!violationSearch) return true
       const q = violationSearch.toLowerCase()
       return v.plate?.toLowerCase().includes(q) || displayTowReason(v.violation_type).toLowerCase().includes(q) || v.location?.toLowerCase().includes(q)
@@ -3090,10 +3178,21 @@ export default function CompanyAdminPortal() {
               placeholder="Search plate, violation type, location..."
               style={{ ...inp, fontSize:'13px', padding:'11px 12px', marginBottom:'10px' }}
             />
-            <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'12px' }}>
+            <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'8px' }}>
               {[{k:'today',l:'Today'},{k:'week',l:'This Week'},{k:'sixmonths',l:'6 Months'}].map(f => (
                 <button key={f.k} onClick={() => setViolationFilter(f.k)}
                   style={{ flex:1, padding:'8px', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', background:violationFilter === f.k ? '#C9A227' : 'transparent', color:violationFilter === f.k ? '#0f1117' : '#888', fontFamily:'Arial' }}>
+                  {f.l}
+                </button>
+              ))}
+            </div>
+            {/* B219 Layer 2a status filter strip. Defaults to 'open' per
+                A1's "see what's pending" ask. AND-ed with the date strip
+                above + search. Voided rows visible only in 'All'. */}
+            <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'12px' }}>
+              {STATUS_FILTER_OPTIONS.map(f => (
+                <button key={f.k} onClick={() => setViolationStatusFilter(f.k)}
+                  style={{ flex:1, padding:'8px', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', background:violationStatusFilter === f.k ? '#3b82f6' : 'transparent', color:violationStatusFilter === f.k ? '#fff' : '#888', fontFamily:'Arial' }}>
                   {f.l}
                 </button>
               ))}
@@ -3138,9 +3237,42 @@ export default function CompanyAdminPortal() {
                     <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
                     <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{displayTowReason(v.violation_type)}</p>
                   </div>
-                  <div style={{ textAlign:'right' }}>
-                    <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
-                    <p style={{ color:'#444', fontSize:'10px', margin:'2px 0 0' }}>{new Date(v.created_at).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}</p>
+                  <div style={{ textAlign:'right', display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'6px' }}>
+                    <div>
+                      <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
+                      <p style={{ color:'#444', fontSize:'10px', margin:'2px 0 0' }}>{new Date(v.created_at).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}</p>
+                    </div>
+                    {/* B219 Layer 2a status control. NOT rendered on voided
+                        rows — the VOIDED badge above already overrides
+                        (and the RPC would return voided_row_immutable
+                        anyway; don't offer an action the backend rejects). */}
+                    {!v.voided_at && (() => {
+                      const cfg = getStatusConfig(v.status)
+                      return (
+                        <select
+                          value={(v.status || 'new') as StatusValue}
+                          onChange={e => changeViolationStatus(v.id, e.target.value as StatusValue)}
+                          style={{
+                            background: cfg.bg,
+                            color: cfg.color,
+                            border: `1px solid ${cfg.color}`,
+                            borderRadius: '6px',
+                            padding: '4px 8px',
+                            fontSize: '10px',
+                            fontWeight: 'bold',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.06em',
+                            cursor: 'pointer',
+                            fontFamily: 'Arial',
+                          }}>
+                          {STATUS_OPTIONS.map(o => (
+                            <option key={o.value} value={o.value} style={{ background:'#1e2535', color:'#fff' }}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      )
+                    })()}
                   </div>
                 </div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', fontSize:'12px', marginBottom:'10px' }}>
