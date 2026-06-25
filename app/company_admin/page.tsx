@@ -215,7 +215,7 @@ export default function CompanyAdminPortal() {
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null)
 
   const [violations, setViolations] = useState<any[]>([])
-  const [violationDisputes, setViolationDisputes] = useState<any[]>([])
+  // B210 (2026-06-24): violationDisputes state removed (CA dispute-pill display retired)
   const [violationFilter, setViolationFilter] = useState('today')
   // B219 Layer 2a — status filter (open/resolved/disputed/all).
   // Default 'open' matches A1's original "see what's pending" ask.
@@ -598,8 +598,8 @@ export default function CompanyAdminPortal() {
       }
     })
     setViolations(flattened)
-    const { data: ddata } = await supabase.from('dispute_requests').select('*').ilike('property', property)
-    setViolationDisputes(ddata || [])
+    // B210 (2026-06-24): per-property dispute_requests fetch removed
+    // (CA dispute-pill display retired alongside the manager dispute flow).
   }
 
   async function fetchPasses(property: string) {
@@ -2257,10 +2257,12 @@ export default function CompanyAdminPortal() {
     const numMonths = analyticsRange === '30d' ? 1 : analyticsRange === '3mo' ? 3 : analyticsRange === '1yr' ? 12 : 6
     const startDate = new Date(now.getFullYear(), now.getMonth() - numMonths, analyticsRange === '30d' ? now.getDate() - 30 : 1)
 
-    const [{ data: vData }, { data: drData }] = await Promise.all([
+    // B210 (2026-06-24): dispute_requests pending-count query removed
+    // from the insights Promise.all (dispute flow retired). Single-table
+    // query now; drData no longer destructured.
+    const [{ data: vData }] = await Promise.all([
       // B175 — analytics counter excludes voided violations.
       supabase.from('violations').select('property,created_at,tow_ticket_generated,violation_type,driver_name').eq('is_confirmed', true).is('voided_at', null).in('property', propNames).gte('created_at', startDate.toISOString()),
-      supabase.from('dispute_requests').select('id').in('property', propNames).eq('status', 'pending'),
     ])
 
     let passCount = 0
@@ -2302,7 +2304,7 @@ export default function CompanyAdminPortal() {
     const totalViolations = viols.length
     const totalTows = viols.filter((v: any) => v.tow_ticket_generated).length
     const avgTowRate = totalViolations > 0 ? Math.round((totalTows / totalViolations) * 100) : 0
-    const pendingDisputes = drData?.length || 0
+    // B210 (2026-06-24): pendingDisputes metric removed (dispute flow retired)
     const avgPerProp = totalViolations / Math.max(propertyChartData.length, 1)
 
     const insights: string[] = []
@@ -2321,11 +2323,11 @@ export default function CompanyAdminPortal() {
       const ptr = pv.length > 0 ? pv.filter((v: any) => v.tow_ticket_generated).length / pv.length : null
       if (ltr !== null && ptr !== null && ptr > 0 && ltr < ptr * 0.9) insights.push('✅ Tow rate declining — enforcement is working!')
     }
-    if (pendingDisputes > 0 && totalViolations > 0 && pendingDisputes / totalViolations > 0.05)
-      insights.push('⚖ Dispute rate elevated. Review violation accuracy.')
+    // B210 (2026-06-24): "Dispute rate elevated" insight + pendingDisputes
+    // shorthand field removed (dispute flow retired).
     if (insights.length === 0) insights.push('✅ Everything looks normal. No anomalies detected.')
 
-    setCAAnalytics({ propertyChartData, trendData, typeChartData, totalViolations, avgTowRate, passCount, pendingDisputes, insights })
+    setCAAnalytics({ propertyChartData, trendData, typeChartData, totalViolations, avgTowRate, passCount, insights })
     setAnalyticsLoaded(true)
   }
 
@@ -3330,21 +3332,10 @@ export default function CompanyAdminPortal() {
                   style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'2px 0', display:'block', marginBottom:'8px' }}>
                   🔍 Search FindMyTowedCar.org
                 </a>
-                {(() => {
-                  const d = violationDisputes.find(d => d.violation_id === v.id)
-                  if (!d) return null
-                  const badge = d.status === 'pending'
-                    ? { text:'⚖ Dispute Pending', bg:'#1a1200', color:'#f59e0b' }
-                    : d.status === 'upheld'
-                      ? { text:'⚖ Tow Upheld', bg:'#3a1a1a', color:'#f44336' }
-                      : { text:'⚖ Resolved in Resident\'s Favor', bg:'#1a3a1a', color:'#4caf50' }
-                  return (
-                    <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'10px', padding:'7px 10px', background:badge.bg, borderRadius:'6px', border:`1px solid ${badge.color}44` }}>
-                      <span style={{ color:badge.color, fontSize:'11px', fontWeight:'bold' }}>{badge.text}</span>
-                      <span style={{ color:'#555', fontSize:'10px', marginLeft:'auto' }}>{d.resident_email}</span>
-                    </div>
-                  )
-                })()}
+                {/* B210 (2026-06-24): dispute pill on violation card removed
+                    (CA dispute_requests display retired). Disputed state is
+                    now expressed via the B219 status='disputed' chip in the
+                    card header, not via a separate resident-dispute pill. */}
                 <button onClick={() => setEditMediaViolationId(v.id)}
                   style={{ width:'100%', padding:'9px', background:'#0f1620', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', marginBottom:'6px' }}>
                   Manage Media
@@ -5004,7 +4995,7 @@ export default function CompanyAdminPortal() {
                     { label:'Total Violations', val:caAnalytics.totalViolations, sub:'in period', subColor:'#555' },
                     { label:'Avg Tow Rate', val:`${caAnalytics.avgTowRate}%`, sub:'towed per violation', subColor:'#555', valColor: caAnalytics.avgTowRate > 30 ? '#E24B4A' : '#C9A227' },
                     { label:'Visitor Passes', val:caAnalytics.passCount, sub:'issued in period', subColor:'#555' },
-                    { label:'Pending Disputes', val:caAnalytics.pendingDisputes, sub:'awaiting review', subColor:'#555', valColor: caAnalytics.pendingDisputes > 0 ? '#E24B4A' : '#1D9E75' },
+                    // B210 (2026-06-24): Pending Disputes insights chip removed (dispute flow retired)
                   ].map((c, i) => (
                     <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
                       <p style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>{c.label}</p>

@@ -11,19 +11,11 @@ import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatu
 import { evaluatePortalGate } from '../lib/portal-account-gate'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
 
-// B180 — resident dispute affordance hidden for A1 launch. Gates every
-// dispute-related surface that can only ever read a single state with
-// disputes off (initiate button + inline form + window-closed message +
-// per-card "No Dispute Filed" status badge + Violations-tab pending
-// counter). The post-resolve dispute details panel intentionally
-// remains gated by `dispute && ...` only — pre-existing dispute history
-// (if any ever existed) still surfaces; it's data display, not an
-// affordance. A1 has no pre-existing disputes so it's a no-op there.
-// Server-side: dispute_requests INSERT remains RLS-permitted for
-// authenticated residents — UI-hide does NOT block a determined console
-// poke. Real lockdown lands with B181 (per-property server-gated toggle).
-// To re-enable post-A1, replace the const with a per-property check.
-const RESIDENT_DISPUTES_ENABLED = false
+// B210 (2026-06-24): RESIDENT_DISPUTES_ENABLED const + all resident
+// dispute affordances removed. The resident→PM dispute flow is retired;
+// the only remaining dispute concept is the CA manual status='disputed'
+// flag on violations (B219). dispute_requests table intentionally left
+// intact (historical data preservation; future cleanup).
 
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
@@ -54,16 +46,12 @@ export default function ResidentPortal() {
   const [changePwMsg, setChangePwMsg] = useState('')
   const [changePwLoading, setChangePwLoading] = useState(false)
   const [myViolations, setMyViolations] = useState<any[]>([])
-  const [myDisputes, setMyDisputes] = useState<any[]>([])
-  const [disputingId, setDisputingId] = useState<string | null>(null)
-  const [disputeForm, setDisputeForm] = useState({ reason: '', details: '' })
-  const [disputeEvidence, setDisputeEvidence] = useState<File | null>(null)
-  const [submittingDispute, setSubmittingDispute] = useState(false)
-  const [disputeMsg, setDisputeMsg] = useState('')
+  // B210 (2026-06-24): myDisputes / disputingId / disputeForm /
+  // disputeEvidence / submittingDispute / disputeMsg state removed
 
   useEffect(() => { loadResident() }, [])
   useEffect(() => {
-    if (activeTab === 'myviol' && resident) { fetchMyViolations(); fetchMyDisputes() }
+    if (activeTab === 'myviol' && resident) fetchMyViolations()
   }, [activeTab, resident])
   useEffect(() => {
     setSupportPhone(localStorage.getItem('company_support_phone') || '')
@@ -212,39 +200,9 @@ export default function ResidentPortal() {
     setMyViolations(flattened)
   }
 
-  async function fetchMyDisputes() {
-    if (!resident) return
-    const { data } = await supabase.from('dispute_requests').select('*').ilike('resident_email', resident.email)
-    setMyDisputes(data || [])
-  }
-
-  async function submitDispute(violationId: string, property: string) {
-    if (!disputeForm.reason) { alert('Please select a reason'); return }
-    if (disputeForm.reason.startsWith('Other') && !disputeForm.details) { alert('Please describe the issue in the details field'); return }
-    setSubmittingDispute(true)
-    let evidenceUrl: string | null = null
-    if (disputeEvidence) {
-      const fileName = `dispute-${Date.now()}-${disputeEvidence.name}`
-      const { error: upErr } = await supabase.storage.from('violation-photos').upload(fileName, disputeEvidence)
-      if (!upErr) {
-        const { data: urlData } = supabase.storage.from('violation-photos').getPublicUrl(fileName)
-        evidenceUrl = urlData.publicUrl
-      }
-    }
-    const { error } = await supabase.from('dispute_requests').insert([{
-      violation_id: violationId, resident_email: resident.email,
-      property, reason: disputeForm.reason, details: disputeForm.details || null,
-      evidence_url: evidenceUrl, status: 'pending',
-    }])
-    setSubmittingDispute(false)
-    if (error) { alert('Error: ' + error.message); return }
-    await logAudit({ action: 'DISPUTE_SUBMITTED', table_name: 'dispute_requests', new_values: { violation_id: violationId, property, reason: disputeForm.reason } })
-    setDisputingId(null)
-    setDisputeForm({ reason: '', details: '' })
-    setDisputeEvidence(null)
-    setDisputeMsg('Dispute submitted. Your property manager will review and respond within 5 business days.')
-    fetchMyDisputes()
-  }
+  // B210 (2026-06-24): fetchMyDisputes + submitDispute removed (resident
+  // dispute flow retired; only the CA-side status='disputed' flag remains
+  // — disputes are handled legally off-system).
 
   async function changePassword() {
     setChangePwMsg('')
@@ -523,7 +481,7 @@ export default function ResidentPortal() {
             })()}
           </button>
           <button style={tabStyle('myviol')} onClick={() => setActiveTab('myviol')}>
-            Violations{RESIDENT_DISPUTES_ENABLED && myDisputes.some(d => d.status === 'pending') && <span style={{ background:'#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{myDisputes.filter(d => d.status === 'pending').length}</span>}
+            Violations{/* B210 (2026-06-24): pending-dispute count badge removed */}
           </button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
         </div>
@@ -782,26 +740,13 @@ export default function ResidentPortal() {
         {/* MY VIOLATIONS TAB */}
         {activeTab === 'myviol' && (
           <div>
-            {disputeMsg && (
-              <div style={{ background:'#1a3a1a', border:'1px solid #2e7d32', borderRadius:'8px', padding:'12px 14px', marginBottom:'14px' }}>
-                <p style={{ color:'#4caf50', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>{disputeMsg}</p>
-              </div>
-            )}
+            {/* B210 (2026-06-24): disputeMsg banner removed (resident
+                dispute flow retired). */}
             {myViolations.length === 0 ? (
               <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}>
                 <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No violations found for your registered vehicles</p>
               </div>
             ) : myViolations.map((v, i) => {
-              const dispute = myDisputes.find(d => d.violation_id === v.id)
-              const daysSince = (Date.now() - new Date(v.created_at).getTime()) / (1000 * 60 * 60 * 24)
-              const canDispute = daysSince <= 30
-              const dispBadge = !dispute
-                ? { text:'No Dispute Filed', bg:'#1e2535', color:'#555' }
-                : dispute.status === 'pending'
-                  ? { text:'Dispute Pending', bg:'#1a1200', color:'#f59e0b' }
-                  : dispute.status === 'upheld'
-                    ? { text:'Tow Upheld', bg:'#3a1a1a', color:'#f44336' }
-                    : { text:'Resolved in Your Favor', bg:'#1a3a1a', color:'#4caf50' }
               return (
                 <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'10px' }}>
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
@@ -844,69 +789,10 @@ export default function ResidentPortal() {
                       ▶ Play Video
                     </button>
                   )}
-                  {RESIDENT_DISPUTES_ENABLED && (
-                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: (!dispute && canDispute) ? '10px' : '0' }}>
-                      <span style={{ background:dispBadge.bg, color:dispBadge.color, padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', border:`1px solid ${dispBadge.color}33` }}>{dispBadge.text}</span>
-                      {dispute?.resolved_at && <span style={{ color:'#555', fontSize:'10px' }}>Resolved {new Date(dispute.resolved_at).toLocaleDateString()}</span>}
-                    </div>
-                  )}
-
-                  {RESIDENT_DISPUTES_ENABLED && !dispute && canDispute && disputingId !== v.id && (
-                    <button onClick={() => { setDisputingId(v.id); setDisputeForm({ reason:'', details:'' }); setDisputeEvidence(null) }}
-                      style={{ width:'100%', padding:'9px', background:'#1a1200', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', marginTop:'10px' }}>
-                      ⚖ Dispute This Tow
-                    </button>
-                  )}
-                  {RESIDENT_DISPUTES_ENABLED && !dispute && !canDispute && (
-                    <p style={{ color:'#555', fontSize:'11px', margin:'10px 0 0', fontStyle:'italic' }}>Dispute window closed (30 days from violation date)</p>
-                  )}
-
-                  {RESIDENT_DISPUTES_ENABLED && disputingId === v.id && (
-                    <div style={{ marginTop:'12px', borderTop:'1px solid #2a2f3d', paddingTop:'12px' }}>
-                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', margin:'0 0 10px' }}>⚖ File a Dispute</p>
-                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.07em', display:'block', marginBottom:'4px' }}>Reason *</label>
-                      <select value={disputeForm.reason} onChange={e => setDisputeForm({...disputeForm, reason: e.target.value})}
-                        style={{ display:'block', width:'100%', padding:'9px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', marginBottom:'10px', boxSizing:'border-box' as const }}>
-                        <option value=''>Select a reason…</option>
-                        <option>Vehicle was already moved before tow</option>
-                        <option>Valid permit not recognized by system</option>
-                        <option>Incorrect vehicle towed</option>
-                        <option>Signage was unclear or missing</option>
-                        <option>Guest had valid visitor pass</option>
-                        <option>Other — explain below</option>
-                      </select>
-                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.07em', display:'block', marginBottom:'4px' }}>Details {disputeForm.reason.startsWith('Other') ? '*' : '(optional)'}</label>
-                      <textarea value={disputeForm.details} onChange={e => setDisputeForm({...disputeForm, details: e.target.value})}
-                        placeholder="Provide any additional context or explanation..."
-                        style={{ display:'block', width:'100%', padding:'9px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'12px', marginBottom:'10px', minHeight:'72px', resize:'vertical' as const, boxSizing:'border-box' as const }} />
-                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.07em', display:'block', marginBottom:'4px' }}>Evidence Photo (optional)</label>
-                      <input type="file" accept="image/*" onChange={e => setDisputeEvidence(e.target.files?.[0] || null)}
-                        style={{ display:'block', width:'100%', color:'#aaa', fontSize:'12px', marginBottom:'10px' }} />
-                      <div style={{ background:'#111827', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 12px', marginBottom:'12px' }}>
-                        <p style={{ color:'#666', fontSize:'11px', margin:'0', lineHeight:'1.6' }}>
-                          ⚖ Official Dispute Record: This dispute will be permanently recorded in the system and reviewed by your property manager. Please provide accurate and professional information. False or misleading disputes may result in account review. All submissions are logged with your name, email, and timestamp for audit purposes.
-                        </p>
-                      </div>
-                      <div style={{ display:'flex', gap:'8px' }}>
-                        <button onClick={() => submitDispute(v.id, v.property)} disabled={submittingDispute}
-                          style={{ flex:1, padding:'10px', background: submittingDispute ? '#555' : '#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor: submittingDispute ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
-                          {submittingDispute ? 'Submitting…' : 'Submit Dispute'}
-                        </button>
-                        <button onClick={() => setDisputingId(null)}
-                          style={{ padding:'10px 12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontFamily:'Arial' }}>
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {dispute && (
-                    <div style={{ marginTop:'10px', borderTop:'1px solid #2a2f3d', paddingTop:'10px' }}>
-                      <p style={{ color:'#555', fontSize:'11px', margin:'0 0 2px' }}>Reason: <span style={{ color:'#aaa' }}>{dispute.reason}</span></p>
-                      {dispute.details && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0' }}>Details: <span style={{ color:'#aaa' }}>{dispute.details}</span></p>}
-                      {dispute.pm_note && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0' }}>Manager note: <span style={{ color:'#aaa' }}>{dispute.pm_note}</span></p>}
-                    </div>
-                  )}
+                  {/* B210 (2026-06-24): all 5 dispute UI blocks removed
+                      from this card (dispBadge / initiate button / window-
+                      closed message / inline form / post-resolve panel).
+                      Resident→PM dispute flow is retired. */}
                 </div>
               )
             })}

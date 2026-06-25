@@ -27,7 +27,10 @@ export const FEATURE_FLAGS = {
   DRIVER_PORTAL: 'driver_portal',
   STORAGE_FACILITY_MANAGEMENT: 'storage_facility_management',
   PHOTO_UPLOADS: 'photo_uploads',
-  DISPUTE_REQUESTS: 'dispute_requests',
+  // DISPUTE_REQUESTS removed 2026-06-24 (B210) — the resident→PM dispute
+  // flow is retired; the only remaining dispute concept is the CA manual
+  // status='disputed' flag on violations (B219). dispute_requests table
+  // intentionally left intact (historical data preservation; future cleanup).
   FINDMYTOWEDCAR_LINKS: 'findmytowedcar_links',
   CSV_EXPORT_BASIC: 'csv_export_basic',
 

@@ -52,7 +52,7 @@ const ENF_STARTER: TierConfigShape = {
   [F.DRIVER_PORTAL]: true,
   [F.STORAGE_FACILITY_MANAGEMENT]: true,
   [F.PHOTO_UPLOADS]: true,
-  [F.DISPUTE_REQUESTS]: true,
+  // [F.DISPUTE_REQUESTS] removed 2026-06-24 (B210)
   [F.FINDMYTOWEDCAR_LINKS]: true,
   [F.CSV_EXPORT_BASIC]: true,
 
@@ -200,7 +200,7 @@ const PM_ESSENTIAL: TierConfigShape = {
   [F.DRIVER_PORTAL]: false,
   [F.STORAGE_FACILITY_MANAGEMENT]: false,
   [F.PHOTO_UPLOADS]: false,
-  [F.DISPUTE_REQUESTS]: false,
+  // [F.DISPUTE_REQUESTS] removed 2026-06-24 (B210)
   [F.FINDMYTOWEDCAR_LINKS]: false,
   [F.CSV_EXPORT_BASIC]: false,
   [F.TOWBOOK_CSV_EXPORT]: false,

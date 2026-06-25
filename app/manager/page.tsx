@@ -213,15 +213,14 @@ export default function ManagerPortal() {
   // (see L118-121) and is unaffected.
   const [showActiveResidents, setShowActiveResidents] = useState(true)
   const [showActiveVehicles, setShowActiveVehicles] = useState(true)
-  const [disputes, setDisputes] = useState<any[]>([])
-  const [pendingDisputeCount, setPendingDisputeCount] = useState(0)
-  const [disputeNotes, setDisputeNotes] = useState<Record<string, string>>({})
+  // B210 (2026-06-24): disputes / pendingDisputeCount / disputeNotes
+  // state removed alongside the disputes tab UI + handlers.
   const [insightsLoaded, setInsightsLoaded] = useState(false)
   const [mgAnalytics, setMgAnalytics] = useState<any>(null)
 
   useEffect(() => { loadManager(); getPlatformLogoUrl() }, [])
   useEffect(() => { if (activeTab === 'activity' && manager) fetchActivityLogs() }, [activeTab, manager])
-  useEffect(() => { if (activeTab === 'disputes' && manager) fetchDisputes(manager.name) }, [activeTab, manager])
+  // B210: disputes-tab useEffect removed
   useEffect(() => { if (activeTab === 'insights' && manager) fetchInsights() }, [activeTab, manager])
   // B214: lazy-load guest auths on tab activation. Re-fetches when the manager
   // switches properties (manager.name change) so the list always reflects the
@@ -334,26 +333,14 @@ export default function ManagerPortal() {
     // data lazily on tab activation via refetchSpacesDashboard/List
     // (dashboard aggregate + filtered paginated list). Removed from the
     // mount-time fetch fan-out so cold load doesn't pull 126+ rows.
-    fetchDisputes(property)
+    // B210 (2026-06-24): fetchDisputes call removed alongside the
+    // resident dispute flow retirement.
   }
 
-  async function fetchDisputes(property: string) {
-    const { data } = await supabase.from('dispute_requests').select('*').ilike('property', property).order('created_at', { ascending: false })
-    setDisputes(data || [])
-    setPendingDisputeCount((data || []).filter((d: any) => d.status === 'pending').length)
-  }
-
-  async function upholdDispute(d: any) {
-    await supabase.from('dispute_requests').update({ status: 'upheld', pm_decision: 'upheld', pm_note: disputeNotes[d.id] || null, resolved_at: new Date().toISOString() }).eq('id', d.id)
-    await logAudit({ action: 'DISPUTE_UPHELD', table_name: 'dispute_requests', record_id: d.id, new_values: { status: 'upheld', pm_note: disputeNotes[d.id] } })
-    fetchDisputes(manager.name)
-  }
-
-  async function resolveDispute(d: any) {
-    await supabase.from('dispute_requests').update({ status: 'resolved', pm_decision: 'resolved', pm_note: disputeNotes[d.id] || null, resolved_at: new Date().toISOString() }).eq('id', d.id)
-    await logAudit({ action: 'DISPUTE_RESOLVED', table_name: 'dispute_requests', record_id: d.id, new_values: { status: 'resolved', pm_note: disputeNotes[d.id] } })
-    fetchDisputes(manager.name)
-  }
+  // B210 (2026-06-24): fetchDisputes / upholdDispute / resolveDispute
+  // removed. The resident→PM dispute concept is retired; the only
+  // remaining dispute concept is the CA manual status='disputed' flag
+  // on violations (B219). Historical DISPUTE_* audit_logs rows preserved.
 
   // ── B214: Guest Authorizations handlers ──────────────────────────────
   async function refetchGuestAuths() {
@@ -1468,11 +1455,13 @@ export default function ManagerPortal() {
     const sixMoAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1)
     const mk = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`
 
-    const [{ data: vData }, { data: vehData }, { data: drData }] = await Promise.all([
+    // B210 (2026-06-24): dispute_requests count query removed from
+    // the insights Promise.all; the disputeRate metric is gone (dispute
+    // flow retired). drData no longer destructured.
+    const [{ data: vData }, { data: vehData }] = await Promise.all([
       // B175 — analytics counter excludes voided violations.
       supabase.from('violations').select('created_at,tow_ticket_generated').eq('is_confirmed', true).is('voided_at', null).ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
       supabase.from('vehicles').select('status,is_active').ilike('property', manager.name),
-      supabase.from('dispute_requests').select('id').ilike('property', manager.name).gte('created_at', sixMoAgo.toISOString()),
     ])
     const viols = vData || []
 
@@ -1496,7 +1485,7 @@ export default function ManagerPortal() {
 
     const vehs = vehData || []
     const complianceRate = vehs.length > 0 ? Math.round((vehs.filter((v: any) => v.is_active).length / vehs.length) * 100) : 100
-    const disputeRate = viols.length > 0 ? Math.round(((drData?.length || 0) / viols.length) * 100) : 0
+    // B210 (2026-06-24): disputeRate metric removed (dispute flow retired)
 
     const peakDayIdx = byDay.indexOf(Math.max(...byDay))
     const peakHourIdx = byHour.indexOf(Math.max(...byHour))
@@ -1508,7 +1497,7 @@ export default function ManagerPortal() {
     setMgAnalytics({
       dayChartData: dayNames.map((name, i) => ({ name, count: byDay[i] })),
       monthData: monthLabels.map(m => ({ month: m.label, count: byMonth[m.key] || 0 })),
-      byHour, thisMonthCount, lastMonthCount, complianceRate, disputeRate, insight,
+      byHour, thisMonthCount, lastMonthCount, complianceRate, insight,
     })
     setInsightsLoaded(true)
   }
@@ -1650,9 +1639,7 @@ export default function ManagerPortal() {
             <button style={tabStyle('plate-lookup')} onClick={() => setActiveTab('plate-lookup')}>Plate Lookup</button>
           )}
           <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
-          <button style={tabStyle('disputes')} onClick={() => setActiveTab('disputes')}>
-            Disputes{pendingDisputeCount > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingDisputeCount}</span>}
-          </button>
+          {/* B210 (2026-06-24): Disputes tab button removed */}
           <button style={tabStyle('insights')} onClick={() => setActiveTab('insights')}>Insights</button>
           <button style={tabStyle('activity')} onClick={() => setActiveTab('activity')}>Activity</button>
         </div>
@@ -3180,74 +3167,9 @@ export default function ManagerPortal() {
         )}
 
 
-        {/* DISPUTES */}
-        {activeTab === 'disputes' && (
-          <div>
-            {disputes.length === 0 ? (
-              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}>
-                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No disputes filed for this property</p>
-              </div>
-            ) : disputes.map((d, i) => {
-              const statusBadge = d.status === 'pending'
-                ? { text:'Pending', bg:'#1a1200', color:'#f59e0b' }
-                : d.status === 'upheld'
-                  ? { text:'Tow Upheld', bg:'#3a1a1a', color:'#f44336' }
-                  : { text:'Resolved in Resident\'s Favor', bg:'#1a3a1a', color:'#4caf50' }
-              return (
-                <div key={i} style={{ background:'#161b26', border:`1px solid ${d.status === 'pending' ? '#f59e0b44' : '#2a2f3d'}`, borderRadius:'10px', padding:'14px', marginBottom:'10px' }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px' }}>
-                    <div>
-                      <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{d.resident_email}</p>
-                      <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>Filed {new Date(d.created_at).toLocaleDateString()} at {new Date(d.created_at).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}</p>
-                    </div>
-                    <span style={{ background:statusBadge.bg, color:statusBadge.color, padding:'3px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', border:`1px solid ${statusBadge.color}44` }}>{statusBadge.text}</span>
-                  </div>
-                  <div style={{ background:'#0f1117', borderRadius:'7px', padding:'10px 12px', marginBottom:'10px', fontSize:'12px' }}>
-                    <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 6px' }}>Violation</p>
-                    <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', margin:'0 0 4px' }}>{violations.find(v => v.id === d.violation_id)?.plate || '—'}</p>
-                    <p style={{ color:'#aaa', fontSize:'11px', margin:'0' }}>{displayTowReason(violations.find(v => v.id === d.violation_id)?.violation_type)} · {violations.find(v => v.id === d.violation_id)?.created_at ? new Date(violations.find(v => v.id === d.violation_id).created_at).toLocaleDateString() : ''}</p>
-                  </div>
-                  <div style={{ marginBottom:'10px' }}>
-                    <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>Reason</p>
-                    <p style={{ color:'#aaa', fontSize:'12px', margin:'0' }}>{d.reason}</p>
-                    {d.details && <p style={{ color:'#777', fontSize:'11px', margin:'6px 0 0', lineHeight:'1.5' }}>{d.details}</p>}
-                  </div>
-                  {d.evidence_url && (
-                    <div style={{ marginBottom:'10px' }}>
-                      <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>Evidence</p>
-                      <a href={d.evidence_url} target="_blank" rel="noopener noreferrer">
-                        <img src={d.evidence_url} alt="Evidence" style={{ width:'80px', height:'80px', objectFit:'cover', borderRadius:'6px', border:'1px solid #2a2f3d', cursor:'pointer' }} />
-                      </a>
-                    </div>
-                  )}
-                  {d.status === 'pending' && !isReadOnly && (
-                    <div>
-                      <textarea value={disputeNotes[d.id] || ''} onChange={e => setDisputeNotes(prev => ({...prev, [d.id]: e.target.value}))}
-                        placeholder="Optional note to resident about this decision..."
-                        style={{ display:'block', width:'100%', padding:'8px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'12px', marginBottom:'8px', minHeight:'56px', resize:'vertical' as const, boxSizing:'border-box' as const }} />
-                      <div style={{ display:'flex', gap:'8px' }}>
-                        <button onClick={() => upholdDispute(d)}
-                          style={{ flex:1, padding:'9px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
-                          Uphold Tow
-                        </button>
-                        <button onClick={() => resolveDispute(d)}
-                          style={{ flex:1, padding:'9px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'7px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
-                          Resolve in Resident's Favor
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {d.status !== 'pending' && (
-                    <div style={{ borderTop:'1px solid #2a2f3d', paddingTop:'8px', marginTop:'8px' }}>
-                      {d.pm_note && <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>Manager note: {d.pm_note}</p>}
-                      {d.resolved_at && <p style={{ color:'#555', fontSize:'10px', margin:'0' }}>Decided {new Date(d.resolved_at).toLocaleDateString()}</p>}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
+        {/* B210 (2026-06-24): DISPUTES tab block removed (resident→PM
+            dispute flow retired). Historical DISPUTE_* audit_logs rows
+            preserved; dispute_requests table intentionally left intact. */}
 
         {activeTab === 'insights' && (
           <div>
@@ -3261,7 +3183,7 @@ export default function ManagerPortal() {
                     { label:'This Month', val:mgAnalytics.thisMonthCount, sub: mgAnalytics.lastMonthCount > 0 ? `${mgAnalytics.thisMonthCount > mgAnalytics.lastMonthCount ? '↑' : '↓'} ${Math.abs(mgAnalytics.thisMonthCount - mgAnalytics.lastMonthCount)} vs last mo` : '—', subColor: mgAnalytics.thisMonthCount > mgAnalytics.lastMonthCount ? '#E24B4A' : '#1D9E75' },
                     { label:'Last Month', val:mgAnalytics.lastMonthCount, sub:'violations', subColor:'#555' },
                     { label:'Vehicle Compliance', val:`${mgAnalytics.complianceRate}%`, sub:'of vehicles registered', subColor:'#555', valColor: mgAnalytics.complianceRate >= 80 ? '#1D9E75' : '#E24B4A' },
-                    { label:'Dispute Rate', val:`${mgAnalytics.disputeRate}%`, sub:'of violations disputed', subColor:'#555', valColor: mgAnalytics.disputeRate > 5 ? '#E24B4A' : '#1D9E75' },
+                    // B210 (2026-06-24): Dispute Rate insights chip removed (dispute flow retired)
                   ].map((c, i) => (
                     <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
                       <p style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>{c.label}</p>
