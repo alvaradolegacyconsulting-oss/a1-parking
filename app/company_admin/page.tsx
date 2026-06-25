@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
@@ -363,12 +363,29 @@ export default function CompanyAdminPortal() {
     label: '', description: '', type: 'carport', is_bundled: false,
   })
 
+  // B219 Layer 2b Insights tab state. Calls get_enforcement_insights
+  // RPC (shipped 2026-06-25) and renders the new operational dashboard
+  // (status pipeline / ticket aging / by-property / by-driver / heatmap
+  // / repeat vehicles + Needs-attention flag strip + summary chips).
+  // Replaces the legacy Analytics tab (button hidden below; JSX block
+  // left in place for deletion in a follow-up commit).
+  const [insightsLoaded, setInsightsLoaded]                 = useState(false)
+  const [insightsData, setInsightsData]                     = useState<any>(null)
+  const [insightsRange, setInsightsRange]                   = useState<'30d'|'3mo'|'6mo'|'1yr'>('30d')
+  const [insightsPropertyFilter, setInsightsPropertyFilter] = useState<string | null>(null)
+  const [insightsError, setInsightsError]                   = useState<string>('')
   const [analyticsRange, setAnalyticsRange] = useState('6mo')
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false)
   const [caAnalytics, setCAAnalytics] = useState<any>(null)
 
   useEffect(() => { loadUser() }, [])
   useEffect(() => { if (activeTab === 'analytics') fetchCAAnalytics() }, [activeTab, analyticsRange])
+  // B219 Layer 2b — Insights tab fetcher. Calls get_enforcement_insights
+  // RPC; refetches on tab open + filter change.
+  useEffect(() => {
+    if (activeTab === 'insights') fetchInsights()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, insightsRange, insightsPropertyFilter])
 
   // B66.4 — Billing tab data loader. Fires on tab activate; also re-
   // fires when the user returns from Stripe Portal (?from=portal in
@@ -2248,6 +2265,54 @@ export default function CompanyAdminPortal() {
     URL.revokeObjectURL(url)
   }
 
+  // B219 Layer 2b — Insights tab data fetcher. Calls the
+  // get_enforcement_insights DEFINER RPC (migration 20260625) and
+  // sets insightsData with the returned jsonb payload (or
+  // insightsError for any error path).
+  //
+  // Surfaces every RPC error path with a clean user-readable message
+  // (no silent failures).
+  async function fetchInsights() {
+    setInsightsError('')
+    setInsightsLoaded(false)
+
+    // Compute date_from from the range filter (matches existing
+    // analyticsRange shape; RPC computes its own defaults if either
+    // arg is null, but we pass both for explicitness).
+    const now = new Date()
+    const dateFrom = new Date(now)
+    if      (insightsRange === '30d') dateFrom.setDate(now.getDate() - 30)
+    else if (insightsRange === '3mo') dateFrom.setMonth(now.getMonth() - 3)
+    else if (insightsRange === '6mo') dateFrom.setMonth(now.getMonth() - 6)
+    else if (insightsRange === '1yr') dateFrom.setFullYear(now.getFullYear() - 1)
+
+    const { data, error } = await supabase.rpc('get_enforcement_insights', {
+      p_property:  insightsPropertyFilter,
+      p_date_from: dateFrom.toISOString(),
+      p_date_to:   now.toISOString(),
+    })
+
+    if (error) {
+      setInsightsError('Could not load insights: ' + error.message)
+      setInsightsLoaded(true)
+      return
+    }
+    if (data?.error) {
+      const messages: Record<string, string> = {
+        unauthenticated:        'Session expired. Please log in again.',
+        no_role_assigned:       'Your account has no role assigned. Contact your admin.',
+        role_not_authorized:    'Insights are available to company admins only.',
+        no_company_assigned:    'Your account has no company assigned. Contact your admin.',
+        no_properties_in_scope: 'No properties match this filter.',
+      }
+      setInsightsError(messages[data.error] || `Error: ${data.error}`)
+      setInsightsLoaded(true)
+      return
+    }
+    setInsightsData(data)
+    setInsightsLoaded(true)
+  }
+
   async function fetchCAAnalytics() {
     setAnalyticsLoaded(false)
     const propNames = properties.map((p: any) => p.name)
@@ -2834,10 +2899,22 @@ export default function CompanyAdminPortal() {
           <button style={tab('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
           <button style={tab('qrcodes')} onClick={() => setActiveTab('qrcodes')}>QR Codes</button>
           <button style={tab('manage')} onClick={() => { setActiveTab('manage'); if (!manageLoaded) loadManageData() }}>Manage</button>
-          {/* Phase 2a: Analytics tab tier-gated (Growth+ / Professional+). Admin always sees it. */}
-          {(role?.role === 'admin' || hasFeature(FEATURE_FLAGS.ADVANCED_ANALYTICS, getCompanyContext()) === true) && (
+          {/* B219 Layer 2b (2026-06-25): Analytics tab button HIDDEN.
+              The dashboard moves to the new Insights tab below (always
+              visible for CA). JSX block for activeTab==='analytics' is
+              intentionally left in place for now — flip the false back
+              on or delete the block entirely in a follow-up commit
+              after one UAT cycle confirms Insights covers everything.
+              Two metrics from Analytics were ported to Insights
+              summary chips (avg_tow_rate + visitor_passes); no other
+              metric was orphaned. */}
+          {false && (role?.role === 'admin' || hasFeature(FEATURE_FLAGS.ADVANCED_ANALYTICS, getCompanyContext()) === true) && (
             <button style={tab('analytics')} onClick={() => setActiveTab('analytics')}>Analytics</button>
           )}
+          {/* B219 Layer 2b Insights tab — always visible for CA
+              (intentionally NOT tier-gated; insights are the
+              operational view every CA should see). */}
+          <button style={tab('insights')} onClick={() => setActiveTab('insights')}>Insights</button>
           <button style={tab('plan')} onClick={() => setActiveTab('plan')}>Plan</button>
           <button style={tab('billing')} onClick={() => setActiveTab('billing')}>Billing</button>
           {/* B113: Bulk Upload nav. Tier-gated (Growth+/Professional+) via
@@ -4969,6 +5046,304 @@ export default function CompanyAdminPortal() {
             })()}
           </div>
         )}
+
+        {/* ═══════════════════════════════════════════════════════════
+            ── INSIGHTS (B219 Layer 2b — Enforcement dashboard) ──
+            ═══════════════════════════════════════════════════════════
+            Reads get_enforcement_insights RPC. Renders:
+              - Filter strip: property + date range
+              - 3 summary chips (Total Violations / Avg Tow Rate /
+                Visitor Passes — ported from soon-deleted Analytics
+                so nothing CA-critical orphans)
+              - "Needs attention" strip (red flags first, then amber;
+                each shows its own intrinsic window label)
+              - 6 widgets: status pipeline / ticket aging /
+                by-property bar chart / by-driver table (DRIFT-WATCH
+                only — no rank) / peak-times heatmap / repeat vehicles
+              - Analytics-tab bleed at ~877px noted pre-build: caused
+                by inline ResponsiveContainer + missing min-width:0
+                on flex parents. Insights chart containers all carry
+                box-sizing:border-box + min-width:0 + overflow:hidden
+                from the start.
+        */}
+        {activeTab === 'insights' && (() => {
+          const d = insightsData
+          const flags: any[] = d?.flags ?? []
+          const redFlags   = flags.filter(f => f.severity === 'red')
+          const amberFlags = flags.filter(f => f.severity === 'amber')
+          // Heatmap helpers
+          const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+          const bucketLabels = ['12–4a','4–8a','8a–12p','12–4p','4–8p','8p–12a']
+          const heatmapCells: Record<string, number> = {}
+          let heatmapMax = 0
+          for (const h of (d?.heatmap ?? [])) {
+            heatmapCells[`${h.dow}-${h.bucket}`] = h.count
+            if (h.count > heatmapMax) heatmapMax = h.count
+          }
+          const heatColor = (v: number): string => {
+            if (v === 0 || heatmapMax === 0) return '#0f1117'
+            const intensity = Math.min(1, v / heatmapMax)
+            // gold gradient
+            const alpha = 0.15 + intensity * 0.7
+            return `rgba(201,162,39,${alpha.toFixed(2)})`
+          }
+          // Status pipeline color map (consistent with 2a chip palette)
+          const sp = d?.status_pipeline ?? { new:0, tow_ticket:0, resolved:0, disputed:0, voided:0 }
+          const statusBuckets = [
+            { k: 'new',        l: 'New',         val: sp.new        ?? 0, c: '#888',    bg: '#1e2535' },
+            { k: 'tow_ticket', l: 'Tow Ticket',  val: sp.tow_ticket ?? 0, c: '#C9A227', bg: '#1a1f00' },
+            { k: 'resolved',   l: 'Resolved',    val: sp.resolved   ?? 0, c: '#4caf50', bg: '#0a3a1e' },
+            { k: 'disputed',   l: 'Disputed',    val: sp.disputed   ?? 0, c: '#ff9800', bg: '#3a2a00' },
+            { k: 'voided',     l: 'Voided',      val: sp.voided     ?? 0, c: '#f44336', bg: '#3a1a1a' },
+          ]
+          // Trend arrow render
+          const trendBadge = (trend: string | null): React.ReactNode => {
+            if (!trend) return null
+            if (trend === 'rising_disputes') return <span title="Rising disputes (last 7d vs prior 7d)" style={{ color:'#ff9800', fontSize:'11px', marginLeft:'6px' }}>↑ disputes</span>
+            if (trend === 'rising_voids')    return <span title="Rising voids (last 7d vs prior 7d)"    style={{ color:'#f44336', fontSize:'11px', marginLeft:'6px' }}>↑ voids</span>
+            return null
+          }
+          // Card style (shared) — overflow guards from the start
+          const cardStyle: React.CSSProperties = {
+            background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px',
+            padding:'14px', marginBottom:'14px',
+            overflow:'hidden', boxSizing:'border-box', minWidth:0,
+          }
+          const widgetTitle: React.CSSProperties = {
+            color:'#C9A227', fontWeight:'bold', fontSize:'11px',
+            textTransform:'uppercase', letterSpacing:'0.06em',
+            margin:'0 0 10px',
+          }
+          return (
+            <div style={{ minWidth: 0 }}>
+              {/* ── Filter strip ── */}
+              <div style={{ marginBottom:'14px' }}>
+                <select
+                  value={insightsPropertyFilter ?? ''}
+                  onChange={e => setInsightsPropertyFilter(e.target.value || null)}
+                  style={{ width:'100%', padding:'9px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box', marginBottom:'8px' }}>
+                  <option value=''>All properties</option>
+                  {properties.map((p: any) => (
+                    <option key={p.id} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+                <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px' }}>
+                  {([
+                    { k: '30d', l: '30d' },
+                    { k: '3mo', l: '3 mo' },
+                    { k: '6mo', l: '6 mo' },
+                    { k: '1yr', l: '1 yr' },
+                  ] as const).map(r => (
+                    <button key={r.k} onClick={() => setInsightsRange(r.k)}
+                      style={{ flex:1, padding:'8px', border:'none', borderRadius:'6px', cursor:'pointer', fontWeight:'bold', fontSize:'12px', fontFamily:'Arial', background:insightsRange === r.k ? '#3b82f6' : 'transparent', color:insightsRange === r.k ? '#fff' : '#888' }}>
+                      {r.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── Loading / error / empty states ── */}
+              {!insightsLoaded ? (
+                <p style={{ color:'#555', textAlign:'center', padding:'40px' }}>Loading insights...</p>
+              ) : insightsError ? (
+                <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'14px', marginBottom:'14px' }}>
+                  <p style={{ color:'#f44336', fontSize:'13px', margin:'0' }}>{insightsError}</p>
+                </div>
+              ) : !d ? (
+                <p style={{ color:'#555', textAlign:'center', padding:'40px' }}>No insights available.</p>
+              ) : (
+                <>
+                  {/* ── 3 SUMMARY CHIPS (ported from Analytics) ── */}
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(140px, 1fr))', gap:'10px', marginBottom:'14px' }}>
+                    {[
+                      { label:'Total Violations', val: d.summary?.total_violations ?? 0, sub:'in window',          subColor:'#555' },
+                      { label:'Tow Rate',          val: `${d.summary?.tow_rate_pct ?? 0}%`, sub:'of violations',     subColor:'#555' },
+                      { label:'Visitor Passes',    val: d.summary?.visitor_passes ?? 0, sub:'in window',             subColor:'#555' },
+                    ].map((c, i) => (
+                      <div key={i} style={{ ...cardStyle, marginBottom:0, padding:'12px' }}>
+                        <p style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>{c.label}</p>
+                        <p style={{ color:'white', fontSize:'22px', fontWeight:'bold', margin:'0', fontFamily:'Arial' }}>{c.val}</p>
+                        <p style={{ color:c.subColor, fontSize:'10px', margin:'4px 0 0' }}>{c.sub}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* ── NEEDS ATTENTION strip (red flags first, then amber) ── */}
+                  {flags.length > 0 && (
+                    <div style={{ ...cardStyle, background:'#0f1117', border:'1px dashed #3a4055' }}>
+                      <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:'bold', margin:'0 0 10px' }}>
+                        ⚠ Needs attention ({flags.length})
+                      </p>
+                      {[...redFlags, ...amberFlags].map((f: any, i: number) => {
+                        const isRed = f.severity === 'red'
+                        return (
+                          <div key={i} style={{
+                            background: isRed ? '#3a1a1a' : '#3a2a00',
+                            border: `1px solid ${isRed ? '#b71c1c' : '#a16207'}`,
+                            borderRadius:'8px', padding:'10px 12px', marginBottom:'6px',
+                          }}>
+                            <p style={{ color: isRed ? '#f44336' : '#fbbf24', fontSize:'12px', fontWeight:'bold', margin:'0 0 2px' }}>
+                              {f.headline}
+                            </p>
+                            <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0' }}>
+                              {f.window_label}
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* ── WIDGET 1 — Status pipeline ── */}
+                  <div style={cardStyle}>
+                    <p style={widgetTitle}>Status pipeline</p>
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(80px, 1fr))', gap:'8px' }}>
+                      {statusBuckets.map(b => (
+                        <div key={b.k} style={{ background: b.bg, border: `1px solid ${b.c}`, borderRadius:'6px', padding:'10px 8px', textAlign:'center' }}>
+                          <p style={{ color: b.c, fontSize:'20px', fontWeight:'bold', margin:'0', fontFamily:'Arial' }}>{b.val}</p>
+                          <p style={{ color: b.c, fontSize:'9px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'4px 0 0' }}>{b.l}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* ── WIDGET 2 — Ticket aging (open tickets only) ── */}
+                  <div style={cardStyle}>
+                    <p style={widgetTitle}>Ticket aging (open)</p>
+                    {[
+                      { k: 'd0_7',    l: '0–7 days',    c: '#4caf50' },
+                      { k: 'd8_30',   l: '8–30 days',   c: '#fbbf24' },
+                      { k: 'd30plus', l: 'Over 30 days', c: '#f44336' },
+                    ].map(b => (
+                      <div key={b.k} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
+                        <span style={{ color: b.c, fontSize:'13px' }}>{b.l}</span>
+                        <span style={{ color: b.c, fontSize:'16px', fontWeight:'bold', fontFamily:'Arial' }}>{d.ticket_aging?.[b.k] ?? 0}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* ── WIDGET 3 — Violations by property (recharts BarChart with overflow guards) ── */}
+                  {d.by_property?.length > 0 && (
+                    <div style={cardStyle}>
+                      <p style={widgetTitle}>Violations by property</p>
+                      {/* min-width:0 on the chart container is the recharts gotcha
+                          at narrow widths — flex parents without min-width:0
+                          let the SVG overflow. */}
+                      <div style={{ width:'100%', minWidth:0, overflow:'hidden' }}>
+                        <ResponsiveContainer width="100%" height={Math.max(120, d.by_property.length * 44)}>
+                          <BarChart data={d.by_property} layout="vertical" margin={{ top:0, right:8, left:0, bottom:0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                            <XAxis type="number" tick={{ fill:'#888', fontSize:10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                            <YAxis type="category" dataKey="property" tick={{ fill:'#aaa', fontSize:10 }} axisLine={false} tickLine={false} width={80} />
+                            <Tooltip contentStyle={{ background:'#1e2535', border:'1px solid #2a2f3d', borderRadius:'8px', fontSize:'11px' }} labelStyle={{ color:'#aaa' }} />
+                            <Bar dataKey="violations" name="Violations" fill="#C9A227" radius={[0,4,4,0]} />
+                            <Bar dataKey="tows"       name="Tows"       fill="#B71C1C" radius={[0,4,4,0]} />
+                            <Bar dataKey="voids"      name="Voids"      fill="#555"    radius={[0,4,4,0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── WIDGET 4 — Driver activity (DRIFT-WATCH; no rank, no accuracy %) ── */}
+                  {d.by_driver?.length > 0 && (
+                    <div style={cardStyle}>
+                      <p style={widgetTitle}>Driver activity (drift-watch)</p>
+                      <p style={{ color:'#555', fontSize:'10px', margin:'-6px 0 10px', fontStyle:'italic' }}>
+                        Volume + trend arrow only. No ranked accuracy score by design.
+                      </p>
+                      <div style={{ overflowX:'auto', width:'100%' }}>
+                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                          <thead>
+                            <tr style={{ borderBottom:'1px solid #2a2f3d' }}>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'left',  padding:'8px 6px' }}>Driver</th>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right', padding:'8px 6px' }}>Violations</th>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right', padding:'8px 6px' }}>Tows</th>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right', padding:'8px 6px' }}>Voids</th>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right', padding:'8px 6px' }}>Disputes</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {d.by_driver.map((r: any, i: number) => (
+                              <tr key={i} style={{ borderBottom: i === d.by_driver.length - 1 ? 'none' : '1px solid #1e2535' }}>
+                                <td style={{ color:'white', padding:'8px 6px' }}>
+                                  {r.driver}
+                                  {trendBadge(r.trend)}
+                                </td>
+                                <td style={{ color:'#aaa', padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.violations ?? 0}</td>
+                                <td style={{ color:'#C9A227', padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.tows ?? 0}</td>
+                                <td style={{ color:'#f44336', padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.voids ?? 0}</td>
+                                <td style={{ color:'#ff9800', padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.disputes ?? 0}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── WIDGET 5 — Peak times heatmap (7 days × 6 buckets) ── */}
+                  <div style={cardStyle}>
+                    <p style={widgetTitle}>Peak enforcement times</p>
+                    <div style={{ overflowX:'auto', width:'100%' }}>
+                      <div style={{ display:'grid', gridTemplateColumns:`60px repeat(6, minmax(0, 1fr))`, gap:'3px', minWidth:'360px' }}>
+                        {/* Header row: bucket labels */}
+                        <div></div>
+                        {bucketLabels.map(b => (
+                          <div key={b} style={{ color:'#888', fontSize:'9px', textAlign:'center', padding:'4px 2px', letterSpacing:'0.04em' }}>{b}</div>
+                        ))}
+                        {/* 7 day rows */}
+                        {dayLabels.map((day, dow) => (
+                          <React.Fragment key={day}>
+                            <div style={{ color:'#aaa', fontSize:'11px', alignSelf:'center', padding:'4px' }}>{day}</div>
+                            {bucketLabels.map((_, bucket) => {
+                              const v = heatmapCells[`${dow}-${bucket}`] ?? 0
+                              return (
+                                <div key={bucket} title={`${day} ${bucketLabels[bucket]}: ${v}`}
+                                  style={{ background: heatColor(v), border:'1px solid #1e2535', borderRadius:'3px', padding:'10px 0', textAlign:'center', fontSize:'10px', color: v > heatmapMax * 0.5 ? '#0f1117' : '#aaa', minWidth:0 }}>
+                                  {v > 0 ? v : ''}
+                                </div>
+                              )
+                            })}
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── WIDGET 6 — Repeat vehicles (plates with ≥3 in window) ── */}
+                  {d.repeat_vehicles?.length > 0 && (
+                    <div style={cardStyle}>
+                      <p style={widgetTitle}>Repeat vehicles (≥3 in window)</p>
+                      <div style={{ overflowX:'auto', width:'100%' }}>
+                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                          <thead>
+                            <tr style={{ borderBottom:'1px solid #2a2f3d' }}>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'left',  padding:'8px 6px' }}>Plate</th>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right', padding:'8px 6px' }}>Count</th>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'left',  padding:'8px 6px' }}>Latest status</th>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'left',  padding:'8px 6px' }}>Property</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {d.repeat_vehicles.map((r: any, i: number) => (
+                              <tr key={i} style={{ borderBottom: i === d.repeat_vehicles.length - 1 ? 'none' : '1px solid #1e2535' }}>
+                                <td style={{ color:'#f44336', padding:'8px 6px', fontFamily:'Courier New', fontWeight:'bold' }}>{r.plate}</td>
+                                <td style={{ color:'white',   padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.count}</td>
+                                <td style={{ color:'#aaa',    padding:'8px 6px' }}>{r.latest_status}</td>
+                                <td style={{ color:'#aaa',    padding:'8px 6px' }}>{r.property}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )
+        })()}
 
         {/* ── ANALYTICS ── */}
         {activeTab === 'analytics' && (
