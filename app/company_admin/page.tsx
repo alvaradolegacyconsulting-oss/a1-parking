@@ -1621,6 +1621,60 @@ export default function CompanyAdminPortal() {
     fetchCompanyDrivers()
   }
 
+  // Tow Ticket Regenerate Layer 3 — CA-facing grant/revoke of the
+  // per-driver can_regenerate_tow_ticket permission. Calls the
+  // set_driver_regenerate_permission DEFINER RPC (Layer 3 migration
+  // 20260627_set_driver_regenerate_permission.sql).
+  //
+  // Server-authorized: the RPC's role gate (admin + company_admin)
+  // and company-scope predicate (driver.company ~~* caller.company,
+  // user_roles-to-user_roles ILIKE) are the real authority. This
+  // handler is the UX surface; do not relax the confirm + error
+  // mapping.
+  async function setDriverRegenPermission(driver: any, allowed: boolean) {
+    const action = allowed ? 'grant' : 'revoke'
+    const msg = allowed
+      ? `Grant regenerate permission to ${driver.name || driver.email}?\n\nThis lets the driver void and replace their own tow tickets in the field (with a reason captured per regenerate). Audited.`
+      : `Revoke regenerate permission from ${driver.name || driver.email}?\n\nThe driver will no longer see the Regenerate button on stamped tickets. Effective immediately at the server; live-session UI catches up on next driver load.`
+    if (!window.confirm(msg)) return
+
+    const { data, error } = await supabase.rpc('set_driver_regenerate_permission', {
+      p_driver_email: String(driver.email).toLowerCase(),
+      p_allowed:      allowed,
+    })
+    if (error) {
+      alert(`Could not ${action} regenerate permission: ${error.message}`)
+      return
+    }
+    const result = data as { ok?: boolean; noop?: boolean; error?: string; hint?: string; new_value?: boolean }
+    if (result?.error) {
+      const messages: Record<string, string> = {
+        unauthenticated:        'Your session has expired. Please log in again.',
+        no_role_assigned:       'Your account has no role assigned. Contact your admin.',
+        no_company_assigned:    'Your account has no company assigned. Contact your admin.',
+        role_not_authorized:    'Only company admins can change regenerate permission.',
+        invalid_allowed:        result.hint || 'Internal: invalid p_allowed value.',
+        driver_email_required:  'Internal: missing driver email.',
+        driver_not_found:       'Driver not found. Refresh the list.',
+        not_a_driver:           result.hint || 'Regenerate permission applies only to drivers.',
+        driver_out_of_scope:    'That driver belongs to a different company.',
+      }
+      alert(messages[result.error] || `Error: ${result.error}`)
+      return
+    }
+
+    // Local-patch the row; cheaper than a full refetch for a single-
+    // column toggle. Mirrors the existing patch-then-stay-in-place
+    // pattern other CA mutations use.
+    setCompanyDrivers((prev: any[]) =>
+      prev.map(d =>
+        String(d.email).toLowerCase() === String(driver.email).toLowerCase()
+          ? { ...d, can_regenerate_tow_ticket: allowed }
+          : d
+      )
+    )
+  }
+
   async function toggleDriverActive(driver: any) {
     const wasActive = driver.is_active
 
@@ -4848,19 +4902,31 @@ export default function CompanyAdminPortal() {
                       {/* B66.5.1 (Item 2): tri-state badge mirroring the
                           Users list pattern at line ~2669. Inactive (soft-
                           deleted via deactivate) wins over invite status —
-                          inactive drivers never show as "Invited". */}
-                      {(() => {
-                        const status = inviteStatuses[String(d.email).toLowerCase()] ?? 'unknown'
-                        const isInactive = d.is_active === false
-                        const label = isInactive ? 'Inactive' : (status === 'invited' ? 'Invited' : 'Active')
-                        const bg = isInactive ? '#2a1a1a' : (status === 'invited' ? '#3a2a08' : '#1a3a1a')
-                        const color = isInactive ? '#f44336' : (status === 'invited' ? '#fbbf24' : '#4caf50')
-                        return (
-                          <span style={{ background: bg, color, padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
-                            {label}
+                          inactive drivers never show as "Invited".
+                          + Tow Ticket Regenerate Layer 3 (2026-06-27):
+                          adjacent REGEN gold dot when can_regenerate_tow_ticket=TRUE
+                          for at-a-glance "who has regenerate" scanning. */}
+                      <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                        {(() => {
+                          const status = inviteStatuses[String(d.email).toLowerCase()] ?? 'unknown'
+                          const isInactive = d.is_active === false
+                          const label = isInactive ? 'Inactive' : (status === 'invited' ? 'Invited' : 'Active')
+                          const bg = isInactive ? '#2a1a1a' : (status === 'invited' ? '#3a2a08' : '#1a3a1a')
+                          const color = isInactive ? '#f44336' : (status === 'invited' ? '#fbbf24' : '#4caf50')
+                          return (
+                            <span style={{ background: bg, color, padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
+                              {label}
+                            </span>
+                          )
+                        })()}
+                        {d.can_regenerate_tow_ticket && (
+                          <span
+                            title="Has regenerate-tow-ticket permission"
+                            style={{ background:'#1a1400', color:'#f59e0b', padding:'2px 7px', borderRadius:'10px', fontSize:'9px', fontWeight:'bold', border:'1px solid #f59e0b', letterSpacing:'0.06em' }}>
+                            ⟲ REGEN
                           </span>
-                        )
-                      })()}
+                        )}
+                      </div>
                     </div>
                     {isCA && (
                       <div style={{ display:'flex', gap:'6px', marginTop:'8px' }}>
@@ -4892,6 +4958,33 @@ export default function CompanyAdminPortal() {
                               </button>
                             )
                           })()}
+                        {/* Tow Ticket Regenerate Layer 3 — Grant/Revoke regen.
+                            Only rendered when the row is an active driver (no
+                            point granting to inactive accounts; not_a_driver
+                            RPC rejection covers non-driver rows server-side
+                            but we save the click). Label flips on current
+                            state; click triggers single window.confirm,
+                            handler maps every RPC error path. */}
+                        {d.is_active !== false && (
+                          <button
+                            onClick={() => setDriverRegenPermission(d, !d.can_regenerate_tow_ticket)}
+                            title={d.can_regenerate_tow_ticket
+                              ? 'Revoke regenerate-tow-ticket permission'
+                              : 'Grant regenerate-tow-ticket permission'}
+                            style={{
+                              flex:1, padding:'7px',
+                              background: d.can_regenerate_tow_ticket ? '#f59e0b' : '#1a1400',
+                              color:      d.can_regenerate_tow_ticket ? '#0f1117' : '#f59e0b',
+                              border:'1px solid #f59e0b',
+                              borderRadius:'6px',
+                              cursor:'pointer',
+                              fontSize:'11px',
+                              fontFamily:'Arial',
+                              fontWeight: d.can_regenerate_tow_ticket ? 'bold' : 'normal',
+                            }}>
+                            {d.can_regenerate_tow_ticket ? '⟲ Revoke regen' : '⟲ Grant regen'}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
