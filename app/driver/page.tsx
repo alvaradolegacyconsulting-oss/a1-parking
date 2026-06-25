@@ -414,9 +414,26 @@ export default function DriverPortal() {
     // constraint exists by design (overlap can be legit) — this just keeps
     // the cascade deterministic when the soft-overlap-warning at create
     // time (commit 3) isn't honored.
+    //
+    // B225 (2026-06-26) — driver-needs-only column narrows for the two
+    // remaining .select('*') calls. Closes 2/3 of B225 (vehicles narrow
+    // was 1/3, shipped a4b425b). Consumer-completeness verified pre-build:
+    //   - guest_auth renders use start_date / end_date / non_resident_reason
+    //     (L1305, L1315-1322); decline-modal payload (L1324) reads
+    //     non_resident_reason; submitViolation + logAudit + pendingDecline
+    //     read ZERO result.data fields.
+    //   - visitor_pass render uses expires_at (L1385); zero other consumers.
+    //   - plate kept in both sets — used as filter + implicit search context.
+    // Removes PII the render block was already stripping but the network
+    // payload was carrying: guest_name, resident_email, visiting_unit,
+    // approved_by_email (guest_auth) + visitor_name/phone, visiting_unit,
+    // vehicle_*, notes (visitor_passes).
+    const SAFE_GUEST_AUTH_COLS   = 'plate, start_date, end_date, non_resident_reason'
+    const SAFE_VISITOR_PASS_COLS = 'plate, expires_at'
+
     const todayIso = new Date().toISOString().split('T')[0]
     const { data: guestAuth } = await supabase
-      .from('guest_authorizations').select('*')
+      .from('guest_authorizations').select(SAFE_GUEST_AUTH_COLS)
       .ilike('plate', clean).ilike('property', selectedProperty)
       .eq('is_active', true).eq('status', 'active')
       .lte('start_date', todayIso).gte('end_date', todayIso)
@@ -426,7 +443,7 @@ export default function DriverPortal() {
       setSearching(false); setResult({ status: 'guest_authorized', data: guestAuth }); return
     }
 
-    const { data: pass } = await supabase.from('visitor_passes').select('*')
+    const { data: pass } = await supabase.from('visitor_passes').select(SAFE_VISITOR_PASS_COLS)
       .ilike('plate', clean).ilike('property', selectedProperty)
       .eq('is_active', true).gte('expires_at', new Date().toISOString())
       .single()
@@ -1394,12 +1411,12 @@ export default function DriverPortal() {
                     </>
                   )}
 
-                  {result.status === 'notassigned' && (
-                    <>
-                      <p style={{ color: '#f44336', fontWeight: 'bold', fontSize: '16px', margin: '0 0 6px' }}>✗ NOT YOUR PROPERTY</p>
-                      <p style={{ color: '#aaa', fontSize: '13px', margin: '0' }}>This plate is registered to a property not assigned to you.</p>
-                    </>
-                  )}
+                  {/* (2026-06-26) — removed dead `result.status === 'notassigned'`
+                      render branch. searchPlate() never emits that status; the
+                      cascade only produces authorized / pending / declined /
+                      expired / guest_authorized / visitor / notfound. Memory
+                      tracked it as "B215 driver portal notassigned dead-code
+                      render block" (logged 2026-06-20 during B214 audit). */}
 
                   {result.status === 'notfound' && (
                     <>
