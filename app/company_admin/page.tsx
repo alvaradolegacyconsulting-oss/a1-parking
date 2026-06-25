@@ -3534,7 +3534,11 @@ export default function CompanyAdminPortal() {
                           : caGuestAuthResidentsLoading ? 'Loading residents…'
                           : '— Select unit —'}
                       </option>
-                      {Array.from(new Set(caGuestAuthResidents.filter((r: any) => r.is_active !== false).map((r: any) => r.unit))).sort().map((u: any) => (
+                      {/* B221 (2026-06-26): natural-numeric sort — parity with
+                          manager/page.tsx fix. Inline localeCompare with
+                          numeric:true so unit "10" doesn't sort before "2".
+                          Null-safe via ?? ''. */}
+                      {Array.from(new Set(caGuestAuthResidents.filter((r: any) => r.is_active !== false).map((r: any) => r.unit))).sort((a: any, b: any) => (a ?? '').localeCompare(b ?? '', undefined, { numeric: true, sensitivity: 'base' })).map((u: any) => (
                         <option key={u} value={u}>{u}</option>
                       ))}
                     </select>

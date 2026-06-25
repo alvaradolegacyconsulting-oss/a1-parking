@@ -187,6 +187,10 @@ export default function ManagerPortal() {
   // coverage (new_start = source.end_date) per Jose lock 2026-06-20.
   const [renewGuestAuthTarget, setRenewGuestAuthTarget] = useState<GuestAuth | null>(null)
   const [renewDates, setRenewDates] = useState({ start_date: '', end_date: '' })
+  // B222 (2026-06-26): search box on the active guest-auth list — filters
+  // by plate, guest name, visiting unit, or resident email. Pattern
+  // mirrors the existing violations search in this file.
+  const [guestAuthSearch, setGuestAuthSearch] = useState('')
   const [settingsMsg, setSettingsMsg] = useState('')
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [auditDateFilter, setAuditDateFilter] = useState('week')
@@ -198,7 +202,10 @@ export default function ManagerPortal() {
   // `plateQuery` further down to avoid the variable collision.
   const [lookupPlate, setLookupPlate] = useState('')
   const [lookupBusy, setLookupBusy] = useState(false)
-  const [lookupResult, setLookupResult] = useState<{ result_type: 'resident' | 'visitor' | 'unauthorized'; unit_number: string | null; queriedPlate: string } | null>(null)
+  // B220 (2026-06-26): widened result_type union to include 'guest_authorized'
+  // + added guest_name/valid_through fields (populated only on guest_authorized;
+  // NULL on resident/visitor/unauthorized per the pm_plate_lookup RPC contract).
+  const [lookupResult, setLookupResult] = useState<{ result_type: 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized'; unit_number: string | null; queriedPlate: string; guest_name?: string | null; valid_through?: string | null } | null>(null)
   const [lookupError, setLookupError] = useState('')
   const [managerCompany, setManagerCompany] = useState('')
   const [managerEmail, setManagerEmail] = useState('')
@@ -2842,6 +2849,46 @@ export default function ManagerPortal() {
               </div>
             )}
 
+            {/* B220 (2026-06-26) — guest_authorized result. Blue tone to
+                distinguish from green (resident) / gold (visitor) / red
+                (unauthorized). Oversight, not enforcement — info card
+                with date + guest + unit; no DO-NOT-TOW banner (that's
+                the driver surface). guest_name + valid_through come from
+                the pm_plate_lookup RPC's new return fields. */}
+            {lookupResult && lookupResult.result_type === 'guest_authorized' && (
+              <div style={{ background:'#0a1628', border:'1px solid #1e3a5f', borderRadius:'10px', padding:'18px' }}>
+                <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Result for</p>
+                <p style={{ color:'#7ab1ff', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0 0 14px' }}>{lookupResult.queriedPlate}</p>
+                <div style={{ display:'flex', alignItems:'center', gap:'12px', marginBottom:'12px' }}>
+                  <div style={{ width:'40px', height:'40px', borderRadius:'50%', background:'#1e3a5f', border:'1px solid #3b82f6', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px' }}>✓</div>
+                  <div>
+                    <p style={{ color:'#7ab1ff', fontSize:'14px', fontWeight:'bold', margin:'0' }}>Authorized guest</p>
+                    {lookupResult.valid_through && (
+                      <p style={{ color:'#cbd5e1', fontSize:'13px', margin:'2px 0 0' }}>
+                        Valid through <strong>{new Date(lookupResult.valid_through).toLocaleDateString()}</strong>
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {(lookupResult.guest_name || lookupResult.unit_number) && (
+                  <div style={{ background:'#0f1f3a', border:'1px solid #1e3a5f', borderRadius:'8px', padding:'10px 12px' }}>
+                    {lookupResult.guest_name && (
+                      <p style={{ color:'#94a3b8', fontSize:'11px', margin:'0' }}>
+                        <span style={{ color:'#64748b', textTransform:'uppercase', letterSpacing:'0.06em', fontSize:'10px' }}>Authorized for</span><br />
+                        <span style={{ color:'#cbd5e1', fontSize:'13px' }}>{lookupResult.guest_name}</span>
+                      </p>
+                    )}
+                    {lookupResult.unit_number && (
+                      <p style={{ color:'#94a3b8', fontSize:'11px', margin: lookupResult.guest_name ? '8px 0 0' : '0' }}>
+                        <span style={{ color:'#64748b', textTransform:'uppercase', letterSpacing:'0.06em', fontSize:'10px' }}>Visiting Unit</span><br />
+                        <span style={{ color:'#cbd5e1', fontSize:'13px' }}>{lookupResult.unit_number}</span>
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {lookupResult && lookupResult.result_type === 'unauthorized' && (
               <div style={{ background:'#2a1a1a', border:'1px solid #7a2222', borderRadius:'10px', padding:'18px' }}>
                 <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Result for</p>
@@ -2952,7 +2999,11 @@ export default function ManagerPortal() {
                       style={inputStyle}>
                       <option value=''>— Select unit —</option>
                       {/* Unique active-resident units, sorted */}
-                      {Array.from(new Set(residents.filter(r => r.is_active !== false).map(r => r.unit))).sort().map(u => (
+                      {/* B221 (2026-06-26): natural-numeric sort so unit "10"
+                          doesn't sort before "2". Inline Intl.Collator-equivalent
+                          via localeCompare with numeric:true; null-safe via ?? ''.
+                          Sister site: company_admin/page.tsx (CA guest-auth form). */}
+                      {Array.from(new Set(residents.filter(r => r.is_active !== false).map(r => r.unit))).sort((a, b) => (a ?? '').localeCompare(b ?? '', undefined, { numeric: true, sensitivity: 'base' })).map(u => (
                         <option key={u} value={u}>{u}</option>
                       ))}
                     </select>
@@ -3035,11 +3086,42 @@ export default function ManagerPortal() {
             )}
 
             {/* ACTIVE LIST */}
-            {guestAuths.length === 0 ? (
-              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
-                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No active guest authorizations</p>
-              </div>
-            ) : guestAuths.map(g => {
+            {/* B222 (2026-06-26): search box — filters by plate, guest name,
+                visiting unit, or resident email. Mirrors the existing
+                violations search pattern in this file. Empty query = no filter. */}
+            {guestAuths.length > 0 && (
+              <input
+                value={guestAuthSearch}
+                onChange={e => setGuestAuthSearch(e.target.value)}
+                placeholder="Search plate, guest, unit, resident…"
+                style={{ ...inputStyle, marginBottom:'10px', fontSize:'13px' }}
+              />
+            )}
+            {(() => {
+              const q = guestAuthSearch.trim().toLowerCase()
+              const filteredGuestAuths = q
+                ? guestAuths.filter(g => (
+                    g.plate?.toLowerCase().includes(q) ||
+                    g.guest_name?.toLowerCase().includes(q) ||
+                    g.visiting_unit?.toLowerCase().includes(q) ||
+                    g.resident_email?.toLowerCase().includes(q)
+                  ))
+                : guestAuths
+              if (guestAuths.length === 0) {
+                return (
+                  <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
+                    <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No active guest authorizations</p>
+                  </div>
+                )
+              }
+              if (filteredGuestAuths.length === 0) {
+                return (
+                  <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'24px', textAlign:'center' }}>
+                    <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No matches for &ldquo;{guestAuthSearch}&rdquo;</p>
+                  </div>
+                )
+              }
+              return filteredGuestAuths.map(g => {
               const expSoon = isExpiringSoon(g.end_date)
               const daysLeft = daysUntilExpiry(g.end_date)
               return (
@@ -3076,7 +3158,8 @@ export default function ManagerPortal() {
                   </div>
                 </div>
               )
-            })}
+            })
+            })()}
 
             {/* RENEW MODAL — new linked record (preserves audit chain).
                 Defaults: new_start = source.end_date (continuous coverage,
