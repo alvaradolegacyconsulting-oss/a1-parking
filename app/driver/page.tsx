@@ -8,6 +8,7 @@ import { TOW_REASONS, RESTRICTED_ON_OVERRIDE, displayTowReason, type TowReasonCo
 import { uploadVideoResumable } from '../lib/video-upload'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationReviewScreen'
+import RegenerateTicketModal, { type RegenerateSuccessPayload } from '../components/RegenerateTicketModal'
 import { getCompanyContext, getLimit } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 // B71: decline-and-proceed interstitial for authorized-plate overrides.
@@ -82,6 +83,13 @@ export default function DriverPortal() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null)
+  // Tow Ticket Regenerate Layer 2 — the live violation row being
+  // regenerated (null = modal closed). Permission-gated visibility
+  // of the entry-point button is enforced via the 3-flag conditional
+  // (driver.can_regenerate_tow_ticket + tow_ticket_generated +
+  // voided_at IS NULL) at the render site; the server-side gate in
+  // regenerate_tow_ticket RPC is the real authority.
+  const [regenerateTarget, setRegenerateTarget] = useState<any>(null)
 
   const resolvedLogo = useResolvedLogo(typeof window !== 'undefined' ? localStorage.getItem('company_logo') : null)
 
@@ -780,13 +788,82 @@ export default function DriverPortal() {
     setMileage('')
   }
 
+  // Tow Ticket Regenerate Layer 2 — success handler. Reflects the
+  // RPC's atomic void+new+stamp result in local state:
+  //   - Old row (the original we regenerated from) → marked voided
+  //   - New row (the regenerated, server-stamped one) → inserted
+  //     into the list + auto-opened so the driver can immediately
+  //     Print / Share via the existing Generate Tow Ticket flow.
+  //
+  // generateTicket() patched below sources storage + tow fee from
+  // the ROW when ticketTarget.tow_ticket_generated === true, so the
+  // auto-opened ticket prints with the regenerate's facility + fee
+  // (NOT the empty form state).
+  function handleRegenerateSuccess(payload: RegenerateSuccessPayload) {
+    const newRow = payload.violation as any
+    setViolations((prev: any[]) => {
+      const withOldVoided = prev.map(v =>
+        v.id === payload.original_id ? { ...v, voided_at: new Date().toISOString(), void_reason: 'regenerate' } : v
+      )
+      // De-dupe defensively (if the new id somehow already exists; shouldn't)
+      const filtered = withOldVoided.filter(v => v.id !== payload.new_violation_id)
+      return [newRow, ...filtered]
+    })
+    setRegenerateTarget(null)
+    // Auto-open the new ticket — driver flows straight to Generate Tow
+    // Ticket / Share without an extra navigation step.
+    setTicketTarget(newRow)
+    setExpandedTicketId(String(newRow.id))
+    // selectedStorage + towFee deliberately NOT set — the patched
+    // generateTicket() reads from row fields when already-stamped.
+    setSelectedStorage('')
+    setTowFee('')
+    setMileage('')
+  }
+
   async function generateTicket() {
     if (!ticketTarget) return
-    const storage = storageFacilities.find(s => String(s.id) === selectedStorage)
+    // Tow Ticket Regenerate Layer 2 — row-sourcing patch.
+    //
+    // When the row is ALREADY STAMPED (re-print, or post-regenerate
+    // case where regenerate_tow_ticket already wrote tow_storage_* +
+    // tow_fee server-side), source storage + fee from the ROW. Form
+    // state (selectedStorage / towFee) is empty for these cases —
+    // openTicketFor() clears them on every open — so reading form
+    // state would produce a blank/$0.00 print.
+    //
+    // For fresh stamps (first-time generate on a not-yet-stamped row),
+    // source from form state as before.
+    //
+    // VSF# isn't denormalized onto the violation row (only name/
+    // address/phone are). Recover by name-matching back to the
+    // storageFacilities client state when re-printing; if the lookup
+    // misses, the print falls back to the row's 3 stamped fields
+    // without VSF# — graceful degradation, no broken render.
+    const isAlreadyStamped = ticketTarget.tow_ticket_generated === true
+    const storageFromState = storageFacilities.find(s => String(s.id) === selectedStorage)
+    const storageFromRow = isAlreadyStamped
+      ? (storageFacilities.find(s => s.name === ticketTarget.tow_storage_name) ?? {
+          name:                ticketTarget.tow_storage_name,
+          address:             ticketTarget.tow_storage_address,
+          phone:               ticketTarget.tow_storage_phone,
+          email:               null,
+          vsf_license_number:  null,
+        })
+      : null
+    const storage = isAlreadyStamped ? storageFromRow : storageFromState
+
+    // Tow fee source: row when stamped, form state otherwise.
+    // Mileage was never persisted (B191 backlog) — stays form state
+    // for fresh stamps; defaults to 0 for re-prints of already-stamped
+    // rows (matches pre-existing behavior; not Layer 2's job to fix).
+    const effectiveTowFee  = isAlreadyStamped ? Number(ticketTarget.tow_fee || 0) : parseFloat(towFee || '0')
+    const effectiveMileage = parseFloat(mileage || '0')
+
     const tw = window.open('', '_blank')
     if (!tw) return
     const v = ticketTarget
-    const total = (parseFloat(towFee || '0') + parseFloat(mileage || '0')).toFixed(2)
+    const total = (effectiveTowFee + effectiveMileage).toFixed(2)
     // Capability-URL ticket view (90-day expiry). Populate view_token
     // on the violation row; recipient clicks the URL → /ticket/view/
     // <token> → sees rich hosted view with photos. Token RPC is
@@ -840,8 +917,8 @@ export default function DriverPortal() {
       ...(companyTdlr ? [`TDLR #: ${companyTdlr}`] : []),
       ``,
       `FEES`,
-      `Tow Fee: $${parseFloat(towFee || '0').toFixed(2)}`,
-      `Mileage Fee: $${parseFloat(mileage || '0').toFixed(2)}`,
+      `Tow Fee: $${effectiveTowFee.toFixed(2)}`,
+      `Mileage Fee: $${effectiveMileage.toFixed(2)}`,
       `Total Due: $${total}`,
       // Capability-URL link in the plain-text body (the same URL goes
       // into mailto's "to" / share-sheet / clipboard via the popup
@@ -925,12 +1002,12 @@ export default function DriverPortal() {
           ${storage?.vsf_license_number ? `<div class="f"><label>VSF #</label><span>${storage.vsf_license_number}</span></div>` : ''}
         </div>
       </div>
-      ${(parseFloat(towFee || '0') > 0 || parseFloat(mileage || '0') > 0) ? `
+      ${(effectiveTowFee > 0 || effectiveMileage > 0) ? `
       <div class="sec">
         <div class="sh">Fees</div>
         <div class="g2">
-          ${parseFloat(towFee || '0') > 0 ? `<div class="f"><label>Tow Fee</label><span>$${parseFloat(towFee).toFixed(2)}</span></div>` : ''}
-          ${parseFloat(mileage || '0') > 0 ? `<div class="f"><label>Mileage Fee</label><span>$${parseFloat(mileage).toFixed(2)}</span></div>` : ''}
+          ${effectiveTowFee  > 0 ? `<div class="f"><label>Tow Fee</label><span>$${effectiveTowFee.toFixed(2)}</span></div>` : ''}
+          ${effectiveMileage > 0 ? `<div class="f"><label>Mileage Fee</label><span>$${effectiveMileage.toFixed(2)}</span></div>` : ''}
           <div class="f"><label>Total Due</label><span style="font-size:16px;font-weight:bold">$${total}</span></div>
         </div>
       </div>` : ''}
@@ -949,7 +1026,20 @@ export default function DriverPortal() {
       </div>
     </body></html>`)
     tw.document.close()
-    if (ticketTarget?.id && storage) {
+    // Tow Ticket Regenerate Layer 2 — defensive skip on stamp.
+    // ALREADY STAMPED → don't re-call stamp_tow_ticket; it would trip
+    // B182's already_stamped guard and log a noisy console error.
+    // Re-prints + post-regenerate prints both fall into this branch:
+    // the row is canonical and the regenerate RPC has already done
+    // the server-side stamp via its own inline UPDATE.
+    //
+    // The `storage` resolution above also accounts for this — when
+    // isAlreadyStamped, storage comes from the row, not form state.
+    // So even though storageFromRow is a synthetic object (id may be
+    // missing if name-lookup didn't recover the original facility
+    // row), it's never passed to stamp_tow_ticket below.
+    const isAlreadyStampedForStamp = ticketTarget.tow_ticket_generated === true
+    if (ticketTarget?.id && storage && !isAlreadyStampedForStamp && 'id' in storage && (storage as { id: unknown }).id !== undefined) {
       // B178 — direct UPDATE of tow_* columns on a confirmed violation
       // is now denied by the tightened RLS (USING is_confirmed = false).
       // Route through stamp_tow_ticket SECURITY DEFINER RPC which
@@ -958,8 +1048,8 @@ export default function DriverPortal() {
       // passed), and returns the updated row.
       const { data: stampResult, error: stampErr } = await supabase.rpc('stamp_tow_ticket', {
         p_violation_id: ticketTarget.id,
-        p_storage_facility_id: storage.id,
-        p_tow_fee: parseFloat(towFee || '0') || null,
+        p_storage_facility_id: (storage as { id: number | string }).id,
+        p_tow_fee: effectiveTowFee || null,
       })
       if (stampErr) {
         console.error('[B178 stamp_tow_ticket] RPC error:', stampErr.message)
@@ -1706,11 +1796,37 @@ export default function DriverPortal() {
                   </button>
                 )}
 
-                <button
-                  onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
-                  style={{ width: '100%', padding: '9px', background: expandedTicketId === v.id ? '#1a1200' : '#0f1620', color: '#C9A227', border: '1px solid #C9A227', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial' }}>
-                  {expandedTicketId === v.id ? '▲ Close Ticket' : 'Generate Tow Ticket'}
-                </button>
+                {/* Tow Ticket Regenerate Layer 2 — row-actions row.
+                    The Regenerate button only renders when ALL of:
+                      driver.can_regenerate_tow_ticket === true
+                      AND v.tow_ticket_generated === true (live ticket)
+                      AND v.voided_at == null (not already voided)
+                    Render-gate is UX only; regenerate_tow_ticket RPC
+                    is the real server-side gate. Amber styling marks
+                    a deliberate destructive action without using red
+                    (drivers shouldn't fear it; it IS the sanctioned
+                    replace path). */}
+                {driver?.can_regenerate_tow_ticket && v.tow_ticket_generated && !v.voided_at ? (
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
+                      style={{ flex: 1, padding: '9px', background: expandedTicketId === v.id ? '#1a1200' : '#0f1620', color: '#C9A227', border: '1px solid #C9A227', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial' }}>
+                      {expandedTicketId === v.id ? '▲ Close Ticket' : 'Generate Tow Ticket'}
+                    </button>
+                    <button
+                      onClick={() => setRegenerateTarget(v)}
+                      title="Voids this ticket and creates a new one"
+                      style={{ padding: '9px 12px', background: '#1a1400', color: '#f59e0b', border: '1px solid #f59e0b', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial', whiteSpace: 'nowrap' }}>
+                      ⟲ Regenerate
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
+                    style={{ width: '100%', padding: '9px', background: expandedTicketId === v.id ? '#1a1200' : '#0f1620', color: '#C9A227', border: '1px solid #C9A227', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial' }}>
+                    {expandedTicketId === v.id ? '▲ Close Ticket' : 'Generate Tow Ticket'}
+                  </button>
+                )}
 
                 {expandedTicketId === v.id && renderTicketForm()}
               </div>
@@ -1728,6 +1844,24 @@ export default function DriverPortal() {
         <div style={{ textAlign: 'center', marginTop: '20px', paddingBottom: '20px' }}>
           <p style={{ color: '#2a2f3d', fontSize: '11px', margin: '0' }}>Powered by ShieldMyLot</p>
         </div>
+
+        {/* Tow Ticket Regenerate Layer 2 — modal mount. Always-mounted-
+            conditionally-rendered. Self-contained: handles its own form
+            state + RPC call + every error path; parent only handles
+            cancel + success (local-state updates in handleRegenerateSuccess). */}
+        {regenerateTarget && (
+          <RegenerateTicketModal
+            target={{
+              id:                regenerateTarget.id,
+              plate:             regenerateTarget.plate,
+              tow_storage_name:  regenerateTarget.tow_storage_name,
+              tow_fee:           regenerateTarget.tow_fee,
+            }}
+            storageFacilities={storageFacilities.map(s => ({ id: s.id, name: s.name, address: s.address }))}
+            onCancel={() => setRegenerateTarget(null)}
+            onSuccess={handleRegenerateSuccess}
+          />
+        )}
 
       </div>
 
