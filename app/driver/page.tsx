@@ -139,6 +139,23 @@ export default function DriverPortal() {
         assigned_properties: ['All'], operator_license: 'N/A',
       }),
       company: roleData.company || '',
+      // Tow Ticket Regenerate Layer 2 — surface the per-driver
+      // can_regenerate_tow_ticket flag from user_roles onto the
+      // driver state object. The driver object is primarily sourced
+      // from the `drivers` table (which doesn't carry this column);
+      // cherry-pick from roleData the same way `company` is. Without
+      // this, the row-action gate at the violations-list render
+      // (`driver?.can_regenerate_tow_ticket && ...`) always evaluates
+      // false and the Regenerate button never appears — even when the
+      // DB has the flag granted. Layer 2 added the gate + Layer 3
+      // added the grant RPC but neither wired this through; this fix
+      // closes the loop.
+      //
+      // `=== true` coercion guards against null/undefined from
+      // pre-Layer-1 user_roles rows that might not have the column
+      // populated (Layer 1's DEFAULT FALSE backfill should have
+      // covered all rows, but the explicit boolean cast is defensive).
+      can_regenerate_tow_ticket: roleData.can_regenerate_tow_ticket === true,
     }
 
     // B66.5 commit 4.3 + B66.5.1: account-state gate with userRole threaded
@@ -783,8 +800,28 @@ export default function DriverPortal() {
   function openTicketFor(v: any) {
     setTicketTarget(v)
     setExpandedTicketId(v.id)
-    setSelectedStorage('')
-    setTowFee('')
+    // For ALREADY-STAMPED rows: pre-fill form from the persisted row
+    // so the form's "Generate Tow Ticket" button (disabled until
+    // selectedStorage is set) is immediately clickable. Per the Gate 5
+    // / Layer 2 row-sourcing patch, generateTicket()'s actual print +
+    // stamp-skip path uses the ROW's tow_storage/tow_fee fields
+    // regardless of what's in form state — so pre-filling is purely
+    // for the form-button-enabled affordance, not for what gets
+    // printed. Driver can't change the facility on a re-print; that
+    // requires the Regenerate flow (which creates a new row).
+    //
+    // For FRESH rows: form opens blank as before (driver picks anew).
+    //
+    // Mileage was never persisted (B191) — always blank.
+    const isStamped = v.tow_ticket_generated && !v.voided_at
+    if (isStamped) {
+      const facility = storageFacilities.find(s => s.name === v.tow_storage_name)
+      setSelectedStorage(facility ? String(facility.id) : '')
+      setTowFee(v.tow_fee != null ? String(v.tow_fee) : '')
+    } else {
+      setSelectedStorage('')
+      setTowFee('')
+    }
     setMileage('')
   }
 
@@ -1796,37 +1833,65 @@ export default function DriverPortal() {
                   </button>
                 )}
 
-                {/* Tow Ticket Regenerate Layer 2 — row-actions row.
-                    The Regenerate button only renders when ALL of:
-                      driver.can_regenerate_tow_ticket === true
-                      AND v.tow_ticket_generated === true (live ticket)
-                      AND v.voided_at == null (not already voided)
-                    Render-gate is UX only; regenerate_tow_ticket RPC
-                    is the real server-side gate. Amber styling marks
-                    a deliberate destructive action without using red
-                    (drivers shouldn't fear it; it IS the sanctioned
-                    replace path). */}
-                {driver?.can_regenerate_tow_ticket && v.tow_ticket_generated && !v.voided_at ? (
-                  <div style={{ display: 'flex', gap: '6px' }}>
+                {/* Tow Ticket Regenerate — 3-state row-action conditional
+                    (Jose lock 2026-06-28). Replaces the prior 2-branch
+                    fall-through where every non-(stamped+permitted) case
+                    rendered "Generate Tow Ticket" — including already-
+                    stamped rows for non-permitted drivers, AND voided
+                    rows. That collapsed UX state lied to drivers about
+                    stamping state and let voided rows be "re-generated"
+                    (Layer 2's stamp-skip hid the silent already_stamped
+                    refusal, so re-prints succeeded with no DB change —
+                    looked normal, broke the one-live-ticket model).
+                    Three explicit branches:
+                      VOIDED   → muted disabled "Ticket Voided" pill;
+                                 no action. Regenerate is off-limits on
+                                 voided rows (RPC also refuses).
+                      STAMPED  → "View / Re-print Ticket" (routes through
+                                 Gate 5 row-sourced print; stamp-skip
+                                 already prevents re-stamp). + Regenerate
+                                 button when driver.can_regenerate_tow_ticket.
+                      FRESH    → "Generate Tow Ticket" (existing fresh
+                                 behavior preserved). */}
+                {(() => {
+                  const isVoided   = !!v.voided_at
+                  const isStamped  = v.tow_ticket_generated && !isVoided
+                  const canRegen   = driver?.can_regenerate_tow_ticket && isStamped
+                  if (isVoided) {
+                    return (
+                      <div style={{ width: '100%', padding: '9px', background: '#1a0a0a', color: '#888', border: '1px dashed #5a2a2a', borderRadius: '7px', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.06em' }}
+                           title="This tow ticket was voided. To issue a replacement, the driver who voided it (or company admin) used Regenerate to create a new ticket.">
+                        🚫 Ticket Voided
+                      </div>
+                    )
+                  }
+                  if (isStamped) {
+                    return (
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
+                          style={{ flex: 1, padding: '9px', background: expandedTicketId === v.id ? '#1a1200' : '#0a1a0a', color: '#4caf50', border: '1px solid #2e7d32', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial' }}>
+                          {expandedTicketId === v.id ? '▲ Close Ticket' : '✓ View / Re-print Ticket'}
+                        </button>
+                        {canRegen && (
+                          <button
+                            onClick={() => setRegenerateTarget(v)}
+                            title="Voids this ticket and creates a new one"
+                            style={{ padding: '9px 12px', background: '#1a1400', color: '#f59e0b', border: '1px solid #f59e0b', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial', whiteSpace: 'nowrap' }}>
+                            ⟲ Regenerate
+                          </button>
+                        )}
+                      </div>
+                    )
+                  }
+                  return (
                     <button
                       onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
-                      style={{ flex: 1, padding: '9px', background: expandedTicketId === v.id ? '#1a1200' : '#0f1620', color: '#C9A227', border: '1px solid #C9A227', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial' }}>
+                      style={{ width: '100%', padding: '9px', background: expandedTicketId === v.id ? '#1a1200' : '#0f1620', color: '#C9A227', border: '1px solid #C9A227', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial' }}>
                       {expandedTicketId === v.id ? '▲ Close Ticket' : 'Generate Tow Ticket'}
                     </button>
-                    <button
-                      onClick={() => setRegenerateTarget(v)}
-                      title="Voids this ticket and creates a new one"
-                      style={{ padding: '9px 12px', background: '#1a1400', color: '#f59e0b', border: '1px solid #f59e0b', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial', whiteSpace: 'nowrap' }}>
-                      ⟲ Regenerate
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => expandedTicketId === v.id ? (setExpandedTicketId(null), setTicketTarget(null)) : openTicketFor(v)}
-                    style={{ width: '100%', padding: '9px', background: expandedTicketId === v.id ? '#1a1200' : '#0f1620', color: '#C9A227', border: '1px solid #C9A227', borderRadius: '7px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', fontFamily: 'Arial' }}>
-                    {expandedTicketId === v.id ? '▲ Close Ticket' : 'Generate Tow Ticket'}
-                  </button>
-                )}
+                  )
+                })()}
 
                 {expandedTicketId === v.id && renderTicketForm()}
               </div>
