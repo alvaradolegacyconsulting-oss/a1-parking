@@ -2797,7 +2797,12 @@ export default function CompanyAdminPortal() {
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-      <div style={{ maxWidth:'540px', margin:'0 auto' }}>
+      {/* Desktop responsive Wave 1 (2026-06-26): swap inline
+          maxWidth:540px+margin:auto for .portal-container utility class.
+          Mobile (<1024px) byte-identical at 540px; lg+ widens to 1280px
+          so wide desktop monitors use the screen real estate instead of
+          pinning the subscriber-facing surface to a phone-width column. */}
+      <div className="portal-container">
 
         {/* B66.5 commit 4.3: past_due banner (REPLACES the prior B65.2-era
             inline accountSuspended banner — suspended is now a hard redirect
@@ -5292,32 +5297,41 @@ export default function CompanyAdminPortal() {
                     </div>
                   )}
 
-                  {/* ── WIDGET 1 — Status pipeline ── */}
-                  <div style={cardStyle}>
-                    <p style={widgetTitle}>Status pipeline</p>
-                    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(80px, 1fr))', gap:'8px' }}>
-                      {statusBuckets.map(b => (
-                        <div key={b.k} style={{ background: b.bg, border: `1px solid ${b.c}`, borderRadius:'6px', padding:'10px 8px', textAlign:'center' }}>
-                          <p style={{ color: b.c, fontSize:'20px', fontWeight:'bold', margin:'0', fontFamily:'Arial' }}>{b.val}</p>
-                          <p style={{ color: b.c, fontSize:'9px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'4px 0 0' }}>{b.l}</p>
+                  {/* Compact stat widgets — wrapped in .dashboard-grid
+                      so they flow 1-col mobile / 2-up tablet / 3-up
+                      desktop. The other 4 widgets below (by_property
+                      BarChart, by_driver table with 6 columns, heatmap
+                      7×6 grid, repeat_vehicles table) stay full-width —
+                      they need horizontal room and would be cramped at
+                      1/3 column width. */}
+                  <div className="dashboard-grid" style={{ marginBottom:'12px' }}>
+                    {/* ── WIDGET 1 — Status pipeline ── */}
+                    <div style={cardStyle}>
+                      <p style={widgetTitle}>Status pipeline</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(80px, 1fr))', gap:'8px' }}>
+                        {statusBuckets.map(b => (
+                          <div key={b.k} style={{ background: b.bg, border: `1px solid ${b.c}`, borderRadius:'6px', padding:'10px 8px', textAlign:'center' }}>
+                            <p style={{ color: b.c, fontSize:'20px', fontWeight:'bold', margin:'0', fontFamily:'Arial' }}>{b.val}</p>
+                            <p style={{ color: b.c, fontSize:'9px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'4px 0 0' }}>{b.l}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* ── WIDGET 2 — Ticket aging (open tickets only) ── */}
+                    <div style={cardStyle}>
+                      <p style={widgetTitle}>Ticket aging (open)</p>
+                      {[
+                        { k: 'd0_7',    l: '0–7 days',    c: '#4caf50' },
+                        { k: 'd8_30',   l: '8–30 days',   c: '#fbbf24' },
+                        { k: 'd30plus', l: 'Over 30 days', c: '#f44336' },
+                      ].map(b => (
+                        <div key={b.k} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
+                          <span style={{ color: b.c, fontSize:'13px' }}>{b.l}</span>
+                          <span style={{ color: b.c, fontSize:'16px', fontWeight:'bold', fontFamily:'Arial' }}>{d.ticket_aging?.[b.k] ?? 0}</span>
                         </div>
                       ))}
                     </div>
-                  </div>
-
-                  {/* ── WIDGET 2 — Ticket aging (open tickets only) ── */}
-                  <div style={cardStyle}>
-                    <p style={widgetTitle}>Ticket aging (open)</p>
-                    {[
-                      { k: 'd0_7',    l: '0–7 days',    c: '#4caf50' },
-                      { k: 'd8_30',   l: '8–30 days',   c: '#fbbf24' },
-                      { k: 'd30plus', l: 'Over 30 days', c: '#f44336' },
-                    ].map(b => (
-                      <div key={b.k} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
-                        <span style={{ color: b.c, fontSize:'13px' }}>{b.l}</span>
-                        <span style={{ color: b.c, fontSize:'16px', fontWeight:'bold', fontFamily:'Arial' }}>{d.ticket_aging?.[b.k] ?? 0}</span>
-                      </div>
-                    ))}
                   </div>
 
                   {/* ── WIDGET 3 — Violations by property (recharts BarChart with overflow guards) ── */}
