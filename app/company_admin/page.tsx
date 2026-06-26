@@ -5196,8 +5196,9 @@ export default function CompanyAdminPortal() {
           // Trend arrow render
           const trendBadge = (trend: string | null): React.ReactNode => {
             if (!trend) return null
-            if (trend === 'rising_disputes') return <span title="Rising disputes (last 7d vs prior 7d)" style={{ color:'#ff9800', fontSize:'11px', marginLeft:'6px' }}>↑ disputes</span>
-            if (trend === 'rising_voids')    return <span title="Rising voids (last 7d vs prior 7d)"    style={{ color:'#f44336', fontSize:'11px', marginLeft:'6px' }}>↑ voids</span>
+            if (trend === 'rising_disputes') return <span title="Rising disputes (last 7d vs prior 7d)"    style={{ color:'#ff9800', fontSize:'11px', marginLeft:'6px' }}>↑ disputes</span>
+            if (trend === 'rising_voids')    return <span title="Rising voids (last 7d vs prior 7d)"       style={{ color:'#f44336', fontSize:'11px', marginLeft:'6px' }}>↑ voids</span>
+            if (trend === 'rising_regens')   return <span title="Rising regenerates (last 7d vs prior 7d)" style={{ color:'#9c27b0', fontSize:'11px', marginLeft:'6px' }}>↑ regens</span>
             return null
           }
           // Card style (shared) — overflow guards from the start
@@ -5358,6 +5359,7 @@ export default function CompanyAdminPortal() {
                               <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right', padding:'8px 6px' }}>Tows</th>
                               <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right', padding:'8px 6px' }}>Voids</th>
                               <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right', padding:'8px 6px' }}>Disputes</th>
+                              <th style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right', padding:'8px 6px' }}>Regens</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -5367,10 +5369,11 @@ export default function CompanyAdminPortal() {
                                   {r.driver}
                                   {trendBadge(r.trend)}
                                 </td>
-                                <td style={{ color:'#aaa', padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.violations ?? 0}</td>
+                                <td style={{ color:'#aaa',     padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.violations ?? 0}</td>
                                 <td style={{ color:'#C9A227', padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.tows ?? 0}</td>
                                 <td style={{ color:'#f44336', padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.voids ?? 0}</td>
                                 <td style={{ color:'#ff9800', padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.disputes ?? 0}</td>
+                                <td style={{ color:'#9c27b0', padding:'8px 6px', textAlign:'right', fontFamily:'Arial' }}>{r.regens ?? 0}</td>
                               </tr>
                             ))}
                           </tbody>
