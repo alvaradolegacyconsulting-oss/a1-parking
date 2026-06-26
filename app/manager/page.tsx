@@ -1624,7 +1624,16 @@ export default function ManagerPortal() {
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-      <div style={{ maxWidth:'600px', margin:'0 auto' }}>
+      {/* Desktop responsive Wave 2 (2026-06-26): swap inline
+          maxWidth:600px+margin:auto for .portal-container utility class.
+          Mobile (<1024px) byte-identical at 540px (the base value in
+          globals.css; matches CA); lg+ widens to 1280px so managers
+          working at a desk see the full queue grid without dead margin.
+          New Approvals queue + space-request controls inherit the
+          width — eyeball after first desktop view, follow up with
+          per-section .reading-container caps if any controls look
+          stretched. */}
+      <div className="portal-container">
 
         {/* B66.5 commit 4.3: past_due banner */}
         {pastDueBanner && <PastDueBanner {...pastDueBanner} />}

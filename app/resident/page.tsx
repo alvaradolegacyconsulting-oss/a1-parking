@@ -509,7 +509,15 @@ export default function ResidentPortal() {
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
-      <div style={{ maxWidth:'500px', margin:'0 auto' }}>
+      {/* Desktop responsive Wave 2 (2026-06-26): swap inline
+          maxWidth:500px+margin:auto for .reading-container (640px cap).
+          Deliberate divergence from CA/manager which use .portal-container
+          (1280px desktop): residents on desktop don't benefit from
+          1280px of tiles — their UI is forms + cards + status surfaces
+          that read better at a comfortable measure. The .reading-
+          container caps at 640px even on a 4K monitor; the per-resident
+          experience stays focused. */}
+      <div className="reading-container">
 
         {/* B66.5 commit 4.3: past_due banner */}
         {pastDueBanner && <PastDueBanner {...pastDueBanner} />}
