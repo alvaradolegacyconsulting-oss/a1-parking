@@ -880,8 +880,15 @@ export default function DriverPortal() {
     // Mileage was never persisted (B191 backlog) — stays form state
     // for fresh stamps; defaults to 0 for re-prints of already-stamped
     // rows (matches pre-existing behavior; not Layer 2's job to fix).
-    const effectiveTowFee  = isAlreadyStamped ? Number(ticketTarget.tow_fee || 0) : parseFloat(towFee || '0')
-    const effectiveMileage = parseFloat(mileage || '0')
+    const effectiveTowFee  = isAlreadyStamped ? Number(ticketTarget.tow_fee || 0)         : parseFloat(towFee || '0')
+    // Mileage row-sources from ticketTarget on stamped re-print (parallel
+    // to tow_fee; both fields now persisted via migration 20260629).
+    // Pre-migration rows have tow_mileage_fee = NULL → effectiveMileage = 0
+    // → no mileage line on re-print (read-only view also omits the row).
+    const effectiveMileage = isAlreadyStamped ? Number(ticketTarget.tow_mileage_fee || 0)  : parseFloat(mileage || '0')
+    // VIN row-sources from ticketTarget on stamped re-print; from form
+    // state on fresh stamp. NULL/blank → omitted from print HTML.
+    const effectiveVin     = isAlreadyStamped ? (ticketTarget.vehicle_vin || '')           : vin.trim()
 
     const tw = window.open('', '_blank')
     if (!tw) return
@@ -918,6 +925,10 @@ export default function DriverPortal() {
       // HTML render: Year first, then Make/Model/Color. Graceful omission of
       // null fields via filter(Boolean) — same pattern as the HTML template.
       `Vehicle: ${[v.vehicle_year, v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join(' ') || '—'}`,
+      // Migration 20260629 — VIN row-sources from ticketTarget when stamped.
+      // Conditional: omit the line entirely when blank/null (parallels the
+      // HTML render). Mailto + print HTML stay in sync.
+      ...(effectiveVin ? [`VIN: ${effectiveVin}`] : []),
       ``,
       `VIOLATION`,
       `Type: ${displayTowReason(v.violation_type)}`,
@@ -991,6 +1002,7 @@ export default function DriverPortal() {
           <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
           ${v.vehicle_year ? `<div class="f"><label>Year</label><span>${v.vehicle_year}</span></div>` : ''}
           ${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).length ? `<div class="f"><label>Make / Model / Color</label><span>${[v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean).join('  ·  ')}</span></div>` : ''}
+          ${effectiveVin ? `<div class="f" style="grid-column:span 2"><label>VIN</label><span style="font-family:'Courier New',monospace">${effectiveVin}</span></div>` : ''}
         </div>
       </div>
       <div class="sec">
@@ -1069,10 +1081,18 @@ export default function DriverPortal() {
       // validates role + violation/facility scope server-side, derives
       // tow_storage_* from the facility row (canonical, not client-
       // passed), and returns the updated row.
+      // Migration 20260629 — mileage + VIN now persist via stamp_tow_ticket.
+      // Blank/zero → null so the COALESCE preserves any prior value
+      // (defensive; fresh stamps start NULL so null = "no charge / no VIN").
+      const mileageToSend = parseFloat(mileage || '0') > 0 ? parseFloat(mileage) : null
+      const vinTrimmed    = vin.trim()
+      const vinToSend     = vinTrimmed.length > 0 ? vinTrimmed : null
       const { data: stampResult, error: stampErr } = await supabase.rpc('stamp_tow_ticket', {
-        p_violation_id: ticketTarget.id,
+        p_violation_id:        ticketTarget.id,
         p_storage_facility_id: (storage as { id: number | string }).id,
-        p_tow_fee: effectiveTowFee || null,
+        p_tow_fee:             effectiveTowFee || null,
+        p_mileage_fee:         mileageToSend,
+        p_vin:                 vinToSend,
       })
       if (stampErr) {
         console.error('[B178 stamp_tow_ticket] RPC error:', stampErr.message)
@@ -1162,6 +1182,17 @@ export default function DriverPortal() {
             <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #2a2f3d' }}>
               <label style={lbl}>Mileage Fee</label>
               <p style={{ color: 'white', fontSize: '13px', margin: '4px 0 0', fontWeight: 'bold' }}>${Number(ticketTarget.tow_mileage_fee).toFixed(2)}</p>
+            </div>
+          )}
+          {/* VIN — same conditional pattern as mileage; omits entirely
+              when NULL. Pre-migration rows + post-migration rows where
+              the driver didn't enter a VIN both stay clean (no "—" or
+              "Not recorded" copy). Courier font matches the print HTML
+              for consistency across the surfaces. */}
+          {ticketTarget.vehicle_vin && (
+            <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #2a2f3d' }}>
+              <label style={lbl}>VIN</label>
+              <p style={{ color: 'white', fontSize: '13px', margin: '4px 0 0', fontWeight: 'bold', fontFamily: 'Courier New' }}>{ticketTarget.vehicle_vin}</p>
             </div>
           )}
         </div>

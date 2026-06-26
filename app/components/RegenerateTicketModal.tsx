@@ -58,6 +58,13 @@ export interface RegenerateTarget {
   plate?: string | null
   tow_storage_name?: string | null
   tow_fee?: number | string | null
+  // Mileage + VIN persistence (migration 20260629). Both optional;
+  // pre-filled in the modal from the original row so the driver can
+  // keep-or-change. VIN specifically supports the dark-lot scenario:
+  // driver stamped without reading the VIN, facility later reports
+  // it, driver regenerates to add it.
+  tow_mileage_fee?: number | string | null
+  vehicle_vin?: string | null
 }
 
 export interface RegenerateSuccessPayload {
@@ -83,6 +90,12 @@ export default function RegenerateTicketModal({
   const [reasonNote,    setReasonNote]    = useState<string>('')
   const [newStorageId,  setNewStorageId]  = useState<string>('')
   const [newTowFee,     setNewTowFee]     = useState<string>('')
+  // Mileage + VIN: pre-filled from the ORIGINAL row's values so the
+  // driver can keep-or-change. Both optional; neither gates canConfirm.
+  // VIN pre-fill supports the dark-lot scenario: regenerate to ADD the
+  // VIN once readable at the facility (original may have been NULL).
+  const [newMileageFee, setNewMileageFee] = useState<string>(target.tow_mileage_fee != null ? String(target.tow_mileage_fee) : '')
+  const [newVin,        setNewVin]        = useState<string>(target.vehicle_vin ?? '')
   const [busy,          setBusy]          = useState<boolean>(false)
   const [error,         setError]         = useState<string>('')
 
@@ -103,12 +116,23 @@ export default function RegenerateTicketModal({
     if (!canConfirm || !reason) return
     setBusy(true)
     setError('')
+    // Mileage + VIN: send NULL when blank (the RPC's COALESCE
+    // semantic would keep prior value on NULL, but for a fresh
+    // regenerate the new row's column starts NULL — driver leaving
+    // blank means "no charge / no VIN on the new ticket").
+    const newMileageNum   = parseFloat(newMileageFee || '0')
+    const newMileageToSend = newMileageFee.trim().length > 0 ? newMileageNum : null
+    const newVinTrimmed    = newVin.trim()
+    const newVinToSend     = newVinTrimmed.length > 0 ? newVinTrimmed : null
+
     const { data, error: rpcErr } = await supabase.rpc('regenerate_tow_ticket', {
       p_original_violation_id:   target.id,
       p_new_storage_facility_id: Number(newStorageId),
       p_new_tow_fee:             newFeeNum,
       p_reason:                  reason,
       p_reason_note:             noteRequired ? reasonNote.trim() : null,
+      p_new_mileage_fee:         newMileageToSend,
+      p_new_vin:                 newVinToSend,
     })
     setBusy(false)
     if (rpcErr) {
@@ -246,7 +270,7 @@ export default function RegenerateTicketModal({
           <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:'4px' }}>
             New tow fee
           </label>
-          <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'10px' }}>
             <span style={{ color:'#888', fontSize:'14px', fontWeight:'bold' }}>$</span>
             <input
               type="number"
@@ -263,6 +287,48 @@ export default function RegenerateTicketModal({
               }}
             />
           </div>
+          {/* Mileage Fee — pre-filled from original row; optional;
+              doesn't gate canConfirm. Blank → null persisted on the
+              new row (intentional "no mileage charge"). */}
+          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:'4px' }}>
+            New mileage fee <span style={{ color:'#555', textTransform:'none', letterSpacing:0 }}>(optional)</span>
+          </label>
+          <div style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'10px' }}>
+            <span style={{ color:'#888', fontSize:'14px', fontWeight:'bold' }}>$</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={newMileageFee}
+              onChange={e => setNewMileageFee(e.target.value)}
+              disabled={busy}
+              placeholder="0.00"
+              style={{
+                flex:1, padding:'9px 10px',
+                background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px',
+                color:'white', fontSize:'13px', boxSizing:'border-box', fontFamily:'inherit',
+              }}
+            />
+          </div>
+          {/* VIN — pre-filled from original (often NULL pre-stamp;
+              dark-lot scenario). Optional; doesn't gate canConfirm.
+              No length/format validation here — Texas-plate VINs vary
+              and the field is operator-typed. */}
+          <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:'4px' }}>
+            VIN <span style={{ color:'#555', textTransform:'none', letterSpacing:0 }}>(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={newVin}
+            onChange={e => setNewVin(e.target.value)}
+            disabled={busy}
+            placeholder="17-character VIN"
+            style={{
+              width:'100%', padding:'9px 10px',
+              background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px',
+              color:'white', fontSize:'13px', boxSizing:'border-box', fontFamily:'inherit',
+            }}
+          />
         </div>
 
         {/* ── 3. Confirm (destructive-action band) ── */}
@@ -275,8 +341,10 @@ export default function RegenerateTicketModal({
           </p>
           <p style={{ color:'#fde68a', fontSize:'11px', margin:'0', lineHeight:'1.55' }}>
             The current ticket for <strong>{oldFacility}</strong> will be permanently voided.
-            A new ticket will be issued for <strong>{newFacilityName}</strong> with fee <strong>{newFeeDisplay}</strong>.
-            The old ticket cannot be reused or reactivated.
+            A new ticket will be issued for <strong>{newFacilityName}</strong> with fee <strong>{newFeeDisplay}</strong>
+            {newMileageFee.trim().length > 0 && <>{' '}+ mileage <strong>${parseFloat(newMileageFee).toFixed(2)}</strong></>}
+            {newVin.trim().length > 0 && <>, VIN <strong style={{ fontFamily:'Courier New' }}>{newVin.trim()}</strong></>}
+            . The old ticket cannot be reused or reactivated.
           </p>
           {noteRequired && reasonNote.trim().length > 0 && (
             <p style={{ color:'#fde68a', fontSize:'11px', margin:'8px 0 0', fontStyle:'italic' }}>
