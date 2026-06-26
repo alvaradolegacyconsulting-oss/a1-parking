@@ -800,28 +800,14 @@ export default function DriverPortal() {
   function openTicketFor(v: any) {
     setTicketTarget(v)
     setExpandedTicketId(v.id)
-    // For ALREADY-STAMPED rows: pre-fill form from the persisted row
-    // so the form's "Generate Tow Ticket" button (disabled until
-    // selectedStorage is set) is immediately clickable. Per the Gate 5
-    // / Layer 2 row-sourcing patch, generateTicket()'s actual print +
-    // stamp-skip path uses the ROW's tow_storage/tow_fee fields
-    // regardless of what's in form state — so pre-filling is purely
-    // for the form-button-enabled affordance, not for what gets
-    // printed. Driver can't change the facility on a re-print; that
-    // requires the Regenerate flow (which creates a new row).
-    //
-    // For FRESH rows: form opens blank as before (driver picks anew).
-    //
-    // Mileage was never persisted (B191) — always blank.
-    const isStamped = v.tow_ticket_generated && !v.voided_at
-    if (isStamped) {
-      const facility = storageFacilities.find(s => s.name === v.tow_storage_name)
-      setSelectedStorage(facility ? String(facility.id) : '')
-      setTowFee(v.tow_fee != null ? String(v.tow_fee) : '')
-    } else {
-      setSelectedStorage('')
-      setTowFee('')
-    }
+    // Form is the FRESH-stamp surface only. Stamped rows route through
+    // renderTicketReadOnlyView() (which sources from ticketTarget, not
+    // form state) — so the prior Fix #3 pre-fill (cherry-picking
+    // facility + fee from the row onto form state) was made redundant
+    // and reverted 2026-06-29. Form opens blank either way; the row
+    // JSX branches on stamped vs fresh to decide which surface to show.
+    setSelectedStorage('')
+    setTowFee('')
     setMileage('')
   }
 
@@ -1122,6 +1108,82 @@ export default function DriverPortal() {
 
   const lbl: React.CSSProperties = {
     color: '#aaa', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em'
+  }
+
+  // Read-only stamped-ticket view — replaces the editable form on
+  // already-stamped rows. 100% row-sourced from ticketTarget; zero
+  // form-state read. Closes the prior integrity hole where the form
+  // exposed editable storage/fee/VIN/mileage inputs on stamped rows
+  // — mileage edits silently surfaced in the print (real silent-
+  // change vector); storage/fee edits were ignored by Gate 5 but
+  // misled the driver visually. To change ANY stamped value, the
+  // driver must go through Regenerate (audited, voids prior, creates
+  // new). Print button routes through generateTicket() which Gate 5's
+  // already-stamped path row-sources facility + fee from ticketTarget
+  // and skips the re-stamp RPC call.
+  //
+  // Mileage line: intentionally OMITTED until B191 mileage persistence
+  // ships (next migration arc). No apologetic caveat copy on a legal
+  // document — the row simply doesn't render when there's nothing
+  // persisted. Post-B191, the conditional `{ticketTarget.tow_mileage_fee
+  // != null && ...}` will surface the persisted value.
+  function renderTicketReadOnlyView() {
+    if (!ticketTarget) return null
+    const facilityName    = ticketTarget.tow_storage_name    || '—'
+    const facilityAddress = ticketTarget.tow_storage_address || ''
+    const facilityPhone   = ticketTarget.tow_storage_phone   || ''
+    const towFeeNum       = Number(ticketTarget.tow_fee || 0)
+    return (
+      <div style={{ background: '#0a1a0a', border: '2px solid #2e7d32', borderRadius: '10px', padding: '16px', marginTop: '12px' }}>
+        <p style={{ color: '#4caf50', fontWeight: 'bold', fontSize: '14px', margin: '0 0 14px' }}>
+          ✓ Tow Ticket — <span style={{ fontFamily: 'Courier New' }}>{ticketTarget.plate}</span>
+        </p>
+
+        {/* Stamped values panel — display-only */}
+        <div style={{ background: '#0d1520', border: '1px solid #2a2f3d', borderRadius: '8px', padding: '12px', marginBottom: '14px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={lbl}>Storage Facility</label>
+              <p style={{ color: 'white', fontSize: '13px', margin: '4px 0 0', fontWeight: 'bold' }}>{facilityName}</p>
+              {facilityAddress && <p style={{ color: '#888', fontSize: '11px', margin: '2px 0 0' }}>{facilityAddress}</p>}
+              {facilityPhone && <p style={{ color: '#888', fontSize: '11px', margin: '2px 0 0' }}>{facilityPhone}</p>}
+            </div>
+            <div>
+              <label style={lbl}>Tow Fee</label>
+              <p style={{ color: 'white', fontSize: '13px', margin: '4px 0 0', fontWeight: 'bold' }}>${towFeeNum.toFixed(2)}</p>
+            </div>
+          </div>
+          {/* Mileage line — conditional on persisted column existing.
+              Today (pre-B191 mileage persistence), tow_mileage_fee is
+              undefined on every row; this block doesn't render. Once
+              B191 ships, persisted mileage values surface here without
+              any UI change. */}
+          {ticketTarget.tow_mileage_fee != null && (
+            <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #2a2f3d' }}>
+              <label style={lbl}>Mileage Fee</label>
+              <p style={{ color: 'white', fontSize: '13px', margin: '4px 0 0', fontWeight: 'bold' }}>${Number(ticketTarget.tow_mileage_fee).toFixed(2)}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Affordance: any change → Regenerate */}
+        <p style={{ color: '#888', fontSize: '11px', margin: '0 0 14px', lineHeight: '1.55', fontStyle: 'italic' }}>
+          To change the facility or fee, use <strong style={{ color: '#f59e0b' }}>⟲ Regenerate</strong> (creates a new ticket and voids this one — audited). Re-print produces a byte-identical copy of the stamped ticket.
+        </p>
+
+        {/* Buttons — Cancel + Print only. No edit affordance. */}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={() => { setTicketTarget(null); setExpandedTicketId(null) }}
+            style={{ flex: 1, padding: '11px', background: '#1e2535', color: '#aaa', border: '1px solid #3a4055', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', fontFamily: 'Arial' }}>
+            Cancel
+          </button>
+          <button onClick={generateTicket}
+            style={{ flex: 1, padding: '11px', background: '#C9A227', color: '#0f1117', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
+            🖨 Print Ticket
+          </button>
+        </div>
+      </div>
+    )
   }
 
   // Inline tow ticket form — called as a function, not a component
@@ -1893,7 +1955,17 @@ export default function DriverPortal() {
                   )
                 })()}
 
-                {expandedTicketId === v.id && renderTicketForm()}
+                {/* Stamped + non-voided rows → read-only view (Jose 2026-06-29:
+                    closes the editable-stamped-ticket integrity hole). Fresh +
+                    voided rows → the fresh-stamp form (existing behavior; voided
+                    rows can't reach this branch because the row-action above
+                    renders the disabled "Ticket Voided" pill instead of an
+                    Open/Close button). */}
+                {expandedTicketId === v.id && (
+                  v.tow_ticket_generated && !v.voided_at
+                    ? renderTicketReadOnlyView()
+                    : renderTicketForm()
+                )}
               </div>
             ))}
           </div>
