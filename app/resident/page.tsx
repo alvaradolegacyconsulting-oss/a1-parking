@@ -36,6 +36,13 @@ export default function ResidentPortal() {
   const [showRequestForm, setShowRequestForm] = useState(false)
   const [newVehicle, setNewVehicle] = useState({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
   const [requestMsg, setRequestMsg] = useState('')
+  // Space Requests v1 — resident's most-recent request (any status) +
+  // submit modal state. Surfaces mirror the vehicle-decline card pattern.
+  const [spaceRequest, setSpaceRequest] = useState<any>(null)
+  const [showSpaceRequestModal, setShowSpaceRequestModal] = useState(false)
+  const [spaceRequestNote, setSpaceRequestNote] = useState<string>('')
+  const [spaceRequestSubmitting, setSpaceRequestSubmitting] = useState(false)
+  const [spaceRequestError, setSpaceRequestError] = useState<string>('')
   const [passError, setPassError] = useState('')
   const [supportPhone, setSupportPhone] = useState('')
   const [supportEmail, setSupportEmail] = useState('')
@@ -101,6 +108,7 @@ export default function ResidentPortal() {
       setEditForm(data)
       fetchVehicles(data.unit, data.property, data.email)
       fetchPasses(data.unit)
+      fetchSpaceRequest(data.email)
       if (data.property) {
         const { data: prop } = await supabase
           .from('properties')
@@ -325,6 +333,63 @@ export default function ResidentPortal() {
     fetchVehicles(resident.unit, resident.property, resident.email)
   }
 
+  // Space Requests v1 — fetch resident's most-recent request (any
+  // status). RLS scopes to lower(resident_email)=lower(JWT.email) so
+  // we get only this resident's rows. ORDER BY requested_at DESC LIMIT 1
+  // because the partial UNIQUE allows at most one pending; plus
+  // historical approved/declined rows. We only need the latest to
+  // drive the surface (pill / dismissible card / submit-button-hidden).
+  async function fetchSpaceRequest(email: string) {
+    const { data, error } = await supabase
+      .from('space_requests')
+      .select('*')
+      .ilike('resident_email', email)
+      .order('requested_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!error) setSpaceRequest(data || null)
+  }
+
+  async function submitSpaceRequest() {
+    if (!resident?.property || spaceRequestSubmitting) return
+    setSpaceRequestSubmitting(true)
+    setSpaceRequestError('')
+    const trimmed = spaceRequestNote.trim()
+    const noteToSend = trimmed.length > 0 ? trimmed : null
+    const { data, error } = await supabase.rpc('submit_space_request', {
+      p_property: resident.property,
+      p_note:     noteToSend,
+    })
+    setSpaceRequestSubmitting(false)
+    if (error) {
+      // Partial UNIQUE collision surfaces as a 23505 from postgres OR
+      // as a friendly 'pending_request_exists' from the RPC's pre-check
+      // (RPC catches it first; this branch is the belt-and-suspenders).
+      const isPendingDup = /pending_request_exists|duplicate key|unique/i.test(error.message)
+      setSpaceRequestError(isPendingDup
+        ? 'You already have a pending space request. Wait for a decision before submitting another.'
+        : `Submit failed: ${error.message}`)
+      return
+    }
+    const result = data as { ok?: boolean; error?: string; hint?: string }
+    if (!result?.ok) {
+      const isPendingDup = result?.error === 'pending_request_exists'
+      setSpaceRequestError(isPendingDup
+        ? (result?.hint || 'You already have a pending space request.')
+        : `Submit failed: ${result?.error || 'unknown error'}`)
+      return
+    }
+    // Success: close modal, clear form, reload
+    setShowSpaceRequestModal(false)
+    setSpaceRequestNote('')
+    fetchSpaceRequest(resident.email)
+  }
+
+  async function markSpaceRequestRead(id: number) {
+    await supabase.rpc('mark_my_space_request_decision_read', { p_request_id: id })
+    if (resident?.email) fetchSpaceRequest(resident.email)
+  }
+
   async function issueVisitorPass() {
     if (!visitorForm.plate || !resident) return
     setPassError('')
@@ -454,6 +519,48 @@ export default function ResidentPortal() {
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Resident Portal</p>
         </div>
 
+        {/* Space Request status surface — mirrors the vehicle-decline
+            dismissible-card pattern. Three states:
+              - pending: amber pill
+              - approved + !resident_read: green dismissible card with assigned space
+              - declined + !resident_read: red dismissible card with optional reason
+            All other states (approved/declined + resident_read=true): no surface
+            (the persistent state is the space-assignment itself or the
+            absence of one; the card is a one-time decision acknowledgement). */}
+        {spaceRequest && spaceRequest.status === 'pending' && (
+          <div style={{ background:'#3a2e0a', border:'1px solid #a16207', borderRadius:'10px', padding:'10px 14px', marginBottom:'12px', display:'flex', alignItems:'center', gap:'10px' }}>
+            <span style={{ color:'#fbbf24', fontSize:'14px' }}>⏳</span>
+            <p style={{ color:'#fde68a', fontSize:'12px', margin:'0' }}>Space request pending review</p>
+          </div>
+        )}
+        {spaceRequest && spaceRequest.status === 'approved' && !spaceRequest.resident_read && (
+          <div style={{ background:'#0a2e0a', border:'1px solid #2e7d32', borderRadius:'10px', padding:'14px 16px', marginBottom:'12px' }}>
+            <p style={{ color:'#a5d6a7', fontWeight:'bold', fontSize:'13px', margin:'0 0 6px' }}>✓ Space Request Approved</p>
+            <p style={{ color:'#e8f5e9', fontSize:'12px', margin:'0 0 10px', lineHeight:'1.5' }}>
+              Your assigned space: <span style={{ color:'#C9A227', fontWeight:'bold', fontFamily:'Courier New' }}>(updated — see Assigned Space below)</span>
+            </p>
+            <button onClick={() => markSpaceRequestRead(spaceRequest.id)}
+              style={{ width:'100%', padding:'7px', background:'#0a1a0a', color:'#a5d6a7', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+              Mark as Read
+            </button>
+          </div>
+        )}
+        {spaceRequest && spaceRequest.status === 'declined' && !spaceRequest.resident_read && (
+          <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'10px', padding:'14px 16px', marginBottom:'12px' }}>
+            <p style={{ color:'#f44336', fontWeight:'bold', fontSize:'13px', margin:'0 0 6px' }}>Space Request Declined</p>
+            {spaceRequest.decline_reason && (
+              <div style={{ background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
+                <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 3px' }}>Manager Note</p>
+                <p style={{ color:'#aaa', fontSize:'12px', margin:'0' }}>{spaceRequest.decline_reason}</p>
+              </div>
+            )}
+            <button onClick={() => markSpaceRequestRead(spaceRequest.id)}
+              style={{ width:'100%', padding:'7px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+              Mark as Read
+            </button>
+          </div>
+        )}
+
         {/* Welcome bar */}
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px 16px', marginBottom:'16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div>
@@ -463,6 +570,15 @@ export default function ResidentPortal() {
           <div style={{ textAlign:'right' }}>
             <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>Assigned Space</p>
             <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'18px', margin:'2px 0 0', fontFamily:'Courier New' }}>{resident.space || '—'}</p>
+            {/* Request a Space affordance — surfaces when no pending
+                request exists. Hidden when pending pill is visible
+                above (one action at a time; pending = wait for decision). */}
+            {(!spaceRequest || spaceRequest.status !== 'pending') && (
+              <button onClick={() => { setSpaceRequestNote(''); setSpaceRequestError(''); setShowSpaceRequestModal(true) }}
+                style={{ marginTop:'8px', padding:'5px 10px', background:'transparent', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', fontFamily:'Arial' }}>
+                + Request a Space
+              </button>
+            )}
           </div>
         </div>
 
@@ -908,6 +1024,49 @@ export default function ResidentPortal() {
         </p>
       )}
       </div>
+
+      {/* Space Request submit modal — invoked from the "+ Request a Space"
+          button in the welcome bar. Optional note (500-char cap; counter
+          shows remaining). Submit calls submit_space_request(p_property,
+          p_note); errors surface inline (including the friendly "already
+          pending" message when the partial UNIQUE catches a 2nd attempt). */}
+      {showSpaceRequestModal && (
+        <div onClick={() => setShowSpaceRequestModal(false)}
+          style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:'16px' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'20px', maxWidth:'480px', width:'100%', boxSizing:'border-box' }}>
+            <p style={{ color:'white', fontWeight:'bold', fontSize:'15px', margin:'0 0 6px' }}>Request a Parking Space</p>
+            <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>
+              Your property manager will review and approve or decline. You will see the decision here.
+            </p>
+            <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:'4px' }}>
+              Note <span style={{ color:'#555', textTransform:'none', letterSpacing:0 }}>(optional)</span>
+            </label>
+            <textarea
+              value={spaceRequestNote}
+              onChange={e => setSpaceRequestNote(e.target.value.slice(0, 500))}
+              disabled={spaceRequestSubmitting}
+              placeholder="e.g. covered spot preferred, or I have a motorcycle"
+              rows={4}
+              style={{ width:'100%', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box', fontFamily:'inherit', resize:'vertical' }}
+            />
+            <p style={{ color:'#555', fontSize:'10px', textAlign:'right', margin:'4px 0 0' }}>{spaceRequestNote.length}/500</p>
+            {spaceRequestError && (
+              <p style={{ color:'#f44336', fontSize:'12px', margin:'10px 0 0', lineHeight:'1.5' }}>{spaceRequestError}</p>
+            )}
+            <div style={{ display:'flex', gap:'8px', marginTop:'16px' }}>
+              <button onClick={() => setShowSpaceRequestModal(false)} disabled={spaceRequestSubmitting}
+                style={{ flex:1, padding:'10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'13px', fontFamily:'Arial' }}>
+                Cancel
+              </button>
+              <button onClick={submitSpaceRequest} disabled={spaceRequestSubmitting}
+                style={{ flex:2, padding:'10px', background:spaceRequestSubmitting?'#3a4055':'#C9A227', color:spaceRequestSubmitting?'#888':'#0a0e1a', border:'none', borderRadius:'6px', cursor:spaceRequestSubmitting?'not-allowed':'pointer', fontSize:'13px', fontWeight:'bold', fontFamily:'Arial' }}>
+                {spaceRequestSubmitting ? 'Submitting…' : 'Submit Request'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

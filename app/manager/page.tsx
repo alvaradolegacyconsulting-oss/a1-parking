@@ -161,6 +161,16 @@ export default function ManagerPortal() {
   const [pendingVehicles, setPendingVehicles] = useState<any[]>([])
   const [pendingNotes, setPendingNotes] = useState<Record<string, string>>({})
   const [unitNotes, setUnitNotes] = useState<Record<string, string>>({})
+  // Space Requests v1 — manager approval queue + per-row decision state.
+  // Approve modal reuses the existing availableSpacesForAssign pool (loaded
+  // once at portal init from fetchSpacesList(... status:'available' ...)).
+  // Per-row decision UI lives inline — approveSelections holds the picked
+  // space_id per request_id; declineReasons holds the optional reason.
+  const [pendingSpaceRequests, setPendingSpaceRequests] = useState<any[]>([])
+  const [approveSelections, setApproveSelections] = useState<Record<number, string>>({})
+  const [declineReasons, setDeclineReasons] = useState<Record<number, string>>({})
+  const [decidingRequestId, setDecidingRequestId] = useState<number | null>(null)
+  const [spaceRequestError, setSpaceRequestError] = useState<string>('')
   const [passLimit, setPassLimit] = useState('')
   const [exemptPlates, setExemptPlates] = useState<string[]>([])
   const [newExemptPlate, setNewExemptPlate] = useState('')
@@ -336,6 +346,7 @@ export default function ManagerPortal() {
     fetchViolations(property)
     fetchPasses(property)
     fetchResidents(property)
+    fetchPendingSpaceRequests(property)
     // fetchSpaces removed (Spaces v1 commit 3) — Spaces tab loads its own
     // data lazily on tab activation via refetchSpacesDashboard/List
     // (dashboard aggregate + filtered paginated list). Removed from the
@@ -663,6 +674,79 @@ export default function ManagerPortal() {
     setPendingVehicles(pending)
     setVehicles(rest)
     setStats(s => ({ ...s, total_vehicles: rest.length }))
+  }
+
+  // Space Requests v1 — fetch pending requests for this manager's
+  // property. RLS scopes by property = ANY(get_my_properties()) so we
+  // only see in-scope rows. Joined to residents on email for display
+  // (name + unit) since space_requests denormalizes just resident_email.
+  async function fetchPendingSpaceRequests(property: string) {
+    const { data } = await supabase
+      .from('space_requests')
+      .select('*')
+      .eq('status', 'pending')
+      .ilike('property', property)
+      .order('requested_at', { ascending: true })
+    setPendingSpaceRequests(data || [])
+  }
+
+  async function approveSpaceRequest(requestId: number) {
+    const spaceIdStr = approveSelections[requestId]
+    if (!spaceIdStr) {
+      setSpaceRequestError('Pick a space from the dropdown before approving.')
+      return
+    }
+    setDecidingRequestId(requestId)
+    setSpaceRequestError('')
+    const { data, error } = await supabase.rpc('approve_space_request', {
+      p_request_id: requestId,
+      p_space_id:   Number(spaceIdStr),
+    })
+    setDecidingRequestId(null)
+    if (error) {
+      setSpaceRequestError(`Approve failed: ${error.message}`)
+      return
+    }
+    const result = data as { ok?: boolean; error?: string; hint?: string }
+    if (!result?.ok) {
+      setSpaceRequestError(`Approve failed: ${result?.hint || result?.error || 'unknown error'}`)
+      return
+    }
+    // Success: refresh queue + spaces pool (the approved space leaves
+    // the available pool — refetch so the dropdown stays accurate).
+    setApproveSelections(s => { const c = {...s}; delete c[requestId]; return c })
+    fetchPendingSpaceRequests(manager.name)
+    refetchSpacesList()
+    // Also refresh the available-spaces pool for any later approval modal
+    const { rows: available } = await fetchSpacesList(
+      supabase, manager.name,
+      { type: null, status: 'available', showInactive: false, search: '' },
+      0, 100,
+    )
+    setAvailableSpacesForAssign(available)
+  }
+
+  async function declineSpaceRequest(requestId: number) {
+    setDecidingRequestId(requestId)
+    setSpaceRequestError('')
+    const reason = (declineReasons[requestId] || '').trim()
+    const reasonToSend = reason.length > 0 ? reason : null
+    const { data, error } = await supabase.rpc('decline_space_request', {
+      p_request_id:     requestId,
+      p_decline_reason: reasonToSend,
+    })
+    setDecidingRequestId(null)
+    if (error) {
+      setSpaceRequestError(`Decline failed: ${error.message}`)
+      return
+    }
+    const result = data as { ok?: boolean; error?: string; hint?: string }
+    if (!result?.ok) {
+      setSpaceRequestError(`Decline failed: ${result?.hint || result?.error || 'unknown error'}`)
+      return
+    }
+    setDeclineReasons(r => { const c = {...r}; delete c[requestId]; return c })
+    fetchPendingSpaceRequests(manager.name)
   }
 
   async function approveVehicle(id: string) {
@@ -1624,7 +1708,12 @@ export default function ManagerPortal() {
         <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', background:'#1e2535', borderRadius:'8px', padding:'6px', marginBottom:'16px' }}>
           <button style={tabStyle('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
           <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>
-            Vehicles{pendingVehicles.length > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingVehicles.length}</span>}
+            {/* Space Requests v1 — tab renamed to "Approvals"; badge is
+                the combined count of pending vehicles + pending space
+                requests. The route key 'vehicles' is preserved so deep-
+                links and prior muscle memory still work; only the label
+                changes. */}
+            Approvals{(pendingVehicles.length + pendingSpaceRequests.length) > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingVehicles.length + pendingSpaceRequests.length}</span>}
           </button>
           <button style={tabStyle('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
           <button style={tabStyle('residents')} onClick={() => setActiveTab('residents')}>
@@ -1768,6 +1857,98 @@ export default function ManagerPortal() {
                 </div>
               )
             })()}
+
+            {/* Space Requests v1 — pending queue, parallels the Pending
+                Vehicle Requests block above. Each row exposes inline
+                approve/decline controls: approve REQUIRES picking a space
+                from the dropdown (assignment IS the approval — atomic
+                via approve_space_request RPC, no double-assign). Decline
+                takes an optional reason (matches vehicle-decline pattern;
+                does not gate the decline). availableSpacesForAssign pool
+                is shared with the resident-approval flow (single load at
+                manager init; refetched on every successful approve). */}
+            {pendingSpaceRequests.length > 0 && (
+              <div style={{ marginBottom:'16px' }}>
+                <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px' }}>
+                  Pending Space Requests ({pendingSpaceRequests.length})
+                </p>
+                {spaceRequestError && (
+                  <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
+                    <p style={{ color:'#f44336', fontSize:'12px', margin:0 }}>{spaceRequestError}</p>
+                  </div>
+                )}
+                {pendingSpaceRequests.map((req: any) => {
+                  const resident = residents.find((r: any) => r.email && req.resident_email && r.email.toLowerCase() === req.resident_email.toLowerCase())
+                  const isThisDeciding = decidingRequestId === req.id
+                  return (
+                    <div key={req.id} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'10px' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px', flexWrap:'wrap', gap:'6px' }}>
+                        <div>
+                          <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>
+                            {resident?.name || req.resident_email}
+                            {resident?.unit && <span style={{ color:'#888', fontWeight:'normal', fontSize:'12px' }}> · Unit {resident.unit}</span>}
+                          </p>
+                          <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>Requested {new Date(req.requested_at).toLocaleString()}</p>
+                        </div>
+                        <span style={{ background:'#2a1e00', color:'#C9A227', border:'1px solid #C9A227', padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold' }}>Pending</span>
+                      </div>
+                      {req.note && (
+                        <div style={{ background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
+                          <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 3px' }}>Resident Note</p>
+                          <p style={{ color:'#aaa', fontSize:'12px', margin:0 }}>{req.note}</p>
+                        </div>
+                      )}
+                      {!isReadOnly && (
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:'8px' }}>
+                          <div>
+                            <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:'4px' }}>
+                              Pick available space to assign
+                            </label>
+                            <select
+                              value={approveSelections[req.id] || ''}
+                              onChange={e => setApproveSelections(s => ({...s, [req.id]: e.target.value}))}
+                              disabled={isThisDeciding || availableSpacesForAssign.length === 0}
+                              style={{ ...inputStyle, marginTop:0, marginBottom:0 }}>
+                              <option value="">
+                                {availableSpacesForAssign.length === 0 ? '— no available spaces (create one first) —' : '— select a space —'}
+                              </option>
+                              {availableSpacesForAssign.map(s => (
+                                <option key={s.id} value={String(s.id)}>{s.label}{s.type && s.type !== 'regular' ? ` (${s.type})` : ''}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:'4px' }}>
+                              Decline reason <span style={{ color:'#555', textTransform:'none', letterSpacing:0 }}>(optional)</span>
+                            </label>
+                            <input
+                              value={declineReasons[req.id] || ''}
+                              onChange={e => setDeclineReasons(r => ({...r, [req.id]: e.target.value.slice(0, 500)}))}
+                              disabled={isThisDeciding}
+                              placeholder="e.g. no available spaces at this time"
+                              style={{ ...inputStyle, marginTop:0, marginBottom:0 }}
+                            />
+                          </div>
+                          <div style={{ display:'flex', gap:'6px' }}>
+                            <button onClick={() => approveSpaceRequest(req.id)}
+                              disabled={isThisDeciding || !approveSelections[req.id]}
+                              style={{ flex:1, padding:'8px', background:isThisDeciding ? '#3a4055' : (approveSelections[req.id] ? '#1a3a1a' : '#1a1f2e'), color:approveSelections[req.id] ? '#4caf50' : '#555', border:`1px solid ${approveSelections[req.id] ? '#2e7d32' : '#333'}`, borderRadius:'6px', cursor:(isThisDeciding || !approveSelections[req.id]) ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                              {isThisDeciding ? '…' : 'Approve + Assign'}
+                            </button>
+                            <button onClick={() => declineSpaceRequest(req.id)}
+                              disabled={isThisDeciding}
+                              style={{ flex:1, padding:'8px', background:isThisDeciding ? '#3a4055' : '#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:isThisDeciding ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                              {isThisDeciding ? '…' : 'Decline'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
             <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center' }}>
               <input value={vehicleSearch} onChange={e => setVehicleSearch(e.target.value)} placeholder="Search plate, unit, make, model, color..." style={{ ...inputStyle, flex:1, marginTop:0, marginBottom:0 }} />
               <button onClick={() => setShowActiveVehicles(s => !s)} style={{ padding:'4px 10px', background: showActiveVehicles ? '#1a1f2e' : '#111', color: showActiveVehicles ? '#C9A227' : '#555', border:`1px solid ${showActiveVehicles ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveVehicles ? '● Active Only' : '○ Show All'}</button>
