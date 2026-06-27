@@ -15,7 +15,10 @@ import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature
 // { ok: false; reason } so the DB-write-stays-committed semantics hold.
 async function callSyncOnAdd(
   companyId: number,
-  kind: 'property' | 'driver',
+  // Slice 1 Commit 4b — 'permit' added (used from manager/page.tsx after
+  // approve_vehicle RPC returns action='approved'; not currently called
+  // from company_admin which has no vehicle-approval surface).
+  kind: 'property' | 'driver' | 'permit',
 ): Promise<{ ok: true; action: string } | { ok: false; reason: string }> {
   try {
     const res = await fetch('/api/billing/sync-on-add', {
@@ -1592,13 +1595,21 @@ export default function CompanyAdminPortal() {
     // B147 3b — sync to Stripe AFTER the route's DB writes succeed. PM-track
     // companies have no per_driver line item; helper returns
     // 'skipped_no_line_item' for those — silent.
-    const companyIdForSync = getCachedCompanyId()
-    if (companyIdForSync === null) {
-      console.warn('[B147-sync-skipped-no-companyid]', { site: 'createDriver', email: newDriver.email })
-    } else {
-      const r = await callSyncOnAdd(companyIdForSync, 'driver')
-      if (!r.ok) console.warn('[B147-sync-failed]', { site: 'createDriver', companyId: companyIdForSync, email: newDriver.email, reason: r.reason })
-    }
+    // ⚠ Slice 1 Commit 4b — DRIVER-SYNC GATE.
+    // per_driver line item is RETIRED in the new 3-tier model (neither
+    // PM-Only nor Enforcement-Only bills per-driver; per_driver remains
+    // a VALID stripe_prices CHECK value for back-compat only, with no
+    // new catalog rows created). The prior 2-line syncOnAdd('driver')
+    // call is removed; reconcileAtRenewal in app/lib/stripe-mutations.ts
+    // still trims any grandfathered per_driver subscription items at the
+    // billing-cycle boundary, so legacy customers don't drift.
+    // Commit 5 will fully retire the per_driver CHECK + remove the
+    // grandfather backstop after a no-active-subscriptions audit.
+    console.info('[B147-driver-sync-gated]', {
+      site: 'createDriver',
+      email: newDriver.email,
+      reason: 'per_driver retired in new 3-tier model; reconcileAtRenewal handles any grandfathered per_driver items at boundary',
+    })
 
     setNewDriver({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] })
     setShowAddDriver(false)
@@ -1704,15 +1715,15 @@ export default function CompanyAdminPortal() {
     await auditLog(wasActive ? 'deactivate_driver' : 'activate_driver', 'drivers', driver.id, { is_active: !wasActive })
 
     // B147 3b — sync ONLY on reactivation. Same rationale as
-    // togglePropertyActive — deactivation defers to renewal trim.
+    // ⚠ Slice 1 Commit 4b — DRIVER-SYNC GATE (matches createDriver site).
+    // per_driver retired in new 3-tier model. reconcileAtRenewal still
+    // trims any grandfathered per_driver items at boundary.
     if (!wasActive) {
-      const companyIdForSync = getCachedCompanyId()
-      if (companyIdForSync === null) {
-        console.warn('[B147-sync-skipped-no-companyid]', { site: 'toggleDriverActive', driverId: driver.id })
-      } else {
-        const r = await callSyncOnAdd(companyIdForSync,'driver')
-        if (!r.ok) console.warn('[B147-sync-failed]', { site: 'toggleDriverActive', companyId: companyIdForSync, driverId: driver.id, reason: r.reason })
-      }
+      console.info('[B147-driver-sync-gated]', {
+        site: 'toggleDriverActive',
+        driverId: driver.id,
+        reason: 'per_driver retired in new 3-tier model; reconcileAtRenewal handles any grandfathered per_driver items at boundary',
+      })
     }
 
     fetchCompanyDrivers()

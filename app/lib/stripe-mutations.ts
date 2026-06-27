@@ -43,7 +43,7 @@ interface CompanyForSync {
 
 interface SubItemSnapshot {
   itemId: string
-  lineItem: 'base' | 'per_property' | 'per_driver' | string
+  lineItem: 'base' | 'per_property' | 'per_driver' | 'per_permit' | string
   quantity: number
   priceId: string
   // B165 — proposalCodeId set per-item via stripe_prices JOIN. NULL on
@@ -83,6 +83,11 @@ interface SubscriptionSnapshot {
 interface ActiveCounts {
   properties: number
   drivers: number
+  // Slice 1 Commit 4b — permit count for the per_permit graduated meter.
+  // Sourced via 2-query indirect (vehicles has no company column; scopes
+  // via property text). See countActiveRecords for the rationale +
+  // why this intentionally diverges from the 1-query property/driver path.
+  permits: number
 }
 
 // Load companies row + verify the company has a stripe_subscription_id.
@@ -175,17 +180,40 @@ async function snapshotSubscription(
 
 // Count is_active=true rows for properties + drivers via company name
 // match (text column, not FK).
+//
+// Slice 1 Commit 4b — permit count added. INTENTIONALLY 2-query indirect:
+//   1. List the company's properties (vehicles.property → properties.name)
+//   2. Count approved vehicles (status='active' AND is_active=true) in those properties
+// This diverges from property/driver's 1-query (direct company column)
+// pattern BECAUSE the vehicles table has no company column — it scopes
+// through property text (the canonical scope chain confirmed in §0.3 of
+// commit 4 design). A future reader: DO NOT "fix" this into a broken
+// 1-query — there's no vehicles.company to .ilike against. If you ever
+// add one (denormalization for billing perf), update this comment + the
+// existing manager/page.tsx :669 .ilike('property', ...) pattern in lockstep.
 async function countActiveRecords(
   supabase: ReturnType<typeof createSupabaseServiceClient>,
   companyName: string,
 ): Promise<ActiveCounts> {
-  const [props, drvs] = await Promise.all([
-    supabase.from('properties').select('id', { count: 'exact', head: true }).ilike('company', companyName).eq('is_active', true),
-    supabase.from('drivers').select('id', { count: 'exact', head: true }).ilike('company', companyName).eq('is_active', true),
+  const [props, drvs, propsForVehicles] = await Promise.all([
+    supabase.from('properties').select('id',   { count: 'exact', head: true }).ilike('company', companyName).eq('is_active', true),
+    supabase.from('drivers').select('id',      { count: 'exact', head: true }).ilike('company', companyName).eq('is_active', true),
+    supabase.from('properties').select('name')                              .ilike('company', companyName).eq('is_active', true),
   ])
+  const propertyNames = (propsForVehicles.data ?? []).map(p => p.name as string)
+  let permitsCount = 0
+  if (propertyNames.length > 0) {
+    const { count } = await supabase
+      .from('vehicles').select('id', { count: 'exact', head: true })
+      .in('property', propertyNames)
+      .eq('status', 'active')
+      .eq('is_active', true)
+    permitsCount = count ?? 0
+  }
   return {
     properties: props.count ?? 0,
-    drivers: drvs.count ?? 0,
+    drivers:    drvs.count ?? 0,
+    permits:    permitsCount,
   }
 }
 
@@ -267,11 +295,21 @@ export type SyncOnAddResult =
   | { ok: false; reason: string }
 
 /**
- * syncOnAdd — call AFTER a property/driver DB insert OR reactivation
- * (toggle from is_active=false → true) succeeds. Increments the
+ * syncOnAdd — call AFTER a property/driver/permit DB write succeeds
+ * (property/driver: add or reactivate; permit: approve via
+ * approve_vehicle RPC returning action='approved'). Increments the
  * relevant line item only when activeCount > current Stripe quantity.
  * Uses create_prorations. Reactivation within prepaid is free by
- * construction (the floor check excludes it).
+ * construction (the floor check excludes it). Same floor-guard applies
+ * to permit mid-cycle (un-approve → next-renewal trim, not mid-cycle
+ * decrement) per slice 1 commit 4 design.
+ *
+ * Slice 1 Commit 4b: kind='permit' wired here. targetLineItem='per_permit'
+ * matches against the per_permit graduated Stripe Price (catalog created
+ * in commit 3). Until slice 2 ships checkout creating subscriptions
+ * with per_permit items, this returns action='skipped_no_line_item'
+ * (safe no-op) — the hook is wired, the meter activates once real
+ * subscriptions carry the per_permit item.
  *
  * Non-throwing: Stripe API failures degrade to { ok: false; reason }
  * so the caller's UX path is uninterrupted — the DB write already
@@ -281,7 +319,7 @@ export type SyncOnAddResult =
  */
 export async function syncOnAdd(
   companyId: number,
-  kind: 'property' | 'driver',
+  kind: 'property' | 'driver' | 'permit',
 ): Promise<SyncOnAddResult> {
   const supabase = createSupabaseServiceClient()
   const company = await loadCompanyForSync(supabase, companyId)
@@ -301,12 +339,16 @@ export async function syncOnAdd(
     return { ok: true, action: 'skipped_manual_collection' }
   }
 
-  const targetLineItem = kind === 'property' ? 'per_property' : 'per_driver'
+  const targetLineItem = kind === 'property' ? 'per_property'
+                       : kind === 'driver'   ? 'per_driver'
+                       : 'per_permit'
   const item = snapshot.items.find(s => s.lineItem === targetLineItem)
   if (!item) return { ok: true, action: 'skipped_no_line_item' }
 
   const counts = await countActiveRecords(supabase, company.name)
-  const activeCount = kind === 'property' ? counts.properties : counts.drivers
+  const activeCount = kind === 'property' ? counts.properties
+                    : kind === 'driver'   ? counts.drivers
+                    : counts.permits
 
   if (activeCount <= item.quantity) {
     return { ok: true, action: 'noop_within_floor' }
@@ -380,8 +422,16 @@ export async function reconcileAtRenewal(
         expected: 1, actual: item.quantity,
       })
     }
-    if (item.lineItem !== 'per_property' && item.lineItem !== 'per_driver') continue
-    const target = item.lineItem === 'per_property' ? counts.properties : counts.drivers
+    // Slice 1 Commit 4b — per_permit added to renewal reconciliation.
+    // syncOnAdd('permit') only increments (floor-guard); the renewal trim
+    // here sets quantity = actual approved-permit count, which is how
+    // mid-cycle un-approves eventually decrement (deferred to renewal,
+    // mirroring property/driver). proration_behavior='none' below so the
+    // boundary reset doesn't re-prorate already-paid units.
+    if (item.lineItem !== 'per_property' && item.lineItem !== 'per_driver' && item.lineItem !== 'per_permit') continue
+    const target = item.lineItem === 'per_property' ? counts.properties
+                 : item.lineItem === 'per_driver'   ? counts.drivers
+                 : counts.permits
     if (target === item.quantity) {
       actions.push({ lineItem: item.lineItem, from: item.quantity, to: target, result: 'noop' })
       continue

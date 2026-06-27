@@ -66,9 +66,11 @@ export async function POST(request: Request) {
   try { body = await request.json() } catch { /* empty body → 400 below */ }
   const companyId = body.company_id
   const kind = body.kind
-  if (!Number.isInteger(companyId) || (kind !== 'property' && kind !== 'driver')) {
+  // Slice 1 Commit 4b — 'permit' added to whitelist (fires from
+  // app/manager/page.tsx after approve_vehicle RPC returns action='approved').
+  if (!Number.isInteger(companyId) || (kind !== 'property' && kind !== 'driver' && kind !== 'permit')) {
     return NextResponse.json(
-      { error: 'company_id (integer) and kind ("property"|"driver") required' },
+      { error: 'company_id (integer) and kind ("property"|"driver"|"permit") required' },
       { status: 400 }
     )
   }
@@ -128,7 +130,7 @@ export async function POST(request: Request) {
 
   // ── Call helper server-side ──────────────────────────────────────
   // Helper is non-throwing; returns { ok: true; action } | { ok: false; reason }.
-  const result = await syncOnAdd(companyId!, kind as 'property' | 'driver')
+  const result = await syncOnAdd(companyId!, kind as 'property' | 'driver' | 'permit')
   if (result.ok) {
     return NextResponse.json({ ok: true, action: result.action })
   }

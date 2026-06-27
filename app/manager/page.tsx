@@ -63,8 +63,43 @@ function escapeIlikeValue(s: string): string {
   return s.replace(/[\\%_]/g, '\\$&')
 }
 
+// Slice 1 Commit 4b — client wrapper for the /api/billing/sync-on-add
+// route. Duplicated from app/company_admin/page.tsx (small DRY violation,
+// limited blast radius — both files own their copy + share the same
+// route contract; extracting to a shared lib is a future-cleanup item
+// if a third call site appears). Non-throwing per the same contract:
+// network errors degrade to {ok:false; reason}, the caller logs and
+// continues — the DB write (here: approve_vehicle RPC) already committed.
+async function callSyncOnAdd(
+  companyId: number,
+  kind: 'property' | 'driver' | 'permit',
+): Promise<{ ok: true; action: string } | { ok: false; reason: string }> {
+  try {
+    const res = await fetch('/api/billing/sync-on-add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company_id: companyId, kind }),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (res.ok && json.ok) {
+      return { ok: true, action: String(json.action ?? 'unknown') }
+    }
+    return { ok: false, reason: String(json.reason ?? json.error ?? `HTTP ${res.status}`) }
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message }
+  }
+}
+
 export default function ManagerPortal() {
   const [manager, setManager] = useState<any>(null)
+  // Slice 1 Commit 4b — companyIdForSync resolved from manager.company
+  // (the company NAME string on the properties row) → companies.id.
+  // Used by the 3 vehicle-approval call sites to fire syncOnAdd('permit')
+  // after a real approve (action='approved' from the approve_vehicle RPC).
+  // Re-resolves on switchProperty (admin route may switch across companies).
+  // Stays null on resolution failure → sync is silently skipped (safe;
+  // reconcileAtRenewal is the backstop).
+  const [companyIdForSync, setCompanyIdForSync] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   // B66.5 commit 4.3: past_due banner state.
@@ -236,6 +271,22 @@ export default function ManagerPortal() {
   const [mgAnalytics, setMgAnalytics] = useState<any>(null)
 
   useEffect(() => { loadManager(); getPlatformLogoUrl() }, [])
+
+  // Slice 1 Commit 4b — resolve companyIdForSync from manager.company
+  // (text) → companies.id. Re-fires on manager change (admin route may
+  // switch properties across companies via switchProperty). Single
+  // 1-query lookup; null on miss (sync calls silently skip; safe).
+  useEffect(() => {
+    if (!manager?.company) { setCompanyIdForSync(null); return }
+    let cancelled = false
+    ;(async () => {
+      const { data } = await supabase
+        .from('companies').select('id')
+        .ilike('name', manager.company).maybeSingle()
+      if (!cancelled) setCompanyIdForSync(data?.id ? Number(data.id) : null)
+    })()
+    return () => { cancelled = true }
+  }, [manager?.company])
   useEffect(() => { if (activeTab === 'activity' && manager) fetchActivityLogs() }, [activeTab, manager])
   // B210: disputes-tab useEffect removed
   useEffect(() => { if (activeTab === 'insights' && manager) fetchInsights() }, [activeTab, manager])
@@ -750,8 +801,34 @@ export default function ManagerPortal() {
   }
 
   async function approveVehicle(id: string) {
-    await supabase.from('vehicles').update({ is_active: true, status: 'active', manager_note: pendingNotes[id] || null, resident_read: true }).eq('id', id)
+    // Slice 1 Commit 4b — route through approve_vehicle RPC (commit 4a).
+    // The RPC re-enforces scope (DEFINER bypasses RLS; the scope-check
+    // is the security property), runs the UPDATE atomically, and returns
+    // {ok, action, vehicle}. Fire the permit sync ONLY on action='approved'
+    // (not 'noop_already_active'); the RPC's idempotency design exists
+    // exactly so a re-approve doesn't redundantly trigger Stripe.
+    const { data: rpcResult, error: rpcErr } = await supabase.rpc('approve_vehicle', {
+      p_vehicle_id:   id,
+      p_manager_note: pendingNotes[id] || null,
+    })
+    if (rpcErr) {
+      console.error('[approve_vehicle] RPC error:', rpcErr.message)
+      return
+    }
+    const result = rpcResult as { ok?: boolean; action?: string; error?: string; hint?: string } | null
+    if (!result?.ok) {
+      console.error('[approve_vehicle] RPC returned error:', result?.error, result?.hint)
+      return
+    }
+    console.info('[approve_vehicle]', { site: 'approveVehicle', vehicleId: id, action: result.action })
     await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'active', property: manager.name } })
+    if (result.action === 'approved' && companyIdForSync) {
+      const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
+      console.info('[B147-sync-result]', { site: 'approveVehicle', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
+      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveVehicle', reason: syncRes.reason })
+    } else if (result.action === 'noop_already_active') {
+      console.info('[B147-sync-skipped]', { site: 'approveVehicle', reason: 'noop_already_active — vehicle was already approved; no quantity change' })
+    }
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
     fetchVehicles(manager.name)
   }
@@ -773,10 +850,36 @@ export default function ManagerPortal() {
 
   async function approveAllForUnit(unitVehicles: any[], unit: string) {
     const note = unitNotes[unit] || null
-    await Promise.all(unitVehicles.map(v =>
-      supabase.from('vehicles').update({ is_active: true, status: 'active', manager_note: note, resident_read: true }).eq('id', v.id)
-        .then(() => logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: v.id, new_values: { status: 'active', property: manager.name } }))
-    ))
+    // Slice 1 Commit 4b — loop the approve_vehicle RPC per vehicle (each
+    // gets the unified scope-check + idempotency + uniform resident_read=true
+    // from commit 4a). Collect approval actions; fire ONE permit sync
+    // after the whole batch if any actually approved (the permit count
+    // is ABSOLUTE, not delta — N syncs would be redundant Stripe calls
+    // for the same final quantity).
+    const results = await Promise.all(unitVehicles.map(async v => {
+      const { data, error } = await supabase.rpc('approve_vehicle', {
+        p_vehicle_id:   v.id,
+        p_manager_note: note,
+      })
+      if (error) {
+        console.error('[approve_vehicle] RPC error in bulk:', error.message, { vehicleId: v.id })
+        return 'error'
+      }
+      const r = data as { ok?: boolean; action?: string } | null
+      if (r?.ok) {
+        console.info('[approve_vehicle]', { site: 'approveAllForUnit', vehicleId: v.id, action: r.action })
+        await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: v.id, new_values: { status: 'active', property: manager.name } })
+        return r.action ?? 'unknown'
+      }
+      return 'rpc_error'
+    }))
+    const bulkApprovedCount = results.filter(a => a === 'approved').length
+    console.info('[B147-sync-batch-summary]', { site: 'approveAllForUnit', unit, batchSize: unitVehicles.length, approvedCount: bulkApprovedCount, willFireSync: bulkApprovedCount > 0 })
+    if (bulkApprovedCount > 0 && companyIdForSync) {
+      const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
+      console.info('[B147-sync-result]', { site: 'approveAllForUnit', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
+      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllForUnit', approvedCount: bulkApprovedCount, reason: syncRes.reason })
+    }
     setUnitNotes(n => { const c = {...n}; delete c[unit]; return c })
     fetchVehicles(manager.name)
   }
@@ -892,7 +995,36 @@ export default function ManagerPortal() {
   async function approveResident(r: any) {
     const note = residentNotes[r.id] || null
     await supabase.from('residents').update({ is_active: true, status: 'active', manager_note: note }).eq('id', r.id)
-    await supabase.from('vehicles').update({ is_active: true, status: 'active' }).ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
+    // Slice 1 Commit 4b — cascade vehicle approval: SELECT pending vehicle
+    // ids for this unit at this property, then loop the approve_vehicle
+    // RPC per row. Each gets the unified scope-check + resident_read=true
+    // (commit 4a normalizes L895's prior omission). p_manager_note=NULL
+    // per the locked decision (the note belongs to the resident approval,
+    // not the auto-cascaded vehicles). One permit sync after the batch if
+    // any actually approved.
+    const { data: pendingCascade } = await supabase
+      .from('vehicles').select('id')
+      .ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
+    let cascadeApprovedCount = 0
+    for (const v of (pendingCascade ?? [])) {
+      const { data, error } = await supabase.rpc('approve_vehicle', {
+        p_vehicle_id:   v.id,
+        p_manager_note: null,
+      })
+      if (error) {
+        console.error('[approve_vehicle] RPC error in cascade:', error.message, { vehicleId: v.id })
+        continue
+      }
+      const r = data as { ok?: boolean; action?: string } | null
+      console.info('[approve_vehicle]', { site: 'approveResident-cascade', vehicleId: v.id, action: r?.action })
+      if (r?.action === 'approved') cascadeApprovedCount++
+    }
+    console.info('[B147-sync-batch-summary]', { site: 'approveResident-cascade', unit: r.unit, batchSize: (pendingCascade ?? []).length, approvedCount: cascadeApprovedCount, willFireSync: cascadeApprovedCount > 0 })
+    if (cascadeApprovedCount > 0 && companyIdForSync) {
+      const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
+      console.info('[B147-sync-result]', { site: 'approveResident-cascade', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
+      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveResident-cascade', approvedCount: cascadeApprovedCount, reason: syncRes.reason })
+    }
     // Send the approval email + capture outcome for the audit. Email
     // failure is non-fatal — approval is already committed.
     const emailResult = await notifyResidentDecision({ residentId: r.id, decision: 'approved', note: null })
