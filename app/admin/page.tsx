@@ -8,6 +8,55 @@ import { useResolvedLogo } from '../lib/logo'
 import CredentialsModal from '../components/CredentialsModal'
 import { generateTempPassword } from '../lib/temp-password'
 
+// Permit-tier helpers (Slice 1 Commit 2 Part B).
+//
+// UNIT CONVENTION: flat scalar pricing columns store dollars (NUMERIC);
+// permit_tiers JSONB inner-band rates store cents (integer). Dollars
+// surface in UI inputs everywhere; the ×100 / ÷100 conversion happens
+// ONLY at the tier-editor boundary (load/save). See migration
+// 20260626_platform_settings_3tier_pricing.sql header for the rationale.
+interface PermitTier { up_to: number | null; rate_cents: number }
+
+function validatePermitTiers(tiers: PermitTier[]): string | null {
+  if (!Array.isArray(tiers) || tiers.length === 0) {
+    return 'Permit tiers must have at least 1 band.'
+  }
+  for (let i = 0; i < tiers.length - 1; i++) {
+    if (tiers[i].up_to == null) return `Band ${i + 1}: only the LAST band may have up_to = ∞ (null).`
+    if (!(tiers[i].up_to! > 0)) return `Band ${i + 1}: up_to must be > 0.`
+    if (i > 0 && tiers[i].up_to! <= tiers[i - 1].up_to!) {
+      return `Band ${i + 1}: up_to (${tiers[i].up_to}) must be strictly greater than the previous band's up_to (${tiers[i - 1].up_to}).`
+    }
+  }
+  if (tiers[tiers.length - 1].up_to !== null) {
+    return `Last band must have up_to = ∞ (null) to cover unlimited permits.`
+  }
+  for (let i = 0; i < tiers.length; i++) {
+    if (!(tiers[i].rate_cents > 0)) return `Band ${i + 1}: rate must be > $0.`
+  }
+  return null
+}
+
+// Computes the graduated total in cents for a given approved-permit count.
+// Walks each band, charging in_band_count × band_rate_cents until the
+// count is exhausted. Used by the Monthly Bill Calculator preview.
+function computePermitTotalCents(count: number, tiers: PermitTier[]): number {
+  if (count <= 0 || !Array.isArray(tiers) || tiers.length === 0) return 0
+  let total = 0
+  let remaining = count
+  let prevUpTo = 0
+  for (const tier of tiers) {
+    const bandCapacity = tier.up_to === null ? remaining : Math.max(0, tier.up_to - prevUpTo)
+    const inBand = Math.min(remaining, bandCapacity)
+    if (inBand <= 0) break
+    total += inBand * tier.rate_cents
+    remaining -= inBand
+    prevUpTo = tier.up_to ?? Infinity
+    if (remaining <= 0) break
+  }
+  return total
+}
+
 export default function AdminPortal() {
   const resolvedLogo = useResolvedLogo()
   const [adminEmail, setAdminEmail] = useState('')
@@ -63,10 +112,14 @@ export default function AdminPortal() {
   const [platformMsg, setPlatformMsg] = useState('')
   const [pricingMsg, setPricingMsg] = useState('')
   const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
-  const [calcTrack, setCalcTrack] = useState('enforcement')
-  const [calcTier, setCalcTier] = useState('starter')
+  // Slice 1 Commit 2 Part B — calc state for new 3-tier model.
+  // calcTrack / calcDrivers from the old 6-tier calc are retired
+  // (track is now 1:1 with tier; per-driver is dropped under the new
+  // model). calcPermitCount is the new graduated-permit input,
+  // PM-Only exclusive.
+  const [calcTier, setCalcTier] = useState<'pm_only' | 'enforcement_only' | 'legacy'>('pm_only')
   const [calcProperties, setCalcProperties] = useState(5)
-  const [calcDrivers, setCalcDrivers] = useState(2)
+  const [calcPermitCount, setCalcPermitCount] = useState(100)
 
   const [showActiveCompanies, setShowActiveCompanies] = useState(true)
   const [showActiveProperties, setShowActiveProperties] = useState(true)
@@ -173,27 +226,34 @@ export default function AdminPortal() {
   }
 
   async function savePricing() {
+    // Slice 1 Commit 2 Part B: write the new 5 columns. NO fallbacks
+    // (the prior 15 `?? <default>` lines were the
+    // feedback_admin_page_fallback_defaults_stale pattern — masking
+    // a missing column with a stale default. Now NULL surfaces as
+    // "unset, fix in DB" instead of silently writing a wrong value).
+    //
+    // Validate permit_tiers before save — surfaces band errors inline
+    // instead of writing a malformed JSONB that the catalog script
+    // would later reject.
+    const tiersValidationError = validatePermitTiers(
+      (platformSettings.permit_tiers ?? []) as PermitTier[],
+    )
+    if (tiersValidationError) {
+      setPricingMsg(`Error: ${tiersValidationError}`)
+      return
+    }
+
     const priceFields = {
-      // Enforcement — hybrid: base + per-property + per-driver
-      price_starter_base: platformSettings.price_starter_base ?? 99,
-      price_starter_per_property: platformSettings.price_starter_per_property ?? 15,
-      price_starter_per_driver: platformSettings.price_starter_per_driver ?? 10,
-      price_growth_base: platformSettings.price_growth_base ?? 149,
-      price_growth_per_property: platformSettings.price_growth_per_property ?? 12,
-      price_growth_per_driver: platformSettings.price_growth_per_driver ?? 8,
-      price_legacy_base: platformSettings.price_legacy_base ?? 199,
-      price_legacy_per_property: platformSettings.price_legacy_per_property ?? 10,
-      price_legacy_per_driver: platformSettings.price_legacy_per_driver ?? 6,
-      // PM — hybrid: base + per-property (no per-driver)
-      price_pm_essential_base: platformSettings.price_pm_essential_base ?? 79,
-      price_pm_essential_per_property: platformSettings.price_pm_essential_per_property ?? 20,
-      price_pm_professional_base: platformSettings.price_pm_professional_base ?? 129,
-      price_pm_professional_per_property: platformSettings.price_pm_professional_per_property ?? 15,
-      price_pm_enterprise_base: platformSettings.price_pm_enterprise_base ?? 179,
-      price_pm_enterprise_per_property: platformSettings.price_pm_enterprise_per_property ?? 10,
+      // 4 flat NUMERIC (dollars; match existing convention).
+      price_pm_only_base:                  platformSettings.price_pm_only_base,
+      price_pm_only_per_property:          platformSettings.price_pm_only_per_property,
+      price_enforcement_only_base:         platformSettings.price_enforcement_only_base,
+      price_enforcement_only_per_property: platformSettings.price_enforcement_only_per_property,
+      // JSONB graduated bands (rate_cents inside; documented unit split).
+      permit_tiers:                        platformSettings.permit_tiers,
     }
     const { error } = await supabase.from('platform_settings').upsert({ id: 1, ...priceFields, updated_at: new Date().toISOString() })
-    if (error) { setPricingMsg('Error saving pricing'); return }
+    if (error) { setPricingMsg(`Error saving pricing: ${error.message}`); return }
     setPlatformSettings((prev: any) => ({ ...prev, ...priceFields }))
     await auditLog(adminEmail, 'UPDATE_PRICING', 'platform_settings', '1', priceFields)
     setPricingMsg('Pricing updated successfully!')
@@ -805,13 +865,15 @@ export default function AdminPortal() {
       {!value && <div style={{ marginBottom:'12px' }} />}
     </div>
   )
+  // Slice 1 Commit 2 Part B — repointed to the 2 new self-serve tiers.
+  // Legacy is intentionally absent (negotiated per-deal; no "from $X/mo"
+  // chip — the proposal carries the price). Companies whose tier still
+  // carries an OLD value ('starter'/'growth'/etc.) get a null chip
+  // during the transition; commit 5 remaps companies.tier to the new
+  // 3-value enum.
   const tierBaseMap: Record<string, string> = {
-    'enforcement:starter': 'price_starter_base',
-    'enforcement:growth': 'price_growth_base',
-    'enforcement:legacy': 'price_legacy_base',
-    'pm:essential': 'price_pm_essential_base',
-    'pm:professional': 'price_pm_professional_base',
-    'pm:enterprise': 'price_pm_enterprise_base',
+    'property_management:pm_only':       'price_pm_only_base',
+    'enforcement:enforcement_only':      'price_enforcement_only_base',
   }
   const getCompanyPrice = (c: any) => {
     const key = `${c.tier_type || 'enforcement'}:${c.tier || 'legacy'}`
@@ -1692,137 +1754,238 @@ export default function AdminPortal() {
               <button onClick={savePlatformSettings} style={{ ...bGold, width:'100%', marginTop:'4px' }}>Save Support Defaults</button>
             </div>
 
-            {/* Section C — Base Subscription Pricing */}
+            {/* Section C — Base Subscription Pricing (Slice 1 Commit 2 Part B)
+                3 sections: PM-Only · Enforcement-Only · Legacy (negotiated note).
+                Flat columns store dollars; permit_tiers stores rate_cents inside the
+                JSONB. The dollars↔cents conversion happens at the tier-editor inputs
+                only (loaded as ÷100 / saved as ×100). */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
               <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>Base Subscription Pricing</p>
-              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Hybrid model: base fee + per-property + per-driver. Changes apply to new signups only.</p>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' }}>
+              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>3-tier model: base fee + per-property; PM-Only adds graduated per-permit metering. Changes apply to new signups.</p>
 
-                {/* Enforcement card */}
-                <div style={{ background:'#1e2535', borderRadius:'8px', padding:'12px' }}>
-                  <p style={{ color:'#b39ddb', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Enforcement Track</p>
-                  {/* Column headers */}
-                  <div style={{ display:'grid', gridTemplateColumns:'60px 1fr 1fr 1fr', gap:'4px', marginBottom:'6px' }}>
-                    <div />
-                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>Base</p>
-                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>/ Prop</p>
-                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>/ Driver</p>
+              {/* PM-Only card (base + per_property + graduated permit-tier editor) */}
+              <div style={{ background:'#1e2535', borderRadius:'8px', padding:'12px', marginBottom:'12px' }}>
+                <p style={{ color:'#4fc3f7', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>PM-Only · self-serve</p>
+                <div style={{ display:'grid', gridTemplateColumns:'120px 1fr', gap:'8px', alignItems:'center', marginBottom:'6px' }}>
+                  <span style={{ color:'#aaa', fontSize:'11px' }}>Base / mo</span>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                    <span style={{ color:'#555', fontSize:'10px' }}>$</span>
+                    <input type="number" step="0.01" min="0"
+                      value={platformSettings.price_pm_only_base ?? ''}
+                      onChange={e => setPlatformSettings((p: any) => ({...p, price_pm_only_base: e.target.value === '' ? null : parseFloat(e.target.value)}))}
+                      style={pInp} />
                   </div>
-                  {[
-                    { label:'Starter', base:'price_starter_base', defBase:99, prop:'price_starter_per_property', defProp:15, drv:'price_starter_per_driver', defDrv:10 },
-                    { label:'Growth',  base:'price_growth_base',  defBase:149, prop:'price_growth_per_property',  defProp:12, drv:'price_growth_per_driver',  defDrv:8 },
-                    { label:'Legacy',  base:'price_legacy_base',  defBase:199, prop:'price_legacy_per_property',  defProp:10, drv:'price_legacy_per_driver',  defDrv:6 },
-                  ].map(t => (
-                    <div key={t.label} style={{ display:'grid', gridTemplateColumns:'60px 1fr 1fr 1fr', gap:'4px', alignItems:'center', marginBottom:'6px' }}>
-                      <span style={{ color:'#aaa', fontSize:'11px' }}>{t.label}</span>
-                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.base] ?? t.defBase} onChange={e => setPlatformSettings((p: any) => ({...p, [t.base]: parseFloat(e.target.value)}))} style={pInp} /></div>
-                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.prop] ?? t.defProp} onChange={e => setPlatformSettings((p: any) => ({...p, [t.prop]: parseFloat(e.target.value)}))} style={pInp} /></div>
-                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.drv] ?? t.defDrv} onChange={e => setPlatformSettings((p: any) => ({...p, [t.drv]: parseFloat(e.target.value)}))} style={pInp} /></div>
-                    </div>
-                  ))}
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'120px 1fr', gap:'8px', alignItems:'center', marginBottom:'12px' }}>
+                  <span style={{ color:'#aaa', fontSize:'11px' }}>Per Property / mo</span>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                    <span style={{ color:'#555', fontSize:'10px' }}>$</span>
+                    <input type="number" step="0.01" min="0"
+                      value={platformSettings.price_pm_only_per_property ?? ''}
+                      onChange={e => setPlatformSettings((p: any) => ({...p, price_pm_only_per_property: e.target.value === '' ? null : parseFloat(e.target.value)}))}
+                      style={pInp} />
+                  </div>
                 </div>
 
-                {/* PM card */}
-                <div style={{ background:'#1e2535', borderRadius:'8px', padding:'12px' }}>
-                  <p style={{ color:'#4fc3f7', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Property Mgmt Track</p>
-                  {/* Column headers */}
-                  <div style={{ display:'grid', gridTemplateColumns:'80px 1fr 1fr', gap:'4px', marginBottom:'6px' }}>
-                    <div />
-                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>Base</p>
-                    <p style={{ color:'#666', fontSize:'9px', textAlign:'center', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>/ Prop</p>
-                  </div>
-                  {[
-                    { label:'Essential',     base:'price_pm_essential_base',     defBase:79,  prop:'price_pm_essential_per_property',     defProp:20 },
-                    { label:'Professional',  base:'price_pm_professional_base',  defBase:129, prop:'price_pm_professional_per_property',  defProp:15 },
-                    { label:'Enterprise',    base:'price_pm_enterprise_base',    defBase:179, prop:'price_pm_enterprise_per_property',    defProp:10 },
-                  ].map(t => (
-                    <div key={t.label} style={{ display:'grid', gridTemplateColumns:'80px 1fr 1fr', gap:'4px', alignItems:'center', marginBottom:'6px' }}>
-                      <span style={{ color:'#aaa', fontSize:'11px' }}>{t.label}</span>
-                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.base] ?? t.defBase} onChange={e => setPlatformSettings((p: any) => ({...p, [t.base]: parseFloat(e.target.value)}))} style={pInp} /></div>
-                      <div style={{ display:'flex', alignItems:'center', gap:'1px' }}><span style={{ color:'#555', fontSize:'10px' }}>$</span><input type="number" step="0.01" min="0" value={platformSettings[t.prop] ?? t.defProp} onChange={e => setPlatformSettings((p: any) => ({...p, [t.prop]: parseFloat(e.target.value)}))} style={pInp} /></div>
-                    </div>
-                  ))}
-                  <p style={{ color:'#555', fontSize:'9px', margin:'8px 0 0', fontStyle:'italic' }}>No per-driver fee — PM clients do not have drivers.</p>
+                {/* Graduated permit-tier editor */}
+                <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'10px 0 6px', fontWeight:'bold' }}>Graduated Permit Tiers</p>
+                <div style={{ display:'grid', gridTemplateColumns:'100px 1fr 60px', gap:'4px', marginBottom:'4px' }}>
+                  <p style={{ color:'#666', fontSize:'9px', textAlign:'left', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>Up to</p>
+                  <p style={{ color:'#666', fontSize:'9px', textAlign:'left', margin:0, textTransform:'uppercase', letterSpacing:'0.05em' }}>$ / Permit</p>
+                  <div />
                 </div>
+                {((platformSettings.permit_tiers ?? []) as PermitTier[]).map((band, idx, arr) => {
+                  const isLast = idx === arr.length - 1
+                  const rateDollars = (band.rate_cents / 100).toFixed(2)
+                  return (
+                    <div key={idx} style={{ display:'grid', gridTemplateColumns:'100px 1fr 60px', gap:'4px', alignItems:'center', marginBottom:'4px' }}>
+                      {isLast ? (
+                        <span style={{ color:'#888', fontSize:'13px', fontStyle:'italic', paddingLeft:'4px' }}>∞</span>
+                      ) : (
+                        <input type="number" min="1" step="1"
+                          value={band.up_to ?? ''}
+                          onChange={e => {
+                            const v = e.target.value === '' ? null : parseInt(e.target.value, 10)
+                            setPlatformSettings((p: any) => {
+                              const next = [...(p.permit_tiers ?? [])]
+                              next[idx] = { ...next[idx], up_to: v }
+                              return {...p, permit_tiers: next}
+                            })
+                          }}
+                          style={pInp} />
+                      )}
+                      <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                        <span style={{ color:'#555', fontSize:'10px' }}>$</span>
+                        <input type="number" min="0" step="0.01"
+                          value={rateDollars}
+                          onChange={e => {
+                            const dollars = parseFloat(e.target.value)
+                            const cents = Number.isFinite(dollars) ? Math.round(dollars * 100) : 0
+                            setPlatformSettings((p: any) => {
+                              const next = [...(p.permit_tiers ?? [])]
+                              next[idx] = { ...next[idx], rate_cents: cents }
+                              return {...p, permit_tiers: next}
+                            })
+                          }}
+                          style={pInp} />
+                      </div>
+                      {!isLast && arr.length > 1 ? (
+                        <button type="button"
+                          onClick={() => setPlatformSettings((p: any) => ({...p, permit_tiers: (p.permit_tiers ?? []).filter((_: any, i: number) => i !== idx)}))}
+                          style={{ background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'4px', padding:'4px 6px', cursor:'pointer', fontSize:'10px' }}>
+                          Remove
+                        </button>
+                      ) : <div />}
+                    </div>
+                  )
+                })}
+                <button type="button"
+                  onClick={() => setPlatformSettings((p: any) => {
+                    const cur = (p.permit_tiers ?? []) as PermitTier[]
+                    // Insert a new bounded band BEFORE the trailing ∞ band.
+                    // If no bands exist yet, seed with [{up_to:50,rate_cents:200}, {up_to:null,rate_cents:100}].
+                    if (cur.length === 0) {
+                      return {...p, permit_tiers: [{up_to: 50, rate_cents: 200}, {up_to: null, rate_cents: 100}]}
+                    }
+                    const last = cur[cur.length - 1]
+                    if (last.up_to === null) {
+                      const prevBounded = cur.slice(0, -1)
+                      const lastBoundedUpTo = prevBounded.length > 0 ? (prevBounded[prevBounded.length - 1].up_to ?? 0) : 0
+                      const newBand: PermitTier = { up_to: lastBoundedUpTo + 50, rate_cents: last.rate_cents }
+                      return {...p, permit_tiers: [...prevBounded, newBand, last]}
+                    }
+                    // No trailing ∞ band (malformed) — append both
+                    return {...p, permit_tiers: [...cur, {up_to: null, rate_cents: 100}]}
+                  })}
+                  style={{ background:'#1e2535', color:'#4fc3f7', border:'1px solid #4fc3f7', borderRadius:'6px', padding:'6px 12px', cursor:'pointer', fontSize:'11px', marginTop:'8px' }}>
+                  + Add Band
+                </button>
+                <p style={{ color:'#555', fontSize:'9px', margin:'8px 0 0', fontStyle:'italic' }}>Bands fill bottom-up (first band counts permits 1–N; ∞ band catches all permits above the last bounded up_to).</p>
+              </div>
+
+              {/* Enforcement-Only card (base + per_property) */}
+              <div style={{ background:'#1e2535', borderRadius:'8px', padding:'12px', marginBottom:'12px' }}>
+                <p style={{ color:'#b39ddb', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 12px' }}>Enforcement-Only · self-serve</p>
+                <div style={{ display:'grid', gridTemplateColumns:'120px 1fr', gap:'8px', alignItems:'center', marginBottom:'6px' }}>
+                  <span style={{ color:'#aaa', fontSize:'11px' }}>Base / mo</span>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                    <span style={{ color:'#555', fontSize:'10px' }}>$</span>
+                    <input type="number" step="0.01" min="0"
+                      value={platformSettings.price_enforcement_only_base ?? ''}
+                      onChange={e => setPlatformSettings((p: any) => ({...p, price_enforcement_only_base: e.target.value === '' ? null : parseFloat(e.target.value)}))}
+                      style={pInp} />
+                  </div>
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'120px 1fr', gap:'8px', alignItems:'center' }}>
+                  <span style={{ color:'#aaa', fontSize:'11px' }}>Per Property / mo</span>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                    <span style={{ color:'#555', fontSize:'10px' }}>$</span>
+                    <input type="number" step="0.01" min="0"
+                      value={platformSettings.price_enforcement_only_per_property ?? ''}
+                      onChange={e => setPlatformSettings((p: any) => ({...p, price_enforcement_only_per_property: e.target.value === '' ? null : parseFloat(e.target.value)}))}
+                      style={pInp} />
+                  </div>
+                </div>
+                <p style={{ color:'#555', fontSize:'9px', margin:'10px 0 0', fontStyle:'italic' }}>No per-permit metering — Enforcement-Only does not issue PM permits.</p>
+              </div>
+
+              {/* Legacy card (negotiated; no inputs) */}
+              <div style={{ background:'#1e2535', borderRadius:'8px', padding:'12px' }}>
+                <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 8px' }}>Legacy · negotiated</p>
+                <p style={{ color:'#888', fontSize:'11px', margin:'0', lineHeight:'1.55' }}>
+                  Negotiated per-deal via the pricing calculator → proposal code; no standard price.
+                </p>
               </div>
             </div>
 
-            {/* Monthly Bill Calculator */}
+            {/* Monthly Bill Calculator — 3-tier model.
+                PM-Only: base + per_property × N + graduated permit total (via computePermitTotalCents).
+                Enforcement-Only: base + per_property × N.
+                Legacy: "Negotiated" placard. */}
             {(() => {
-              const isEnf = calcTrack === 'enforcement'
-              const tiers = isEnf
-                ? ['starter','growth','legacy']
-                : ['essential','professional','enterprise']
-              const safeCalcTier = tiers.includes(calcTier) ? calcTier : tiers[0]
-              const trackPrefix = isEnf ? '' : 'pm_'
-              const baseKey = `price_${trackPrefix}${safeCalcTier}_base`
-              const propKey = `price_${trackPrefix}${safeCalcTier}_per_property`
-              const drvKey  = isEnf ? `price_${safeCalcTier}_per_driver` : ''
-              const defBases: Record<string,number> = { starter:99, growth:149, legacy:199, essential:79, professional:129, enterprise:179 }
-              const defProps: Record<string,number>  = { starter:15, growth:12,  legacy:10,  essential:20, professional:15,  enterprise:10 }
-              const defDrvs: Record<string,number>   = { starter:10, growth:8,   legacy:6 }
-              const base   = Number(platformSettings[baseKey] ?? defBases[safeCalcTier] ?? 0)
-              const perProp = Number(platformSettings[propKey]  ?? defProps[safeCalcTier]  ?? 0)
-              const perDrv  = isEnf ? Number(platformSettings[drvKey] ?? defDrvs[safeCalcTier] ?? 0) : 0
-              const propTotal = perProp * calcProperties
-              const drvTotal  = isEnf ? perDrv * calcDrivers : 0
-              const monthly   = base + propTotal + drvTotal
-              const annual    = monthly * 10
               const fmt = (n: number) => `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+              const tiers = (platformSettings.permit_tiers ?? []) as PermitTier[]
+
+              let base = 0, perProp = 0, permitTotalCents = 0, isLegacy = false
+              if (calcTier === 'pm_only') {
+                base = Number(platformSettings.price_pm_only_base ?? 0)
+                perProp = Number(platformSettings.price_pm_only_per_property ?? 0)
+                permitTotalCents = computePermitTotalCents(calcPermitCount, tiers)
+              } else if (calcTier === 'enforcement_only') {
+                base = Number(platformSettings.price_enforcement_only_base ?? 0)
+                perProp = Number(platformSettings.price_enforcement_only_per_property ?? 0)
+              } else {
+                isLegacy = true
+              }
+              const propTotal = perProp * calcProperties
+              const permitTotalDollars = permitTotalCents / 100
+              const monthly = base + propTotal + permitTotalDollars
+              const annual = monthly * 10
+
               return (
                 <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
                   <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px' }}>Monthly Bill Calculator</p>
                   <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Estimate what a client should be charged based on their tier and usage.</p>
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'12px' }}>
-                    <div>
-                      <label style={lbl}>Track</label>
-                      <select value={calcTrack} onChange={e => { setCalcTrack(e.target.value); setCalcTier(e.target.value === 'enforcement' ? 'starter' : 'essential') }} style={{ ...inp, marginTop:0, marginBottom:0 }}>
-                        <option value="enforcement">Enforcement</option>
-                        <option value="pm">Property Mgmt</option>
-                      </select>
-                    </div>
+                  <div style={{ display:'grid', gridTemplateColumns: calcTier === 'pm_only' ? '1fr 1fr 1fr' : '1fr 1fr', gap:'8px', marginBottom:'12px' }}>
                     <div>
                       <label style={lbl}>Tier</label>
-                      <select value={safeCalcTier} onChange={e => setCalcTier(e.target.value)} style={{ ...inp, marginTop:0, marginBottom:0 }}>
-                        {tiers.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+                      <select value={calcTier}
+                        onChange={e => setCalcTier(e.target.value as 'pm_only' | 'enforcement_only' | 'legacy')}
+                        style={{ ...inp, marginTop:0, marginBottom:0 }}>
+                        <option value="pm_only">PM-Only</option>
+                        <option value="enforcement_only">Enforcement-Only</option>
+                        <option value="legacy">Legacy (negotiated)</option>
                       </select>
                     </div>
-                    <div>
-                      <label style={lbl}>Properties</label>
-                      <input type="number" min="1" value={calcProperties} onChange={e => setCalcProperties(Math.max(1, parseInt(e.target.value) || 1))} style={{ ...inp, marginTop:0, marginBottom:0 }} />
-                    </div>
-                    {isEnf && (
+                    {!isLegacy && (
                       <div>
-                        <label style={lbl}>Drivers</label>
-                        <input type="number" min="0" value={calcDrivers} onChange={e => setCalcDrivers(Math.max(0, parseInt(e.target.value) || 0))} style={{ ...inp, marginTop:0, marginBottom:0 }} />
+                        <label style={lbl}>Properties</label>
+                        <input type="number" min="1" value={calcProperties}
+                          onChange={e => setCalcProperties(Math.max(1, parseInt(e.target.value) || 1))}
+                          style={{ ...inp, marginTop:0, marginBottom:0 }} />
+                      </div>
+                    )}
+                    {calcTier === 'pm_only' && (
+                      <div>
+                        <label style={lbl}>Permits</label>
+                        <input type="number" min="0" value={calcPermitCount}
+                          onChange={e => setCalcPermitCount(Math.max(0, parseInt(e.target.value) || 0))}
+                          style={{ ...inp, marginTop:0, marginBottom:0 }} />
                       </div>
                     )}
                   </div>
-                  <div style={{ background:'#0f1117', borderRadius:'8px', padding:'12px', fontFamily:'Courier New' }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
-                      <span style={{ color:'#888', fontSize:'12px' }}>Base fee</span>
-                      <span style={{ color:'#ccc', fontSize:'12px' }}>{fmt(base)}</span>
+                  {isLegacy ? (
+                    <div style={{ background:'#0f1117', borderRadius:'8px', padding:'14px', textAlign:'center' }}>
+                      <p style={{ color:'#C9A227', fontSize:'13px', margin:'0 0 4px', fontWeight:'bold' }}>Negotiated per-deal</p>
+                      <p style={{ color:'#888', fontSize:'11px', margin:'0' }}>Use the pricing calculator → proposal code path. No standard price applies.</p>
                     </div>
-                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
-                      <span style={{ color:'#888', fontSize:'12px' }}>Properties ({calcProperties})</span>
-                      <span style={{ color:'#ccc', fontSize:'12px' }}>{fmt(propTotal)}</span>
-                    </div>
-                    {isEnf && (
+                  ) : (
+                    <div style={{ background:'#0f1117', borderRadius:'8px', padding:'12px', fontFamily:'Courier New' }}>
                       <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
-                        <span style={{ color:'#888', fontSize:'12px' }}>Drivers ({calcDrivers})</span>
-                        <span style={{ color:'#ccc', fontSize:'12px' }}>{fmt(drvTotal)}</span>
+                        <span style={{ color:'#888', fontSize:'12px' }}>Base fee</span>
+                        <span style={{ color:'#ccc', fontSize:'12px' }}>{fmt(base)}</span>
                       </div>
-                    )}
-                    <div style={{ borderTop:'1px solid #2a2f3d', margin:'8px 0' }} />
-                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
-                      <span style={{ color:'#C9A227', fontSize:'13px', fontWeight:'bold' }}>Monthly total</span>
-                      <span style={{ color:'#C9A227', fontSize:'13px', fontWeight:'bold' }}>{fmt(monthly)}</span>
+                      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                        <span style={{ color:'#888', fontSize:'12px' }}>Properties ({calcProperties})</span>
+                        <span style={{ color:'#ccc', fontSize:'12px' }}>{fmt(propTotal)}</span>
+                      </div>
+                      {calcTier === 'pm_only' && (
+                        <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                          <span style={{ color:'#888', fontSize:'12px' }}>Permits ({calcPermitCount}, graduated)</span>
+                          <span style={{ color:'#ccc', fontSize:'12px' }}>{fmt(permitTotalDollars)}</span>
+                        </div>
+                      )}
+                      <div style={{ borderTop:'1px solid #2a2f3d', margin:'8px 0' }} />
+                      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'4px' }}>
+                        <span style={{ color:'#C9A227', fontSize:'13px', fontWeight:'bold' }}>Monthly total</span>
+                        <span style={{ color:'#C9A227', fontSize:'13px', fontWeight:'bold' }}>{fmt(monthly)}</span>
+                      </div>
+                      <div style={{ display:'flex', justifyContent:'space-between' }}>
+                        <span style={{ color:'#888', fontSize:'11px' }}>Annual total <span style={{ color:'#555' }}>(2 months free)</span></span>
+                        <span style={{ color:'#aaa', fontSize:'11px' }}>{fmt(annual)}</span>
+                      </div>
                     </div>
-                    <div style={{ display:'flex', justifyContent:'space-between' }}>
-                      <span style={{ color:'#888', fontSize:'11px' }}>Annual total <span style={{ color:'#555' }}>(2 months free)</span></span>
-                      <span style={{ color:'#aaa', fontSize:'11px' }}>{fmt(annual)}</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
               )
             })()}
