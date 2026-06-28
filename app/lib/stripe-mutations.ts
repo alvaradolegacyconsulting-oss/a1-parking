@@ -476,8 +476,19 @@ export async function reconcileAtRenewal(
 // in the array = tier "height" within the track. Higher index = more
 // expensive tier. Premium is contact-sales (not self-serve) so it's
 // excluded from this ordering — changeTier refuses target='premium'.
-const ENF_TIER_ORDER = ['starter', 'growth', 'legacy'] as const
-const PM_TIER_ORDER = ['essential', 'professional', 'enterprise'] as const
+//
+// Slice 1 Commit 5 (2026-06-26) — DORMANT under the new 3-tier model.
+// PM-Only and Enforcement-Only are each the only self-serve tier in
+// their track; Legacy is negotiated-only. So there's no within-track
+// upgrade path today — the singletons below make changeTier's
+// isUpgradeWithinTrack() always return false (no idx+1 target),
+// which is the correct behavior under the new model.
+// changeTier / previewTierChange / TierUpgradeModal stay in place as
+// RESERVED SCAFFOLDING for a hypothetical future within-track tier
+// (e.g., Enforcement+ or PM-Only-Pro). When that tier ships, add it
+// to the appropriate array here in the correct height position.
+const ENF_TIER_ORDER = ['enforcement_only'] as const
+const PM_TIER_ORDER  = ['pm_only'] as const
 
 type SubscriptionTrack = 'enforcement' | 'property_management'
 

@@ -14,8 +14,18 @@ import { FEATURE_FLAGS, FeatureFlag } from './feature-flags'
 export type TierType = 'enforcement' | 'property_management'
 // B89: 'premium' is the contact-sales tier; not self-serve-creatable
 // from the admin Add Company UI but available via the proposal-code path.
-export type EnforcementTier = 'starter' | 'growth' | 'legacy' | 'premium'
-export type PropertyManagementTier = 'essential' | 'professional' | 'enterprise'
+//
+// Slice 1 Commit 5 (2026-06-26) — 3-tier model added:
+//   enforcement_only (self-serve), pm_only (self-serve), legacy (negotiated).
+// Old 6-tier values kept in unions for BACK-COMPAT DISPLAY only:
+// existing proposal_codes may still reference old base_tier strings
+// ('professional', 'starter', etc.) on issued/draft rows, and
+// TIER_DISPLAY_NAME / TIER_PRICING need to resolve them so the UI
+// renders correctly. companies.tier was remapped to the new 3-set in
+// the companion migration (commit 5 Part 1), so NO company row carries
+// old values post-migration. New code paths key off the new 3 tiers.
+export type EnforcementTier = 'starter' | 'growth' | 'legacy' | 'premium' | 'enforcement_only'
+export type PropertyManagementTier = 'essential' | 'professional' | 'enterprise' | 'pm_only' | 'legacy'
 export type Tier = EnforcementTier | PropertyManagementTier
 
 export type TierConfigShape = Record<FeatureFlag, boolean | number>
@@ -250,17 +260,42 @@ const PM_ENTERPRISE: TierConfigShape = {
   [F.DEDICATED_ACCOUNT_MANAGER]: true,
 }
 
+// Slice 1 Commit 5 — new 3-tier shapes. Cloned from the high tier of
+// each track (LEGACY/ENTERPRISE) so all features default-on under the
+// new model. The full hasFeature() feature-matrix definition (esp.
+// Enforcement-Only barebones-PM surface) is the NEXT slice's work;
+// this commit just provides "sane high defaults" so existing
+// hasFeature consumers don't return undefined for the new tier keys.
+const ENF_ENFORCEMENT_ONLY: TierConfigShape = { ...ENF_LEGACY }
+const PM_PM_ONLY: TierConfigShape = { ...PM_ENTERPRISE }
+// LEGACY is cross-track in the new model (a company can be tier=legacy
+// with tier_type=enforcement OR tier_type=property_management). Both
+// keys must exist under their respective TierType. PM-track legacy
+// clones the high-PM tier; ENF-track legacy uses the existing ENF_LEGACY.
+const PM_LEGACY: TierConfigShape = { ...PM_ENTERPRISE }
+
 export const TIER_CONFIG: Record<TierType, Record<string, TierConfigShape>> = {
   enforcement: {
+    // Slice 1 Commit 5 — new 3-tier model:
+    enforcement_only: ENF_ENFORCEMENT_ONLY,
+    // legacy is reused below from the old set (ENF_LEGACY shape — same
+    // semantics as new-model ENF-track legacy).
+    // Old 6-tier values kept BACK-COMPAT for display of existing
+    // proposal_codes' base_tier; not used for any new company:
     starter: ENF_STARTER,
-    growth: ENF_GROWTH,
-    legacy: ENF_LEGACY,
+    growth:  ENF_GROWTH,
+    legacy:  ENF_LEGACY,
     premium: ENF_PREMIUM,
   },
   property_management: {
-    essential: PM_ESSENTIAL,
+    // Slice 1 Commit 5 — new 3-tier model:
+    pm_only: PM_PM_ONLY,
+    legacy:  PM_LEGACY,
+    // Old 6-tier values kept BACK-COMPAT for display of existing
+    // proposal_codes' base_tier; not used for any new company:
+    essential:    PM_ESSENTIAL,
     professional: PM_PROFESSIONAL,
-    enterprise: PM_ENTERPRISE,
+    enterprise:   PM_ENTERPRISE,
   },
 }
 
@@ -273,20 +308,50 @@ export const TIER_CONFIG: Record<TierType, Record<string, TierConfigShape>> = {
 // tiers have bespoke pricing, not a published number. getUpgradePrompt()
 // guards against undefined TIER_PRICING entries by skipping such tiers as
 // upgrade targets — see app/lib/tier.ts:155-167.
+// Slice 1 Commit 5 — new 3-tier prices (commit 2 platform_settings seed):
+//   pm_only          = $179/mo
+//   enforcement_only = $199/mo
+// Legacy is negotiated — INTENTIONALLY OMITTED from TIER_PRICING so
+// getUpgradePrompt() skips it (same pattern as Premium per B89 + this
+// file's L272-275). Old 6-tier prices retained as BACK-COMPAT display
+// values for existing proposal_codes; not for any new company.
 export const TIER_PRICING: Record<TierType, Record<string, number>> = {
-  enforcement: { starter: 129, growth: 149, legacy: 199 },
-  property_management: { essential: 129, professional: 199, enterprise: 279 },
+  enforcement: { starter: 129, growth: 149, legacy: 199, enforcement_only: 199 },
+  property_management: { essential: 129, professional: 199, enterprise: 279, pm_only: 179 },
 }
 
-// B89: 'premium' appended to enforcement ladder above Legacy. getUpgradePrompt()
-// walks the ladder up from currentTier; the TIER_PRICING guard ensures Premium
-// is silently skipped rather than surfaced as a "$0/mo" garbage upgrade prompt.
+// Slice 1 Commit 5 — TIER_LADDER updated to the new model. Per-track
+// singletons (no within-track upgrades under new model — PM-Only and
+// Enforcement-Only are each the only self-serve tier in their track).
+// getUpgradePrompt() walks tier_idx+1 looking for an upgrade target;
+// with single-element arrays, no upgrade is ever surfaced — correct
+// (changeTier / TierUpgradeModal stays dormant as reserved scaffolding
+// for a hypothetical future Enforcement+/PM-Only-Pro tier).
+// Old 6-tier values intentionally REMOVED from the ladder: post-
+// migration no company has an old tier value, so they wouldn't reach
+// getUpgradePrompt anyway.
 export const TIER_LADDER: Record<TierType, Tier[]> = {
-  enforcement: ['starter', 'growth', 'legacy', 'premium'],
-  property_management: ['essential', 'professional', 'enterprise'],
+  enforcement: ['enforcement_only'],
+  property_management: ['pm_only'],
 }
 
+// Slice 1 Commit 5 — new tier display names added. Old 6-tier display
+// names retained as BACK-COMPAT for existing proposal_codes display.
 export const TIER_DISPLAY_NAME: Record<TierType, Record<string, string>> = {
-  enforcement: { starter: 'Starter', growth: 'Growth', legacy: 'Legacy', premium: 'Premium' },
-  property_management: { essential: 'Essential', professional: 'Professional', enterprise: 'Enterprise' },
+  enforcement: {
+    enforcement_only: 'Enforcement-Only',
+    legacy: 'Legacy',
+    // Back-compat for old proposal_codes:
+    starter: 'Starter',
+    growth:  'Growth',
+    premium: 'Premium',
+  },
+  property_management: {
+    pm_only: 'PM-Only',
+    legacy:  'Legacy',
+    // Back-compat for old proposal_codes:
+    essential:    'Essential',
+    professional: 'Professional',
+    enterprise:   'Enterprise',
+  },
 }

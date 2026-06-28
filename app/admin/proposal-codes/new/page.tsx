@@ -44,11 +44,18 @@ const inp: React.CSSProperties = {
 }
 const lbl: React.CSSProperties = { color: '#aaa', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em' }
 
-// B89: 'premium' available via proposal-code creation (sales path).
-// NOT in admin Add Company dropdown — Premium is proposal-code-only,
-// not self-serve-creatable from the platform's Add Company UI.
-const ENFORCEMENT_TIERS = ['starter', 'growth', 'legacy', 'premium'] as const
-const PM_TIERS = ['essential', 'professional', 'enterprise'] as const
+// Slice 1 Commit 5 (2026-06-26) — proposal-code tier choices updated
+// to the new 3-tier model. Each track has a single self-serve tier
+// plus Legacy (negotiated). Custom proposals can target any of the 3
+// per Jose's locked decision.
+//   pm_only:          PM-Only — flat per-permit override available
+//   enforcement_only: Enforcement-Only — no permit billing
+//   legacy:           Legacy negotiated — no permit billing (unmetered)
+// Old 6-tier values intentionally NOT in the dropdown for new proposals.
+// Existing proposal_codes with old base_tier values display via
+// TIER_DISPLAY_NAME back-compat in [code]/page.tsx (no breakage).
+const ENFORCEMENT_TIERS = ['enforcement_only', 'legacy'] as const
+const PM_TIERS = ['pm_only', 'legacy'] as const
 
 export default function NewProposalCode() {
   const router = useRouter()
@@ -61,17 +68,31 @@ export default function NewProposalCode() {
   const [clientName, setClientName] = useState('')
   const [clientEmail, setClientEmail] = useState('')
   const [tierType, setTierType] = useState<TierType>('enforcement')
-  const [tier, setTier] = useState<string>('legacy')
+  // Slice 1 Commit 5 — default tier for new proposals: enforcement_only
+  // (matches the default tierType='enforcement' starting state). Reset
+  // useEffect below updates this when tierType toggles.
+  const [tier, setTier] = useState<string>('enforcement_only')
   const [expiresInDays, setExpiresInDays] = useState<number>(30)
   const [customBaseFee, setCustomBaseFee] = useState<string>('')
   const [customPerProperty, setCustomPerProperty] = useState<string>('')
-  const [customPerDriver, setCustomPerDriver] = useState<string>('')
+  // Slice 1 Commit 5 — customPerDriver state removed (per_driver retired).
+  // Form field removed below; payload always sends custom_per_driver_fee=null;
+  // validation reference dropped too.
+  // Slice 1 Commit 5 — NEW: per-permit override (PM-Only deals only).
+  // Single flat $/permit rate (NOT graduated — graduated is standard-
+  // catalog only, custom proposals get a flat negotiated rate per
+  // Jose's locked Legacy/PM-Only permit shape decision). Writes to
+  // proposal_codes.custom_per_permit_fee NUMERIC column. Stripe-side
+  // issue-time creation of the corresponding flat per_permit Price
+  // is deferred to a future commit per the migration's header note.
+  const [customPerPermit, setCustomPerPermit] = useState<string>('')
   const [lockInMonths, setLockInMonths] = useState<string>('')
   // B66.7 Option γ — admin captures negotiated quantities at code creation;
   // start-billing route passes these as Stripe Subscription line-item
   // quantities at redeem. Blank → NULL on insert (and 1 at start-billing).
   const [includedProperties, setIncludedProperties] = useState<string>('')
-  const [includedDrivers, setIncludedDrivers] = useState<string>('')
+  // Slice 1 Commit 5 — includedDrivers state removed (per_driver retired).
+  // Form field gone; payload always sends included_drivers=null.
   const [overridesText, setOverridesText] = useState<string>('')
   const [notes, setNotes] = useState<string>('')
 
@@ -87,9 +108,10 @@ export default function NewProposalCode() {
     })()
   }, [])
 
-  // Reset tier when type changes
+  // Reset tier when type changes. Slice 1 Commit 5 — new default tiers
+  // per track (the single self-serve tier in each).
   useEffect(() => {
-    setTier(tierType === 'enforcement' ? 'legacy' : 'professional')
+    setTier(tierType === 'enforcement' ? 'enforcement_only' : 'pm_only')
   }, [tierType])
 
   const tierDefaults = useMemo(() => {
@@ -102,17 +124,26 @@ export default function NewProposalCode() {
     }
   }, [tierType, tier])
 
-  // Hardcoded per-property/per-driver defaults from Pricing v2 — kept here
-  // because TIER_PRICING only stores the base fee. Mirror of admin pricing UI.
+  // Slice 1 Commit 5 — defaults updated for new 3-tier model.
+  // pm_only       = $20/property (matches platform_settings seed)
+  // enforcement_only = $15/property (matches platform_settings seed)
+  // legacy        = no default (negotiated; UI shows blank)
+  // Old 6-tier defaults kept inline for the back-compat display of
+  // OLD proposal_codes only; new dropdown options (enforcement_only,
+  // pm_only, legacy) hit the new branches first.
   const perPropertyDefault = (() => {
     if (tierType === 'enforcement') {
+      if (tier === 'enforcement_only') return 15
+      if (tier === 'legacy') return 0  // negotiated; no default
+      // Back-compat for OLD tier display:
       return tier === 'starter' ? 15 : tier === 'growth' ? 12 : 10
     }
+    if (tier === 'pm_only') return 20
+    if (tier === 'legacy') return 0  // negotiated; no default
+    // Back-compat for OLD tier display:
     return tier === 'essential' ? 20 : tier === 'professional' ? 15 : 10
   })()
-  const perDriverDefault = tierType === 'enforcement'
-    ? (tier === 'starter' ? 10 : tier === 'growth' ? 8 : 6)
-    : 0
+  // Slice 1 Commit 5 — perDriverDefault removed (field gone; no readers).
 
   const overrideValidation = validateFeatureOverrides(overridesText)
 
@@ -129,27 +160,34 @@ export default function NewProposalCode() {
   // integer. CHECKs proposal_codes_included_{properties,drivers}_valid mirror.
   const includedIntOk = (s: string) => s === '' || (/^\d+$/.test(s) && parseInt(s, 10) >= 0)
   const includedPropertiesOk = includedIntOk(includedProperties)
-  const includedDriversOk = includedIntOk(includedDrivers)
+  // Slice 1 Commit 5 — customPerDriver + includedDrivers validation
+  // removed (state declarations gone). customPerPermit added.
   const allOk = prefixOk && clientName.trim() && emailOk && expiresOk
-    && numOk(customBaseFee) && numOk(customPerProperty) && numOk(customPerDriver)
+    && numOk(customBaseFee) && numOk(customPerProperty)
+    && numOk(customPerPermit)
     && lockInOk
-    && includedPropertiesOk && includedDriversOk
+    && includedPropertiesOk
     && overrideValidation.valid
 
   // B66.7 computed-total guard against fat-finger pricing. Sums what the
   // customer actually pays at month 1 given the chosen overrides +
   // included counts. Falls back to tier defaults when override blank.
   // Returns null when any input is non-numeric (UI suppresses display).
+  //
+  // Slice 1 Commit 5 — per-driver retired (perDrv always 0 since the
+  // field is removed). Per-permit included in the total IF tier is
+  // pm_only AND included_permits + customPerPermit both provide a
+  // numeric rate. NOTE: this commit doesn't add an included_permits
+  // input field — initial permit count is captured at customer
+  // approval time (commit 4a's approve_vehicle hooks). The proposal-
+  // code overhead total assumes 0 permits at issue (typical for a
+  // new customer); permit total accrues as vehicles are approved.
   const computedMonthlyTotal = (() => {
     const base = customBaseFee === '' ? tierDefaults.base : Number(customBaseFee)
     const perProp = customPerProperty === '' ? perPropertyDefault : Number(customPerProperty)
-    const perDrv = tierType === 'enforcement'
-      ? (customPerDriver === '' ? perDriverDefault : Number(customPerDriver))
-      : 0
     const propQty = includedProperties === '' ? 0 : parseInt(includedProperties, 10)
-    const drvQty = (tierType === 'enforcement' && includedDrivers !== '') ? parseInt(includedDrivers, 10) : 0
-    if ([base, perProp, perDrv, propQty, drvQty].some(n => !Number.isFinite(n))) return null
-    return base + perProp * propQty + perDrv * drvQty
+    if ([base, perProp, propQty].some(n => !Number.isFinite(n))) return null
+    return base + perProp * propQty
   })()
 
   async function submit() {
@@ -168,16 +206,22 @@ export default function NewProposalCode() {
       expires_at: expiresAt,
       custom_base_fee: customBaseFee === '' ? null : Number(customBaseFee),
       custom_per_property_fee: customPerProperty === '' ? null : Number(customPerProperty),
-      custom_per_driver_fee: tierType === 'enforcement'
-        ? (customPerDriver === '' ? null : Number(customPerDriver))
+      // Slice 1 Commit 5 — per_driver RETIRED in new model. Form
+      // field removed; payload sends NULL always (kept in shape for
+      // back-compat — the column still exists per the migration's
+      // KEEP-for-back-compat decision).
+      custom_per_driver_fee: null,
+      // Slice 1 Commit 5 — NEW: per_permit override (PM-Only deals
+      // only; legacy + enforcement_only get no permit billing per
+      // Jose's locked decision so always NULL there).
+      custom_per_permit_fee: (tierType === 'property_management' && tier === 'pm_only')
+        ? (customPerPermit === '' ? null : Number(customPerPermit))
         : null,
       lock_in_duration: lockInMonths === '' ? null : parseInt(lockInMonths, 10),
       // B66.7 Option γ: PM track has no per_driver line, so included_drivers
-      // forced NULL there (mirrors custom_per_driver_fee handling above).
+      // is now always NULL (per_driver retired in slice 1 commit 5).
       included_properties: includedProperties === '' ? null : parseInt(includedProperties, 10),
-      included_drivers: tierType === 'enforcement'
-        ? (includedDrivers === '' ? null : parseInt(includedDrivers, 10))
-        : null,
+      included_drivers: null,
       feature_overrides: overrideValidation.value,
       notes: notes.trim() || null,
       status: 'draft',
@@ -289,12 +333,29 @@ export default function NewProposalCode() {
             onChange={e => setCustomPerProperty(e.target.value)}
             placeholder={`Default: $${perPropertyDefault}`} style={inp} />
 
-          {tierType === 'enforcement' && (
+          {/* Slice 1 Commit 5 — Custom Per-Driver Fee field REMOVED.
+              per_driver line item retired in the new 3-tier model.
+              Existing proposal_codes with non-null custom_per_driver_fee
+              retain their value (back-compat); new proposals can't set it. */}
+
+          {/* Slice 1 Commit 5 — Custom Per-Permit Fee field, PM-Only deals only.
+              Single flat $/permit rate (NOT the graduated band editor —
+              graduated is standard-catalog only; custom proposals get a
+              flat negotiated rate per Jose's locked Legacy permit shape
+              decision). Legacy + Enforcement-Only deals: NO permit
+              field (unmetered / no permit billing). */}
+          {tierType === 'property_management' && tier === 'pm_only' && (
             <>
-              <label style={lbl}>Custom Per-Driver Fee ($/mo)</label>
-              <input type="number" step="0.01" min={0} value={customPerDriver}
-                onChange={e => setCustomPerDriver(e.target.value)}
-                placeholder={`Default: $${perDriverDefault}`} style={inp} />
+              <label style={lbl}>Custom Per-Permit Fee ($/permit, flat)</label>
+              <input type="number" step="0.01" min={0} value={customPerPermit}
+                onChange={e => setCustomPerPermit(e.target.value)}
+                placeholder="e.g. 1.50 (blank = use standard graduated rate)" style={inp} />
+              <p style={{ color:'#666', fontSize:'10px', margin:'-10px 0 14px', fontStyle:'italic' }}>
+                Single negotiated flat rate. Blank = customer pays the standard
+                graduated PM-Only rate ($2.00 → $1.25 by volume).
+                Stripe-side wiring of this override is deferred to a future
+                commit; the value is captured here for now.
+              </p>
             </>
           )}
 
@@ -321,17 +382,9 @@ export default function NewProposalCode() {
             <p style={{ color: '#f44336', fontSize: '11px', margin: '-10px 0 14px' }}>Must be a non-negative whole number.</p>
           )}
 
-          {tierType === 'enforcement' && (
-            <>
-              <label style={lbl}>Included Drivers</label>
-              <input type="number" min={0} step={1} value={includedDrivers}
-                onChange={e => setIncludedDrivers(e.target.value)}
-                placeholder="e.g. 2" style={inp} />
-              {!includedDriversOk && includedDrivers !== '' && (
-                <p style={{ color: '#f44336', fontSize: '11px', margin: '-10px 0 14px' }}>Must be a non-negative whole number.</p>
-              )}
-            </>
-          )}
+          {/* Slice 1 Commit 5 — Included Drivers field REMOVED
+              (per_driver retired in new model; included_drivers always
+              NULL on new deals per the payload). */}
 
           {computedMonthlyTotal !== null && (
             <div style={{ background: '#1a2030', border: '1px solid #3a4055', borderRadius: '8px', padding: '12px 14px', margin: '0 0 14px' }}>
@@ -345,13 +398,12 @@ export default function NewProposalCode() {
                 base ${(customBaseFee === '' ? tierDefaults.base : Number(customBaseFee)).toFixed(2)}
                 {' + '}
                 {includedProperties || 0} prop × ${(customPerProperty === '' ? perPropertyDefault : Number(customPerProperty)).toFixed(2)}
-                {tierType === 'enforcement' && (
-                  <>
-                    {' + '}
-                    {includedDrivers || 0} drv × ${(customPerDriver === '' ? perDriverDefault : Number(customPerDriver)).toFixed(2)}
-                  </>
-                )}
               </p>
+              {tierType === 'property_management' && tier === 'pm_only' && customPerPermit !== '' && (
+                <p style={{ color: '#666', fontSize: '10px', margin: '4px 0 0', fontFamily: 'Courier New', fontStyle: 'italic' }}>
+                  + permits × ${Number(customPerPermit).toFixed(2)} (flat, accrues as approved)
+                </p>
+              )}
             </div>
           )}
 

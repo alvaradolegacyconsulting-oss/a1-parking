@@ -18,7 +18,8 @@ type ProposalRow = {
   expires_at: string | null
   custom_base_fee: number | null
   custom_per_property_fee: number | null
-  custom_per_driver_fee: number | null
+  custom_per_driver_fee: number | null  // back-compat: kept for existing proposal_codes display
+  custom_per_permit_fee: number | null   // Slice 1 Commit 5 — PM-Only flat negotiated rate
   lock_in_duration: number | null
   feature_overrides: Record<string, boolean | number> | null
   notes: string | null
@@ -114,7 +115,15 @@ export default function ProposalCodeDetail() {
   const [expiresAt, setExpiresAt] = useState<string>('')
   const [customBaseFee, setCustomBaseFee] = useState<string>('')
   const [customPerProperty, setCustomPerProperty] = useState<string>('')
+  // Slice 1 Commit 5 — customPerDriver state KEPT for back-compat:
+  // loads existing custom_per_driver_fee from DB at L170+, payload at
+  // L238+ writes it back unchanged. Edit FIELD removed below — operator
+  // can't edit but the value preserves through Save. Full column drop
+  // is a future cleanup commit.
   const [customPerDriver, setCustomPerDriver] = useState<string>('')
+  // Slice 1 Commit 5 — NEW: per-permit override (PM-Only deals only).
+  // Loads from custom_per_permit_fee column; writes back on save.
+  const [customPerPermit, setCustomPerPermit] = useState<string>('')
   const [lockInMonths, setLockInMonths] = useState<string>('')
   const [overridesText, setOverridesText] = useState<string>('')
   const [notes, setNotes] = useState<string>('')
@@ -168,6 +177,7 @@ export default function ProposalCodeDetail() {
     setCustomBaseFee(r.custom_base_fee != null ? String(r.custom_base_fee) : '')
     setCustomPerProperty(r.custom_per_property_fee != null ? String(r.custom_per_property_fee) : '')
     setCustomPerDriver(r.custom_per_driver_fee != null ? String(r.custom_per_driver_fee) : '')
+    setCustomPerPermit(r.custom_per_permit_fee != null ? String(r.custom_per_permit_fee) : '')
     setLockInMonths(r.lock_in_duration != null ? String(r.lock_in_duration) : '')
     setOverridesText(r.feature_overrides && Object.keys(r.feature_overrides).length ? JSON.stringify(r.feature_overrides, null, 2) : '')
     setNotes(r.notes || '')
@@ -234,8 +244,18 @@ export default function ProposalCodeDetail() {
         expires_at: expiresAt || null,
         custom_base_fee: customBaseFee === '' ? null : Number(customBaseFee),
         custom_per_property_fee: customPerProperty === '' ? null : Number(customPerProperty),
-        custom_per_driver_fee: tierType === 'enforcement'
-          ? (customPerDriver === '' ? null : Number(customPerDriver))
+        // Slice 1 Commit 5 — custom_per_driver_fee preserved unchanged
+        // for back-compat (loaded from DB, written back same value).
+        // Edit FIELD removed from JSX below; operator can't change but
+        // legacy non-null values survive Save. Future commit drops the
+        // column entirely after a "no-active-deals-with-per-driver"
+        // audit.
+        custom_per_driver_fee: customPerDriver === '' ? null : Number(customPerDriver),
+        // Slice 1 Commit 5 — NEW: per-permit override (PM-Only deals
+        // only; legacy + enforcement_only get NULL per Jose's locked
+        // decision so always NULL there).
+        custom_per_permit_fee: (tierType === 'property_management' && tier === 'pm_only')
+          ? (customPerPermit === '' ? null : Number(customPerPermit))
           : null,
         lock_in_duration: lockInMonths === '' ? null : parseInt(lockInMonths, 10),
         feature_overrides: overrideValidation.value,
@@ -372,9 +392,14 @@ export default function ProposalCodeDetail() {
 
   const status = eff!
   const badge = STATUS_BADGE[status]
+  // Slice 1 Commit 5 — new 3-tier dropdown options for editing draft
+  // proposals. Existing issued/redeemed proposals with OLD base_tier
+  // values still display correctly via TIER_DISPLAY_NAME back-compat
+  // (the row's stored tier is shown in the read-only "current value"
+  // areas of the JSX; only the EDIT dropdown is restricted to the new 3).
   const tierOptions = tierType === 'enforcement'
-    ? ['starter', 'growth', 'legacy', 'premium']  // B89: Premium available on enforcement track
-    : ['essential', 'professional', 'enterprise']
+    ? ['enforcement_only', 'legacy']
+    : ['pm_only', 'legacy']
 
   const btnGold: React.CSSProperties = { padding: '10px 14px', background: '#C9A227', color: '#0f1117', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }
   const btnGhost: React.CSSProperties = { padding: '10px 14px', background: '#1e2535', color: '#aaa', fontSize: '13px', border: '1px solid #3a4055', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }
@@ -459,10 +484,23 @@ export default function ProposalCodeDetail() {
               <label style={lbl}>Custom Per-Property Fee ($/mo)</label>
               <input type="number" step="0.01" min={0} value={customPerProperty} onChange={e => setCustomPerProperty(e.target.value)} placeholder={`Default: $${perPropertyDefault}`} style={inp} />
 
-              {tierType === 'enforcement' && (
+              {/* Slice 1 Commit 5 — Custom Per-Driver Fee field REMOVED.
+                  per_driver line item retired in new 3-tier model.
+                  customPerDriver state still loads existing values from
+                  DB + writes them back unchanged on save (back-compat). */}
+
+              {/* Slice 1 Commit 5 — Custom Per-Permit Fee, PM-Only deals only.
+                  Single flat $/permit (not graduated; custom proposals
+                  get a flat negotiated rate). Legacy + Enforcement-Only:
+                  no permit field (unmetered). */}
+              {tierType === 'property_management' && tier === 'pm_only' && (
                 <>
-                  <label style={lbl}>Custom Per-Driver Fee ($/mo)</label>
-                  <input type="number" step="0.01" min={0} value={customPerDriver} onChange={e => setCustomPerDriver(e.target.value)} placeholder={`Default: $${perDriverDefault}`} style={inp} />
+                  <label style={lbl}>Custom Per-Permit Fee ($/permit, flat)</label>
+                  <input type="number" step="0.01" min={0} value={customPerPermit} onChange={e => setCustomPerPermit(e.target.value)}
+                    placeholder="e.g. 1.50 (blank = standard graduated rate)" style={inp} />
+                  <p style={{ color:'#666', fontSize:'10px', margin:'-10px 0 14px', fontStyle:'italic' }}>
+                    Stripe-side wiring of this override deferred to a future commit.
+                  </p>
                 </>
               )}
 
