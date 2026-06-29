@@ -1,7 +1,13 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
+// B213 — Turnstile widget on the change-password re-auth call.
+// signInWithPassword is captcha-gated when the Supabase toggle is ON;
+// updateUser is NOT gated (authenticated call), so only the re-auth
+// step needs the widget. The re-auth itself is deliberate security
+// (current-password-required-to-change) — kept, not eliminated.
+import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
@@ -49,6 +55,9 @@ export default function ResidentPortal() {
   const [supportWebsite, setSupportWebsite] = useState('')
   const [propertyManager, setPropertyManager] = useState<{ name: string | null; email: string | null }>({ name: null, email: null })
   const [companyName, setCompanyName] = useState<string>('')
+  // B213 — captcha state for the change-password re-auth step.
+  const [changePwCaptchaToken, setChangePwCaptchaToken] = useState<string | null>(null)
+  const changePwTurnstileRef = useRef<TurnstileHandle>(null)
   const [changePwForm, setChangePwForm] = useState({ current: '', newPw: '', confirmPw: '' })
   const [changePwMsg, setChangePwMsg] = useState('')
   const [changePwLoading, setChangePwLoading] = useState(false)
@@ -216,15 +225,43 @@ export default function ResidentPortal() {
     setChangePwMsg('')
     if (changePwForm.newPw.length < 8) { setChangePwMsg('New password must be at least 8 characters.'); return }
     if (changePwForm.newPw !== changePwForm.confirmPw) { setChangePwMsg('Passwords do not match.'); return }
+    // B213 — explicit captcha guard before re-auth (signInWithPassword
+    // is captcha-gated when toggle ON). updateUser below is NOT gated
+    // (authenticated call), so only the re-auth step needs the token.
+    if (!changePwCaptchaToken) {
+      setChangePwMsg('Please complete the CAPTCHA challenge below before saving.')
+      return
+    }
     setChangePwLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-    const { error: reAuthErr } = await supabase.auth.signInWithPassword({ email: user?.email || '', password: changePwForm.current })
-    if (reAuthErr) { setChangePwMsg('Current password is incorrect.'); setChangePwLoading(false); return }
+    // B213 — threading captchaToken into the re-auth call. Toggle OFF →
+    // ignored; toggle ON → required.
+    const { error: reAuthErr } = await supabase.auth.signInWithPassword({
+      email: user?.email || '',
+      password: changePwForm.current,
+      options: { captchaToken: changePwCaptchaToken },
+    })
+    if (reAuthErr) {
+      // B213 — single-use token; reset on any failure (wrong current pw
+      // OR captcha rejection both surface as reAuthErr) so the user can
+      // re-challenge without reloading.
+      changePwTurnstileRef.current?.reset()
+      setChangePwCaptchaToken(null)
+      setChangePwMsg('Current password is incorrect.')
+      setChangePwLoading(false)
+      return
+    }
+    // updateUser stays bare — already-authenticated, NOT captcha-gated.
     const { error: updateErr } = await supabase.auth.updateUser({ password: changePwForm.newPw })
     setChangePwLoading(false)
     if (updateErr) { setChangePwMsg(updateErr.message); return }
     setChangePwMsg('Password changed successfully.')
     setChangePwForm({ current: '', newPw: '', confirmPw: '' })
+    // B213 — clear the now-consumed captcha state on success. The widget
+    // will re-render fresh if the user opens the change-password form
+    // again.
+    changePwTurnstileRef.current?.reset()
+    setChangePwCaptchaToken(null)
   }
 
   async function saveResident() {
@@ -677,8 +714,18 @@ export default function ResidentPortal() {
             {changePwMsg && (
               <p style={{ color: changePwMsg.includes('success') ? '#4caf50' : '#f44336', fontSize:'12px', margin:'0 0 10px' }}>{changePwMsg}</p>
             )}
-            <button onClick={changePassword} disabled={changePwLoading || !changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw}
-              style={{ width:'100%', padding:'11px', background:(!changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw) ? '#555' : '#C9A227', color:(!changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:(!changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw) ? 'not-allowed' : 'pointer' }}>
+            {/* B213 — Turnstile widget for the re-auth captcha gate.
+                Mounts inline above Update Password; user must complete
+                the challenge before the button enables. Managed mode
+                usually resolves invisibly. */}
+            <div style={{ marginBottom: 10 }}>
+              <TurnstileWidget ref={changePwTurnstileRef}
+                               onVerify={setChangePwCaptchaToken}
+                               onExpire={() => setChangePwCaptchaToken(null)}
+                               onError={() => setChangePwCaptchaToken(null)} />
+            </div>
+            <button onClick={changePassword} disabled={changePwLoading || !changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw || !changePwCaptchaToken}
+              style={{ width:'100%', padding:'11px', background:(!changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw || !changePwCaptchaToken) ? '#555' : '#C9A227', color:(!changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw || !changePwCaptchaToken) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:(!changePwForm.current || !changePwForm.newPw || !changePwForm.confirmPw || !changePwCaptchaToken) ? 'not-allowed' : 'pointer' }}>
               {changePwLoading ? 'Saving...' : 'Update Password'}
             </button>
           </div>
