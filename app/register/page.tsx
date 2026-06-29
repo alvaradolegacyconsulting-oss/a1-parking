@@ -110,12 +110,17 @@ function RegisterForm() {
       const json = await res.json().catch(() => ({}))
       if (!res.ok || !json.ok) {
         // Token is single-use — reset widget on any failure so the
-        // user can re-challenge without a page reload. Error message
-        // surfaces verbatim (server route preserves "email already
-        // registered" wording).
+        // user can re-challenge without a page reload. Error surfaces
+        // the server's verbatim error message when present. The
+        // fallback used to claim "email may already be registered"
+        // which lied when the real failure was infrastructure (the
+        // 2026-06-29 middleware-allowlist class bug — every signup
+        // hit the fallback because the route never executed). The
+        // fallback now includes the HTTP status so the next infra
+        // failure is observable, not mislabeled.
         turnstileRef.current?.reset()
         setCaptchaToken(null)
-        setError(json.error || json.message || 'Failed to create account. The email may already be registered.')
+        setError(json.error || json.message || `Registration failed (HTTP ${res.status}). Please try again in a moment; if it persists, contact support.`)
         setSubmitting(false)
         return
       }
