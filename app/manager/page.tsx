@@ -420,6 +420,23 @@ export default function ManagerPortal() {
     fetchPasses(property)
     fetchResidents(property)
     fetchPendingSpaceRequests(property)
+    // Spaces fixes 2026-06-28 — load-on-manager-load for Bug 1 + Bug 2.
+    // Bug 1: tab-activation useEffect raced manager-loading and could
+    //   capture stale closure → dashboard 0/0 until an add-space action
+    //   forced a refetch. Eagerly priming here means the dashboard is
+    //   correct on first Spaces-tab open regardless of effect timing.
+    // Bug 2: availableSpacesForAssign (used by approve-space-request
+    //   modal in the Approvals tab) only populated via the same
+    //   tab-activation effect. Opening a request without first visiting
+    //   Spaces tab → empty pool → "no available spaces". This call
+    //   primes the pool at manager-load so it's present regardless of
+    //   navigation order.
+    // Note: PROPERTY ARG IS LOAD-BEARING. setManager has not yet been
+    //   React-committed when fetchAll is invoked, so closure-`manager`
+    //   inside the refetch functions would be stale. The optional arg
+    //   bypasses that race.
+    refetchSpacesDashboard(property)
+    refetchSpacesList(property)
     // fetchSpaces removed (Spaces v1 commit 3) — Spaces tab loads its own
     // data lazily on tab activation via refetchSpacesDashboard/List
     // (dashboard aggregate + filtered paginated list). Removed from the
@@ -578,32 +595,54 @@ export default function ManagerPortal() {
   //   • decommission_space         (submitDecommissionSpace)
   //   • update_space_metadata      (submitEditMetadata)
 
-  async function refetchSpacesDashboard() {
-    if (!manager?.name) return
-    const dash = await fetchOccupancyDashboard(supabase, manager.name)
+  // Spaces fixes 2026-06-28 (Bug 1 + Bug 2):
+  //   Optional `property` arg lets callers pass the property name
+  //   directly instead of reading the closure-captured `manager` state.
+  //   This is the load-on-manager-load fix: fetchAll(property) calls
+  //   these BEFORE React commits setManager, so closure-`manager` is
+  //   still stale; passing `property` explicitly avoids the race.
+  //
+  //   Pre-fix: refetchSpacesDashboard ran ONLY when Spaces tab activated
+  //   AND when manager?.name happened to be populated. If the useEffect
+  //   captured a stale closure, the fetch silently returned empty
+  //   (dashboard 0/0) and never re-fired until an add-space action.
+  //   The available-spaces pool used by the Approvals-tab modal had the
+  //   same gap: opening a space-request before ever visiting Spaces tab
+  //   → empty pool → "no available spaces" even when spaces exist.
+  //
+  //   With this change, fetchAll(property) primes BOTH the dashboard
+  //   (Bug 1) and the available pool (Bug 2) at manager-load time. The
+  //   existing tab-activation useEffects still call with no arg (default
+  //   to manager?.name) and are now defensive refreshers, not the sole
+  //   path.
+  async function refetchSpacesDashboard(property?: string) {
+    const prop = property ?? manager?.name
+    if (!prop) return
+    const dash = await fetchOccupancyDashboard(supabase, prop)
     setOccupancy(dash)
     // Inert defensive banner count (commit 1 produced 0 flagged rows in v1;
     // future per-customer rollouts may flag multi-residency unit assignments)
     const { count: flagged } = await supabase
       .from('spaces').select('*', { count: 'exact', head: true })
-      .ilike('property', manager.name).not('migration_note', 'is', null)
+      .ilike('property', prop).not('migration_note', 'is', null)
     setFlaggedMigrationCount(flagged ?? 0)
     // Available-spaces pool for the resident-approval assign-on-approve
     // dropdowns (commit 4). Top 100 available spaces; manager-level property
     // unlikely to have more available at once.
     const { rows: available } = await fetchSpacesList(
-      supabase, manager.name,
+      supabase, prop,
       { type: null, status: 'available', showInactive: false, search: '' },
       0, 100,
     )
     setAvailableSpacesForAssign(available)
   }
 
-  async function refetchSpacesList() {
-    if (!manager?.name) return
+  async function refetchSpacesList(property?: string) {
+    const prop = property ?? manager?.name
+    if (!prop) return
     setSpacesListLoading(true)
     try {
-      const { rows, totalCount } = await fetchSpacesList(supabase, manager.name, spacesFilters, spacesPage, spacesPageSize)
+      const { rows, totalCount } = await fetchSpacesList(supabase, prop, spacesFilters, spacesPage, spacesPageSize)
       setSpacesList(rows)
       setSpacesListTotal(totalCount)
     } finally {
@@ -2231,7 +2270,17 @@ export default function ManagerPortal() {
               <button onClick={() => setShowActiveVehicles(s => !s)} style={{ padding:'4px 10px', background: showActiveVehicles ? '#1a1f2e' : '#111', color: showActiveVehicles ? '#C9A227' : '#555', border:`1px solid ${showActiveVehicles ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveVehicles ? '● Active Only' : '○ Show All'}</button>
             </div>
             {!isReadOnly && (
-              <button onClick={() => setShowAddVehicle(!showAddVehicle)}
+              // Spaces fixes 2026-06-28 (Bug 3) — fire fetchResidentsAtUnit
+              // on Modal A open, mirroring Modal B at L2895. Covers the
+              // case where newVehicle.unit was typed in a prior open and
+              // persisted (residentsAtUnit may be stale). The onFocus on
+              // the Vehicle Owner select below covers the "type-without-
+              // blurring" case for fresh sessions.
+              <button onClick={async () => {
+                const willOpen = !showAddVehicle
+                setShowAddVehicle(willOpen)
+                if (willOpen) await fetchResidentsAtUnit(newVehicle.unit)
+              }}
                 style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
                 + Add Vehicle
               </button>
@@ -2252,7 +2301,14 @@ export default function ManagerPortal() {
                   {/* B166 — owner picker. Auto-populates on Unit blur via fetchResidentsAtUnit. */}
                   <div style={{ gridColumn:'span 2' }}>
                     <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Vehicle Owner</label>
-                    <select value={vehicleOwnerEmail} onChange={e => setVehicleOwnerEmail(e.target.value)} style={inputStyle}>
+                    {/* Spaces fixes 2026-06-28 (Bug 3) — onFocus lazy-fetch
+                        covers the "user typed unit then clicked directly
+                        into Owner without blurring Unit" case. Cheap: the
+                        fetch early-returns if unit is empty + already-loaded
+                        state just gets re-set with the same data. */}
+                    <select value={vehicleOwnerEmail} onChange={e => setVehicleOwnerEmail(e.target.value)}
+                            onFocus={() => { if (newVehicle.unit && residentsAtUnit.length === 0) fetchResidentsAtUnit(newVehicle.unit) }}
+                            style={inputStyle}>
                       <option value="">Unit-level / shared (no owner)</option>
                       {residentsAtUnit.map(r => (
                         <option key={r.email} value={r.email}>{r.name} ({r.email})</option>
