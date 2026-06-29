@@ -9,6 +9,10 @@ import { displayTowReason } from '../lib/tow-reasons'
 // scoping server-side regardless. Flag is true on every tier across
 // both tracks (B75 expanded from PM-only).
 import { hasFeature, getCompanyContext } from '../lib/tier'
+// Permit-Door Piece 1 §1/§2 — centralized vehicle-insert state helper
+// (PM-Only → pending → approval is the metering chokepoint; all other
+// tiers → active, preserving today's behavior).
+import { initialVehicleState } from '../lib/vehicle-state'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import SupportContact from '../components/SupportContact'
 import {
@@ -100,6 +104,13 @@ export default function ManagerPortal() {
   // Stays null on resolution failure → sync is silently skipped (safe;
   // reconcileAtRenewal is the backstop).
   const [companyIdForSync, setCompanyIdForSync] = useState<number | null>(null)
+  // Permit-Door Piece 1 §3 — manager's approval authority. Universal:
+  // gates the approve button(s) regardless of company tier. Sourced
+  // from user_roles.can_approve_vehicles at loadManager time.
+  //   admin route        → true unconditionally (admin owns it all)
+  //   manager role       → roleData.can_approve_vehicles === true
+  //   leasing_agent role → false unconditionally (no approve path)
+  const [canApproveVehicles, setCanApproveVehicles] = useState<boolean>(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   // B66.5 commit 4.3: past_due banner state.
@@ -356,6 +367,17 @@ export default function ManagerPortal() {
         if (gateResult.redirected) return
         if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
       }
+    }
+
+    // Permit-Door Piece 1 §3 — surface the authority gate state alongside
+    // the role branch. admin = always allowed; manager = per the column;
+    // leasing_agent = never (no approve path at all).
+    if (roleData.role === 'admin') {
+      setCanApproveVehicles(true)
+    } else if (roleData.role === 'manager') {
+      setCanApproveVehicles(roleData.can_approve_vehicles === true)
+    } else {
+      setCanApproveVehicles(false)
     }
 
     if (roleData.role === 'admin') {
@@ -801,6 +823,13 @@ export default function ManagerPortal() {
   }
 
   async function approveVehicle(id: string) {
+    // Permit-Door Piece 1 §3 — billing-conversion prompt (PM-Only ONLY).
+    // Non-PM tiers: no prompt (no permit meter; approval just fires).
+    // CA on PM-Only sees the prompt too (informed, not gated).
+    const ctx = getCompanyContext()
+    if (ctx.tier === 'pm_only') {
+      if (!window.confirm('Approve this vehicle as a billable permit?')) return
+    }
     // Slice 1 Commit 4b — route through approve_vehicle RPC (commit 4a).
     // The RPC re-enforces scope (DEFINER bypasses RLS; the scope-check
     // is the security property), runs the UPDATE atomically, and returns
@@ -850,6 +879,13 @@ export default function ManagerPortal() {
 
   async function approveAllForUnit(unitVehicles: any[], unit: string) {
     const note = unitNotes[unit] || null
+    // Permit-Door Piece 1 §3 — billing-conversion prompt (PM-Only ONLY).
+    // Batch shows the full count so the operator knows the scale of the
+    // billing event they're authorizing.
+    const ctxBulk = getCompanyContext()
+    if (ctxBulk.tier === 'pm_only') {
+      if (!window.confirm(`Approve ${unitVehicles.length} vehicles as billable permits?`)) return
+    }
     // Slice 1 Commit 4b — loop the approve_vehicle RPC per vehicle (each
     // gets the unified scope-check + idempotency + uniform resident_read=true
     // from commit 4a). Collect approval actions; fire ONE permit sync
@@ -881,6 +917,56 @@ export default function ManagerPortal() {
       if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllForUnit', approvedCount: bulkApprovedCount, reason: syncRes.reason })
     }
     setUnitNotes(n => { const c = {...n}; delete c[unit]; return c })
+    fetchVehicles(manager.name)
+  }
+
+  // Permit-Door Piece 1 §5 — property-wide Approve-All Pending Vehicles.
+  // Bulk-invite of N residents creates N pending vehicles (PM-Only via
+  // initialVehicleState helper); a 500-resident upload would otherwise
+  // need 500 per-unit clicks via approveAllForUnit. This action approves
+  // every pending vehicle for the manager's property in one batch.
+  //
+  // Reuses the proven 4b batch-sync pattern: loop approve_vehicle RPC
+  // per row, fire ONE permit sync after the batch if any actually
+  // approved (count is absolute, not delta; N syncs would be redundant).
+  // Billing prompt PM-Only only with the full count.
+  async function approveAllPendingProperty() {
+    const { data: pendingAll } = await supabase
+      .from('vehicles').select('id')
+      .ilike('property', manager.name).eq('status', 'pending')
+    const ids = (pendingAll ?? []).map(p => p.id)
+    if (ids.length === 0) {
+      alert('No pending vehicles to approve.')
+      return
+    }
+    const ctxAll = getCompanyContext()
+    if (ctxAll.tier === 'pm_only') {
+      if (!window.confirm(`Approve ${ids.length} vehicles as billable permits?`)) return
+    }
+    const results = await Promise.all(ids.map(async id => {
+      const { data, error } = await supabase.rpc('approve_vehicle', {
+        p_vehicle_id:   id,
+        p_manager_note: null,
+      })
+      if (error) {
+        console.error('[approve_vehicle] RPC error in approveAllPendingProperty:', error.message, { vehicleId: id })
+        return 'error'
+      }
+      const r = data as { ok?: boolean; action?: string } | null
+      if (r?.ok) {
+        console.info('[approve_vehicle]', { site: 'approveAllPendingProperty', vehicleId: id, action: r.action })
+        await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'active', property: manager.name } })
+        return r.action ?? 'unknown'
+      }
+      return 'rpc_error'
+    }))
+    const approvedCount = results.filter(a => a === 'approved').length
+    console.info('[B147-sync-batch-summary]', { site: 'approveAllPendingProperty', property: manager.name, batchSize: ids.length, approvedCount, willFireSync: approvedCount > 0 })
+    if (approvedCount > 0 && companyIdForSync) {
+      const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
+      console.info('[B147-sync-result]', { site: 'approveAllPendingProperty', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
+      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllPendingProperty', approvedCount, reason: syncRes.reason })
+    }
     fetchVehicles(manager.name)
   }
 
@@ -1002,11 +1088,28 @@ export default function ManagerPortal() {
     // per the locked decision (the note belongs to the resident approval,
     // not the auto-cascaded vehicles). One permit sync after the batch if
     // any actually approved.
-    const { data: pendingCascade } = await supabase
+    const { data: pendingCascadeRaw } = await supabase
       .from('vehicles').select('id')
       .ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
+    // Permit-Door Piece 1 §3 — billing-conversion prompt (PM-Only ONLY).
+    // Prompt fires ONLY when there's actually something to cascade
+    // (count > 0) so a no-vehicle resident-approval doesn't surface a
+    // confusing "Approve 0 vehicles?" prompt. If operator cancels:
+    // resident stays approved (L1033 already committed) but the vehicle
+    // cascade is skipped — operator can approve vehicles individually
+    // later. Resident-approval and vehicle-approval are separate
+    // billing events. Skip mechanism: empty the cascade array so the
+    // loop below runs over 0 items + the email/audit block still runs.
+    let pendingCascade = pendingCascadeRaw ?? []
+    const ctxCascade = getCompanyContext()
+    if (pendingCascade.length > 0 && ctxCascade.tier === 'pm_only') {
+      if (!window.confirm(`Approve ${pendingCascade.length} vehicles as billable permits?`)) {
+        console.info('[approve_vehicle]', { site: 'approveResident-cascade', skipped: 'billing-prompt-cancelled', count: pendingCascade.length })
+        pendingCascade = []
+      }
+    }
     let cascadeApprovedCount = 0
-    for (const v of (pendingCascade ?? [])) {
+    for (const v of pendingCascade) {
       const { data, error } = await supabase.rpc('approve_vehicle', {
         p_vehicle_id:   v.id,
         p_manager_note: null,
@@ -1124,14 +1227,18 @@ export default function ManagerPortal() {
     // permit_expiry coercion: form holds '' when blank; Postgres rejects
     // '' on a DATE column with `invalid input syntax for type date`.
      // Coerce explicitly (same family as the residents.lease_end fix).
-    // Single write site today; inline at N=1 is correct per scope discipline.
+    // Permit-Door Piece 1 §1/§2 — vehicle insert state via the centralized
+    // helper (PM-Only → pending → approval is the metering chokepoint;
+    // all other tiers → active, preserving today's behavior).
+    const initState = initialVehicleState(getCompanyContext().tier)
     const { error } = await supabase.from('vehicles').insert([{
       ...newVehicle,
       plate: normalizedPlate,
       unit: unit || newVehicle.unit,
       property: manager.name,
       resident_email: ownerEmail,
-      is_active: true,
+      status: initState.status,
+      is_active: initState.is_active,
       year: parseInt(newVehicle.year) || null,
       permit_expiry: newVehicle.permit_expiry || null,
     }])
@@ -1223,6 +1330,12 @@ export default function ManagerPortal() {
       // customer can add the vehicle later via the Edit Resident
       // modal or /resident if this insert fails.
       if (newResident.vehicle_plate.trim()) {
+        // Permit-Door Piece 1 §1/§2 — vehicle insert state via the
+        // centralized helper. PM-Only → pending (approval is the
+        // metering chokepoint); all other tiers → active (preserves
+        // today's behavior since this is the manager-trusted
+        // resident-create cascade, not a self-register).
+        const cascadeInitState = initialVehicleState(getCompanyContext().tier)
         const { error: vehErr } = await supabase.from('vehicles').insert([{
           plate: normalizePlate(newResident.vehicle_plate),
           state: newResident.vehicle_state || 'TX',
@@ -1234,8 +1347,8 @@ export default function ManagerPortal() {
           property: manager.name,
           // B166 — owner stamp. targetEmail already lowercased at L522.
           resident_email: targetEmail,
-          is_active: true,
-          status: 'active',
+          is_active: cascadeInitState.is_active,
+          status:    cascadeInitState.status,
         }])
         if (vehErr) {
           // Inline boundary — log + soft alert + CONTINUE. Do NOT throw.
@@ -1921,9 +2034,20 @@ export default function ManagerPortal() {
               }, {} as Record<string, any[]>)
               return (
                 <div style={{ marginBottom:'16px' }}>
-                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px' }}>
-                    Pending Vehicle Requests ({pendingVehicles.length})
-                  </p>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'0 0 12px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:0 }}>
+                      Pending Vehicle Requests ({pendingVehicles.length})
+                    </p>
+                    {/* Permit-Door Piece 1 §5 — property-wide Approve-All.
+                        Visible to managers with can_approve_vehicles (universal).
+                        Reuses the batch-sync pattern: N approvals → 1 sync. */}
+                    {!isReadOnly && canApproveVehicles && pendingVehicles.length > 1 && (
+                      <button onClick={approveAllPendingProperty}
+                        style={{ padding:'6px 12px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                        Approve All Pending ({pendingVehicles.length})
+                      </button>
+                    )}
+                  </div>
                   {(Object.entries(grouped) as [string, any[]][]).map(([unit, unitVehicles]) => {
                     const resident = residents.find((r: any) => r.unit?.toLowerCase() === unit.toLowerCase())
                     return (
@@ -1938,10 +2062,16 @@ export default function ManagerPortal() {
                             </div>
                             {!isReadOnly && (
                               <div style={{ display:'flex', gap:'6px' }}>
-                                <button onClick={() => approveAllForUnit(unitVehicles, unit)}
-                                  style={{ padding:'5px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
-                                  Approve All
-                                </button>
+                                {/* Permit-Door Piece 1 §3 — Approve gated
+                                    on can_approve_vehicles (universal:
+                                    appears for any tier's manager with
+                                    authority). Decline always visible. */}
+                                {canApproveVehicles && (
+                                  <button onClick={() => approveAllForUnit(unitVehicles, unit)}
+                                    style={{ padding:'5px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                                    Approve All
+                                  </button>
+                                )}
                                 <button onClick={() => declineAllForUnit(unitVehicles, unit)}
                                   style={{ padding:'5px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
                                   Decline All
@@ -1980,12 +2110,18 @@ export default function ManagerPortal() {
                             />
                             {!isReadOnly && (
                               <div style={{ display:'flex', gap:'8px' }}>
-                                <button onClick={() => approveVehicle(v.id)}
-                                  style={{ flex:1, padding:'8px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
-                                  Approve
-                                </button>
+                                {/* Permit-Door Piece 1 §3 — Approve gated
+                                    on can_approve_vehicles. Decline always
+                                    visible (managers should still be able
+                                    to decline regardless of billing authority). */}
+                                {canApproveVehicles && (
+                                  <button onClick={() => approveVehicle(v.id)}
+                                    style={{ flex:1, padding:'8px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                                    Approve
+                                  </button>
+                                )}
                                 <button onClick={() => declineVehicle(v.id)}
-                                  style={{ flex:1, padding:'8px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                                  style={{ flex: canApproveVehicles ? 1 : undefined, padding:'8px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
                                   Decline
                                 </button>
                               </div>
@@ -2660,10 +2796,19 @@ export default function ManagerPortal() {
                     )}
                     {!isReadOnly && (
                       <div style={{ display:'flex', gap:'8px' }}>
-                        <button onClick={() => approveResident(r)}
-                          style={{ flex:1, padding:'8px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
-                          Approve
-                        </button>
+                        {/* Permit-Door Piece 1 §3 — Resident approval gated
+                            on can_approve_vehicles. The cascade vehicle
+                            approvals trigger the billing prompt; gating
+                            here is consistent — managers without authority
+                            don't approve residents (which would otherwise
+                            leave vehicles in pending with no path to
+                            approval). Decline always visible. */}
+                        {canApproveVehicles && (
+                          <button onClick={() => approveResident(r)}
+                            style={{ flex:1, padding:'8px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                            Approve
+                          </button>
+                        )}
                         <button onClick={() => declineResident(r)}
                           style={{ flex:1, padding:'8px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
                           Decline

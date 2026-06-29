@@ -3,6 +3,12 @@ import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { FEATURE_FLAGS } from '../../../lib/feature-flags'
 import { TIER_CONFIG } from '../../../lib/tier-config'
+// Permit-Door Piece 1 §1/§2 — centralized vehicle-insert state helper.
+// PM-Only companies: bulk-invite companion vehicles land pending →
+// approve_vehicle RPC + meter sync at approval time. All other tiers:
+// active (preserves today's behavior; no permit meter on non-PM).
+// Residents are NOT affected — only the companion VEHICLE goes pending.
+import { initialVehicleState } from '../../../lib/vehicle-state'
 import {
   validateRows,
   MAX_UPLOAD_ROWS,
@@ -325,8 +331,9 @@ export async function POST(req: NextRequest) {
             // register/page.tsx:137).
             property: res.property,
             unit: res.unit,
-            status: 'active',
-            is_active: true,
+            // Permit-Door Piece 1 §2 — helper-routed insert state.
+            // companyData.tier resolved at L110 above.
+            ...initialVehicleState(companyData.tier),
           }])
           if (vehErr) {
             console.error('[bulk-invite] companion vehicle insert failed for', res.email, vehErr.message)

@@ -259,6 +259,13 @@ export default function CompanyAdminPortal() {
   const [newUser, setNewUser] = useState({ name: '', email: '', role: 'manager', property: '' })
   const [userMsg, setUserMsg] = useState('')
   const [togglingUser, setTogglingUser] = useState<string | null>(null)
+  // Permit-Door Piece 1 §4 — manager-creation REQUIRED yes/no for
+  // can_approve_vehicles authority. null = unchosen (must be picked
+  // before submit when role='manager'); deliberately no default.
+  // Universal — shows for every CA regardless of company tier.
+  // (Approval-time billing prompt + YES-confirm-copy ARE tier-gated;
+  // see submit handler below.)
+  const [newManagerCanApprove, setNewManagerCanApprove] = useState<boolean | null>(null)
 
   const [companyDrivers, setCompanyDrivers] = useState<any[]>([])
   const [showAddDriver, setShowAddDriver] = useState(false)
@@ -1378,6 +1385,28 @@ export default function CompanyAdminPortal() {
   async function createUser() {
     const isResident = newUser.role === 'resident'
     if (!newUser.email || !newUser.role) { setUserMsg('Email and role are required'); return }
+
+    // Permit-Door Piece 1 §4 — manager creation requires explicit yes/no
+    // for can_approve_vehicles authority (universal, every CA).
+    // Tier-conditional YES-confirm copy (PM-Only mentions billing).
+    if (newUser.role === 'manager') {
+      if (newManagerCanApprove === null) {
+        setUserMsg('Please select whether this manager can approve vehicle registrations.')
+        return
+      }
+      const targetName = newUser.name.trim() || newUser.email.trim()
+      const isPmOnly = getCompanyContext().tier === 'pm_only'
+      const confirmMsg = newManagerCanApprove === false
+        ? `${targetName} will not be able to approve new vehicle registrations.`
+        : isPmOnly
+          ? `I authorize ${targetName} to approve vehicle registrations, which initiates billing at the graduated permit rate.`
+          : `I authorize ${targetName} to approve vehicle registrations.`
+      if (!window.confirm(confirmMsg)) {
+        setUserMsg('')
+        return
+      }
+    }
+
     setUserMsg('Creating...')
 
     const targetEmail = newUser.email.trim().toLowerCase()
@@ -1519,6 +1548,29 @@ export default function CompanyAdminPortal() {
         setUserMsg('Error: ' + (json.error || 'Failed to send invite'))
         return
       }
+      // Permit-Door Piece 1 §4 — apply the manager approval-authority
+      // grant if YES was selected at the creation form. NO selection
+      // = leave column at DEFAULT FALSE (no RPC call needed). The
+      // grant RPC is non-fatal: a failed grant leaves the manager
+      // created+invited, just without authority — CA can re-toggle
+      // via the user-list per-manager surface. Tagged log.
+      if (newUser.role === 'manager' && newManagerCanApprove === true) {
+        const { data, error } = await supabase.rpc('set_manager_approve_permission', {
+          p_manager_email: targetEmail,
+          p_allowed:       true,
+        })
+        if (error) {
+          console.warn('[set_manager_approve_permission] grant failed (non-fatal — manager created without authority):', error.message)
+        } else {
+          const grantResult = data as { ok?: boolean; noop?: boolean; error?: string } | null
+          if (grantResult?.error) {
+            console.warn('[set_manager_approve_permission] grant returned error (non-fatal):', grantResult.error)
+          }
+        }
+      }
+      // Reset the per-creation manager-authority choice (null for the
+      // next create).
+      setNewManagerCanApprove(null)
       setUserMsg(json.warning
         ? `Invite sent — partial: ${json.warning}`
         : `Invite email sent to ${targetEmail}`)
@@ -1682,6 +1734,61 @@ export default function CompanyAdminPortal() {
         String(d.email).toLowerCase() === String(driver.email).toLowerCase()
           ? { ...d, can_regenerate_tow_ticket: allowed }
           : d
+      )
+    )
+  }
+
+  // Permit-Door Piece 1 §4 — CA-facing grant/revoke of the per-manager
+  // can_approve_vehicles permission. One-to-one mirror of
+  // setDriverRegenPermission above (same confirm-then-RPC-then-patch
+  // shape, same error-code map, same local-patch). The RPC's role gate
+  // (admin + company_admin) and company-scope predicate are the real
+  // authority; this handler is the UX surface.
+  //
+  // YES-confirm copy is TIER-CONDITIONAL: PM-Only mentions billing;
+  // non-PM does not. NO-confirm copy is universal.
+  async function setManagerApprovePermission(manager: any, allowed: boolean) {
+    const action = allowed ? 'grant' : 'revoke'
+    const targetName = manager.name || manager.email
+    const isPmOnly = getCompanyContext().tier === 'pm_only'
+    const msg = !allowed
+      ? `${targetName} will not be able to approve new vehicle registrations.`
+      : isPmOnly
+        ? `I authorize ${targetName} to approve vehicle registrations, which initiates billing at the graduated permit rate.`
+        : `I authorize ${targetName} to approve vehicle registrations.`
+    if (!window.confirm(msg)) return
+
+    const { data, error } = await supabase.rpc('set_manager_approve_permission', {
+      p_manager_email: String(manager.email).toLowerCase(),
+      p_allowed:       allowed,
+    })
+    if (error) {
+      alert(`Could not ${action} approval authority: ${error.message}`)
+      return
+    }
+    const result = data as { ok?: boolean; noop?: boolean; error?: string; hint?: string; new_value?: boolean }
+    if (result?.error) {
+      const messages: Record<string, string> = {
+        unauthenticated:        'Your session has expired. Please log in again.',
+        no_role_assigned:       'Your account has no role assigned. Contact your admin.',
+        no_company_assigned:    'Your account has no company assigned. Contact your admin.',
+        role_not_authorized:    'Only admin or company admin can change manager approval authority.',
+        invalid_allowed:        result.hint || 'Internal: invalid p_allowed value.',
+        manager_email_required: 'Internal: missing manager email.',
+        manager_not_found:      'Manager not found. Refresh the list.',
+        not_a_manager:          result.hint || 'Approval authority applies only to managers.',
+        manager_out_of_scope:   'That manager belongs to a different company.',
+      }
+      alert(messages[result.error] || `Error: ${result.error}`)
+      return
+    }
+
+    // Local-patch the row in companyUsers (mirrors the driver-regen pattern).
+    setCompanyUsers((prev: any[]) =>
+      prev.map(u =>
+        String(u.email).toLowerCase() === String(manager.email).toLowerCase()
+          ? { ...u, can_approve_vehicles: allowed }
+          : u
       )
     )
   }
@@ -4657,6 +4764,33 @@ export default function CompanyAdminPortal() {
                         A temp password will be auto-generated and shown once after submit.
                       </p>
                     )}
+                    {/* Permit-Door Piece 1 §4 — manager approval authority
+                        REQUIRED choice. Universal (every CA sees this).
+                        Default: null (unchosen). Submit handler validates
+                        a deliberate yes/no was picked before creating
+                        the manager. YES-confirm copy is tier-conditional
+                        (PM-Only mentions billing). */}
+                    {newUser.role === 'manager' && (
+                      <>
+                        <label style={lbl}>Approve Vehicle Registrations? *</label>
+                        <select
+                          value={newManagerCanApprove === null ? '' : newManagerCanApprove ? 'yes' : 'no'}
+                          onChange={e => {
+                            const v = e.target.value
+                            setNewManagerCanApprove(v === 'yes' ? true : v === 'no' ? false : null)
+                          }}
+                          style={inp}>
+                          <option value="">— Select —</option>
+                          <option value="yes">Yes — manager can approve vehicles</option>
+                          <option value="no">No — manager cannot approve vehicles</option>
+                        </select>
+                        <p style={{ color:'#555', fontSize:'11px', margin:'-6px 0 12px' }}>
+                          {getCompanyContext().tier === 'pm_only'
+                            ? 'PM-Only billing: approvals initiate per-permit billing. You can change this later in the user list.'
+                            : 'Required choice. You can change this later in the user list.'}
+                        </p>
+                      </>
+                    )}
                     <label style={lbl}>Property</label>
                     <select value={newUser.property} onChange={e => setNewUser({ ...newUser, property: e.target.value })} style={inp}>
                       <option value="">No specific property</option>
@@ -4707,6 +4841,27 @@ export default function CompanyAdminPortal() {
                                 <span style={{ background: u.is_active !== false ? '#1a3a1a' : '#3a1a1a', color: u.is_active !== false ? '#4caf50' : '#f44336', padding:'2px 6px', borderRadius:'8px', fontSize:'9px', fontWeight:'bold' }}>
                                   {u.is_active !== false ? 'Active' : 'Inactive'}
                                 </span>
+                              )}
+                              {/* Permit-Door Piece 1 §4 — approval-authority
+                                  status badge for managers (universal; appears
+                                  for every tier). Click-to-toggle via
+                                  setManagerApprovePermission with tier-
+                                  conditional confirm copy. Mirrors the
+                                  driver-regen toggle pattern. */}
+                              {u.role === 'manager' && (
+                                <button onClick={() => setManagerApprovePermission(u, !u.can_approve_vehicles)}
+                                  title={u.can_approve_vehicles
+                                    ? 'Approval authority GRANTED. Click to revoke.'
+                                    : 'Approval authority NOT granted. Click to grant.'}
+                                  style={{
+                                    background: u.can_approve_vehicles ? '#1a3a1a' : '#1e2535',
+                                    color: u.can_approve_vehicles ? '#4caf50' : '#888',
+                                    border: `1px solid ${u.can_approve_vehicles ? '#2e7d32' : '#3a4055'}`,
+                                    padding:'2px 8px', borderRadius:'8px', fontSize:'9px',
+                                    fontWeight:'bold', cursor:'pointer', fontFamily:'Arial',
+                                  }}>
+                                  {u.can_approve_vehicles ? '✓ Can Approve' : 'No Approve'}
+                                </button>
                               )}
                               {/* B144 (B66.5 c4.3): tri-state activation badge for driver/resident rows */}
                               {(u.role === 'driver' || u.role === 'resident') && (() => {

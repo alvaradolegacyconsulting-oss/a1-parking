@@ -94,19 +94,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'authorization lookup failed' }, { status: 500 })
   }
 
+  // Permit-Door Piece 1 §5b — admin (super-admin) caller is allowed
+  // for cross-company maintenance actions (e.g., property reactivation
+  // cascade at admin/page.tsx:463 that re-enters vehicles into the
+  // active count). Admin trusts the passed companyId without a CA-
+  // scope iteration. NOT a security hole — admin role is the highest
+  // privilege tier and already has cross-company write access via
+  // direct table mutations.
+  const callerIsAdmin = (callerRoles ?? []).some(r => r.role === 'admin')
+
   const caRoles = (callerRoles ?? []).filter(r => r.role === 'company_admin')
-  if (caRoles.length === 0) {
-    // Authenticated but no CA role — driver/manager/resident or
-    // attacker who guessed the route URL.
-    return NextResponse.json({ error: 'caller is not company_admin of any company' }, { status: 403 })
+  if (!callerIsAdmin && caRoles.length === 0) {
+    // Authenticated but neither admin nor any CA role — driver/manager/
+    // resident or attacker who guessed the route URL.
+    return NextResponse.json({ error: 'caller is not admin or company_admin of any company' }, { status: 403 })
   }
 
   // Iterate CA rows (typically 1, rarely 2+); use 3a's
   // resolveCompanyByName for the company-side compare. That handles
   // trim, exact .eq, ambiguous-row detection, ownership cross-check —
   // single source of truth, sibling to the B159 normalization discipline.
-  let authorized = false
+  //
+  // Permit-Door Piece 1 §5b — admin caller bypasses CA scope iteration
+  // (any companyId is allowed for admin's cross-company maintenance).
+  let authorized = callerIsAdmin
   for (const ca of caRoles) {
+    if (authorized) break
     const resolved = await resolveCompanyByName(supabase, ca.company as string | null)
     if (!resolved.ok) {
       // Resolve failed for this CA row — log + skip to next. Common

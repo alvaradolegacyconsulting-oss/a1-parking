@@ -465,6 +465,36 @@ export default function AdminPortal() {
       await auditLog(adminEmail, 'ACTIVATE_PROPERTY_CASCADE', 'properties', p.id, {
         property: propertyName, users_affected: propertyUsers?.length || 0,
       })
+      // Permit-Door Piece 1 §5b — fire permit sync after the cascade.
+      // Already-approved vehicles (status='active') just re-entered the
+      // active count (is_active=true). Without this call, the meter
+      // stays stale until renewal-reconcile. Resolve company.id from
+      // p.company text → one extra query per cascade (admin-rare action;
+      // cost negligible). Unconditional — no-ops safely on non-PM via
+      // skipped_no_line_item per syncOnAdd's existing branch.
+      try {
+        const { data: comp } = await supabase
+          .from('companies').select('id')
+          .ilike('name', p.company || '')
+          .maybeSingle()
+        if (comp?.id) {
+          const { data: { session: postSession } } = await supabase.auth.getSession()
+          const syncRes = await fetch('/api/billing/sync-on-add', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(postSession?.access_token ? { 'Authorization': `Bearer ${postSession.access_token}` } : {}),
+            },
+            body: JSON.stringify({ company_id: Number(comp.id), kind: 'permit' }),
+          })
+          const json = await syncRes.json().catch(() => ({}))
+          console.info('[B147-sync-result]', { site: 'admin-property-cascade', kind: 'permit', companyId: comp.id, result: syncRes.ok && json.ok ? json.action : `failed:${json.reason ?? json.error ?? syncRes.status}` })
+        } else {
+          console.warn('[B147-sync-skipped-no-companyid]', { site: 'admin-property-cascade', propertyName, companyName: p.company })
+        }
+      } catch (e) {
+        console.warn('[B147-sync-failed]', { site: 'admin-property-cascade', propertyName, error: (e as Error).message })
+      }
     }
     fetchProperties()
   }
