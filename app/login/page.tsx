@@ -1,7 +1,11 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { useResolvedLogo } from '../lib/logo'
+// B213 — Turnstile widget for native captcha-gated signInWithPassword.
+// Supabase's captcha toggle (when ON) rejects sign-in without a token;
+// the 6/19 lockout root cause was this site missing the widget.
+import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 // B65.2: account_state gate. Login dispatch is the primary stop for non-active
 // states (CA portal entry has the same gate as defense in depth).
 import { gateAccountState, AccountState } from '../lib/account-state'
@@ -37,6 +41,11 @@ export default function Login() {
   // which resolve reason fired (no info leak); tagged-log in
   // resolveCompanyByName differentiates by reason for ops.
   const [resolveFailed, setResolveFailed] = useState<{ companyName: string } | null>(null)
+  // B213 — captcha token + widget ref. Reset-on-failure pattern matches
+  // the 4 existing widgeted forms; tokens are single-use so any failed
+  // login attempt needs a fresh re-challenge.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileHandle>(null)
 
   useEffect(() => {
     setCompanyLogo(localStorage.getItem('company_logo'))
@@ -83,10 +92,32 @@ export default function Login() {
     setLoading(true)
     setError('')
 
+    // B213 — explicit captcha guard before the signInWithPassword call.
+    // Matches the defensive shape in /signup, /signup/redeem, /register,
+    // /visitor: button-disabled covers the happy path, this guard makes
+    // the requirement legible to readers + surfaces a clear message
+    // instead of a generic auth error if someone bypasses the disable.
+    if (!captchaToken) {
+      setLoading(false)
+      setError('Please complete the CAPTCHA challenge below before signing in.')
+      return
+    }
+
     // B65.4: capture authData so the recovery branch below can read
     // user_metadata.proposal_code + email_confirmed_at off the signed-in user.
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password })
+    // B213: threading captchaToken into options — Supabase ignores when
+    // toggle OFF (deploy-before-toggle stays safe).
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+      options: { captchaToken },
+    })
     if (authError) {
+      // B213 — token is single-use; reset widget on any failure (wrong
+      // password OR captcha rejection both surface as authError here)
+      // so the user can re-challenge without a page reload.
+      turnstileRef.current?.reset()
+      setCaptchaToken(null)
       setLoading(false)
       setError('Invalid email or password. Please try again.')
       return
@@ -332,10 +363,22 @@ export default function Login() {
             </a>
           </div>
 
+          {/* B213 — Turnstile widget. onVerify sets captchaToken; expiry
+              + error callbacks clear it so Sign In re-disables. Submit
+              button gates on captchaToken so user can't fire the call
+              with no token (defense in depth alongside the handleLogin
+              guard). */}
+          <div style={{ marginBottom:'14px' }}>
+            <TurnstileWidget ref={turnstileRef}
+                             onVerify={setCaptchaToken}
+                             onExpire={() => setCaptchaToken(null)}
+                             onError={() => setCaptchaToken(null)} />
+          </div>
+
           <button
             onClick={handleLogin}
-            disabled={loading || !email || !password}
-            style={{ width:'100%', padding:'13px', background: (!email || !password) ? '#555' : '#C9A227', color: (!email || !password) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!email || !password) ? 'not-allowed' : 'pointer' }}
+            disabled={loading || !email || !password || !captchaToken}
+            style={{ width:'100%', padding:'13px', background: (!email || !password || !captchaToken) ? '#555' : '#C9A227', color: (!email || !password || !captchaToken) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!email || !password || !captchaToken) ? 'not-allowed' : 'pointer' }}
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>

@@ -83,6 +83,14 @@ function RedeemInner() {
   // re-challenge without a page reload.
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<TurnstileHandle>(null)
+  // B213 — SECOND widget for the resend flow. The original captchaToken
+  // above is consumed by supabase.auth.signUp at the editing → sent
+  // transition; the "sent" view's Resend button calls auth.resend which
+  // is also captcha-gated and needs its OWN fresh token. Separate state
+  // + ref keeps the two widgets cleanly isolated (the resend widget
+  // only mounts once submission.kind === 'sent').
+  const [resendCaptchaToken, setResendCaptchaToken] = useState<string | null>(null)
+  const resendTurnstileRef = useRef<TurnstileHandle>(null)
 
   // 2026-06-17 site-cleanup extension — when no ?code= present, accept paste
   // instead of dead-ending. Site CTA "Have a proposal code? Activate here →"
@@ -205,12 +213,20 @@ function RedeemInner() {
 
   async function resend() {
     if (submission.kind !== 'sent' || resendCooldown > 0) return
+    // B213 — resend is captcha-gated; guard before the call (button-disabled
+    // already gates the happy path).
+    if (!resendCaptchaToken) return
     setResendCooldown(30)
     const { error } = await supabase.auth.resend({
       type: 'signup',
       email: submission.email,
-      options: { emailRedirectTo: buildRedirectTo() },
+      options: { emailRedirectTo: buildRedirectTo(), captchaToken: resendCaptchaToken },
     })
+    // B213 — token is single-use; always reset the resend widget after
+    // a resend attempt (success or failure) so a subsequent resend has
+    // a fresh token.
+    resendTurnstileRef.current?.reset()
+    setResendCaptchaToken(null)
     if (error) {
       // Don't unwind the "sent" view — the email may have gone out anyway and
       // we don't want to confuse the user. Just show a small inline note.
@@ -369,8 +385,20 @@ function RedeemInner() {
             <p style={{ color: MUTED, fontSize: 13, lineHeight: 1.6, margin: '0 0 22px' }}>
               Click the link to verify your email and continue setting up your account. The link is valid for one hour.
             </p>
-            <button onClick={resend} disabled={resendCooldown > 0}
-              style={{ background: resendCooldown > 0 ? '#1e2535' : CARD_BG, color: resendCooldown > 0 ? '#555' : TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 18px', fontSize: 13, fontWeight: 600, cursor: resendCooldown > 0 ? 'not-allowed' : 'pointer' }}>
+            {/* B213 — Turnstile widget for the resend operation. Separate
+                from the page's primary captcha widget (which was consumed
+                by the initial signUp at the editing → sent transition).
+                auth.resend is captcha-gated, so a fresh token is required.
+                Cooldown stays in place; Resend disables on either cooldown
+                or missing token. */}
+            <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'center' }}>
+              <TurnstileWidget ref={resendTurnstileRef}
+                               onVerify={setResendCaptchaToken}
+                               onExpire={() => setResendCaptchaToken(null)}
+                               onError={() => setResendCaptchaToken(null)} />
+            </div>
+            <button onClick={resend} disabled={resendCooldown > 0 || !resendCaptchaToken}
+              style={{ background: (resendCooldown > 0 || !resendCaptchaToken) ? '#1e2535' : CARD_BG, color: (resendCooldown > 0 || !resendCaptchaToken) ? '#555' : TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 18px', fontSize: 13, fontWeight: 600, cursor: (resendCooldown > 0 || !resendCaptchaToken) ? 'not-allowed' : 'pointer' }}>
               {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Didn’t receive it? Resend'}
             </button>
             <p style={{ color: MUTED, fontSize: 11, margin: '20px 0 0', lineHeight: 1.6 }}>

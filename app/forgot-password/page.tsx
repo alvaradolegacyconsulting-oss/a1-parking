@@ -11,8 +11,10 @@
 // which redirects to https://shieldmylot.com/reset-password with a
 // PKCE token in the query string.
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { supabase } from '../supabase'
+// B213 — Turnstile widget for native captcha-gated resetPasswordForEmail.
+import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 
 const GOLD = '#C9A227'
 
@@ -21,17 +23,29 @@ export default function ForgotPassword() {
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  // B213 — captcha token + widget ref (reset-on-failure pattern).
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileHandle>(null)
 
   async function submit() {
     if (!email.trim()) return
+    // B213 — explicit captcha guard before resetPasswordForEmail.
+    if (!captchaToken) {
+      setError('Please complete the CAPTCHA challenge below before submitting.')
+      return
+    }
     setSubmitting(true)
     setError('')
     const redirectTo = typeof window === 'undefined'
       ? 'https://shieldmylot.com/reset-password'
       : `${window.location.origin}/reset-password`
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo })
+    // B213 — threading captchaToken into options; ignored when toggle OFF.
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo, captchaToken })
     setSubmitting(false)
     if (error) {
+      // B213 — token single-use; reset on any failure so user can retry.
+      turnstileRef.current?.reset()
+      setCaptchaToken(null)
       // Surface the error in case it's something other than enumeration
       // (e.g. rate limit). Otherwise success branch covers the happy + the
       // "no such email" cases identically per anti-enumeration policy.
@@ -85,8 +99,15 @@ export default function ForgotPassword() {
                 placeholder="you@example.com"
                 style={{ display: 'block', width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box' }} />
             </div>
-            <button onClick={submit} disabled={!email.trim() || submitting}
-              style={{ width: '100%', padding: 13, background: !email.trim() || submitting ? '#555' : GOLD, color: !email.trim() || submitting ? '#888' : '#0f1117', fontWeight: 'bold', fontSize: 15, border: 'none', borderRadius: 8, cursor: !email.trim() || submitting ? 'not-allowed' : 'pointer' }}>
+            {/* B213 — Turnstile widget; submit gates on captchaToken. */}
+            <div style={{ marginBottom: 14 }}>
+              <TurnstileWidget ref={turnstileRef}
+                               onVerify={setCaptchaToken}
+                               onExpire={() => setCaptchaToken(null)}
+                               onError={() => setCaptchaToken(null)} />
+            </div>
+            <button onClick={submit} disabled={!email.trim() || submitting || !captchaToken}
+              style={{ width: '100%', padding: 13, background: (!email.trim() || submitting || !captchaToken) ? '#555' : GOLD, color: (!email.trim() || submitting || !captchaToken) ? '#888' : '#0f1117', fontWeight: 'bold', fontSize: 15, border: 'none', borderRadius: 8, cursor: (!email.trim() || submitting || !captchaToken) ? 'not-allowed' : 'pointer' }}>
               {submitting ? 'Sending…' : 'Send reset link'}
             </button>
             <div style={{ marginTop: 16, textAlign: 'center' }}>
