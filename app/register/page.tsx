@@ -42,30 +42,6 @@ function RegisterForm() {
   // Token is single-use; reset on failure so the user can re-challenge.
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<TurnstileHandle>(null)
-  // B213 — fresh-token resolver for the dual-token flow. Token #1 is
-  // consumed by /api/register/captcha-verify (guards swift-handler);
-  // signInWithPassword needs a SEPARATE token #2 (Supabase server-side
-  // captcha enforcement, when toggle ON). acquireFreshToken() resets
-  // the widget + returns a promise that resolves on the next onVerify
-  // — Managed mode usually re-resolves invisibly. Without this, the
-  // sign-in races ahead with a null/stale token and recreates a
-  // lockout-class failure (sign-in fails → "session setup failed" →
-  // residents INSERT never runs).
-  const tokenWaiterRef = useRef<((token: string) => void) | null>(null)
-  function handleCaptchaVerify(token: string) {
-    setCaptchaToken(token)
-    if (tokenWaiterRef.current) {
-      tokenWaiterRef.current(token)
-      tokenWaiterRef.current = null
-    }
-  }
-  function acquireFreshToken(): Promise<string> {
-    return new Promise((resolve) => {
-      tokenWaiterRef.current = resolve
-      setCaptchaToken(null)
-      turnstileRef.current?.reset()
-    })
-  }
 
   useEffect(() => {
     setCompanyLogo(localStorage.getItem('company_logo'))
@@ -112,81 +88,54 @@ function RegisterForm() {
         return
       }
 
-      // CAPTCHA verify — server-side gate BEFORE swift-handler. /register
-      // uses swift-handler (Edge Function) for user creation, which is not
-      // native-CAPTCHA-capable, so the wrapper-route verifies the token
-      // first. If verify fails, abort the flow (NO swift-handler call, NO
-      // auth.users row).
-      try {
-        const verifyRes = await fetch('/api/register/captcha-verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ captchaToken }),
-        })
-        if (!verifyRes.ok) {
-          const body = await verifyRes.json().catch(() => ({}))
-          // Token is single-use — reset the widget so the user can re-challenge.
-          turnstileRef.current?.reset()
-          setCaptchaToken(null)
-          setError(body?.error || 'CAPTCHA verification failed. Please try again.')
-          setSubmitting(false)
-          return
-        }
-      } catch (verifyErr) {
-        turnstileRef.current?.reset()
-        setCaptchaToken(null)
-        setError('CAPTCHA service is temporarily unavailable. Please try again in a moment.')
-        setSubmitting(false)
-        return
-      }
-
-      const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
-      const res = await fetch(fnBase + '/swift-handler', {
+      // C′′ 2026-06-29 — single-solve registration. The new
+      // /api/register/create-user route does its own siteverify
+      // (consuming token #1 server-side — bot rejection is the security
+      // boundary, must live server-side not in a client-orchestrated
+      // upstream call), admin-creates the auth.users row, and returns
+      // a magic-link token_hash for ungated session acquisition via
+      // verifyOtp. Replaces the previous (/api/register/captcha-verify
+      // → swift-handler → signInWithPassword with a second captcha
+      // token) chain. swift-handler stays in use for admin / company_admin
+      // / manager call sites — only /register switches.
+      const res = await fetch('/api/register/create-user', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({ action: 'create_user', email: account.email.trim(), password: account.password }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          captchaToken,
+          email: account.email.trim(),
+          password: account.password,
+        }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) {
+      if (!res.ok || !json.ok) {
+        // Token is single-use — reset widget on any failure so the
+        // user can re-challenge without a page reload. Error message
+        // surfaces verbatim (server route preserves "email already
+        // registered" wording).
+        turnstileRef.current?.reset()
+        setCaptchaToken(null)
         setError(json.error || json.message || 'Failed to create account. The email may already be registered.')
         setSubmitting(false)
         return
       }
 
-      // B213 — acquire FRESH token #2 for signInWithPassword. Token #1
-      // was consumed by /api/register/captcha-verify above; Supabase's
-      // server-side captcha gate (when toggle ON) requires its own
-      // token on the sign-in call. acquireFreshToken resets the widget
-      // and awaits the next onVerify (Managed mode usually invisible).
-      // Critical: MUST await before signInWithPassword — racing ahead
-      // with a null/stale token recreates the 6/19 lockout-class
-      // failure surfaced as "session setup failed".
-      let token2: string
-      try {
-        token2 = await acquireFreshToken()
-      } catch {
-        setError('Could not complete CAPTCHA challenge for sign-in. Please reload and try again.')
-        setSubmitting(false)
-        return
-      }
-
-      // Sign in as the just-created user so the residents INSERT below
-      // runs with their JWT. The residents_self_insert RLS policy checks
-      // lower(auth.jwt() ->> 'email') = lower(residents.email); without
-      // a session, that comparison is null and the INSERT is denied.
-      const { error: signInErr } = await supabase.auth.signInWithPassword({
-        email: account.email.trim(),
-        password: account.password,
-        options: { captchaToken: token2 },
+      // Sign in via verifyOtp using the magic-link token_hash returned
+      // by the new route. verifyOtp is UNGATED (confirmed by 2026-06-29
+      // prod probe) — no second captcha solve needed. Same downstream
+      // result as the prior signInWithPassword path: an authenticated
+      // session whose JWT email matches residents.email, so the
+      // residents_self_insert RLS policy passes for the INSERT below.
+      const { error: signInErr } = await supabase.auth.verifyOtp({
+        email: account.email.trim().toLowerCase(),
+        token_hash: json.token_hash as string,
+        type: 'magiclink',
       })
       if (signInErr) {
-        // B213 — sign-in failed with token #2; reset for retry. User
-        // can hit the submit button again (will re-verify captcha-verify
-        // path with a fresh token #1 too, since the original widget
-        // state is null).
+        // Reset widget for any subsequent retry. The auth.users row
+        // exists (route succeeded above) so the user can log in via
+        // /login with the password they entered, but this session-
+        // setup leg failed — message verbatim.
         turnstileRef.current?.reset()
         setCaptchaToken(null)
         setError('Account created but session setup failed: ' + signInErr.message)
@@ -537,7 +486,7 @@ function RegisterForm() {
                 <p style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>Confirm you&apos;re human</p>
                 <TurnstileWidget
                   ref={turnstileRef}
-                  onVerify={handleCaptchaVerify}
+                  onVerify={setCaptchaToken}
                   onExpire={() => setCaptchaToken(null)}
                   onError={() => setCaptchaToken(null)}
                   action="register"
