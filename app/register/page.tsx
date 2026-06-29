@@ -131,8 +131,15 @@ function RegisterForm() {
       // result as the prior signInWithPassword path: an authenticated
       // session whose JWT email matches residents.email, so the
       // residents_self_insert RLS policy passes for the INSERT below.
+      //
+      // SDK SIGNATURE — token_hash variant takes ONLY {token_hash, type}.
+      // verifyOtp has two mutually-exclusive shapes: (a) 6-digit OTP via
+      // {email, token, type} and (b) hashed-link-token via {token_hash,
+      // type}. admin.generateLink returns hashed_token → variant (b).
+      // Passing email alongside token_hash makes the SDK reject with
+      // "Only the token_hash and type should be provided." Type matches
+      // generateLink's type: 'magiclink' → verifyOtp type 'magiclink'.
       const { error: signInErr } = await supabase.auth.verifyOtp({
-        email: account.email.trim().toLowerCase(),
         token_hash: json.token_hash as string,
         type: 'magiclink',
       })
