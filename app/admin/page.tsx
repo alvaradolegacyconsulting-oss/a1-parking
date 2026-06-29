@@ -213,7 +213,60 @@ export default function AdminPortal() {
     const totalProps = properties.length
     const totalDrivers = drivers.filter((d: any) => d.is_active !== false).length
 
-    setAdminAnalytics({ monthData, topProperties, tierData, activeCompanies, thisMonthViolations, totalProps, totalDrivers })
+    // Permit-Door Piece 3 Item 2 — exempt-plate super-admin report.
+    // Informational only: lists each property's exempt-plate count
+    // vs. resident count, flags when exempt_count > max(FLOOR, PCT *
+    // resident_count). NO enforcement, NO cap, NO manager surface —
+    // super-admin eyeballs the flag to spot disproportionate exempts.
+    // Door 3 decision (2026-06-28): exempt stays FREE; this report is
+    // the soft visibility guardrail, not a meter.
+    //
+    // Threshold as named constants (Jose: NOT a platform_setting until
+    // someone needs to tune). Promote to platform_settings later if
+    // signal emerges that the threshold needs frequent adjustment.
+    const EXEMPT_PLATES_FLAG_FLOOR = 10
+    const EXEMPT_PLATES_FLAG_PCT   = 0.10
+
+    // Per-property aggregation. properties was loaded earlier in the
+    // portal lifecycle (fetchProperties). Each row has .name, .id, and
+    // .exempt_plates (TEXT[] — confirmed by manager portal write at
+    // app/manager/page.tsx:552). exempt_count = array length; null/
+    // missing → 0.
+    const exemptProps = (properties || []) as any[]
+
+    // Resident denominator: canonical pattern is
+    //   residents WHERE is_active=true AND property ILIKE <name>
+    // (per Spaces v1 + Door 5b usage). One bulk query, group client-side
+    // by lowercase property name to handle minor case drift between
+    // properties.name and residents.property.
+    const { data: residentRows } = await supabase
+      .from('residents')
+      .select('property')
+      .eq('is_active', true)
+    const residentCountByProp: Record<string, number> = {}
+    for (const r of (residentRows ?? [])) {
+      const key = String(r.property ?? '').trim().toLowerCase()
+      if (!key) continue
+      residentCountByProp[key] = (residentCountByProp[key] || 0) + 1
+    }
+
+    const exemptReport = exemptProps
+      .map(p => {
+        const exemptCount   = Array.isArray(p.exempt_plates) ? p.exempt_plates.length : 0
+        const residentCount = residentCountByProp[String(p.name ?? '').trim().toLowerCase()] ?? 0
+        const threshold     = Math.max(EXEMPT_PLATES_FLAG_FLOOR, Math.ceil(EXEMPT_PLATES_FLAG_PCT * residentCount))
+        return {
+          propertyName:  p.name as string,
+          companyName:  (p.company as string) ?? '',
+          exemptCount,
+          residentCount,
+          threshold,
+          flagged:       exemptCount > threshold,
+        }
+      })
+      .sort((a, b) => b.exemptCount - a.exemptCount)
+
+    setAdminAnalytics({ monthData, topProperties, tierData, activeCompanies, thisMonthViolations, totalProps, totalDrivers, exemptReport })
     setAdminAnalyticsLoaded(true)
   }
 
@@ -2125,6 +2178,60 @@ export default function AdminPortal() {
                         </div>
                       )
                     })}
+                  </div>
+                )}
+
+                {/* Permit-Door Piece 3 Item 2 — exempt-plate visibility report.
+                    Per Door 3 decision (Permit-Door Audit 2026-06-28): exempt
+                    plates stay FREE; this is the soft super-admin guardrail
+                    so disproportionate exempt counts get noticed without
+                    adding manager friction. Flag = exempt_count > max(10,
+                    ceil(0.10 * residents)). Informational only. */}
+                {adminAnalytics.exemptReport && adminAnalytics.exemptReport.length > 0 && (
+                  <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginTop:'14px' }}>
+                    <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>
+                      Exempt-Plate Visibility
+                    </p>
+                    <p style={{ color:'#666', fontSize:'10px', margin:'0 0 12px' }}>
+                      Informational only — review-flag fires when exempt_count &gt; max(10, 10% of residents). No enforcement.
+                    </p>
+                    {(() => {
+                      const flaggedCount = adminAnalytics.exemptReport.filter((r: any) => r.flagged).length
+                      const totalExempts = adminAnalytics.exemptReport.reduce((s: number, r: any) => s + r.exemptCount, 0)
+                      return (
+                        <p style={{ color:'#888', fontSize:'11px', margin:'0 0 10px' }}>
+                          <strong style={{ color: flaggedCount > 0 ? '#C9A227' : '#4caf50' }}>{flaggedCount}</strong> flagged of {adminAnalytics.exemptReport.length} properties · {totalExempts} total exempt plates
+                        </p>
+                      )
+                    })()}
+                    <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr 0.6fr', gap:'8px', padding:'6px 8px', background:'#0f1117', borderRadius:'6px', marginBottom:'4px' }}>
+                      <span style={{ color:'#666', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em' }}>Property</span>
+                      <span style={{ color:'#666', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right' }}>Exempts</span>
+                      <span style={{ color:'#666', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right' }}>Residents</span>
+                      <span style={{ color:'#666', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'right' }}>Threshold</span>
+                      <span style={{ color:'#666', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', textAlign:'center' }}>Flag</span>
+                    </div>
+                    {adminAnalytics.exemptReport.map((r: any, i: number) => (
+                      <div key={i} style={{
+                        display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr 0.6fr', gap:'8px',
+                        padding:'8px', borderBottom:'1px solid #1e2535',
+                        background: r.flagged ? '#3a2a08' : 'transparent',
+                        borderRadius: r.flagged ? '4px' : 0,
+                      }}>
+                        <div style={{ minWidth:0 }}>
+                          <p style={{ color:'#aaa', fontSize:'12px', margin:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{r.propertyName}</p>
+                          {r.companyName && <p style={{ color:'#555', fontSize:'10px', margin:'2px 0 0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{r.companyName}</p>}
+                        </div>
+                        <span style={{ color: r.flagged ? '#fbbf24' : 'white', fontSize:'13px', fontWeight: r.flagged ? 'bold' : 'normal', textAlign:'right', fontFamily:'Arial' }}>{r.exemptCount}</span>
+                        <span style={{ color:'#888', fontSize:'13px', textAlign:'right', fontFamily:'Arial' }}>{r.residentCount}</span>
+                        <span style={{ color:'#666', fontSize:'12px', textAlign:'right', fontFamily:'Arial' }}>{r.threshold}</span>
+                        <span style={{ textAlign:'center' }}>
+                          {r.flagged
+                            ? <span title="exempt_count exceeds threshold — review for abuse" style={{ background:'#3a2a08', color:'#fbbf24', padding:'2px 6px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', border:'1px solid #C9A227' }}>REVIEW</span>
+                            : <span style={{ color:'#444', fontSize:'12px' }}>—</span>}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </>
