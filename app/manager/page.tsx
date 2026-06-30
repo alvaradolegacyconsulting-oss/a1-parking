@@ -165,6 +165,15 @@ export default function ManagerPortal() {
   // the existing guestAuthSubmitting state — not duplicated here.)
   const [addVehicleSubmitting,    setAddVehicleSubmitting]    = useState(false)
   const [addResidentSubmitting,   setAddResidentSubmitting]   = useState(false)
+  // B212 — per-queue "Last updated" timestamps for the three pending
+  // queues (vehicles, space requests, resident registrations). Refresh
+  // button next to each header re-fetches that queue only.
+  // refreshTicker forces a re-render every 30s so "N min ago" stays
+  // accurate without polling the data itself (data refresh = on click).
+  const [vehiclesPendingRefreshedAt,      setVehiclesPendingRefreshedAt]      = useState<number>(Date.now())
+  const [spaceRequestsPendingRefreshedAt, setSpaceRequestsPendingRefreshedAt] = useState<number>(Date.now())
+  const [residentsPendingRefreshedAt,     setResidentsPendingRefreshedAt]     = useState<number>(Date.now())
+  const [, setRefreshTicker] = useState(0)
   // Per-modal target + form state — one slot per RPC, matches B214 pattern
   const [targetAdd, setTargetAdd] = useState(false)
   const [addForm, setAddForm] = useState<{ type: SpaceType }>({ type: 'carport' })
@@ -325,6 +334,13 @@ export default function ManagerPortal() {
   }, [])
   // 2. Dashboard refetch on tab activation. Aggregate queries; no row data.
   useEffect(() => { if (activeTab === 'spaces' && manager) refetchSpacesDashboard() }, [activeTab, manager])
+  // B212 — 30s ticker so "Last updated N min ago" labels stay accurate
+  // without polling the data. Data refetch happens only on Refresh
+  // click; this tick just forces fmtAgo's Date.now() read to advance.
+  useEffect(() => {
+    const id = setInterval(() => setRefreshTicker(t => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
   // 3. List refetch on tab activation OR filter/page change. SERVER-SIDE
   //    filtered + LIMIT-paginated. NEVER fetches all rows.
   useEffect(() => {
@@ -600,6 +616,39 @@ export default function ManagerPortal() {
   //   • free_space                 (submitFreeSpace)
   //   • decommission_space         (submitDecommissionSpace)
   //   • update_space_metadata      (submitEditMetadata)
+
+  // B212 — "Last updated N min ago" relative-time formatter for the
+  // 3 pending-queue headers. Plain helper, no library. Used by all
+  // three Refresh widgets. fmtAgo reads Date.now() at call-time, so
+  // re-renders driven by refreshTicker (30s interval) keep it accurate.
+  function fmtAgo(ts: number): string {
+    const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000))
+    if (sec < 30)  return 'just now'
+    if (sec < 60)  return `${sec}s ago`
+    const min = Math.floor(sec / 60)
+    if (min < 60)  return `${min} min ago`
+    const hr = Math.floor(min / 60)
+    return `${hr}h ago`
+  }
+
+  // B212 — per-queue refresh helpers. Each refetches ONLY that queue's
+  // data + stamps its own timestamp. No cross-queue refresh so manager
+  // sees exactly which queue they just refreshed.
+  async function refreshVehiclesPending() {
+    if (!manager?.name) return
+    await fetchVehicles(manager.name)
+    setVehiclesPendingRefreshedAt(Date.now())
+  }
+  async function refreshSpaceRequestsPending() {
+    if (!manager?.name) return
+    await fetchPendingSpaceRequests(manager.name)
+    setSpaceRequestsPendingRefreshedAt(Date.now())
+  }
+  async function refreshResidentsPending() {
+    if (!manager?.name) return
+    await fetchResidents(manager.name)
+    setResidentsPendingRefreshedAt(Date.now())
+  }
 
   // Spaces fixes 2026-06-28 (Bug 1 + Bug 2):
   //   Optional `property` arg lets callers pass the property name
@@ -2101,19 +2150,28 @@ export default function ManagerPortal() {
               }, {} as Record<string, any[]>)
               return (
                 <div style={{ marginBottom:'16px' }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'0 0 12px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'0 0 12px', gap:'8px', flexWrap:'wrap' as const }}>
                     <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:0 }}>
                       Pending Vehicle Requests ({pendingVehicles.length})
                     </p>
-                    {/* Permit-Door Piece 1 §5 — property-wide Approve-All.
-                        Visible to managers with can_approve_vehicles (universal).
-                        Reuses the batch-sync pattern: N approvals → 1 sync. */}
-                    {!isReadOnly && canApproveVehicles && pendingVehicles.length > 1 && (
-                      <button onClick={approveAllPendingProperty}
-                        style={{ padding:'6px 12px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
-                        Approve All Pending ({pendingVehicles.length})
+                    <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                      {/* B212 — Refresh + last-updated for this queue. */}
+                      <span style={{ color:'#666', fontSize:'10px' }}>Updated {fmtAgo(vehiclesPendingRefreshedAt)}</span>
+                      <button onClick={refreshVehiclesPending}
+                        title="Refresh pending vehicles"
+                        style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                        ↻ Refresh
                       </button>
-                    )}
+                      {/* Permit-Door Piece 1 §5 — property-wide Approve-All.
+                          Visible to managers with can_approve_vehicles (universal).
+                          Reuses the batch-sync pattern: N approvals → 1 sync. */}
+                      {!isReadOnly && canApproveVehicles && pendingVehicles.length > 1 && (
+                        <button onClick={approveAllPendingProperty}
+                          style={{ padding:'6px 12px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial' }}>
+                          Approve All Pending ({pendingVehicles.length})
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {(Object.entries(grouped) as [string, any[]][]).map(([unit, unitVehicles]) => {
                     const resident = residents.find((r: any) => r.unit?.toLowerCase() === unit.toLowerCase())
@@ -2213,9 +2271,20 @@ export default function ManagerPortal() {
                 manager init; refetched on every successful approve). */}
             {pendingSpaceRequests.length > 0 && (
               <div style={{ marginBottom:'16px' }}>
-                <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px' }}>
-                  Pending Space Requests ({pendingSpaceRequests.length})
-                </p>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'0 0 12px', gap:'8px', flexWrap:'wrap' as const }}>
+                  <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:0 }}>
+                    Pending Space Requests ({pendingSpaceRequests.length})
+                  </p>
+                  {/* B212 — Refresh + last-updated for this queue. */}
+                  <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                    <span style={{ color:'#666', fontSize:'10px' }}>Updated {fmtAgo(spaceRequestsPendingRefreshedAt)}</span>
+                    <button onClick={refreshSpaceRequestsPending}
+                      title="Refresh pending space requests"
+                      style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                      ↻ Refresh
+                    </button>
+                  </div>
+                </div>
                 {spaceRequestError && (
                   <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
                     <p style={{ color:'#f44336', fontSize:'12px', margin:0 }}>{spaceRequestError}</p>
@@ -2825,9 +2894,20 @@ export default function ManagerPortal() {
           <div>
             {pendingResidents.length > 0 && (
               <div style={{ background:'#1a1400', border:'1px solid #a16207', borderRadius:'10px', padding:'14px', marginBottom:'16px' }}>
-                <p style={{ color:'#fbbf24', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px' }}>
-                  Pending Resident Registrations ({pendingResidents.length})
-                </p>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'0 0 12px', gap:'8px', flexWrap:'wrap' as const }}>
+                  <p style={{ color:'#fbbf24', fontWeight:'bold', fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.08em', margin:0 }}>
+                    Pending Resident Registrations ({pendingResidents.length})
+                  </p>
+                  {/* B212 — Refresh + last-updated for this queue. */}
+                  <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                    <span style={{ color:'#666', fontSize:'10px' }}>Updated {fmtAgo(residentsPendingRefreshedAt)}</span>
+                    <button onClick={refreshResidentsPending}
+                      title="Refresh pending residents"
+                      style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
+                      ↻ Refresh
+                    </button>
+                  </div>
+                </div>
                 {pendingResidents.map(r => (
                   <div key={r.id} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'10px' }}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
