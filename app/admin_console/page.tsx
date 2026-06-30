@@ -87,6 +87,12 @@ export default function AdminConsolePage() {
   const [pmPropertyPermits, setPmPropertyPermits] = useState<PmPropertyPermit[] | null>(null)
   const [costRates, setCostRates] = useState<{ plate_read_usd: number; vin_lookup_usd: number }>({ plate_read_usd: 0.012, vin_lookup_usd: 0.05 })
   const [acking, setAcking] = useState<string | null>(null)
+  // B228 Phase 3 — deactivate-subscriber state
+  const [deactivateOpen, setDeactivateOpen] = useState(false)
+  const [confirmTyped, setConfirmTyped] = useState('')
+  const [deactivateReason, setDeactivateReason] = useState('')
+  const [deactivating, setDeactivating] = useState(false)
+  const [reactivating, setReactivating] = useState(false)
 
   // Role gate — admin only.
   useEffect(() => {
@@ -127,6 +133,64 @@ export default function AdminConsolePage() {
     gate()
     return () => { cancelled = true }
   }, [])
+
+  // B228 Phase 3 — super_admin_deactivate_company RPC call.
+  // Server-side enforces super-admin role check; client UX gates with
+  // type-to-confirm. After success: refresh aggregates so the CRM row
+  // reflects the new is_active state; close drawer to nudge the
+  // operator out of the just-deactivated context.
+  async function deactivateCurrent() {
+    if (!drawerCompany) return
+    if (confirmTyped.trim() !== drawerCompany.name) return
+    setDeactivating(true)
+    const { data, error } = await supabase.rpc('super_admin_deactivate_company', {
+      p_company_id: drawerCompany.id,
+      p_reason:     deactivateReason.trim() || null,
+    })
+    setDeactivating(false)
+    if (error) {
+      alert('Deactivate failed: ' + error.message)
+      return
+    }
+    const result = data as { ok?: boolean; users_affected?: number; reason?: string } | null
+    if (!result?.ok) {
+      alert('Deactivate did not complete: ' + (result?.reason ?? 'unknown'))
+      return
+    }
+    // Refresh aggregates so the CRM row's state badge updates.
+    const { data: refreshed } = await supabase.rpc('get_console_aggregates')
+    if (refreshed) setAggregates(refreshed as CompanyAggregate[])
+    setDeactivateOpen(false)
+    setConfirmTyped('')
+    setDeactivateReason('')
+    setDrawerCompany(null)
+    alert(`Deactivated. Users affected: ${result.users_affected ?? 0}.`)
+  }
+
+  // Reactivate — pure mirror, no type-to-confirm (reversal is benign;
+  // the type-gate was for blast-radius on the destructive side).
+  async function reactivateCurrent() {
+    if (!drawerCompany) return
+    if (!window.confirm(`Reactivate ${drawerCompany.name}? Restores access for all users at the company.`)) return
+    setReactivating(true)
+    const { data, error } = await supabase.rpc('super_admin_reactivate_company', {
+      p_company_id: drawerCompany.id,
+    })
+    setReactivating(false)
+    if (error) {
+      alert('Reactivate failed: ' + error.message)
+      return
+    }
+    const result = data as { ok?: boolean; users_affected?: number; reason?: string } | null
+    if (!result?.ok) {
+      alert('Reactivate did not complete: ' + (result?.reason ?? 'unknown'))
+      return
+    }
+    const { data: refreshed } = await supabase.rpc('get_console_aggregates')
+    if (refreshed) setAggregates(refreshed as CompanyAggregate[])
+    setDrawerCompany({ ...drawerCompany, is_active: true })
+    alert(`Reactivated. Users restored: ${result.users_affected ?? 0}.`)
+  }
 
   // B228 Phase 2 — acknowledge (dismiss) a spike flag. 7-day default
   // dismiss window (handled server-side in the RPC). Local-patch the
@@ -455,9 +519,60 @@ export default function AdminConsolePage() {
               )}
 
               <hr style={{ border: 'none', borderTop: '1px solid #2a2f3d', margin: '14px 0' }} />
-              <p style={{ color: '#666', fontSize: 11, margin: 0 }}>
-                Deactivate subscriber → Phase 3 (super-admin DEFINER RPC with type-to-confirm).
+              {/* B228 Phase 3 — Deactivate / Reactivate (access-only).
+                  account_state is intentionally untouched (dunning + Stripe
+                  own it). Type-to-confirm gates the destructive direction;
+                  reactivate just does a window.confirm. */}
+              {drawerCompany.is_active ? (
+                <button onClick={() => setDeactivateOpen(true)}
+                  style={{ width: '100%', padding: 10, background: '#3a1a1a', color: '#f44336', border: '1px solid #b71c1c', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', fontFamily: 'Arial' }}>
+                  Deactivate subscriber
+                </button>
+              ) : (
+                <button onClick={reactivateCurrent} disabled={reactivating}
+                  style={{ width: '100%', padding: 10, background: reactivating ? '#1e2535' : '#1a3a1a', color: reactivating ? '#555' : '#4caf50', border: `1px solid ${reactivating ? '#3a4055' : '#2e7d32'}`, borderRadius: 8, cursor: reactivating ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 'bold', fontFamily: 'Arial' }}>
+                  {reactivating ? 'Reactivating…' : 'Reactivate subscriber'}
+                </button>
+              )}
+              <p style={{ color: '#555', fontSize: 10, margin: '8px 0 0' }}>
+                Access-only lever. Does not change account_state (Stripe + dunning own that). Routine billing flows are untouched.
               </p>
+            </div>
+          </div>
+        )}
+
+        {/* B228 Phase 3 — type-to-confirm dialog */}
+        {deactivateOpen && drawerCompany && (
+          <div onClick={() => { if (!deactivating) { setDeactivateOpen(false); setConfirmTyped(''); setDeactivateReason('') } }}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={e => e.stopPropagation()}
+              style={{ background: '#161b26', border: '1px solid #b71c1c', borderRadius: 10, width: 440, maxWidth: '92vw', padding: 20 }}>
+              <p style={{ color: '#f44336', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 8px', fontWeight: 'bold' }}>Confirm Deactivate</p>
+              <p style={{ color: 'white', fontSize: 14, fontWeight: 'bold', margin: '0 0 6px' }}>{drawerCompany.name}</p>
+              <p style={{ color: '#aaa', fontSize: 12, margin: '0 0 14px', lineHeight: 1.5 }}>
+                This revokes access for every user at this company. Active sessions are booted on next focus. Reversible via Reactivate. <strong style={{ color: 'white' }}>account_state is NOT changed</strong> — dunning + Stripe own billing state.
+              </p>
+              <label style={{ color: '#aaa', fontSize: 11, display: 'block', margin: '0 0 4px' }}>Reason (optional, audited)</label>
+              <input value={deactivateReason} onChange={e => setDeactivateReason(e.target.value)}
+                placeholder="e.g. contract breach — abusive scan volume"
+                style={{ width: '100%', background: '#0f1117', border: '1px solid #2a2f3d', color: 'white', padding: '8px 10px', borderRadius: 6, fontSize: 12, marginBottom: 12, fontFamily: 'Arial', boxSizing: 'border-box' }} />
+              <label style={{ color: '#aaa', fontSize: 11, display: 'block', margin: '0 0 4px' }}>
+                Type <strong style={{ color: '#f44336', fontFamily: 'monospace' }}>{drawerCompany.name}</strong> to enable Confirm
+              </label>
+              <input value={confirmTyped} onChange={e => setConfirmTyped(e.target.value)}
+                placeholder={drawerCompany.name}
+                style={{ width: '100%', background: '#0f1117', border: '1px solid #2a2f3d', color: 'white', padding: '8px 10px', borderRadius: 6, fontSize: 12, marginBottom: 16, fontFamily: 'monospace', boxSizing: 'border-box' }} />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={deactivateCurrent}
+                  disabled={deactivating || confirmTyped.trim() !== drawerCompany.name}
+                  style={{ flex: 1, padding: 10, background: (deactivating || confirmTyped.trim() !== drawerCompany.name) ? '#1e2535' : '#3a1a1a', color: (deactivating || confirmTyped.trim() !== drawerCompany.name) ? '#555' : '#f44336', border: `1px solid ${(deactivating || confirmTyped.trim() !== drawerCompany.name) ? '#3a4055' : '#b71c1c'}`, borderRadius: 8, cursor: (deactivating || confirmTyped.trim() !== drawerCompany.name) ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 'bold', fontFamily: 'Arial' }}>
+                  {deactivating ? 'Deactivating…' : 'Confirm Deactivate'}
+                </button>
+                <button onClick={() => { setDeactivateOpen(false); setConfirmTyped(''); setDeactivateReason('') }} disabled={deactivating}
+                  style={{ padding: '10px 16px', background: '#1e2535', color: '#aaa', border: '1px solid #3a4055', borderRadius: 8, cursor: deactivating ? 'not-allowed' : 'pointer', fontSize: 12, fontFamily: 'Arial' }}>
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         )}
