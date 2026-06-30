@@ -159,6 +159,12 @@ export default function ManagerPortal() {
   const [spacesResidents, setSpacesResidents] = useState<ResidentOption[]>([])
   const [spacesError, setSpacesError] = useState('')
   const [flaggedMigrationCount, setFlaggedMigrationCount] = useState(0)
+  // B217 — double-click submit guards. One state per handler so a
+  // concurrent submit doesn't lock unrelated buttons. Inline pattern
+  // matches driver.submitViolation. (submitGuestAuth already uses
+  // the existing guestAuthSubmitting state — not duplicated here.)
+  const [addVehicleSubmitting,    setAddVehicleSubmitting]    = useState(false)
+  const [addResidentSubmitting,   setAddResidentSubmitting]   = useState(false)
   // Per-modal target + form state — one slot per RPC, matches B214 pattern
   const [targetAdd, setTargetAdd] = useState(false)
   const [addForm, setAddForm] = useState<{ type: SpaceType }>({ type: 'carport' })
@@ -1259,37 +1265,45 @@ export default function ManagerPortal() {
 
   async function addVehicle(unit?: string) {
     if (!newVehicle.plate) { alert('Plate is required'); return }
-    const normalizedPlate = normalizePlate(newVehicle.plate)
-    // B166 — normalize picked owner email at the stamp site. Empty
-    // string → null = Unit-level / shared (B150 cascade handles vacancy).
-    const ownerEmail = vehicleOwnerEmail.trim().toLowerCase() || null
-    // permit_expiry coercion: form holds '' when blank; Postgres rejects
-    // '' on a DATE column with `invalid input syntax for type date`.
-     // Coerce explicitly (same family as the residents.lease_end fix).
-    // Permit-Door Piece 1 §1/§2 — vehicle insert state via the centralized
-    // helper (PM-Only → pending → approval is the metering chokepoint;
-    // all other tiers → active, preserving today's behavior).
-    const initState = initialVehicleState(getCompanyContext().tier)
-    const { error } = await supabase.from('vehicles').insert([{
-      ...newVehicle,
-      plate: normalizedPlate,
-      unit: unit || newVehicle.unit,
-      property: manager.name,
-      resident_email: ownerEmail,
-      status: initState.status,
-      is_active: initState.is_active,
-      year: parseInt(newVehicle.year) || null,
-      permit_expiry: newVehicle.permit_expiry || null,
-    }])
-    if (error) { alert('Error: ' + error.message) }
-    else {
-      await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name, resident_email: ownerEmail } })
-      alert('Vehicle added!')
-      setShowAddVehicle(false)
-      setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', unit:'', space:'', permit_expiry:'' })
-      setVehicleOwnerEmail('')
-      setResidentsAtUnit([])
-      fetchVehicles(manager.name)
+    // B217 — double-click guard. Vehicle add is one of the highest-
+    // blast-radius dup paths: a second INSERT lands a duplicate plate
+    // row, then a second permit-meter sync fires under Piece 1, etc.
+    setAddVehicleSubmitting(true)
+    try {
+      const normalizedPlate = normalizePlate(newVehicle.plate)
+      // B166 — normalize picked owner email at the stamp site. Empty
+      // string → null = Unit-level / shared (B150 cascade handles vacancy).
+      const ownerEmail = vehicleOwnerEmail.trim().toLowerCase() || null
+      // permit_expiry coercion: form holds '' when blank; Postgres rejects
+      // '' on a DATE column with `invalid input syntax for type date`.
+       // Coerce explicitly (same family as the residents.lease_end fix).
+      // Permit-Door Piece 1 §1/§2 — vehicle insert state via the centralized
+      // helper (PM-Only → pending → approval is the metering chokepoint;
+      // all other tiers → active, preserving today's behavior).
+      const initState = initialVehicleState(getCompanyContext().tier)
+      const { error } = await supabase.from('vehicles').insert([{
+        ...newVehicle,
+        plate: normalizedPlate,
+        unit: unit || newVehicle.unit,
+        property: manager.name,
+        resident_email: ownerEmail,
+        status: initState.status,
+        is_active: initState.is_active,
+        year: parseInt(newVehicle.year) || null,
+        permit_expiry: newVehicle.permit_expiry || null,
+      }])
+      if (error) { alert('Error: ' + error.message) }
+      else {
+        await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name, resident_email: ownerEmail } })
+        alert('Vehicle added!')
+        setShowAddVehicle(false)
+        setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', unit:'', space:'', permit_expiry:'' })
+        setVehicleOwnerEmail('')
+        setResidentsAtUnit([])
+        fetchVehicles(manager.name)
+      }
+    } finally {
+      setAddVehicleSubmitting(false)
     }
   }
 
@@ -1302,6 +1316,15 @@ export default function ManagerPortal() {
 
   async function addResident() {
     if (!newResident.name || !newResident.unit || !newResident.email) { alert('Name, email and unit are required'); return }
+    // B217 — double-click guard. Highest-blast-radius dup path on this
+    // page: a second cascade would attempt to create another auth user
+    // (rejected by swift-handler as duplicate), then a second
+    // residents INSERT (rejected by RLS/dup), and could mis-fire the
+    // companion-vehicle insert. Outer try/finally so EVERY exit path
+    // (early-return, swift-handler fail, inner catch rollback, optional
+    // assign-space step) resets the flag.
+    setAddResidentSubmitting(true)
+    try {
 
     const targetEmail = newResident.email.trim().toLowerCase()
     const tempPassword = generateTempPassword()
@@ -1453,6 +1476,11 @@ export default function ManagerPortal() {
     setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'', vehicle_plate:'', vehicle_state:'TX', vehicle_make:'', vehicle_model:'', vehicle_year:'', vehicle_color:'' })
     fetchResidents(manager.name)
     setCredentials({ email: targetEmail, password: tempPassword })
+    } finally {
+      // B217 outer guard reset — covers all exit paths (swift-handler
+      // fail return, inner-catch rollback return, normal completion).
+      setAddResidentSubmitting(false)
+    }
   }
 
   async function saveResident() {
@@ -2323,7 +2351,7 @@ export default function ManagerPortal() {
                   </div>
                 </div>
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={() => addVehicle()} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Add Vehicle</button>
+                  <button onClick={() => addVehicle()} disabled={addVehicleSubmitting} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: addVehicleSubmitting ? 'not-allowed' : 'pointer', opacity: addVehicleSubmitting ? 0.6 : 1 }}>{addVehicleSubmitting ? 'Adding…' : 'Add Vehicle'}</button>
                   <button onClick={() => setShowAddVehicle(false)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                 </div>
               </div>
@@ -2925,7 +2953,7 @@ export default function ManagerPortal() {
                   </div>
                 )}
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={addResident} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Add Resident</button>
+                  <button onClick={addResident} disabled={addResidentSubmitting} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: addResidentSubmitting ? 'not-allowed' : 'pointer', opacity: addResidentSubmitting ? 0.6 : 1 }}>{addResidentSubmitting ? 'Adding…' : 'Add Resident'}</button>
                   <button onClick={() => { setShowAddResident(false); setNewResidentAssignSpaceId('') }} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                 </div>
               </div>
@@ -2976,7 +3004,7 @@ export default function ManagerPortal() {
                         </div>
                       </div>
                       <div style={{ display:'flex', gap:'8px' }}>
-                        <button onClick={() => addVehicle(editingResident.unit)} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer' }}>Add Vehicle</button>
+                        <button onClick={() => addVehicle(editingResident.unit)} disabled={addVehicleSubmitting} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor: addVehicleSubmitting ? 'not-allowed' : 'pointer', opacity: addVehicleSubmitting ? 0.6 : 1 }}>{addVehicleSubmitting ? 'Adding…' : 'Add Vehicle'}</button>
                         <button onClick={() => setShowAddVehicle(false)} style={{ padding:'9px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                       </div>
                     </div>

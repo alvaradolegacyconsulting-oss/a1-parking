@@ -129,6 +129,11 @@ export default function AdminPortal() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [adminAnalyticsLoaded, setAdminAnalyticsLoaded] = useState(false)
   const [adminAnalytics, setAdminAnalytics] = useState<any>(null)
+  // B217 — double-click submit guards. One state per handler so a
+  // concurrent saveProperty doesn't lock the addProperty button (or
+  // vice versa). Inline pattern matches driver.submitViolation.
+  const [addPropertySubmitting,  setAddPropertySubmitting]  = useState(false)
+  const [savePropertySubmitting, setSavePropertySubmitting] = useState(false)
 
   useEffect(() => { loadAdmin() }, [])
   useEffect(() => { if (activeTab === 'auditlog') fetchAuditLogs() }, [activeTab])
@@ -423,22 +428,34 @@ export default function AdminPortal() {
 
   async function addProperty() {
     if (!newProperty.name) { alert('Name is required'); return }
-    const payload = { ...newProperty, visitor_capacity: parseInt(newProperty.visitor_capacity) || null }
-    const { data, error } = await supabase.from('properties').insert([payload]).select().single()
-    if (error) { alert('Error: ' + error.message); return }
-    await auditLog(adminEmail, 'ADD_PROPERTY', 'properties', data.id, payload)
-    setShowAddProperty(false)
-    setNewProperty({ name:'', company:'', address:'', city:'', state:'TX', zip:'', visitor_capacity:'', pm_name:'', pm_phone:'', pm_email:'', is_active:true })
-    fetchProperties()
+    // B217 — guard against double-click duplicate INSERT (Jose UAT repro).
+    setAddPropertySubmitting(true)
+    try {
+      const payload = { ...newProperty, visitor_capacity: parseInt(newProperty.visitor_capacity) || null }
+      const { data, error } = await supabase.from('properties').insert([payload]).select().single()
+      if (error) { alert('Error: ' + error.message); return }
+      await auditLog(adminEmail, 'ADD_PROPERTY', 'properties', data.id, payload)
+      setShowAddProperty(false)
+      setNewProperty({ name:'', company:'', address:'', city:'', state:'TX', zip:'', visitor_capacity:'', pm_name:'', pm_phone:'', pm_email:'', is_active:true })
+      fetchProperties()
+    } finally {
+      setAddPropertySubmitting(false)
+    }
   }
 
   async function saveProperty() {
-    const payload = { ...editingProperty, visitor_capacity: parseInt(editingProperty.visitor_capacity) || null }
-    const { error } = await supabase.from('properties').update(payload).eq('id', editingProperty.id)
-    if (error) { alert('Error: ' + error.message); return }
-    await auditLog(adminEmail, 'EDIT_PROPERTY', 'properties', editingProperty.id, payload)
-    setEditingProperty(null)
-    fetchProperties()
+    // B217 — guard against double-click duplicate UPDATE.
+    setSavePropertySubmitting(true)
+    try {
+      const payload = { ...editingProperty, visitor_capacity: parseInt(editingProperty.visitor_capacity) || null }
+      const { error } = await supabase.from('properties').update(payload).eq('id', editingProperty.id)
+      if (error) { alert('Error: ' + error.message); return }
+      await auditLog(adminEmail, 'EDIT_PROPERTY', 'properties', editingProperty.id, payload)
+      setEditingProperty(null)
+      fetchProperties()
+    } finally {
+      setSavePropertySubmitting(false)
+    }
   }
 
   async function toggleProperty(p: any, active: boolean) {
@@ -1202,7 +1219,7 @@ export default function AdminPortal() {
                   <div><label style={lbl}>Active</label><select value={newProperty.is_active ? 'true' : 'false'} onChange={e => setNewProperty({...newProperty, is_active: e.target.value === 'true'})} style={inp}><option value="true">Yes</option><option value="false">No</option></select></div>
                 </div>
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={addProperty} style={{ ...bGold, flex:1 }}>Add Property</button>
+                  <button onClick={addProperty} disabled={addPropertySubmitting} style={{ ...bGold, flex:1, opacity: addPropertySubmitting ? 0.6 : 1, cursor: addPropertySubmitting ? 'not-allowed' : 'pointer' }}>{addPropertySubmitting ? 'Adding…' : 'Add Property'}</button>
                   <button onClick={() => setShowAddProperty(false)} style={bGray}>Cancel</button>
                 </div>
               </div>
@@ -1231,7 +1248,7 @@ export default function AdminPortal() {
                   <div><label style={lbl}>Active</label><select value={editingProperty.is_active ? 'true' : 'false'} onChange={e => setEditingProperty({...editingProperty, is_active: e.target.value === 'true'})} style={inp}><option value="true">Yes</option><option value="false">No</option></select></div>
                 </div>
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={saveProperty} style={{ ...bGold, flex:1 }}>Save Changes</button>
+                  <button onClick={saveProperty} disabled={savePropertySubmitting} style={{ ...bGold, flex:1, opacity: savePropertySubmitting ? 0.6 : 1, cursor: savePropertySubmitting ? 'not-allowed' : 'pointer' }}>{savePropertySubmitting ? 'Saving…' : 'Save Changes'}</button>
                   <button onClick={() => setEditingProperty(null)} style={bGray}>Cancel</button>
                 </div>
               </div>

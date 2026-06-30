@@ -55,6 +55,10 @@ export default function ResidentPortal() {
   const [supportWebsite, setSupportWebsite] = useState('')
   const [propertyManager, setPropertyManager] = useState<{ name: string | null; email: string | null }>({ name: null, email: null })
   const [companyName, setCompanyName] = useState<string>('')
+  // B217 — double-click guard for the public resident-request-vehicle
+  // path. A second RPC call lands a duplicate pending vehicle in the
+  // manager queue.
+  const [requestVehicleSubmitting, setRequestVehicleSubmitting] = useState(false)
   // B213 — captcha state for the change-password re-auth step.
   const [changePwCaptchaToken, setChangePwCaptchaToken] = useState<string | null>(null)
   const changePwTurnstileRef = useRef<TurnstileHandle>(null)
@@ -321,6 +325,10 @@ export default function ResidentPortal() {
 
   async function requestVehicle() {
     if (!newVehicle.plate) { alert('Plate is required'); return }
+    // B217 — double-click guard. A second RPC call lands a duplicate
+    // pending vehicle in the manager queue (RPC has no app-layer dedup).
+    setRequestVehicleSubmitting(true)
+    try {
     const normalizedPlate = normalizePlate(newVehicle.plate)
     // Deactivation arc — DEFINER RPC replaces the direct .insert() path.
     // The resident_insert_vehicles RLS policy was DROPped; this RPC is
@@ -358,6 +366,9 @@ export default function ResidentPortal() {
       setShowRequestForm(false)
       setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
       fetchVehicles(resident.unit, resident.property, resident.email)
+    }
+    } finally {
+      setRequestVehicleSubmitting(false)
     }
   }
 
@@ -787,7 +798,7 @@ export default function ResidentPortal() {
                         <div><label style={lbl}>Year</label><input value={newVehicle.year} onChange={e => setNewVehicle({...newVehicle, year: e.target.value})} placeholder="2022" style={inp} /></div>
                       </div>
                       <div style={{ display:'flex', gap:'8px' }}>
-                        <button onClick={requestVehicle} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Submit Request</button>
+                        <button onClick={requestVehicle} disabled={requestVehicleSubmitting} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: requestVehicleSubmitting ? 'not-allowed' : 'pointer', opacity: requestVehicleSubmitting ? 0.6 : 1 }}>{requestVehicleSubmitting ? 'Submitting…' : 'Submit Request'}</button>
                         <button onClick={() => setShowRequestForm(false)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                       </div>
                     </div>

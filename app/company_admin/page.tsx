@@ -268,6 +268,12 @@ export default function CompanyAdminPortal() {
   const [newManagerCanApprove, setNewManagerCanApprove] = useState<boolean | null>(null)
 
   const [companyDrivers, setCompanyDrivers] = useState<any[]>([])
+  // B217 — double-click guard on createUser. Highest-blast-radius dup
+  // on this page: a second click would attempt to admin-create another
+  // auth user (rejected by swift-handler as duplicate), then attempt
+  // duplicate insert_user_role + drivers/residents inserts. Wraps the
+  // whole orchestrated cascade.
+  const [createUserSubmitting, setCreateUserSubmitting] = useState(false)
   const [showAddDriver, setShowAddDriver] = useState(false)
   const [editingDriver, setEditingDriver] = useState<any>(null)
   const [newDriver, setNewDriver] = useState({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] as string[] })
@@ -1408,6 +1414,13 @@ export default function CompanyAdminPortal() {
     }
 
     setUserMsg('Creating...')
+    // B217 — double-click guard. Wraps the full createUser cascade
+    // (swift-handler create_user → residents/drivers INSERT →
+    // insert_user_role → optional manager approval-permission grant
+    // → invite-user route). A second click could land orphan auth
+    // users + duplicate role rows.
+    setCreateUserSubmitting(true)
+    try {
 
     const targetEmail = newUser.email.trim().toLowerCase()
     const propertyArray = newUser.property
@@ -1582,6 +1595,12 @@ export default function CompanyAdminPortal() {
     setNewUser({ name: '', email: '', role: 'manager', property: '' })
     setShowAddUser(false)
     fetchCompanyUsers()
+    } finally {
+      // B217 outer guard reset — covers all exit paths (validation
+      // return, swift-handler fail, resident-branch return, try/catch
+      // return).
+      setCreateUserSubmitting(false)
+    }
   }
 
   async function createDriver() {
@@ -4797,7 +4816,7 @@ export default function CompanyAdminPortal() {
                       {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
                     </select>
                     <div style={{ display:'flex', gap:'8px' }}>
-                      <button onClick={createUser} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Create User</button>
+                      <button onClick={createUser} disabled={createUserSubmitting} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: createUserSubmitting ? 'not-allowed' : 'pointer', opacity: createUserSubmitting ? 0.6 : 1, fontFamily:'Arial' }}>{createUserSubmitting ? 'Creating…' : 'Create User'}</button>
                       <button onClick={() => { setShowAddUser(false); setUserMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                     </div>
                   </div>
