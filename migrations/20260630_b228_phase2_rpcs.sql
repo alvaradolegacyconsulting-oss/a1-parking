@@ -35,6 +35,17 @@ BEGIN;
 -- ─────────────────────────────────────────────────────────────────
 -- 1. get_console_aggregates — EXTENDED replacement
 -- ─────────────────────────────────────────────────────────────────
+-- Phase 2 widens the RETURNS TABLE shape (adds plate_reads_24h /
+-- plate_reads_30d / active_flags). PG 42P13: CREATE OR REPLACE can't
+-- change return-type shape — must DROP first.
+--
+-- IDEMPOTENT: IF EXISTS so the fix migration is re-runnable.
+-- LOAD-BEARING: DROP wipes the ACL; the REVOKE/GRANT block below the
+-- CREATE re-applies the discipline. Without this, Supabase's default
+-- grants (which include service_role) come back — the exact leak fixed
+-- in the Phase 1 hotfix. The §4 verification re-confirms post-apply.
+DROP FUNCTION IF EXISTS public.get_console_aggregates();
+
 CREATE OR REPLACE FUNCTION public.get_console_aggregates()
 RETURNS TABLE (
   company_id        BIGINT,
