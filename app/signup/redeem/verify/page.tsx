@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../../supabase'
-import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE } from '../../../lib/legal-versions'
+import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE, TEXAS_ATTESTATION_VERSION, TEXAS_ATTESTATION_TEXT } from '../../../lib/legal-versions'
 // B76: post-activation bootstrap. Without this, /company_admin renders
 // with null localStorage and falls back to the 'Legacy Enforcement'
 // default until the user signs out and back in. See project_b76.
@@ -103,6 +103,13 @@ export default function VerifyLanding() {
   const [contactPhone, setContactPhone] = useState('')
   const [address, setAddress] = useState('')
   const [tosChecked, setTosChecked] = useState(false)
+  // 2026-06-30 — Texas operator attestation on the redeem path
+  // (parity with /signup). A1 onboards here and needs the same
+  // attestation as the self-serve path. Recorded via the new
+  // p_attestation_version arg on redeem_proposal_code → sibling row
+  // with document_type='texas_attestation' alongside the tos_and_privacy
+  // row, atomic with the rest of the redeem.
+  const [attestChecked, setAttestChecked] = useState(false)
   const [submission, setSubmission] = useState<Submission>({ kind: 'editing' })
 
   // B117 Phase 2 — OTP fallback state. Email pre-fills from ?email=
@@ -263,6 +270,7 @@ export default function VerifyLanding() {
     if (!contactPhone.trim()) return 'Primary contact phone is required.'
     if (!address.trim()) return 'Billing address is required.'
     if (!tosChecked) return 'You must agree to the Terms of Service and Privacy Policy.'
+    if (!attestChecked) return 'You must attest to the Texas operations terms.'
     return null
   }
 
@@ -285,6 +293,7 @@ export default function VerifyLanding() {
       p_primary_contact_phone: contactPhone.trim(),
       p_tos_version: TOS_VERSION,
       p_privacy_version: PRIVACY_VERSION,
+      p_attestation_version: TEXAS_ATTESTATION_VERSION,
       p_address: address.trim(),
       // p_ip_address omitted — browser can't reliably know its own IP
       // (Finding 7). Server-side proxy is a future commit if legal asks.
@@ -533,7 +542,22 @@ export default function VerifyLanding() {
                 onChange={e => setAddress(e.target.value)}
                 placeholder="123 Main St, Houston, TX 77001" />
 
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 22, cursor: 'pointer' }}>
+              {/* 2026-06-30 — Texas operator attestation. Renders the
+                  same TEXAS_ATTESTATION_TEXT block /signup uses, then
+                  the attestation checkbox. Required to enable Activate. */}
+              <div style={{ marginTop: 22, padding: '14px 16px', background: 'rgba(201,162,39,0.04)', border: `1px solid rgba(201,162,39,0.18)`, borderRadius: 10 }}>
+                <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 8px', fontWeight: 700 }}>Texas operations attestation</p>
+                <pre style={{ color: '#cbd5e1', fontSize: 12, lineHeight: 1.5, margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{TEXAS_ATTESTATION_TEXT}</pre>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 12, cursor: 'pointer' }}>
+                <input type="checkbox" checked={attestChecked} onChange={e => setAttestChecked(e.target.checked)}
+                  style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer', flexShrink: 0 }} />
+                <span style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>
+                  I attest to the Texas operations terms above (required).
+                </span>
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 14, cursor: 'pointer' }}>
                 <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
                   style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer', flexShrink: 0 }} />
                 <span style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>
