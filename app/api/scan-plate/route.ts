@@ -161,5 +161,35 @@ export async function POST(request: NextRequest) {
     .toUpperCase()
     .slice(0, 8)
 
+  // B228 Phase 2 — metering for the Super-Admin Console cost section.
+  // Append-only audit_logs INSERT in the success path; new_values
+  // carries tool + company + email so the console aggregate fn can
+  // group by company without an extra JOIN through user_roles.
+  //
+  // FUTURE VIN-LOOKUP HOOK (zero rework when attorney clears it):
+  //   When the VIN-lookup endpoint ships, it uses the SAME shape:
+  //     INSERT INTO audit_logs (action='API_USAGE_METER', new_values={
+  //       tool: 'vin_lookup', company: <from caller>, email: <from caller>
+  //     })
+  //   The console's cost section aggregates by new_values.tool, so a
+  //   new tool name appears automatically. No console code changes
+  //   needed — just the new endpoint's INSERT.
+  //
+  // Soft-fail: a failed audit INSERT MUST NOT break the scan response.
+  // The user got their plate; we lose one metering row at worst.
+  await supabase.from('audit_logs').insert([{
+    user_email: user.email,
+    action:     'API_USAGE_METER',
+    table_name: 'api_calls',
+    new_values: {
+      tool:    'plate_read',
+      company: roleRow.company,
+      email:   user.email,
+      plate,
+    },
+  }]).then(({ error }) => {
+    if (error) console.warn('[scan-plate metering] insert failed (non-fatal):', error.message)
+  })
+
   return NextResponse.json({ plate })
 }

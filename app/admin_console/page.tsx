@@ -34,6 +34,26 @@ interface CompanyAggregate {
   violations_30d:    number
   passes_30d:        number
   plate_reads_24h:   number
+  plate_reads_30d:   number  // B228 Phase 2 — extended
+  active_flags:      number  // B228 Phase 2 — extended (placeholder; spike flags live in their own state)
+}
+
+// B228 Phase 2 — spike flag row from get_console_spike_flags
+interface SpikeFlag {
+  company_id:      number
+  company_name:    string
+  flag_type:       'plate_reads' | 'visitor_passes' | 'self_registrations' | 'bulk_uploads'
+  last_24h:        number
+  baseline_7d_avg: number
+  threshold_pct:   number
+  dismissed:       boolean
+  dismissed_until: string | null
+}
+
+// B228 Phase 2 — per-property permit count for PM-track drawer
+interface PmPropertyPermit {
+  property_name:    string
+  approved_permits: number
 }
 
 interface CompanyDetail {
@@ -62,6 +82,11 @@ export default function AdminConsolePage() {
   const [drawerCompany, setDrawerCompany] = useState<CompanyDetail | null>(null)
   const [drawerLoading, setDrawerLoading] = useState(false)
   const [searchQ, setSearchQ] = useState('')
+  // B228 Phase 2 — spike flags, PM per-property drill, cost rates
+  const [spikeFlags, setSpikeFlags] = useState<SpikeFlag[]>([])
+  const [pmPropertyPermits, setPmPropertyPermits] = useState<PmPropertyPermit[] | null>(null)
+  const [costRates, setCostRates] = useState<{ plate_read_usd: number; vin_lookup_usd: number }>({ plate_read_usd: 0.012, vin_lookup_usd: 0.05 })
+  const [acking, setAcking] = useState<string | null>(null)
 
   // Role gate — admin only.
   useEffect(() => {
@@ -76,24 +101,63 @@ export default function AdminConsolePage() {
         setLoading(false)
         return
       }
-      // Load aggregates via the new DEFINER RPC.
-      const { data, error } = await supabase.rpc('get_console_aggregates')
+      // B228 Phase 1 + 2 — load aggregates, spike flags, and cost
+      // rates in parallel. All three are super-admin-gated; the role
+      // check above already passed.
+      const [aggRes, flagsRes, ratesRes] = await Promise.all([
+        supabase.rpc('get_console_aggregates'),
+        supabase.rpc('get_console_spike_flags'),
+        supabase.from('platform_settings').select('api_cost_rates').eq('id', 1).maybeSingle(),
+      ])
       if (cancelled) return
-      if (error) {
-        setAuthErr('Could not load console data: ' + error.message)
+      if (aggRes.error) {
+        setAuthErr('Could not load console data: ' + aggRes.error.message)
         setLoading(false)
         return
       }
-      setAggregates((data ?? []) as CompanyAggregate[])
+      setAggregates((aggRes.data ?? []) as CompanyAggregate[])
+      // Spike flags + rates are non-fatal — console renders without them.
+      if (!flagsRes.error) setSpikeFlags((flagsRes.data ?? []) as SpikeFlag[])
+      else console.warn('[admin_console] spike flags load failed:', flagsRes.error.message)
+      if (!ratesRes.error && ratesRes.data?.api_cost_rates) {
+        setCostRates(ratesRes.data.api_cost_rates as { plate_read_usd: number; vin_lookup_usd: number })
+      }
       setLoading(false)
     }
     gate()
     return () => { cancelled = true }
   }, [])
 
+  // B228 Phase 2 — acknowledge (dismiss) a spike flag. 7-day default
+  // dismiss window (handled server-side in the RPC). Local-patch the
+  // flag out of state so it disappears immediately; full refresh on
+  // next manual reload picks up any new flags.
+  async function acknowledgeFlag(companyId: number, flagType: SpikeFlag['flag_type']) {
+    const key = `${companyId}:${flagType}`
+    setAcking(key)
+    const { data, error } = await supabase.rpc('acknowledge_console_flag', {
+      p_company_id:    companyId,
+      p_flag_type:     flagType,
+      p_dismiss_until: null,
+      p_note:          null,
+    })
+    setAcking(null)
+    if (error) {
+      alert('Could not acknowledge flag: ' + error.message)
+      return
+    }
+    const result = data as { ok?: boolean; error?: string } | null
+    if (result?.error) {
+      alert('Could not acknowledge flag: ' + result.error)
+      return
+    }
+    setSpikeFlags(prev => prev.filter(f => !(f.company_id === companyId && f.flag_type === flagType)))
+  }
+
   async function openDrawer(companyId: number) {
     setDrawerLoading(true)
     setDrawerCompany(null)
+    setPmPropertyPermits(null)
     const { data, error } = await supabase
       .from('companies')
       .select('id, name, primary_contact_name, billing_email, phone, address, tier, tier_type, account_state, is_active, created_at, stripe_customer_id, tdlr_license_number')
@@ -104,8 +168,19 @@ export default function AdminConsolePage() {
       setDrawerLoading(false)
       return
     }
-    setDrawerCompany(data as CompanyDetail)
+    const detail = data as CompanyDetail
+    setDrawerCompany(detail)
     setDrawerLoading(false)
+
+    // B228 Phase 2 — for PM-track subscribers, fetch the per-property
+    // approved-permit breakdown. RPC returns empty for non-PM, so the
+    // tier_type guard is belt-and-suspenders (UI section hides on
+    // empty array anyway).
+    if (detail.tier_type === 'property_management') {
+      const { data: permits, error: permitsErr } = await supabase.rpc('get_console_pm_property_permits', { p_company_id: companyId })
+      if (!permitsErr) setPmPropertyPermits((permits ?? []) as PmPropertyPermit[])
+      else console.warn('[admin_console] pm property permits load failed:', permitsErr.message)
+    }
   }
 
   if (loading) {
@@ -119,17 +194,24 @@ export default function AdminConsolePage() {
     )
   }
 
-  // ── Row 0 health strip values (Phase 1 reads real data where it's free;
-  // Phase 2 fills in scan/cost/spike-related tiles)
+  // ── Row 0 health strip values
   const activeSubs        = aggregates.filter(a => a.is_active).length
   const pastDueSubs       = aggregates.filter(a => a.account_state === 'past_due').length
   const suspendedSubs     = aggregates.filter(a => a.account_state === 'suspended').length
   const totalPermits      = aggregates.reduce((s, a) => s + a.vehicles_active, 0)
   const totalPending      = aggregates.reduce((s, a) => s + a.vehicles_pending, 0)
+  // B228 Phase 2 — real metering data
+  const totalScans24h     = aggregates.reduce((s, a) => s + a.plate_reads_24h, 0)
+  const totalScans30d    = aggregates.reduce((s, a) => s + a.plate_reads_30d, 0)
+  const estCost30dUsd     = totalScans30d * (costRates.plate_read_usd ?? 0)
+  const activeFlagsCount  = spikeFlags.length
 
   const filteredAggregates = searchQ.trim().length === 0
     ? aggregates
     : aggregates.filter(a => a.company_name.toLowerCase().includes(searchQ.toLowerCase().trim()))
+
+  // B228 Phase 2 — top consumer for the cost section (by 30d count)
+  const topConsumer = aggregates.slice().sort((a, b) => b.plate_reads_30d - a.plate_reads_30d).find(a => a.plate_reads_30d > 0)
 
   return (
     <main style={{ minHeight: '100vh', background: '#0f1117', color: 'white', fontFamily: 'Arial' }}>
@@ -166,14 +248,74 @@ export default function AdminConsolePage() {
         {/* ── CONSOLE TAB ─────────────────────────────────────── */}
         {tab === 'console' && (
           <div>
-            {/* Row 0 health strip — 5 tiles (cost tile parked until Phase 2) */}
+            {/* Row 0 health strip — 6 tiles (cost + flags real per Phase 2) */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 14 }}>
               <HealthTile label="Active Subscribers" value={activeSubs} sub={pastDueSubs > 0 ? `${pastDueSubs} past-due ★` : 'all current'} subColor={pastDueSubs > 0 ? GOLD : '#4caf50'} />
               <HealthTile label="Past-Due" value={pastDueSubs} sub={pastDueSubs > 0 ? 'review dunning' : 'none'} subColor={pastDueSubs > 0 ? '#fbbf24' : '#555'} />
               <HealthTile label="Suspended" value={suspendedSubs} sub={suspendedSubs > 0 ? 'review' : 'none'} subColor={suspendedSubs > 0 ? '#f44336' : '#555'} />
               <HealthTile label="Approved Permits" value={totalPermits} sub={`${totalPending} pending`} subColor="#555" />
-              <HealthTile label="Plate Scans 24h" value="—" sub="Phase 2 metering" subColor="#555" />
+              <HealthTile label="Plate Scans 24h" value={totalScans24h} sub={`${totalScans30d} over 30d`} subColor="#555" />
+              <HealthTile label="Risk Flags Open"
+                value={activeFlagsCount}
+                sub={activeFlagsCount > 0 ? 'review ↓' : 'all clear'}
+                subColor={activeFlagsCount > 0 ? '#fbbf24' : '#4caf50'} />
             </div>
+
+            {/* B228 Phase 2 — Cost section */}
+            <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 10, flexWrap: 'wrap' as const }}>
+                <p style={{ color: GOLD, fontWeight: 'bold', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>API Cost — 30 days (estimate)</p>
+                <p style={{ color: '#666', fontSize: 10, margin: 0 }}>Rates editable in Platform Settings; this view = count × rate.</p>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 12 }}>
+                <HealthTile label="Plate reads 30d" value={totalScans30d} sub={`@ $${(costRates.plate_read_usd ?? 0).toFixed(4)}/call`} subColor="#555" />
+                <HealthTile label="Est. cost 30d" value={`$${estCost30dUsd.toFixed(2)}`} sub="plate reads × rate" subColor="#555" />
+                <HealthTile label="Top consumer"
+                  value={topConsumer ? topConsumer.company_name : '—'}
+                  sub={topConsumer ? `${topConsumer.plate_reads_30d} scans` : 'no scans yet'}
+                  subColor="#555" />
+                <div style={{ background: '#0f1117', border: '1px dashed #3a4055', borderRadius: 10, padding: 14 }}>
+                  <p style={{ color: '#aaa', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px' }}>VIN Lookup</p>
+                  <p style={{ color: '#666', fontSize: 16, fontWeight: 'bold', margin: 0 }}>Pending</p>
+                  <p style={{ color: '#555', fontSize: 10, margin: '4px 0 0' }}>Meter hook wired, awaits attorney clear</p>
+                </div>
+              </div>
+            </div>
+
+            {/* B228 Phase 2 — Spike Flags */}
+            {spikeFlags.length > 0 && (
+              <div style={{ background: '#1a1400', border: '1px solid #a16207', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+                <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px' }}>
+                  Risk Flags ({spikeFlags.length})
+                </p>
+                <p style={{ color: '#666', fontSize: 10, margin: '0 0 10px' }}>
+                  Last-24h volume vs 7-day baseline. Mark "expected" to dismiss for 7 days (e.g. onboarding spike).
+                </p>
+                {spikeFlags.map((f, i) => {
+                  const ackKey = `${f.company_id}:${f.flag_type}`
+                  const isAcking = acking === ackKey
+                  const pct = f.baseline_7d_avg > 0
+                    ? Math.round((f.last_24h / f.baseline_7d_avg - 1) * 100)
+                    : null
+                  return (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1.4fr 1.4fr 0.8fr 0.9fr', gap: 8, alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #2a2a08' }}>
+                      <span style={{ color: 'white', fontSize: 12 }}>{f.company_name}</span>
+                      <span style={{ color: '#aaa', fontSize: 11, textTransform: 'capitalize' }}>{f.flag_type.replace(/_/g, ' ')}</span>
+                      <span style={{ color: '#fbbf24', fontSize: 12, fontFamily: 'Arial' }}>
+                        {f.last_24h} <span style={{ color: '#666', fontSize: 10 }}>vs {f.baseline_7d_avg.toFixed(1)}/d</span>
+                      </span>
+                      <span style={{ color: pct !== null && pct > 0 ? '#fbbf24' : '#666', fontSize: 11, textAlign: 'right' }}>
+                        {pct !== null ? `+${pct}%` : '—'}
+                      </span>
+                      <button onClick={() => acknowledgeFlag(f.company_id, f.flag_type)} disabled={isAcking}
+                        style={{ padding: '4px 8px', background: '#1e2535', color: isAcking ? '#555' : '#aaa', border: '1px solid #3a4055', borderRadius: 6, cursor: isAcking ? 'not-allowed' : 'pointer', fontSize: 10, fontFamily: 'Arial' }}>
+                        {isAcking ? '...' : 'Mark expected'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
 
             {/* Subscribers CRM */}
             <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 10, padding: 14, marginBottom: 14 }}>
@@ -291,6 +433,26 @@ export default function AdminConsolePage() {
               <DetailRow label="Created"        value={drawerCompany.created_at?.slice(0, 10) ?? null} />
               <DetailRow label="Stripe customer" value={drawerCompany.stripe_customer_id} mono />
               <DetailRow label="TDLR license"   value={drawerCompany.tdlr_license_number} />
+
+              {/* B228 Phase 2 — per-property approved-permit breakdown.
+                  PM-track subscribers only. Section omitted for enforcement
+                  (RPC returns empty). Sales/health signal: which property
+                  is heavy, who's drifting toward a tier ceiling. */}
+              {drawerCompany.tier_type === 'property_management' && pmPropertyPermits !== null && pmPropertyPermits.length > 0 && (
+                <>
+                  <hr style={{ border: 'none', borderTop: '1px solid #2a2f3d', margin: '14px 0' }} />
+                  <p style={{ color: GOLD, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 8px' }}>
+                    Approved Permits by Property
+                  </p>
+                  {pmPropertyPermits.map((p, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #1e2535' }}>
+                      <span style={{ color: '#aaa', fontSize: 12, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.property_name}</span>
+                      <span style={{ color: 'white', fontSize: 13, fontWeight: 'bold' }}>{p.approved_permits}</span>
+                    </div>
+                  ))}
+                  <p style={{ color: '#555', fontSize: 10, margin: '8px 0 0' }}>Actuals from live data. Future-subscriber sizing lives in the proposal calculator.</p>
+                </>
+              )}
 
               <hr style={{ border: 'none', borderTop: '1px solid #2a2f3d', margin: '14px 0' }} />
               <p style={{ color: '#666', fontSize: 11, margin: 0 }}>
