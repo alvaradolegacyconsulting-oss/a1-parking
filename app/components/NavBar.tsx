@@ -10,12 +10,19 @@ import { useResolvedLogo } from '../lib/logo'
 // link is visible to authenticated users too as a navigation aid.
 const NAV_LINKS: Record<string, { label: string; href: string }[]> = {
   admin: [
-    { label: 'Home', href: '/' },
-    { label: 'History', href: '/history' },
-    { label: 'Manager', href: '/manager' },
-    { label: 'Driver', href: '/driver' },
-    { label: 'Company Admin', href: '/company_admin' },
-    { label: 'Admin', href: '/admin' },
+    // B228 Phase 1 — admin NavBar trimmed to the super-admin decision
+    // surface. Role-portal links (Manager / Driver / Company Admin /
+    // History) removed — admin shouldn't be cosplaying as another role
+    // in the primary nav. Admin still has direct-URL access to those
+    // portals during the deploy window if needed for support work.
+    //
+    // Console = the new B228 super-admin surface (CRM + usage + cost +
+    // health). Admin (legacy) = the existing /admin (CRUD + bulk +
+    // pricing + audit) which COEXISTS until later phases migrate its
+    // tools into the Console's tabs. Both linked here during the
+    // transition.
+    { label: 'Console', href: '/admin_console' },
+    { label: 'Admin (legacy)', href: '/admin' },
     { label: 'Proposals', href: '/admin/proposal-codes' },
     { label: 'QR Codes', href: '/qr' },
     { label: 'Help', href: '/help' },
