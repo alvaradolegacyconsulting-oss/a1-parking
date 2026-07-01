@@ -369,57 +369,16 @@ export default function AdminPortal() {
     fetchCompanies()
   }
 
-  async function toggleCompany(c: any, active: boolean) {
-    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
-    const { data: { session } } = await supabase.auth.getSession()
-
-    // 1. Fetch all non-admin users for this company
-    const { data: companyUsers } = await supabase
-      .from('user_roles')
-      .select('email')
-      .ilike('company', c.name)
-      .neq('role', 'admin')
-
-    // 2. Ban or unban all users in parallel via swift-handler
-    if (companyUsers && companyUsers.length > 0) {
-      await Promise.all(companyUsers.map(u =>
-        fetch(fnBase + '/swift-handler', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ action: active ? 'activate_user' : 'deactivate_user', email: u.email }),
-        })
-      ))
-      // Deactivation arc — also flip user_roles.is_active for every
-      // company user so the new get_my_effective_active gate fires on
-      // stale-session PMs/leasing_agents. Single bulk UPDATE keyed on
-      // company; auth ban above is load-bearing, this is the derived-
-      // access driver. Best-effort: log on failure, don't surface.
-      const { error: urErr } = await supabase
-        .from('user_roles')
-        .update({ is_active: active })
-        .ilike('company', c.name)
-        .neq('role', 'admin')
-      if (urErr) {
-        console.error('[admin company-cascade] user_roles.is_active write failed (auth bans intact):', urErr.message, { company: c.name, active })
-      }
-    }
-
-    // 3. Update drivers (facilities excluded — global)
-    await supabase.from('drivers').update({ is_active: active }).ilike('company', c.name)
-
-    // 4. Update properties
-    await supabase.from('properties').update({ is_active: active }).ilike('company', c.name)
-
-    // 5. Update company record
-    await supabase.from('companies').update({ is_active: active }).eq('id', c.id)
-
-    // 6. Audit log the cascade
-    await auditLog(adminEmail, active ? 'ACTIVATE_COMPANY_CASCADE' : 'DEACTIVATE_COMPANY_CASCADE', 'companies', c.id, {
-      is_active: active,
-      users_affected: companyUsers?.length || 0,
-    })
-    fetchCompanies()
-  }
+  // B229 (2026-06-30) — legacy toggleCompany REMOVED. The (de)activate
+  // cascade lives in the super_admin_(de)activate_company DEFINER RPCs
+  // shipped by B228 Phase 3 (ecba954), accessed from /admin_console's
+  // subscriber drawer with type-to-confirm. This removal closes the
+  // render-gate hole where the client-side cascade was callable from
+  // any admin token outside the UI — the RPCs enforce role server-side.
+  //
+  // See project-b229-legacy-togglecompany-retirement memo + the Phase 3
+  // role-bypass verification (b8566ee) confirming both RPCs reject
+  // non-admin callers with 42501 forbidden_not_admin.
 
   async function fetchProperties() {
     const { data } = await supabase.from('properties').select('*').order('name')
@@ -1179,8 +1138,11 @@ export default function AdminPortal() {
                 {c.address && <p style={{ color:'#555', fontSize:'11px', margin:'0 0 10px' }}>{c.address}</p>}
                 <div style={{ display:'flex', gap:'6px' }}>
                   <button onClick={() => { setEditingCompany({...c}); setShowAddCompany(false) }} style={editBtn}>Edit</button>
-                  {c.is_active ? <button onClick={() => toggleCompany(c, false)} style={bRed}>Deactivate</button>
-                               : <button onClick={() => toggleCompany(c, true)} style={bGrn}>Activate</button>}
+                  {/* B229 — Activate/Deactivate buttons REMOVED. Cascade
+                      lives in /admin_console → subscriber drawer, gated
+                      by the super_admin_(de)activate_company DEFINER
+                      RPC with type-to-confirm. Access-only, audited,
+                      role-enforced server-side. */}
                 </div>
               </div>
             ))}
