@@ -2,6 +2,12 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import NavBar from "./components/NavBar";
+// B211 — auto-logout watcher (silent v1, single 12h threshold,
+// enforced on load + visibilitychange/focus). SKIP_PATHS allowlist
+// self-disables the watcher on public + recovery flows so PKCE
+// landings aren't disturbed. Runs before portal loadX() → composes
+// with evaluatePortalGate cleanly.
+import InactivityWatcher from "./components/InactivityWatcher";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -41,6 +47,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
+        <InactivityWatcher />
         <NavBar />
         {children}
       </body>
