@@ -84,9 +84,13 @@ export async function POST() {
   if (intended.property_count < 1) {
     return NextResponse.json({ error: 'property_count must be at least 1' }, { status: 400 })
   }
-  if (intended.track === 'enforcement' && intended.driver_count < 1) {
-    return NextResponse.json({ error: 'enforcement track requires at least 1 driver' }, { status: 400 })
-  }
+  // 2026-07-01 — Enforcement per_driver line RETIRED with the 3-tier
+  // move (Slice 1). Enforcement catalog is now base + per_property only.
+  // The old "requires at least 1 driver" check would 400 every legit
+  // enforcement caller now that driver_count=0 is the normal shape.
+  // Removed. `driver_count` remains in the body type for backward
+  // compat with clients that still send it; PM guard above enforces
+  // ==0 for PM; enforcement no longer enforces a minimum.
 
   // ── Resolve catalog lines ────────────────────────────────────────
   const mode = getStripeMode()
@@ -101,7 +105,13 @@ export async function POST() {
   } catch (e) {
     return NextResponse.json({ error: 'catalog lookup failed: ' + (e as Error).message }, { status: 503 })
   }
-  const expectedCount = intended.track === 'enforcement' ? 3 : 2
+  // 2026-07-01 — expectedCount inverted from the original ternary.
+  // Post-3-tier catalog (Slice 1 Commit 3): PM has 3 lines (base +
+  // per_property + per_permit graduated); Enforcement has 2 (base +
+  // per_property; per_driver retired). Previous ternary returned 2
+  // for PM (would drop per_permit and 503 "catalog missing") and 3
+  // for Enforcement (would 503 on the current 2-line catalog).
+  const expectedCount = intended.track === 'property_management' ? 3 : 2
   if (catalog.length !== expectedCount) {
     return NextResponse.json(
       { error: `standard catalog missing rows for (${intended.track}.${intended.tier}.${intended.cycle}.${mode}): expected ${expectedCount}, got ${catalog.length}. Run scripts/create-stripe-prices.ts.` },
@@ -110,16 +120,26 @@ export async function POST() {
   }
 
   // ── Build line items ─────────────────────────────────────────────
-  // base → quantity 1; per_property → property_count; per_driver → driver_count.
-  // Stripe rejects quantity=0, so the per_* lines drop out if their count is 0
-  // (only realistically possible for PM driver_count, which we already guarded).
+  // 2026-07-01 — quantity map rewritten for the 3-tier catalog:
+  //   base         → 1
+  //   per_property → intended.property_count
+  //   per_permit   → 1 (graduated tiered Price; billed by metered usage
+  //                  via syncOnAdd on approval, not by upfront quantity.
+  //                  Stripe requires a numeric quantity for tiered lines
+  //                  at Checkout — 1 is the seat value; actual permits
+  //                  reported later via subscription-item usage).
+  //   per_driver   → retired with the 3-tier move; not in the catalog.
+  // Previous fallthrough sent intended.driver_count for anything not
+  // base/per_property — that would produce NaN for PM per_permit and
+  // silently drop the line via the >0 filter.
   const lineItems = catalog
     .map(line => ({
       price: line.stripe_price_id,
       quantity:
-        line.line_item === 'base' ? 1
+        line.line_item === 'base'         ? 1
         : line.line_item === 'per_property' ? intended.property_count!
-        : intended.driver_count!,
+        : line.line_item === 'per_permit'   ? 1
+        : 1,
     }))
     .filter(li => li.quantity > 0)
 
