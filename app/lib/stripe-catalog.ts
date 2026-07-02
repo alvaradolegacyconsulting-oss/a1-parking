@@ -13,16 +13,22 @@ import { createSupabaseServiceClient } from './supabase-admin'
 // for callers that need it (e.g., B66.2b proposal-code creation reuses
 // the same Product).
 //
-// Expected row counts:
-//   • enforcement: 3 (base, per_property, per_driver)
-//   • property_management: 2 (base, per_property) — no per_driver per Cluster 2.1
+// Expected row counts (post 3-tier move, Slice 1):
+//   • enforcement: 2 (base, per_property) — per_driver RETIRED with the
+//     3-tier move; historical DB rows may still exist but the catalog
+//     script no longer creates them.
+//   • property_management: 3 (base, per_property, per_permit graduated)
 // Callers should assert the expected count to catch catalog drift.
 
 type Track = 'enforcement' | 'property_management'
 type Tier =
-  | 'starter' | 'growth' | 'legacy'
-  | 'essential' | 'professional' | 'enterprise'
-type LineItem = 'base' | 'per_property' | 'per_driver'
+  | 'starter' | 'growth' | 'legacy'                    // old 6-tier (historical rows)
+  | 'essential' | 'professional' | 'enterprise'         // old 6-tier (historical rows)
+  | 'pm_only' | 'enforcement_only'                      // 3-tier (current)
+// LineItem includes 'per_permit' (graduated meter, PM-only) added with
+// the 3-tier move. 'per_driver' kept in the union for historical rows
+// even though the current catalog script no longer creates it.
+type LineItem = 'base' | 'per_property' | 'per_driver' | 'per_permit'
 type Cycle = 'monthly' | 'annual'
 type Mode = 'test' | 'live'
 
