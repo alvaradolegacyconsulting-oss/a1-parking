@@ -1,18 +1,34 @@
 // 3-Tier Pricing — single source of truth for marketing surfaces.
 //
-// Locked model (Jose 2026-06-24): ONE product, THREE offerings —
-// PM-Only / Enforcement-Only / Legacy. Pricing = base (per tier) +
-// per-property + per-reserved-space ($0.50, zero included). Visitor
-// capacity is FREE + UNLIMITED (a metric, not billed). Drivers on
-// enforcement tiers only.
+// Current model (Jose 2026-07-02 update):
+//   PM-Only          — $179/mo base + $20/mo per property + graduated
+//                      per-approved-permit meter (2.00 → 1.75 → 1.50 →
+//                      1.25 across 1-50 / 51-200 / 201-500 / 501+).
+//                      Reserved spaces are INCLUDED (no per-space fee).
+//                      No property-manager cap. No driver concept.
+//   Enforcement-Only — $199/mo base + $15/mo per property. No permit
+//                      meter, no per-driver fee, no per-space fee. No
+//                      property-manager cap. Enforcement doesn't have
+//                      reserved-space management (PM feature).
+//   Legacy           — CUSTOM PRICING via proposal code. Do NOT publish
+//                      numbers on marketing surfaces (Jose 2026-07-02
+//                      lock — Legacy price is hidden; CTA is "Request a
+//                      proposal").
 //
-// Working numbers: these reflect the locked model but may refine before
-// public launch. Edit here — one file, single edit point. Landing page,
-// /signup, and any future marketing surface all consume from this module.
+// RETIRED (Jose 2026-07-02):
+//   - per-driver fee — no per-driver charge on any offering.
+//   - per-reserved-space fee ($0.50) — reserved spaces are included
+//     at no additional cost.
+//   - "Up to N property managers" cap — no cap on any offering.
+//   - "Most Popular" badge on Legacy — Legacy is a custom deal, not a
+//     popular-choice standard tier.
+//   - Legacy pitchLine ("bid-winning operator" blurb) — removed.
 //
-// A1 is a per-account custom override (Legacy tier, $325 base, $0 add-ons)
-// applied at the billing slice — NOT represented in this display config.
-// The site shows the standard Legacy $349/$12/$0.50/$10 working numbers.
+// Edit here — one file, single edit point. Landing page, /signup, and
+// any future marketing surface all consume from this module.
+//
+// A1 is a per-account custom override applied at the billing slice —
+// NOT represented in this display config.
 //
 // This module is for DISPLAY only. Runtime tier capability checks live in
 // app/lib/tier.ts (hasFeature, getLimit) and app/lib/tier-config.ts (the
@@ -20,28 +36,40 @@
 
 export type TierTrack = 'enforcement' | 'pm'   // kept for backwards-compat consumers
 
+// Graduated per-permit meter (PM-Only only). Each band: bill at
+// `ratePerPermit` for permits in the range (previous band's upTo, upTo].
+// Trailing band has upTo=null (∞).
+export type PermitBand = {
+  upTo: number | null
+  ratePerPermit: number
+}
+
 export type TierDisplay = {
   name: string
-  // Optional because legacy contact-sales tiers (enterprise: true) had no
-  // published price. All 3 new offerings DO publish prices.
+  // Optional because Legacy hides its price on marketing surfaces
+  // (customPrice: true replaces the numeric with "Custom pricing").
   base?: number
   perProp?: number
-  perDriver?: number     // undefined = "n/a" (PM-Only has no driver concept)
-  perSpace?: number      // NEW — $0.50 universal across all 3 offerings, zero included
-  perSpaceNote?: string  // optional caption rendered below the per-space line
-  popular?: boolean
-  enterprise?: boolean   // kept for forward-compat; NOT used by the 3 current offerings
-  badge?: string         // unused today; forward-compat
-  // NEW track-membership flags so the derived ENFORCEMENT_TIERS /
-  // PROPERTY_MANAGEMENT_TIERS legacy exports can compute subsets for
-  // /signup (which still uses the track-tabbed picker pre-billing).
+  // PM-Only per-approved-permit graduated meter. Rendered as a small
+  // table under the base + per-property lines when present.
+  permitTiers?: PermitBand[]
+  // When true, marketing surfaces hide numeric price and render
+  // "Custom pricing" + a "Request a proposal" CTA. Locked on Legacy
+  // (Jose 2026-07-02).
+  customPrice?: boolean
+  // Track-membership flags for the derived subsets used by /signup's
+  // pre-billing track-tabbed picker.
   includesEnforcement: boolean
   includesPM: boolean
   features: string[]
-  // Operator-focused framing — currently only Legacy uses this.
-  // (The bid-winning operator pitch: full PM is how you close the deal;
-  // you recover the cost in enforcement.)
-  pitchLine?: string
+
+  // ── DEPRECATED (Jose 2026-07-02): kept on the TierDisplay type so
+  // pre-billing /signup + /signup/verify keep compiling until the
+  // Bar-2 self-serve rewrite lands. Not populated on any OFFERING
+  // anymore. Consumers that read these get `undefined` and should
+  // treat it as "n/a / zero".
+  perDriver?: number
+  enterprise?: boolean
 }
 
 // ── The canonical 3 offerings ────────────────────────────────────────
@@ -51,17 +79,25 @@ export const OFFERINGS: TierDisplay[] = [
     name: 'PM-Only',
     base: 179,
     perProp: 20,
-    perSpace: 0.50,
-    perSpaceNote: '$0.50 per reserved space, zero included (pay-per-use)',
+    // Graduated per-approved-permit meter. Rate declines as volume
+    // grows. Meter fires on approved resident vehicles; declined and
+    // pending vehicles are free.
+    permitTiers: [
+      { upTo: 50,   ratePerPermit: 2.00 },
+      { upTo: 200,  ratePerPermit: 1.75 },
+      { upTo: 500,  ratePerPermit: 1.50 },
+      { upTo: null, ratePerPermit: 1.25 },
+    ],
     includesEnforcement: false,
     includesPM: true,
     features: [
       'Resident portal',
       'Resident self-registration',
       'Self-serve visitor passes',
-      'Detailed reporting & analytics',
       'Reserved space management',
+      'Detailed reporting & analytics',
       'Unlimited visitor capacity (free)',
+      'Unlimited property manager accounts',
       'Email support',
     ],
   },
@@ -69,9 +105,6 @@ export const OFFERINGS: TierDisplay[] = [
     name: 'Enforcement-Only',
     base: 199,
     perProp: 15,
-    perSpace: 0.50,
-    perDriver: 10,
-    perSpaceNote: '$0.50 per reserved space, zero included (pay-per-use)',
     includesEnforcement: true,
     includesPM: false,
     features: [
@@ -80,32 +113,25 @@ export const OFFERINGS: TierDisplay[] = [
       'QR-code visitor pass entry',
       'Manager-added residents',
       'Basic reporting',
-      'Reserved space management',
-      'Unlimited visitor capacity (free)',
-      'Up to 3 property managers',
+      'Unlimited driver accounts (no per-driver fee)',
+      'Unlimited property manager accounts',
       'Email support',
     ],
   },
   {
     name: 'Legacy',
-    base: 349,
-    perProp: 12,
-    perSpace: 0.50,
-    perDriver: 10,
-    perSpaceNote: '$0.50 per reserved space, zero included (pay-per-use)',
-    popular: true,
+    customPrice: true,
     includesEnforcement: true,
     includesPM: true,
-    pitchLine: 'The management features you give the properties you service are how you win their business — they get a full resident platform; you recover the cost in enforcement.',
     features: [
       'Everything in PM-Only AND Enforcement-Only',
       'Full PM functionality for serviced properties',
       'Full enforcement (plate scan, video, tow tickets)',
       'Resident self-registration + self-serve visitor passes',
-      'Detailed reporting & analytics',
-      'Higher property-manager allotment',
       'Reserved space management',
+      'Detailed reporting & analytics',
       'Unlimited visitor capacity (free)',
+      'Unlimited property manager accounts',
       'Priority email support',
       'Dedicated escalation path',
     ],
@@ -159,9 +185,10 @@ export const FEATURE_COMPARISON: ComparisonRow[] = [
   { capability: 'Detailed reporting / analytics',
     pmOnly: '✓',                   enforcementOnly: 'Basic only',         legacy: '✓' },
   { capability: 'Reserved spaces',
-    pmOnly: '✓ ($0.50/space)',     enforcementOnly: '✓ ($0.50/space)',    legacy: '✓ ($0.50/space)' },
+    pmOnly: '✓',                   enforcementOnly: '—',                  legacy: '✓' },
   { capability: 'Visitor capacity',
     pmOnly: 'Unlimited (free)',    enforcementOnly: 'Unlimited (free)',   legacy: 'Unlimited (free)' },
-  { capability: 'Property managers',
-    pmOnly: 'Included allotment',  enforcementOnly: '3',                  legacy: 'Higher allotment' },
+  // "Property managers" row removed 2026-07-02 — there is no property-
+  // manager cap on any offering. Advertising a number here would
+  // reintroduce the fossil the spec explicitly retires.
 ]

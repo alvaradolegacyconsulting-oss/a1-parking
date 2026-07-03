@@ -40,7 +40,7 @@ export default function Landing() {
     { icon: '🎫', title: 'Visitor pass system', body: 'Residents issue digital visitor passes to guests. Passes auto-expire. Manager-issued passes also available.', tier: 'PM-Only · Legacy (self-serve); Enforcement-Only (QR only)' },
     { icon: '📊', title: 'Detailed analytics', body: 'Track violations, pass usage, tow events, and trends across all your properties.', tier: 'PM-Only · Legacy (basic on Enforcement-Only)' },
     { icon: '🏗️', title: 'Multi-property management', body: 'Manage your entire portfolio from one login. Each property has its own rules, managers, and resident database.', tier: 'All offerings' },
-    { icon: '🅿️', title: 'Reserved space management', body: 'Track who has which spot, with cap-aware roommate tying. Pay-per-use ($0.50 per reserved space, zero included).', tier: 'All offerings' },
+    { icon: '🅿️', title: 'Reserved space management', body: 'Track who has which spot, with cap-aware roommate tying. Included on PM-Only and Legacy at no additional cost.', tier: 'PM-Only · Legacy' },
   ]
 
   return (
@@ -280,68 +280,84 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── PRICING — 3-card view (Jose lock 2026-06-24).
-          Drops the two-track tab UI; renders OFFERINGS array directly.
-          Each card shows base + per-property + per-space + (per-driver
-          when applicable). Legacy card includes the operator-focused
-          pitch quote. CTAs are "Contact us" / "Get started" only —
-          self-serve checkout HOLDs until billing slice ships. */}
+      {/* ── PRICING — 3-card view (Jose 2026-07-02 update).
+          Retired: "Most Popular" badge, per-space + per-driver lines,
+          Legacy pitchLine. Legacy now shows "Custom pricing" + a
+          "Request a proposal" CTA (customPrice: true on the offering).
+          PM-Only shows a graduated per-permit table under base + per-
+          property. */}
       <section id="pricing" style={{ padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
             <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Three offerings, one platform</h2>
             <p style={{ color: MUTED, fontSize: 16, margin: '0 0 8px', maxWidth: 640, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
-              Base + per-property + per-reserved-space ($0.50, zero included — pay only for spaces you use). Drivers billed on enforcement offerings.
+              Base + per-property. PM-Only meters approved permits on a graduated schedule — you only pay for permits you actually approve. Legacy is custom-priced per proposal.
             </p>
             <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '20px auto 0' }} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24 }}>
-            {OFFERINGS.map((tier, i) => (
-              <div key={i} style={{ background: tier.popular ? 'rgba(201,162,39,0.08)' : CARD_BG, border: `1px solid ${tier.popular ? 'rgba(201,162,39,0.5)' : BORDER}`, borderRadius: 20, padding: 36, position: 'relative', boxShadow: tier.popular ? '0 0 0 1px rgba(201,162,39,0.25), 0 8px 32px rgba(201,162,39,0.06)' : 'none' }}>
-                {tier.popular && (
-                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, background: GOLD, color: '#0a0d14', fontSize: 11, fontWeight: 700, padding: '6px 12px', borderTopLeftRadius: 20, borderTopRightRadius: 20, letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'center' }}>
-                    ★ Most Popular
-                  </div>
-                )}
-                <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: `${tier.popular ? '14px' : '0'} 0 6px` }}>
-                  {tier.includesEnforcement && tier.includesPM ? 'PM + Enforcement' : tier.includesEnforcement ? 'Enforcement' : 'Property Management'}
-                </p>
-                <h3 style={{ color: TEXT, fontSize: 24, fontWeight: 700, margin: '0 0 16px' }}>{tier.name}</h3>
+            {OFFERINGS.map((tier, i) => {
+              const isCustom = tier.customPrice === true
+              return (
+                <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 36, position: 'relative' }}>
+                  <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>
+                    {tier.includesEnforcement && tier.includesPM ? 'PM + Enforcement' : tier.includesEnforcement ? 'Enforcement' : 'Property Management'}
+                  </p>
+                  <h3 style={{ color: TEXT, fontSize: 24, fontWeight: 700, margin: '0 0 16px' }}>{tier.name}</h3>
 
-                <div style={{ marginBottom: 8 }}>
-                  <span style={{ color: GOLD, fontSize: 36, fontWeight: 800 }}>${tier.base}</span>
-                  <span style={{ color: MUTED, fontSize: 14 }}>/mo base</span>
-                </div>
-                <p style={{ color: MUTED, fontSize: 12, margin: '0 0 4px' }}>+ ${tier.perProp}/mo per property</p>
-                <p style={{ color: MUTED, fontSize: 12, margin: '0 0 4px' }}>+ ${tier.perSpace?.toFixed(2)}/mo per reserved space <span style={{ color: '#4a5568' }}>(zero included)</span></p>
-                {tier.perDriver
-                  ? <p style={{ color: MUTED, fontSize: 12, margin: '0 0 20px' }}>+ ${tier.perDriver}/mo per driver</p>
-                  : <p style={{ color: '#4a5568', fontSize: 12, margin: '0 0 20px', fontStyle: 'italic' }}>No driver fee (PM-only)</p>}
-
-                <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 20, marginBottom: tier.pitchLine ? 16 : 24 }}>
-                  {tier.features.map((f, j) => (
-                    <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-                      <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 1 }}>✓</span>
-                      <span style={{ color: '#94a3b8', fontSize: 14 }}>{f}</span>
+                  {isCustom ? (
+                    <div style={{ marginBottom: 24 }}>
+                      <p style={{ color: GOLD, fontSize: 22, fontWeight: 800, margin: '0 0 4px' }}>Custom pricing</p>
+                      <p style={{ color: MUTED, fontSize: 12, margin: 0, lineHeight: 1.55 }}>Negotiated per proposal for hybrid, larger, or non-standard deployments.</p>
                     </div>
-                  ))}
+                  ) : (
+                    <>
+                      <div style={{ marginBottom: 8 }}>
+                        <span style={{ color: GOLD, fontSize: 36, fontWeight: 800 }}>${tier.base}</span>
+                        <span style={{ color: MUTED, fontSize: 14 }}>/mo base</span>
+                      </div>
+                      <p style={{ color: MUTED, fontSize: 12, margin: '0 0 12px' }}>+ ${tier.perProp}/mo per property</p>
+
+                      {tier.permitTiers && tier.permitTiers.length > 0 && (
+                        <div style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '10px 12px', marginBottom: 20 }}>
+                          <p style={{ color: MUTED, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px', fontWeight: 600 }}>Per approved permit</p>
+                          {tier.permitTiers.map((band, j) => {
+                            const prev = j === 0 ? 0 : (tier.permitTiers![j - 1].upTo ?? 0)
+                            const rangeLabel = band.upTo === null ? `${prev + 1}+` : `${prev + 1}–${band.upTo}`
+                            return (
+                              <div key={j} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '3px 0', fontSize: 12 }}>
+                                <span style={{ color: '#94a3b8' }}>{rangeLabel} permits</span>
+                                <span style={{ color: TEXT, fontWeight: 600 }}>${band.ratePerPermit.toFixed(2)}</span>
+                              </div>
+                            )
+                          })}
+                          <p style={{ color: '#4a5568', fontSize: 10, margin: '6px 0 0', fontStyle: 'italic', lineHeight: 1.45 }}>Rate declines as volume grows. Meter fires on approval; declined and pending vehicles are free.</p>
+                        </div>
+                      )}
+
+                      {!tier.permitTiers && <div style={{ marginBottom: 20 }} />}
+                    </>
+                  )}
+
+                  <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 20, marginBottom: 24 }}>
+                    {tier.features.map((f, j) => (
+                      <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+                        <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 1 }}>✓</span>
+                        <span style={{ color: '#94a3b8', fontSize: 14 }}>{f}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <a href="#contact" style={{ display: 'block', textAlign: 'center', background: isCustom ? GOLD : CARD_BG, color: isCustom ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${isCustom ? GOLD : BORDER}` }}>
+                    {isCustom ? 'Request a proposal' : 'Get started'} →
+                  </a>
                 </div>
-
-                {tier.pitchLine && (
-                  <blockquote style={{ background: 'rgba(201,162,39,0.06)', border: `1px solid rgba(201,162,39,0.25)`, borderLeft: `3px solid ${GOLD}`, borderRadius: 8, padding: '12px 14px', margin: '0 0 22px', color: '#cbd5e1', fontSize: 13, lineHeight: 1.6, fontStyle: 'italic' }}>
-                    {tier.pitchLine}
-                  </blockquote>
-                )}
-
-                <a href="#contact" style={{ display: 'block', textAlign: 'center', background: tier.popular ? GOLD : CARD_BG, color: tier.popular ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${tier.popular ? GOLD : BORDER}` }}>
-                  {tier.popular ? 'Get started' : 'Contact us'} →
-                </a>
-              </div>
-            ))}
+              )
+            })}
           </div>
           <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 28 }}>
-            Working numbers — finalized before public launch. Self-serve checkout opens when billing wires; for now, reach out via Contact below to start.
+            Self-serve signup for PM-Only and Enforcement-Only. Legacy is proposal-code onboarded — reach out via Contact below.
           </p>
         </div>
       </section>
