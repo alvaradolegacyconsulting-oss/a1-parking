@@ -6061,9 +6061,7 @@ export default function CompanyAdminPortal() {
                         {isPmOnly && (
                           <>
                             <span style={{ color: '#64748b' }}>Permits approved this cycle:</span>
-                            <span style={{ color: '#e2e8f0' }}>
-                              {billingData.approvals_this_cycle ?? <span style={{ color: '#64748b' }}>(check the Stripe portal for detail)</span>}
-                            </span>
+                            <span style={{ color: '#64748b' }}>(check the Stripe portal for detail)</span>
                           </>
                         )}
                       </div>
