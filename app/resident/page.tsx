@@ -26,6 +26,12 @@ import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBan
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
   const [vehicles, setVehicles] = useState<any[]>([])
+  // 2026-07-02 (per-screen polish #7) — real space assignment from
+  // the spaces table (assigned_to_resident_email match), replacing
+  // the legacy residents.space free-text field on My Info render.
+  // Null when the resident has no active space assigned — the render
+  // falls back to "—" honestly.
+  const [assignedSpace, setAssignedSpace] = useState<{ space_number: string; type: string | null } | null>(null)
   const [passes, setPasses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -122,6 +128,22 @@ export default function ResidentPortal() {
       fetchVehicles(data.unit, data.property, data.email)
       fetchPasses(data.unit)
       fetchSpaceRequest(data.email)
+      // 2026-07-02 (per-screen polish #7) — fetch the resident's real
+      // active space assignment. Belt-and-suspenders filter:
+      // status='assigned' + is_active=true + email match. maybeSingle
+      // returns null if the resident is truly without a space, which
+      // the render treats as "—" honestly.
+      if (data.email) {
+        const { data: spaceRow } = await supabase
+          .from('spaces')
+          .select('space_number, type')
+          .eq('is_active', true)
+          .eq('status', 'assigned')
+          .ilike('property', data.property)
+          .ilike('assigned_to_resident_email', data.email.toLowerCase())
+          .maybeSingle()
+        if (spaceRow) setAssignedSpace(spaceRow as { space_number: string; type: string | null })
+      }
       if (data.property) {
         const { data: prop } = await supabase
           .from('properties')
@@ -690,20 +712,42 @@ export default function ResidentPortal() {
               </>
             ) : (
               <>
-                {[
-                  { label: 'Full Name', value: resident.name },
-                  { label: 'Email', value: resident.email },
-                  { label: 'Phone', value: resident.phone || '—' },
-                  { label: 'Unit', value: resident.unit },
-                  { label: 'Property', value: resident.property },
-                  { label: 'Assigned Space', value: resident.space || '—' },
-                  { label: 'Lease End', value: resident.lease_end ? new Date(resident.lease_end).toLocaleDateString() : '—' },
-                ].map((item, i) => (
-                  <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
-                    <span style={{ color:'#555', fontSize:'12px' }}>{item.label}</span>
-                    <span style={{ color:'#aaa', fontSize:'12px', fontWeight:'500' }}>{item.value}</span>
-                  </div>
-                ))}
+                {(() => {
+                  // 2026-07-02 (per-screen polish #7) — Assigned Space
+                  // pulls from the real spaces table (assignedSpace
+                  // state) instead of the legacy residents.space free-
+                  // text column. Falls back to "—" honestly when the
+                  // resident has no active space assigned.
+                  //
+                  // Approved plates on the space = the resident's own
+                  // vehicles at their unit that are currently active
+                  // (status='active' + is_active=true). Shown only if a
+                  // space is assigned.
+                  const spaceLabel = assignedSpace
+                    ? `${assignedSpace.space_number}${assignedSpace.type ? ` (${assignedSpace.type})` : ''}`
+                    : '—'
+                  const approvedPlates = assignedSpace
+                    ? vehicles
+                        .filter((v: any) => v.status === 'active' && v.is_active === true)
+                        .map((v: any) => v.plate)
+                        .filter(Boolean)
+                    : []
+                  return [
+                    { label: 'Full Name',      value: resident.name },
+                    { label: 'Email',          value: resident.email },
+                    { label: 'Phone',          value: resident.phone || '—' },
+                    { label: 'Unit',           value: resident.unit },
+                    { label: 'Property',       value: resident.property },
+                    { label: 'Assigned Space', value: spaceLabel },
+                    ...(approvedPlates.length > 0 ? [{ label: 'Approved plates', value: approvedPlates.join(', ') }] : []),
+                    { label: 'Lease End',      value: resident.lease_end ? new Date(resident.lease_end).toLocaleDateString() : '—' },
+                  ].map((item, i) => (
+                    <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
+                      <span style={{ color:'#555', fontSize:'12px' }}>{item.label}</span>
+                      <span style={{ color:'#aaa', fontSize:'12px', fontWeight:'500' }}>{item.value}</span>
+                    </div>
+                  ))
+                })()}
               </>
             )}
           </div>

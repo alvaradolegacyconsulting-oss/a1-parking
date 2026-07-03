@@ -3327,6 +3327,39 @@ export default function ManagerPortal() {
               </div>
             )}
 
+            {/* 2026-07-02 (per-screen polish #6) — Visitor-Pass QR
+                for the property manager to print and post on-site.
+                Reuses the CA QR pattern (QRCodeCanvas + print-window
+                open) property-scoped to the manager's assigned
+                property. Points at /visitor?property=<name> — the
+                same URL a CA would generate for the same property. */}
+            {manager && (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'14px' }}>
+                <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Visitor Pass QR</p>
+                <p style={{ color:'#555', fontSize:'12px', margin:'0 0 16px', lineHeight:'1.5' }}>Print this and post it on-site so visitors can self-issue a pass at your property. Property-scoped — passes generated here land on this property.</p>
+                {(() => {
+                  const visitorUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'}/visitor?property=${encodeURIComponent(manager.name)}`
+                  return (
+                    <>
+                      <div id="qr-visitor-pass" style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
+                        <QRCodeCanvas value={visitorUrl} size={160} level="H" />
+                      </div>
+                      <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New', textAlign:'center' }}>{visitorUrl}</p>
+                      <button onClick={() => {
+                        const canvas = document.querySelector('#qr-visitor-pass canvas') as HTMLCanvasElement
+                        if (!canvas) return
+                        const tw = window.open('', '_blank')!
+                        tw.document.write(`<html><head><title>Visitor Pass QR - ${manager.name}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#fff;font-family:Arial,sans-serif;padding:40px}img{width:220px;height:220px}h2{color:#1A1F2E;font-size:22px;margin:16px 0 8px}p{color:#555;font-size:13px;text-align:center;max-width:320px;margin:4px 0}a{color:#C9A227;font-size:11px;word-break:break-all}</style></head><body><img src="${canvas.toDataURL()}" /><h2>${manager.name}</h2><p>Scan to issue a visitor pass at this property</p><a>${visitorUrl}</a><script>window.print();window.close();</script></body></html>`)
+                        tw.document.close()
+                      }} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                        Print QR Code
+                      </button>
+                    </>
+                  )
+                })()}
+              </div>
+            )}
+
             {/* Section C — Exempt Plates */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px' }}>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Exempt Plates</p>

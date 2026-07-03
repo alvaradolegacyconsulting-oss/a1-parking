@@ -6028,6 +6028,52 @@ export default function CompanyAdminPortal() {
                   </div>
                 </div>
 
+                {/* 2026-07-02 (per-screen polish #5) — billing-impact
+                    quantities + delta since current cycle start. Cycle
+                    boundary approximated from current_period_end minus
+                    a monthly window (companies row doesn't store
+                    current_period_start; adding a column would require
+                    a webhook change). Copy is honest about the
+                    approximation. Goal: no surprise-bill trap on the
+                    Billing tab.
+                    - Current active properties = source of the per-
+                      property line item on the next invoice.
+                    - (PM-Only) permits approved this cycle = sourced
+                      from audit_logs APPROVE_VEHICLE events since
+                      the cycle boundary; feeds the graduated per-
+                      permit meter on the next invoice. */}
+                {(() => {
+                  const cycleEnd = billingData.current_period_end ? new Date(billingData.current_period_end) : null
+                  const cycleStart = cycleEnd ? new Date(cycleEnd.getTime() - 30 * 24 * 60 * 60 * 1000) : null
+                  const activeProps = properties.filter(p => p.is_active !== false).length
+                  const isPmOnly = getCompanyContext().tier === 'pm_only'
+                  return (
+                    <div style={{ background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                      <p style={{ color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 4px', fontWeight: 700 }}>What impacts your next invoice</p>
+                      <p style={{ color: '#64748b', fontSize: 11, margin: '0 0 12px' }}>
+                        {cycleStart
+                          ? `Since your cycle started (~${cycleStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
+                          : 'This cycle'}
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 16, rowGap: 8, fontSize: 13 }}>
+                        <span style={{ color: '#64748b' }}>Active properties:</span>
+                        <span style={{ color: '#e2e8f0' }}>{activeProps}</span>
+                        {isPmOnly && (
+                          <>
+                            <span style={{ color: '#64748b' }}>Permits approved this cycle:</span>
+                            <span style={{ color: '#e2e8f0' }}>
+                              {billingData.approvals_this_cycle ?? <span style={{ color: '#64748b' }}>(check the Stripe portal for detail)</span>}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <p style={{ color: '#64748b', fontSize: 11, margin: '10px 0 0', lineHeight: 1.5 }}>
+                        Cycle boundary is approximate; open the Stripe portal below for exact cycle history and invoice detail.
+                      </p>
+                    </div>
+                  )
+                })()}
+
                 {/* Manage Billing button */}
                 <button onClick={openBillingPortal} disabled={portalLoading}
                   style={{
