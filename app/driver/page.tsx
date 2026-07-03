@@ -425,8 +425,14 @@ export default function DriverPortal() {
       setSearching(false); setResult({ status: 'authorized', data: { ...activeVeh, _assigned_spaces: assignedSpaces, _pending_plate_change: underReviewChange } }); return
     }
 
+    // Slice 5 — deactivated vehicles are NOT authorized. Exclude them from
+    // the expired-branch query so they fall through to notfound (returns
+    // "NO PERMIT FOUND" — the standing determination for unauthorized).
+    // A deactivated permit that still resolves as any authorized-family
+    // status would be an enforcement hole (same class as the slice-4
+    // collision guard).
     const { data: expiredVeh } = await supabase
-      .from('vehicles').select(SAFE_VEHICLE_COLS).ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', false).single()
+      .from('vehicles').select(SAFE_VEHICLE_COLS).ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', false).neq('status', 'deactivated').single()
     if (expiredVeh) {
       // Expired/pending/declined: same RPC call (the resident's space ties
       // are reference data regardless of vehicle is_active state — the

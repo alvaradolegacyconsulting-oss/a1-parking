@@ -49,6 +49,13 @@ interface Props {
   // callSyncOnAdd — a plate change is a substitution, not a new permit.
   onApprovePlateChange: (changeId: number) => Promise<void>
   onDeclinePlateChange: (changeId: number) => Promise<void>
+  // Slice 5 — deactivate / reactivate. Deactivate role-only (+
+  // !isReadOnly) — removing protection isn't granting. Reactivate
+  // gates on canApproveVehicles + !isReadOnly — routes through
+  // approve_vehicle wrapper which fires callSyncOnAdd → noop_within_floor
+  // same-cycle (net-zero on the meter by ratchet + reconcile design).
+  onDeactivateVehicle: (vehicleId: string | number) => Promise<void>
+  onReactivateVehicle: (vehicleId: string | number) => Promise<void>
 }
 
 // Manager-portal design tokens (matched to existing manager/page.tsx palette).
@@ -113,6 +120,7 @@ export default function PmResidentCrm({
   onApproveAllPending,
   onReleaseSpace, onAssignSpaceRequest, onDeclineSpaceRequest,
   onApprovePlateChange, onDeclinePlateChange,
+  onDeactivateVehicle, onReactivateVehicle,
 }: Props) {
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
@@ -264,6 +272,8 @@ export default function PmResidentCrm({
                     onDeclineVehicle={onDeclineVehicle}
                     onApprovePlateChange={onApprovePlateChange}
                     onDeclinePlateChange={onDeclinePlateChange}
+                    onDeactivateVehicle={onDeactivateVehicle}
+                    onReactivateVehicle={onReactivateVehicle}
                   />
                 )}
                 {subTab === 'spaces' && (
@@ -598,7 +608,7 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
   )
 }
 
-function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange }: {
+function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -606,6 +616,8 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
   onDeclineVehicle: (id: string | number) => Promise<void>
   onApprovePlateChange: (changeId: number) => Promise<void>
   onDeclinePlateChange: (changeId: number) => Promise<void>
+  onDeactivateVehicle: (id: string | number) => Promise<void>
+  onReactivateVehicle: (id: string | number) => Promise<void>
 }) {
   if (resident.vehicles.length === 0) {
     return (
@@ -626,16 +638,18 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
           onDeclineVehicle={onDeclineVehicle}
           onApprovePlateChange={onApprovePlateChange}
           onDeclinePlateChange={onDeclinePlateChange}
+          onDeactivateVehicle={onDeactivateVehicle}
+          onReactivateVehicle={onReactivateVehicle}
         />
       ))}
       <div style={{ fontSize: '11px', color: C.faint, marginTop: '10px', fontStyle: 'italic' }}>
-        Deactivate lands slice 5.
+        Inline edit lands slice 6.
       </div>
     </>
   )
 }
 
-function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange }: {
+function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle }: {
   v: any
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -643,6 +657,8 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   onDeclineVehicle: (id: string | number) => Promise<void>
   onApprovePlateChange: (changeId: number) => Promise<void>
   onDeclinePlateChange: (changeId: number) => Promise<void>
+  onDeactivateVehicle: (id: string | number) => Promise<void>
+  onReactivateVehicle: (id: string | number) => Promise<void>
 }) {
   const s = (v.status ?? '').toLowerCase()
   const stat = s === 'under_review'
@@ -651,11 +667,15 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
       ? { color: C.gold, bg: C.goldSoft, border: C.goldLine, text: 'Pending approval' }
       : s === 'active' || s === 'approved'
         ? { color: C.green, bg: C.greenSoft, border: C.greenLine, text: 'Approved' }
-        : { color: C.faint, bg: 'transparent', border: C.border, text: (v.status || 'unknown') }
+        : s === 'deactivated'
+          ? { color: C.faint, bg: 'transparent', border: C.border2, text: 'Deactivated' }
+          : { color: C.faint, bg: 'transparent', border: C.border, text: (v.status || 'unknown') }
   const ymm = [v.year, v.make, v.model].filter(Boolean).join(' ') || '—'
   const status = (v.status ?? '').toLowerCase()
   const isPending = status === 'pending'
   const isUnderReview = status === 'under_review'
+  const isActive = status === 'active' || status === 'approved'
+  const isDeactivated = status === 'deactivated'
   const showApprove = isPending && canApproveVehicles && !isReadOnly
   const showDecline = isPending && !isReadOnly
   // Slice 4 — plate re-approval affordances. pendingPlateChange is
@@ -664,6 +684,10 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   const pc = v.pendingPlateChange
   const showApprovePlateChange = isUnderReview && !!pc && canApproveVehicles && !isReadOnly
   const showDeclinePlateChange = isUnderReview && !!pc && !isReadOnly
+  // Slice 5 — deactivate/reactivate. Deactivate role-only; Reactivate
+  // permit-granting → can_approve_vehicles gate.
+  const showDeactivate = isActive && !isReadOnly
+  const showReactivate = isDeactivated && canApproveVehicles && !isReadOnly
   return (
     <div style={{
       border: `1px solid ${C.border}`, borderRadius: '10px', padding: '14px',
@@ -745,6 +769,24 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
             </div>
           )}
         </>
+      )}
+      {/* Slice 5 — Deactivate button on active vehicles + Reactivate
+          button on deactivated. Deactivate role-only (removing protection
+          isn't granting). Reactivate routes through approve_vehicle
+          (permit-granting → can_approve_vehicles gate). */}
+      {showDeactivate && (
+        <button onClick={() => onDeactivateVehicle(v.id)} title="Drops the plate out of the approved / do-not-tow set. Record is kept — you can Reactivate later (routes through approval)." style={{
+          marginTop: '12px', width: '100%', padding: '8px', background: 'transparent', color: C.faint,
+          border: `1px solid ${C.border2}`, borderRadius: '6px',
+          cursor: 'pointer', fontSize: '11.5px', fontWeight: 700, fontFamily: 'inherit',
+        }}>Deactivate</button>
+      )}
+      {showReactivate && (
+        <button onClick={() => onReactivateVehicle(v.id)} title="Re-authorize this plate. Routes through the same approval flow used for new vehicles." style={{
+          marginTop: '12px', width: '100%', padding: '8px', background: C.greenSoft, color: C.green,
+          border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+          cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+        }}>Reactivate</button>
       )}
     </div>
   )

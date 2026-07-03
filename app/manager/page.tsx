@@ -1536,6 +1536,53 @@ export default function ManagerPortal() {
     fetchVehicles(manager.name)
   }
 
+  // PM CRM slice 5 — vehicle deactivate/reactivate.
+  // Deactivate: role-gated (manager|CA + !isReadOnly). Removing enforcement
+  //   protection is NOT permit-granting, so no can_approve_vehicles gate.
+  //   Direct client UPDATE — RLS admits managers at own properties. Record
+  //   kept, is_active=false, status='deactivated' distinguishes from
+  //   'declined' (declined = never approved; deactivated = was approved,
+  //   protection removed).
+  // Reactivate: routes through approve_vehicle wrapper — permit-granting,
+  //   so can_approve_vehicles gate applies (at the CRM render level). RPC
+  //   flips is_active=true, status='active', client fires callSyncOnAdd.
+  //   Same-cycle deactivate+reactivate = noop_within_floor (item.quantity
+  //   was never decremented at the meter — decrement happens at cycle
+  //   close via reconcileAtRenewal). Net-zero, guaranteed by ratchet.
+  async function deactivateVehicleCrm(id: string | number) {
+    if (!manager?.name) return
+    if (!window.confirm('Deactivate this vehicle?\n\nThe plate will no longer be authorized — driver plate lookups will return "not authorized." The record stays for audit. You can Reactivate later (routes through approval).')) return
+    const { error } = await supabase.from('vehicles')
+      .update({ is_active: false, status: 'deactivated' })
+      .eq('id', id)
+    if (error) {
+      alert(`Deactivate failed: ${error.message}`)
+      console.error('[deactivate_vehicle]', error)
+      return
+    }
+    await logAudit({
+      action: 'DEACTIVATE_VEHICLE',
+      table_name: 'vehicles',
+      record_id: String(id),
+      new_values: { is_active: false, status: 'deactivated', property: manager.name, meter_fired: false, note: 'record kept; count decrements at cycle close via reconcileAtRenewal' },
+    })
+    console.info('[deactivate_vehicle]', { site: 'crm', vehicleId: id, meter_fired: false })
+    fetchVehicles(manager.name)
+  }
+
+  async function reactivateVehicleCrm(id: string | number) {
+    // Reuse the existing approve_vehicle wrapper — same wrapper the per-
+    // vehicle Approve button uses. It fires callSyncOnAdd on action=
+    // 'approved'. In the deactivate+reactivate same-cycle case,
+    // syncOnAdd's ratchet returns 'noop_within_floor' (item.quantity was
+    // never dropped). Cross-cycle case, syncOnAdd correctly ratchets up
+    // because item.quantity dropped at cycle close.
+    if (!manager?.name) return
+    if (!window.confirm('Reactivate this vehicle?\n\nThe plate will be re-authorized. This routes through the same approval flow used for new vehicles.')) return
+    await approveVehicle(String(id))
+    console.info('[reactivate_vehicle]', { site: 'crm', vehicleId: id, note: 'routes through approve_vehicle wrapper — meter sync fires; noop_within_floor if same-cycle' })
+  }
+
   async function declineResident(r: any) {
     const note = residentNotes[r.id] || null
     await supabase.from('residents').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', r.id)
@@ -3224,6 +3271,8 @@ export default function ManagerPortal() {
             onDeclineSpaceRequest={(reqId) => declineSpaceRequestFromCrm(reqId)}
             onApprovePlateChange={(changeId) => approvePlateChange(changeId)}
             onDeclinePlateChange={(changeId) => declinePlateChange(changeId)}
+            onDeactivateVehicle={(id) => deactivateVehicleCrm(id)}
+            onReactivateVehicle={(id) => reactivateVehicleCrm(id)}
           />
         )}
 
