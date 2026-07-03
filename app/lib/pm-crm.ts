@@ -25,6 +25,23 @@ export interface CrmSpace {
   property?: string | null
 }
 
+// Slice 3 enrichment: each assigned space carries its authorized plate list
+// with owner attribution. Computed client-side from ties + vehicles; no new
+// fetch. isThisResident distinguishes the currently-viewed resident's own
+// plates from roommate plates when the space is shared.
+export interface CrmAuthorizedPlate {
+  plate: string
+  owner_email: string
+  owner_name: string
+  owner_unit: string
+  isThisResident: boolean
+}
+
+export interface CrmResidentSpace extends CrmSpace {
+  authorizedPlates: CrmAuthorizedPlate[]
+  roommateCount: number  // count of tied residents OTHER than the current one
+}
+
 export interface CrmSpaceResidentTie {
   space_id: number
   resident_email: string
@@ -56,7 +73,7 @@ export interface CrmResident {
   // Grouped derivations:
   vehicles: any[]
   vehicleCounts: { approved: number; pending: number; underReview: number }
-  assignedSpaces: CrmSpace[]
+  assignedSpaces: CrmResidentSpace[]
   guests: GuestAuth[]
   spaceRequest: CrmSpaceRequest | null
   needsApproval: boolean
@@ -143,7 +160,8 @@ export function buildCrmResidents(input: {
     if (u) residentsPerUnit.set(u, (residentsPerUnit.get(u) ?? 0) + 1)
   }
 
-  return allResidents.map((r): CrmResident => {
+  // Phase 1 — build a plain rows array without space enrichment.
+  const rows: CrmResident[] = allResidents.map((r): CrmResident => {
     const email = norm(r.email)
     const unit = norm(r.unit)
     let vs = vehiclesByEmail.get(email) ?? []
@@ -185,12 +203,64 @@ export function buildCrmResidents(input: {
       manager_note: r.manager_note ?? null,
       vehicles: vs,
       vehicleCounts: counts,
-      assignedSpaces: ss,
+      // Placeholder — Phase 2 replaces with CrmResidentSpace[] with per-space
+      // authorized plate list.
+      assignedSpaces: ss.map(s => ({ ...s, authorizedPlates: [], roommateCount: 0 })),
       guests: gs,
       spaceRequest: sr,
       needsApproval,
     }
   })
+
+  // Phase 2 — enrich each row's assignedSpaces with authorized plates + roommate
+  // counts. Needs a full email → row index built from Phase 1's results.
+  const rowByEmail = new Map<string, CrmResident>()
+  for (const r of rows) rowByEmail.set(norm(r.email), r)
+
+  const tiesBySpaceId = new Map<number, string[]>()
+  for (const tie of input.spaceResidentTies) {
+    const email = norm(tie.resident_email)
+    if (!email) continue
+    const list = tiesBySpaceId.get(tie.space_id) ?? []
+    list.push(email)
+    tiesBySpaceId.set(tie.space_id, list)
+  }
+
+  for (const r of rows) {
+    const currentEmail = norm(r.email)
+    r.assignedSpaces = r.assignedSpaces.map(s => {
+      let tiedEmails = tiesBySpaceId.get(s.id) ?? []
+      // Legacy fallback: no ties yet but spaces.assigned_to_resident_email
+      // is set (pre-v1.1 single-resident model).
+      if (tiedEmails.length === 0 && s.assigned_to_resident_email) {
+        tiedEmails = [norm(s.assigned_to_resident_email)]
+      }
+      const authorizedPlates: CrmAuthorizedPlate[] = []
+      let roommateCount = 0
+      for (const tiedEmail of tiedEmails) {
+        const isThisResident = tiedEmail === currentEmail
+        if (!isThisResident) roommateCount++
+        const other = rowByEmail.get(tiedEmail)
+        if (!other) continue
+        // Only APPROVED vehicles are enforcement-authorized to park at
+        // the assigned space. Pending / under_review / declined excluded.
+        for (const v of other.vehicles) {
+          const st = norm(v.status)
+          if (st !== 'active' && st !== 'approved') continue
+          authorizedPlates.push({
+            plate: v.plate ?? '',
+            owner_email: other.email,
+            owner_name: other.name,
+            owner_unit: other.unit,
+            isThisResident,
+          })
+        }
+      }
+      return { ...s, authorizedPlates, roommateCount }
+    })
+  }
+
+  return rows
 }
 
 export function countVehicles(vs: any[]): { approved: number; pending: number; underReview: number } {

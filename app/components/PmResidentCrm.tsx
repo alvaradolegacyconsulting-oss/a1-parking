@@ -7,7 +7,7 @@
 // from the parent. Zero DB access here; grouping done in app/lib/pm-crm.ts.
 
 import { useMemo, useState } from 'react'
-import type { CrmResident, CrmFilter } from '@/app/lib/pm-crm'
+import type { CrmResident, CrmFilter, CrmResidentSpace } from '@/app/lib/pm-crm'
 import { computeInsights, filterCrmRows, initials } from '@/app/lib/pm-crm'
 
 type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
@@ -33,6 +33,12 @@ interface Props {
   onApproveResident: (resident: CrmResident) => Promise<void>
   onDeclineResident: (resident: CrmResident) => Promise<void>
   onApproveAllPending: (pendingResidents: CrmResident[]) => Promise<void>
+  // Slice 3 — space handlers. All server-role-gated (manager|CA); client
+  // hides on isReadOnly. Release uses per-tie free_space so co-residents
+  // survive.
+  onReleaseSpace: (spaceId: number, residentEmail: string) => Promise<void>
+  onAssignSpaceRequest: (requestId: number, spaceId: number) => Promise<void>
+  onDeclineSpaceRequest: (requestId: number) => Promise<void>
 }
 
 // Manager-portal design tokens (matched to existing manager/page.tsx palette).
@@ -95,6 +101,7 @@ export default function PmResidentCrm({
   onApproveVehicle, onDeclineVehicle,
   onApproveResident, onDeclineResident,
   onApproveAllPending,
+  onReleaseSpace, onAssignSpaceRequest, onDeclineSpaceRequest,
 }: Props) {
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
@@ -234,6 +241,7 @@ export default function PmResidentCrm({
                     isReadOnly={isReadOnly}
                     onApproveResident={onApproveResident}
                     onDeclineResident={onDeclineResident}
+                    onJumpToGuests={() => setSubTab('guests')}
                   />
                 )}
                 {subTab === 'vehicles' && (
@@ -245,7 +253,15 @@ export default function PmResidentCrm({
                     onDeclineVehicle={onDeclineVehicle}
                   />
                 )}
-                {subTab === 'spaces' && <SpacesPane resident={selected} />}
+                {subTab === 'spaces' && (
+                  <SpacesPane
+                    resident={selected}
+                    isReadOnly={isReadOnly}
+                    onReleaseSpace={onReleaseSpace}
+                    onAssignSpaceRequest={onAssignSpaceRequest}
+                    onDeclineSpaceRequest={onDeclineSpaceRequest}
+                  />
+                )}
                 {subTab === 'guests' && <GuestsPane resident={selected} />}
                 {subTab === 'activity' && <ActivityPane resident={selected} />}
               </div>
@@ -479,12 +495,13 @@ function SubTabBar({ tab, setTab, resident }: { tab: SubTab; setTab: (t: SubTab)
 
 // ── Sub-tab panes ────────────────────────────────────────────────────
 
-function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident }: {
+function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onJumpToGuests }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
   onApproveResident: (r: CrmResident) => Promise<void>
   onDeclineResident: (r: CrmResident) => Promise<void>
+  onJumpToGuests: () => void
 }) {
   const { pending, underReview } = resident.vehicleCounts
   const showCallout = resident.needsApproval
@@ -526,21 +543,30 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '14px' }}>
-        <Card title="Authorized guests">
+        <Card title={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <span>Authorized guests</span>
+            {resident.guests.length > 0 && (
+              <button onClick={onJumpToGuests} style={{
+                background: 'transparent', border: 'none', color: C.gold, fontSize: '11px',
+                fontFamily: 'inherit', cursor: 'pointer', padding: 0, letterSpacing: 'normal', textTransform: 'none',
+              }}>→ Guests</button>
+            )}
+          </div>
+        }>
           {resident.guests.length === 0 ? (
             <div style={{ color: C.faint, fontSize: '12.5px' }}>None on file.</div>
-          ) : resident.guests.map((g, i) => (
-            <div key={i} style={{ fontSize: '13px', marginBottom: '6px', color: C.text }}>
-              {(g as any).guest_name || (g as any).name || '(unnamed)'}
-              {' · '}
-              <span style={{ fontFamily: 'Courier New' }}>{(g as any).plate || '—'}</span>
-              {(g as any).start_date && (g as any).end_date && (
-                <span style={{ color: C.faint }}>
-                  {' '}({(g as any).start_date} – {(g as any).end_date})
-                </span>
-              )}
-            </div>
-          ))}
+          ) : (
+            <>
+              <div style={{ color: C.text, fontSize: '13px', marginBottom: '4px' }}>
+                <b>{resident.guests.length}</b> {resident.guests.length === 1 ? 'guest' : 'guests'} on file
+              </div>
+              <div style={{ color: C.muted, fontSize: '12px' }}>
+                {resident.guests.slice(0, 2).map(g => (g as any).guest_name || (g as any).name || '(unnamed)').filter(Boolean).join(' · ')}
+                {resident.guests.length > 2 && ` · +${resident.guests.length - 2} more`}
+              </div>
+            </>
+          )}
         </Card>
         <Card title="Notes">
           <div style={{
@@ -650,7 +676,13 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   )
 }
 
-function SpacesPane({ resident }: { resident: CrmResident }) {
+function SpacesPane({ resident, isReadOnly, onReleaseSpace, onAssignSpaceRequest, onDeclineSpaceRequest }: {
+  resident: CrmResident
+  isReadOnly: boolean
+  onReleaseSpace: (spaceId: number, residentEmail: string) => Promise<void>
+  onAssignSpaceRequest: (requestId: number, spaceId: number) => Promise<void>
+  onDeclineSpaceRequest: (requestId: number) => Promise<void>
+}) {
   const hasSpaces = resident.assignedSpaces.length > 0
   return (
     <>
@@ -662,41 +694,133 @@ function SpacesPane({ resident }: { resident: CrmResident }) {
         <div style={{ color: C.faint, fontSize: '12.5px', marginBottom: '12px' }}>No space assigned.</div>
       )}
       {resident.assignedSpaces.map(s => (
-        <div key={s.id} style={{
-          border: `1px solid ${C.border}`, borderRadius: '10px', padding: '14px',
-          marginBottom: '12px', background: C.panel2,
-        }}>
-          <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px',
-          }}>
-            <div style={{ fontWeight: 600, fontSize: '13.5px', color: C.text }}>
-              Space {s.label}{' '}
-              <span style={{
-                fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '20px', marginLeft: '4px',
-                color: C.green, background: C.greenSoft, border: `1px solid ${C.greenLine}`,
-              }}>Assigned</span>
-            </div>
-            <span style={{ fontSize: '11px', color: C.faint }}>Type: {s.type ?? '—'}</span>
-          </div>
-        </div>
+        <SpaceCard
+          key={s.id} s={s}
+          residentEmail={resident.email}
+          isReadOnly={isReadOnly}
+          onReleaseSpace={onReleaseSpace}
+        />
       ))}
       {resident.spaceRequest && (
-        <div style={{
-          border: `1px solid ${C.goldLine}`, borderRadius: '10px', padding: '12px 14px',
-          marginBottom: '10px', background: C.goldSoft,
+        <SpaceRequestCard
+          req={resident.spaceRequest}
+          isReadOnly={isReadOnly}
+          onAssignSpaceRequest={onAssignSpaceRequest}
+          onDeclineSpaceRequest={onDeclineSpaceRequest}
+        />
+      )}
+    </>
+  )
+}
+
+function SpaceCard({ s, residentEmail, isReadOnly, onReleaseSpace }: {
+  s: CrmResidentSpace
+  residentEmail: string
+  isReadOnly: boolean
+  onReleaseSpace: (spaceId: number, residentEmail: string) => Promise<void>
+}) {
+  const roommateCount = s.roommateCount
+  return (
+    <div style={{
+      border: `1px solid ${C.border}`, borderRadius: '10px', padding: '14px',
+      marginBottom: '12px', background: C.panel2,
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px', flexWrap: 'wrap',
+      }}>
+        <div style={{ fontWeight: 600, fontSize: '13.5px', color: C.text }}>
+          Space {s.label}{' '}
+          <span style={{
+            fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '20px', marginLeft: '4px',
+            color: C.green, background: C.greenSoft, border: `1px solid ${C.greenLine}`,
+          }}>Assigned</span>
+          {s.type && (
+            <span style={{ color: C.faint, fontSize: '11px', marginLeft: '8px' }}>· {s.type}</span>
+          )}
+        </div>
+        {!isReadOnly && (
+          <button onClick={() => onReleaseSpace(s.id, residentEmail)} title="Frees this resident's tie for reassignment. Co-residents (if any) retain their tie." style={{
+            padding: '6px 12px', background: C.redSoft, color: C.red,
+            border: `1px solid ${C.redLine}`, borderRadius: '6px',
+            cursor: 'pointer', fontSize: '11px', fontWeight: 700, fontFamily: 'inherit',
+          }}>Release</button>
+        )}
+      </div>
+      <div style={{
+        fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.6px',
+        color: C.faint, margin: '2px 0 8px', fontWeight: 700,
+      }}>
+        Plates authorized on this space
+        {roommateCount > 0 && <span style={{ color: C.blue, textTransform: 'none', letterSpacing: 'normal', marginLeft: '6px', fontWeight: 600 }}>· shared with {roommateCount} other</span>}
+      </div>
+      {s.authorizedPlates.length === 0 ? (
+        <div style={{ color: C.faint, fontSize: '12px' }}>No approved plates authorized on this space yet.</div>
+      ) : s.authorizedPlates.map((p, i) => (
+        <div key={i} style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '6px 0', borderTop: i === 0 ? 'none' : `1px solid ${C.border}`,
         }}>
-          <div style={{ fontWeight: 600, fontSize: '13.5px', color: C.text }}>
-            {resident.spaceRequest.requested_space_label || 'Space request'}
-          </div>
-          <div style={{ color: C.muted, fontSize: '12px', marginTop: '2px' }}>
-            Requested {new Date(resident.spaceRequest.created_at).toLocaleDateString()} · awaiting assignment
-          </div>
+          <span style={{ fontSize: '12.5px' }}>
+            <span style={{ fontFamily: 'Courier New', color: C.text, fontWeight: 600 }}>{p.plate}</span>
+            <span style={{ color: C.muted }}> · {p.owner_name || p.owner_email}</span>
+            {!p.isThisResident && p.owner_unit && (
+              <span style={{ color: C.faint }}> · Unit {p.owner_unit}</span>
+            )}
+          </span>
+          <span style={{
+            fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '20px', flex: 'none', whiteSpace: 'nowrap',
+            color: p.isThisResident ? C.green : C.blue,
+            background: p.isThisResident ? C.greenSoft : C.blueSoft,
+          }}>{p.isThisResident ? 'this resident' : 'roommate'}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function SpaceRequestCard({ req, isReadOnly, onAssignSpaceRequest, onDeclineSpaceRequest }: {
+  req: NonNullable<CrmResident['spaceRequest']>
+  isReadOnly: boolean
+  onAssignSpaceRequest: (requestId: number, spaceId: number) => Promise<void>
+  onDeclineSpaceRequest: (requestId: number) => Promise<void>
+}) {
+  const canAssign = !isReadOnly && !!req.requested_space_id
+  const canDecline = !isReadOnly
+  return (
+    <div style={{
+      border: `1px solid ${C.goldLine}`, borderRadius: '10px', padding: '12px 14px',
+      marginBottom: '10px', background: C.goldSoft,
+    }}>
+      <div style={{ fontWeight: 600, fontSize: '13.5px', color: C.text }}>
+        Space request: {req.requested_space_label || `#${req.requested_space_id ?? '—'}`}
+      </div>
+      <div style={{ color: C.muted, fontSize: '12px', marginTop: '2px' }}>
+        Requested {new Date(req.created_at).toLocaleDateString()} · awaiting decision
+      </div>
+      {req.note && (
+        <div style={{ color: C.muted, fontSize: '12px', marginTop: '6px', fontStyle: 'italic' }}>
+          "{req.note}"
         </div>
       )}
-      <div style={{ fontSize: '11px', color: C.faint, marginTop: '10px', fontStyle: 'italic' }}>
-        Roommate plates · Release · Assign · Decline land in slice 3.
-      </div>
-    </>
+      {(canAssign || canDecline) && (
+        <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+          {canAssign && (
+            <button onClick={() => onAssignSpaceRequest(req.id, req.requested_space_id!)} style={{
+              padding: '7px 12px', background: C.greenSoft, color: C.green,
+              border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+            }}>Assign requested space</button>
+          )}
+          {canDecline && (
+            <button onClick={() => onDeclineSpaceRequest(req.id)} style={{
+              padding: '7px 12px', background: C.redSoft, color: C.red,
+              border: `1px solid ${C.redLine}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+            }}>Decline</button>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 

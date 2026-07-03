@@ -1387,6 +1387,85 @@ export default function ManagerPortal() {
     fetchVehicles(manager.name)
   }
 
+  // PM CRM slice 3 — space-write handlers. Route through the existing
+  // DEFINER RPCs (assign_space / free_space / approve_space_request /
+  // decline_space_request). Server enforces role (manager|CA) + property/
+  // company scope; client hides affordances on isReadOnly (leasing_agent).
+  // Every RPC writes its own audit_logs row internally — no extra logAudit
+  // needed here.
+  //
+  // Release semantics: free_space(space_id, 'manual_free', resident_email)
+  // is the PER-TIE path (v1.1 multi-resident) — deletes ONLY the caller's
+  // tie from space_residents. Co-residents survive. Whole-space free is
+  // reserved for deactivation cascade.
+  async function releaseSpaceForResident(spaceId: number, residentEmail: string) {
+    if (!manager?.name) return
+    if (!window.confirm('Release this space for reassignment?\n\nCo-residents (if any) retain their tie. Assignment history is kept.')) return
+    const { data, error } = await supabase.rpc('free_space', {
+      p_space_id: spaceId,
+      p_reason: 'manual_free',
+      p_resident_email: residentEmail,
+    })
+    if (error) {
+      alert(`Release failed: ${error.message}`)
+      console.error('[free_space] RPC error:', error)
+      return
+    }
+    console.info('[free_space]', { site: 'crm-release', spaceId, residentEmail, result: data })
+    // Refresh CRM data + spaces dashboard so the released space returns to
+    // the available pool visible on the Spaces tab.
+    fetchCrmDataForProperty(manager.name)
+    refetchSpacesDashboard()
+  }
+
+  async function assignSpaceForRequest(requestId: number, spaceId: number) {
+    if (!manager?.name) return
+    const { data, error } = await supabase.rpc('approve_space_request', {
+      p_request_id: requestId,
+      p_space_id: spaceId,
+    })
+    if (error) {
+      alert(`Assign failed: ${error.message}`)
+      console.error('[approve_space_request] RPC error:', error)
+      return
+    }
+    const result = data as { error?: string } | null
+    if (result?.error) {
+      alert(`Assign failed: ${result.error}`)
+      console.error('[approve_space_request] RPC returned error:', result.error)
+      return
+    }
+    console.info('[approve_space_request]', { site: 'crm-assign', requestId, spaceId, result })
+    fetchCrmDataForProperty(manager.name)
+    fetchPendingSpaceRequests(manager.name)
+    refetchSpacesDashboard()
+  }
+
+  async function declineSpaceRequestFromCrm(requestId: number) {
+    if (!manager?.name) return
+    const reason = window.prompt('Decline reason (optional — surfaced to the resident):', '')
+    // null = user hit Cancel → abort; empty string = declined without reason
+    if (reason === null) return
+    const { data, error } = await supabase.rpc('decline_space_request', {
+      p_request_id: requestId,
+      p_decline_reason: reason.trim() || null,
+    })
+    if (error) {
+      alert(`Decline failed: ${error.message}`)
+      console.error('[decline_space_request] RPC error:', error)
+      return
+    }
+    const result = data as { error?: string } | null
+    if (result?.error) {
+      alert(`Decline failed: ${result.error}`)
+      console.error('[decline_space_request] RPC returned error:', result.error)
+      return
+    }
+    console.info('[decline_space_request]', { site: 'crm-decline', requestId, result })
+    fetchCrmDataForProperty(manager.name)
+    fetchPendingSpaceRequests(manager.name)
+  }
+
   async function declineResident(r: any) {
     const note = residentNotes[r.id] || null
     await supabase.from('residents').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', r.id)
@@ -3044,6 +3123,9 @@ export default function ManagerPortal() {
             onApproveResident={(r) => approveResident(r)}
             onDeclineResident={(r) => declineResident(r)}
             onApproveAllPending={(rs) => approveAllPendingCrm(rs)}
+            onReleaseSpace={(spaceId, email) => releaseSpaceForResident(spaceId, email)}
+            onAssignSpaceRequest={(reqId, spaceId) => assignSpaceForRequest(reqId, spaceId)}
+            onDeclineSpaceRequest={(reqId) => declineSpaceRequestFromCrm(reqId)}
           />
         )}
 
