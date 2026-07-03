@@ -1583,6 +1583,117 @@ export default function ManagerPortal() {
     console.info('[reactivate_vehicle]', { site: 'crm', vehicleId: id, note: 'routes through approve_vehicle wrapper — meter sync fires; noop_within_floor if same-cycle' })
   }
 
+  // ═════════════════════════════════════════════════════════════════
+  // PM CRM Slice 6 — inline edit + audit
+  //
+  // Cosmetic fields save inline; plate NEVER via this path — routes
+  // through submit_plate_change (Slice 4). The save allowlists below
+  // are the enforcement boundary: even if a future dev adds a plate
+  // input to the form, the handler's Object.entries filter drops it
+  // before the UPDATE builds. Belt: DB-level partial unique index
+  // (Slice-5 hardening) would 23505 any smuggled plate collision.
+  //
+  // Gate discipline: manager|CA + !isReadOnly (per standing rule —
+  // no permit granted, so no can_approve_vehicles).
+  //
+  // Audit: EDIT_VEHICLE / EDIT_RESIDENT with only the fields that
+  // actually changed. Empty diff → skip audit write.
+  // ═════════════════════════════════════════════════════════════════
+
+  const VEHICLE_EDITABLE_FIELDS = ['color', 'make', 'model', 'year', 'state'] as const
+  const RESIDENT_EDITABLE_FIELDS = ['phone', 'lease_end', 'manager_note', 'tags'] as const
+  type VehicleField = typeof VEHICLE_EDITABLE_FIELDS[number]
+  type ResidentField = typeof RESIDENT_EDITABLE_FIELDS[number]
+
+  async function editVehicleCosmetic(vehicleId: string | number, patch: Partial<Record<VehicleField, any>>) {
+    if (!manager?.name) return
+    // Allowlist enforcement — drop anything not in VEHICLE_EDITABLE_FIELDS.
+    // Explicitly named for grepability. `plate` is INTENTIONALLY EXCLUDED —
+    // it routes through submit_plate_change (Slice 4). If a caller passes
+    // a plate value here, this filter drops it silently and the underlying
+    // vehicle row is never touched at the plate column.
+    const clean: Record<string, any> = {}
+    for (const [k, v] of Object.entries(patch)) {
+      if ((VEHICLE_EDITABLE_FIELDS as readonly string[]).includes(k)) clean[k] = v
+    }
+    if (Object.keys(clean).length === 0) return  // no-op
+    // Load current values so we can compute a diff for the audit row.
+    const { data: current, error: readErr } = await supabase.from('vehicles')
+      .select('id, color, make, model, year, state')
+      .eq('id', vehicleId).single()
+    if (readErr || !current) {
+      alert(`Edit failed: could not read current vehicle: ${readErr?.message ?? 'unknown'}`)
+      return
+    }
+    const oldVals: Record<string, any> = {}
+    const newVals: Record<string, any> = {}
+    for (const k of Object.keys(clean)) {
+      const oldV = (current as any)[k]
+      const newV = clean[k]
+      // JSON stringify comparison catches obj/array + primitive alike;
+      // string-only handler here (no nested types) so === is enough,
+      // JSON.stringify is defensive against edge cases.
+      if (JSON.stringify(oldV) !== JSON.stringify(newV)) {
+        oldVals[k] = oldV
+        newVals[k] = newV
+      }
+    }
+    if (Object.keys(newVals).length === 0) return  // no actual change → no audit
+    const { error: updErr } = await supabase.from('vehicles').update(clean).eq('id', vehicleId)
+    if (updErr) {
+      alert(`Edit failed: ${updErr.message}`)
+      return
+    }
+    await logAudit({
+      action: 'EDIT_VEHICLE',
+      table_name: 'vehicles',
+      record_id: String(vehicleId),
+      old_values: oldVals,
+      new_values: newVals,
+    })
+    fetchVehicles(manager.name)
+  }
+
+  async function editResidentCosmetic(residentId: string | number, patch: Partial<Record<ResidentField, any>>) {
+    if (!manager?.name) return
+    const clean: Record<string, any> = {}
+    for (const [k, v] of Object.entries(patch)) {
+      if ((RESIDENT_EDITABLE_FIELDS as readonly string[]).includes(k)) clean[k] = v
+    }
+    if (Object.keys(clean).length === 0) return
+    const { data: current, error: readErr } = await supabase.from('residents')
+      .select('id, phone, lease_end, manager_note, tags')
+      .eq('id', residentId).single()
+    if (readErr || !current) {
+      alert(`Edit failed: could not read current resident: ${readErr?.message ?? 'unknown'}`)
+      return
+    }
+    const oldVals: Record<string, any> = {}
+    const newVals: Record<string, any> = {}
+    for (const k of Object.keys(clean)) {
+      const oldV = (current as any)[k]
+      const newV = clean[k]
+      if (JSON.stringify(oldV) !== JSON.stringify(newV)) {
+        oldVals[k] = oldV
+        newVals[k] = newV
+      }
+    }
+    if (Object.keys(newVals).length === 0) return
+    const { error: updErr } = await supabase.from('residents').update(clean).eq('id', residentId)
+    if (updErr) {
+      alert(`Edit failed: ${updErr.message}`)
+      return
+    }
+    await logAudit({
+      action: 'EDIT_RESIDENT',
+      table_name: 'residents',
+      record_id: String(residentId),
+      old_values: oldVals,
+      new_values: newVals,
+    })
+    fetchResidents(manager.name)
+  }
+
   async function declineResident(r: any) {
     const note = residentNotes[r.id] || null
     await supabase.from('residents').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', r.id)
@@ -3273,6 +3384,8 @@ export default function ManagerPortal() {
             onDeclinePlateChange={(changeId) => declinePlateChange(changeId)}
             onDeactivateVehicle={(id) => deactivateVehicleCrm(id)}
             onReactivateVehicle={(id) => reactivateVehicleCrm(id)}
+            onEditVehicle={(id, patch) => editVehicleCosmetic(id, patch)}
+            onEditResident={(id, patch) => editResidentCosmetic(id, patch)}
           />
         )}
 

@@ -56,6 +56,15 @@ interface Props {
   // same-cycle (net-zero on the meter by ratchet + reconcile design).
   onDeactivateVehicle: (vehicleId: string | number) => Promise<void>
   onReactivateVehicle: (vehicleId: string | number) => Promise<void>
+  // Slice 6 — inline edit + audit. Cosmetic fields only:
+  //   vehicles:  color / make / model / year / state
+  //   residents: phone / lease_end / manager_note (+ tags future)
+  // Plate NEVER through this path — routes via submit_plate_change
+  // (Slice 4). Server-side handler enforces an allowlist so a bad
+  // patch shape can't smuggle a plate write. Gate: role + !isReadOnly
+  // (no permit granted). Empty diff → no audit write.
+  onEditVehicle: (vehicleId: string | number, patch: Record<string, any>) => Promise<void>
+  onEditResident: (residentId: string | number, patch: Record<string, any>) => Promise<void>
 }
 
 // Manager-portal design tokens (matched to existing manager/page.tsx palette).
@@ -121,6 +130,7 @@ export default function PmResidentCrm({
   onReleaseSpace, onAssignSpaceRequest, onDeclineSpaceRequest,
   onApprovePlateChange, onDeclinePlateChange,
   onDeactivateVehicle, onReactivateVehicle,
+  onEditVehicle, onEditResident,
 }: Props) {
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
@@ -261,6 +271,7 @@ export default function PmResidentCrm({
                     onApproveResident={onApproveResident}
                     onDeclineResident={onDeclineResident}
                     onJumpToGuests={() => setSubTab('guests')}
+                    onEditResident={onEditResident}
                   />
                 )}
                 {subTab === 'vehicles' && (
@@ -274,6 +285,7 @@ export default function PmResidentCrm({
                     onDeclinePlateChange={onDeclinePlateChange}
                     onDeactivateVehicle={onDeactivateVehicle}
                     onReactivateVehicle={onReactivateVehicle}
+                    onEditVehicle={onEditVehicle}
                   />
                 )}
                 {subTab === 'spaces' && (
@@ -519,14 +531,38 @@ function SubTabBar({ tab, setTab, resident }: { tab: SubTab; setTab: (t: SubTab)
 
 // ── Sub-tab panes ────────────────────────────────────────────────────
 
-function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onJumpToGuests }: {
+function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onJumpToGuests, onEditResident }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
   onApproveResident: (r: CrmResident) => Promise<void>
   onDeclineResident: (r: CrmResident) => Promise<void>
   onJumpToGuests: () => void
+  onEditResident: (id: string | number, patch: Record<string, any>) => Promise<void>
 }) {
+  // Slice 6 — resident cosmetic edit (phone / lease_end / manager_note).
+  // Tags deferred to a later iteration (needs multi-value input UI).
+  const [editingRes, setEditingRes] = useState(false)
+  const [resEdit, setResEdit] = useState<{ phone?: string; lease_end?: string; manager_note?: string }>({})
+  const startResEdit = () => {
+    setResEdit({
+      phone: resident.phone ?? '',
+      lease_end: resident.lease_end ?? '',
+      manager_note: resident.manager_note ?? '',
+    })
+    setEditingRes(true)
+  }
+  const saveResEdit = async () => {
+    const patch: Record<string, any> = {
+      phone: (resEdit.phone ?? '').trim() || null,
+      lease_end: (resEdit.lease_end ?? '').trim() || null,
+      manager_note: (resEdit.manager_note ?? '').trim() || null,
+    }
+    await onEditResident(resident.id, patch)
+    setEditingRes(false)
+  }
+  const cancelResEdit = () => setEditingRes(false)
+  const showResEdit = !isReadOnly
   const { pending, underReview } = resident.vehicleCounts
   const showCallout = resident.needsApproval
   const showApproveResident = resident.status === 'pending' && canApproveVehicles && !isReadOnly
@@ -592,23 +628,70 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
             </>
           )}
         </Card>
-        <Card title="Notes">
-          <div style={{
-            width: '100%', background: C.panel2, border: `1px solid ${C.border2}`, borderRadius: '9px',
-            padding: '11px', color: C.text, fontFamily: 'inherit', fontSize: '13px', minHeight: '64px',
-          }}>
-            {resident.manager_note || <span style={{ color: C.faint }}>No notes.</span>}
+        <Card title={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <span>Notes + resident details</span>
+            {showResEdit && !editingRes && (
+              <button onClick={startResEdit} style={{
+                background: 'transparent', border: 'none', color: C.gold, fontSize: '11px',
+                fontFamily: 'inherit', cursor: 'pointer', padding: 0, letterSpacing: 'normal', textTransform: 'none',
+              }}>✎ edit</button>
+            )}
           </div>
-          <div style={{ fontSize: '11px', color: C.faint, marginTop: '8px', fontStyle: 'italic' }}>
-            Edit lands slice 6.
-          </div>
+        }>
+          {!editingRes ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '10px', fontSize: '12.5px' }}>
+                <div>
+                  <span style={{ color: C.faint, fontSize: '10px', textTransform: 'uppercase' }}>Phone</span><br />
+                  <span style={{ color: C.text }}>{resident.phone || <span style={{ color: C.faint }}>—</span>}</span>
+                </div>
+                <div>
+                  <span style={{ color: C.faint, fontSize: '10px', textTransform: 'uppercase' }}>Lease end</span><br />
+                  <span style={{ color: C.text }}>{resident.lease_end || <span style={{ color: C.faint }}>—</span>}</span>
+                </div>
+              </div>
+              <div style={{
+                width: '100%', background: C.panel2, border: `1px solid ${C.border2}`, borderRadius: '9px',
+                padding: '11px', color: C.text, fontFamily: 'inherit', fontSize: '13px', minHeight: '64px',
+              }}>
+                {resident.manager_note || <span style={{ color: C.faint }}>No notes.</span>}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+                <EditField label="Phone" value={resEdit.phone ?? ''} onChange={v => setResEdit(e => ({ ...e, phone: v }))} placeholder="713-555-0100" />
+                <EditField label="Lease end" value={resEdit.lease_end ?? ''} onChange={v => setResEdit(e => ({ ...e, lease_end: v }))} placeholder="YYYY-MM-DD" />
+              </div>
+              <label style={{ display: 'block', fontSize: '10px', color: C.faint, textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: 700, marginBottom: '3px' }}>Manager notes</label>
+              <textarea value={resEdit.manager_note ?? ''} onChange={e => setResEdit(prev => ({ ...prev, manager_note: e.target.value }))}
+                style={{
+                  width: '100%', background: C.panel2, border: `1px solid ${C.border2}`, borderRadius: '6px',
+                  padding: '8px', color: C.text, fontFamily: 'inherit', fontSize: '13px', minHeight: '64px',
+                  boxSizing: 'border-box', resize: 'vertical',
+                }} />
+              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                <button onClick={saveResEdit} style={{
+                  flex: 1, padding: '7px', background: C.greenSoft, color: C.green,
+                  border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>Save</button>
+                <button onClick={cancelResEdit} style={{
+                  flex: 1, padding: '7px', background: 'transparent', color: C.muted,
+                  border: `1px solid ${C.border2}`, borderRadius: '6px',
+                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>Cancel</button>
+              </div>
+            </>
+          )}
         </Card>
       </div>
     </>
   )
 }
 
-function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle }: {
+function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -618,6 +701,7 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
   onDeclinePlateChange: (changeId: number) => Promise<void>
   onDeactivateVehicle: (id: string | number) => Promise<void>
   onReactivateVehicle: (id: string | number) => Promise<void>
+  onEditVehicle: (id: string | number, patch: Record<string, any>) => Promise<void>
 }) {
   if (resident.vehicles.length === 0) {
     return (
@@ -640,16 +724,14 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
           onDeclinePlateChange={onDeclinePlateChange}
           onDeactivateVehicle={onDeactivateVehicle}
           onReactivateVehicle={onReactivateVehicle}
+          onEditVehicle={onEditVehicle}
         />
       ))}
-      <div style={{ fontSize: '11px', color: C.faint, marginTop: '10px', fontStyle: 'italic' }}>
-        Inline edit lands slice 6.
-      </div>
     </>
   )
 }
 
-function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle }: {
+function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle }: {
   v: any
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -659,7 +741,37 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   onDeclinePlateChange: (changeId: number) => Promise<void>
   onDeactivateVehicle: (id: string | number) => Promise<void>
   onReactivateVehicle: (id: string | number) => Promise<void>
+  onEditVehicle: (id: string | number, patch: Record<string, any>) => Promise<void>
 }) {
+  // Slice 6 — inline edit mode + form state. Plate is DELIBERATELY NOT
+  // in the form — it's read-only on the plate chip. If the resident
+  // needs to change plate on an approved vehicle, they submit via
+  // Slice 4's re-approval flow from the resident portal.
+  const [editing, setEditing] = useState(false)
+  const [edit, setEdit] = useState<{ color?: string; make?: string; model?: string; year?: string; state?: string }>({})
+  const startEdit = () => {
+    setEdit({
+      color: v.color ?? '',
+      make: v.make ?? '',
+      model: v.model ?? '',
+      year: v.year != null ? String(v.year) : '',
+      state: v.state ?? '',
+    })
+    setEditing(true)
+  }
+  const saveEdit = async () => {
+    // Coerce year: '' → null, otherwise parseInt; skip if unchanged.
+    const patch: Record<string, any> = {
+      color: (edit.color ?? '').trim() || null,
+      make: (edit.make ?? '').trim() || null,
+      model: (edit.model ?? '').trim() || null,
+      year: edit.year && edit.year.trim() ? parseInt(edit.year, 10) || null : null,
+      state: (edit.state ?? '').trim() || null,
+    }
+    await onEditVehicle(v.id, patch)
+    setEditing(false)
+  }
+  const cancelEdit = () => setEditing(false)
   const s = (v.status ?? '').toLowerCase()
   const stat = s === 'under_review'
     ? { color: C.amber, bg: C.amberSoft, border: '#a16207', text: 'Plate under review' }
@@ -678,6 +790,12 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   const isDeactivated = status === 'deactivated'
   const showApprove = isPending && canApproveVehicles && !isReadOnly
   const showDecline = isPending && !isReadOnly
+  // Slice 6 — edit gate: role only (+ !isReadOnly). No permit granted;
+  // no can_approve_vehicles needed. Available on any non-deactivated
+  // status — pending vehicles can be edited (cosmetic tweaks pre-
+  // approval), active vehicles too. Deactivated shows Reactivate
+  // instead (already gated below).
+  const showEdit = !isReadOnly && !isDeactivated
   // Slice 4 — plate re-approval affordances. pendingPlateChange is
   // attached by buildCrmResidents Phase 3 when the vehicle has a
   // vehicle_plate_changes row with status='pending'.
@@ -774,7 +892,47 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
           button on deactivated. Deactivate role-only (removing protection
           isn't granting). Reactivate routes through approve_vehicle
           (permit-granting → can_approve_vehicles gate). */}
-      {showDeactivate && (
+      {/* Slice 6 — Edit affordance (cosmetic fields only). Plate is
+          intentionally EXCLUDED from the form (rendered read-only on
+          the plate chip above). To change plate on an approved vehicle,
+          resident submits via the plate-change flow (Slice 4). */}
+      {showEdit && !editing && (
+        <button onClick={startEdit} title="Edit cosmetic fields (color, make, model, year, state). Plate is not editable here — changes route through the resident's plate-change request." style={{
+          marginTop: '12px', width: '100%', padding: '8px', background: 'transparent', color: C.gold,
+          border: `1px solid ${C.goldLine}`, borderRadius: '6px',
+          cursor: 'pointer', fontSize: '11.5px', fontWeight: 700, fontFamily: 'inherit',
+        }}>Edit</button>
+      )}
+      {editing && (
+        <div style={{
+          marginTop: '12px', padding: '12px', background: C.panel, border: `1px solid ${C.goldLine}`, borderRadius: '8px',
+        }}>
+          <div style={{ fontSize: '11px', color: C.gold, textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: 700, marginBottom: '8px' }}>Edit cosmetic fields</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            <EditField label="Color" value={edit.color ?? ''} onChange={(v) => setEdit(e => ({ ...e, color: v }))} />
+            <EditField label="Year" value={edit.year ?? ''} onChange={(v) => setEdit(e => ({ ...e, year: v }))} placeholder="e.g. 2020" />
+            <EditField label="Make" value={edit.make ?? ''} onChange={(v) => setEdit(e => ({ ...e, make: v }))} />
+            <EditField label="Model" value={edit.model ?? ''} onChange={(v) => setEdit(e => ({ ...e, model: v }))} />
+            <EditField label="State" value={edit.state ?? ''} onChange={(v) => setEdit(e => ({ ...e, state: v }))} placeholder="e.g. TX" />
+          </div>
+          <div style={{ fontSize: '10.5px', color: C.faint, fontStyle: 'italic', marginTop: '8px' }}>
+            Plate change? The resident submits it from their portal — routes through re-approval.
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+            <button onClick={saveEdit} style={{
+              flex: 1, padding: '7px', background: C.greenSoft, color: C.green,
+              border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+            }}>Save</button>
+            <button onClick={cancelEdit} style={{
+              flex: 1, padding: '7px', background: 'transparent', color: C.muted,
+              border: `1px solid ${C.border2}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+            }}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {showDeactivate && !editing && (
         <button onClick={() => onDeactivateVehicle(v.id)} title="Drops the plate out of the approved / do-not-tow set. Record is kept — you can Reactivate later (routes through approval)." style={{
           marginTop: '12px', width: '100%', padding: '8px', background: 'transparent', color: C.faint,
           border: `1px solid ${C.border2}`, borderRadius: '6px',
@@ -1006,6 +1164,20 @@ function ActivityPane({ resident }: { resident: CrmResident }) {
       <div style={{ color: C.muted, marginBottom: '4px' }}>Activity timeline coming in a later slice.</div>
       Will fetch this resident's audit_logs (registration, approvals, plate changes,
       space assign/release, deactivations, edits) — {resident.name}'s recent events.
+    </div>
+  )
+}
+
+function EditField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <div>
+      <label style={{ display: 'block', fontSize: '10px', color: C.faint, textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: 700, marginBottom: '3px' }}>{label}</label>
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        style={{
+          width: '100%', background: C.panel2, border: `1px solid ${C.border2}`,
+          borderRadius: '6px', padding: '6px 8px', color: C.text, fontSize: '13px',
+          fontFamily: 'inherit', boxSizing: 'border-box',
+        }} />
     </div>
   )
 }
