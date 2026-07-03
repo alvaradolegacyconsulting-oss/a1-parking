@@ -89,6 +89,11 @@ export interface CrmResident {
   vehicleCounts: { approved: number; pending: number; underReview: number }
   assignedSpaces: CrmResidentSpace[]
   guests: GuestAuth[]
+  // RT-4 — resident-submitted guest requests awaiting PM approve/decline.
+  // Populated from a separate WHERE status='pending' fetch (fetchActiveGuestAuths
+  // filters to active). Feeds Overview approval callout + GuestsPane pending
+  // section + needsApproval.
+  pendingGuestRequests: GuestAuth[]
   spaceRequest: CrmSpaceRequest | null
   needsApproval: boolean
 }
@@ -104,6 +109,10 @@ export function buildCrmResidents(input: {
   guestAuths: GuestAuth[]
   spaceRequests: CrmSpaceRequest[]
   pendingPlateChanges?: CrmPendingPlateChange[]
+  // RT-4 — property-scoped fetch of `guest_authorizations WHERE status='pending'`.
+  // Separate from guestAuths (which is status='active') so callers don't
+  // conflate approve-time / pending-time semantics.
+  pendingGuestRequests?: GuestAuth[]
 }): CrmResident[] {
   const allResidents = [...input.pendingResidents, ...input.residents]
 
@@ -172,6 +181,24 @@ export function buildCrmResidents(input: {
     }
   }
 
+  // RT-4 — pending guest requests: index the same way as active guests.
+  // Resident-submit RPC always writes resident_email + visiting_unit, so
+  // both keys populate reliably.
+  const pendingGuestsByEmail = new Map<string, GuestAuth[]>()
+  const pendingGuestsByUnit = new Map<string, GuestAuth[]>()
+  for (const g of input.pendingGuestRequests ?? []) {
+    const email = norm((g as any).resident_email)
+    const unit = norm((g as any).visiting_unit ?? (g as any).unit)
+    if (email) {
+      const list = pendingGuestsByEmail.get(email) ?? []
+      list.push(g); pendingGuestsByEmail.set(email, list)
+    }
+    if (unit) {
+      const list = pendingGuestsByUnit.get(unit) ?? []
+      list.push(g); pendingGuestsByUnit.set(unit, list)
+    }
+  }
+
   // Pending space requests: one per resident (first-wins on duplicates).
   const spaceReqByEmail = new Map<string, CrmSpaceRequest>()
   for (const sr of input.spaceRequests) {
@@ -209,6 +236,7 @@ export function buildCrmResidents(input: {
     }
     const counts = countVehicles(vs)
     const gs = guestsByEmail.get(email) ?? guestsByUnit.get(unit) ?? []
+    const pgs = pendingGuestsByEmail.get(email) ?? pendingGuestsByUnit.get(unit) ?? []
     const ss = spacesByEmail.get(email) ?? []
     const sr = spaceReqByEmail.get(email) ?? null
     const status = ((r.status as string) ?? (r.is_active ? 'active' : 'pending')) as CrmResident['status']
@@ -216,7 +244,8 @@ export function buildCrmResidents(input: {
       status === 'pending' ||
       counts.pending > 0 ||
       counts.underReview > 0 ||
-      sr !== null
+      sr !== null ||
+      pgs.length > 0
     return {
       id: r.id,
       name: r.name || '(unnamed)',
@@ -235,6 +264,7 @@ export function buildCrmResidents(input: {
       // authorized plate list.
       assignedSpaces: ss.map(s => ({ ...s, authorizedPlates: [], roommateCount: 0 })),
       guests: gs,
+      pendingGuestRequests: pgs,
       spaceRequest: sr,
       needsApproval,
     }

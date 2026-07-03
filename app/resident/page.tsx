@@ -85,6 +85,18 @@ export default function ResidentPortal() {
   // B210 (2026-06-24): myDisputes / disputingId / disputeForm /
   // disputeEvidence / submittingDispute / disputeMsg state removed
 
+  // RT-4 — resident's own guest_authorizations rows (any status).
+  // resident_read_own_guest_auths RLS policy admits by lower(email) match.
+  const [myGuestAuths, setMyGuestAuths] = useState<any[]>([])
+  const [showGuestForm, setShowGuestForm] = useState(false)
+  const [newGuestForm, setNewGuestForm] = useState({
+    plate: '', state: 'TX', make: '', model: '', color: '',
+    guest_name: '', start_date: '', end_date: '',
+  })
+  const [guestSubmitting, setGuestSubmitting] = useState(false)
+  const [guestError, setGuestError] = useState('')
+  const [guestMsg, setGuestMsg] = useState('')
+
   useEffect(() => { loadResident() }, [])
   useEffect(() => {
     if (activeTab === 'myviol' && resident) fetchMyViolations()
@@ -138,6 +150,7 @@ export default function ResidentPortal() {
       fetchVehicles(data.unit, data.property, data.email)
       fetchPasses(data.unit)
       fetchSpaceRequest(data.email)
+      fetchGuestAuths(data.email)
       // Slice 3.5 — multi-space fetch from the SoT (spaces + space_residents).
       // PRIMARY: resolve space IDs via space_residents ties (v1.1 multi-
       // resident source). FALLBACK: legacy single-resident rows where
@@ -551,6 +564,73 @@ export default function ResidentPortal() {
     if (resident?.email) fetchSpaceRequest(resident.email)
   }
 
+  // ── RT-4: Resident guest authorization requests ────────────────────
+  async function fetchGuestAuths(email: string) {
+    // resident_read_own_guest_auths RLS policy admits by lower(email).
+    // Returns any status (pending/active/declined/revoked); UI groups
+    // by status. Ordered by created_at desc so the latest submissions
+    // read first.
+    const { data } = await supabase
+      .from('guest_authorizations')
+      .select('*')
+      .ilike('resident_email', email)
+      .order('created_at', { ascending: false })
+    setMyGuestAuths(data ?? [])
+  }
+
+  const GUEST_ERROR_COPY: Record<string, string> = {
+    pending_cap_reached: 'You have 3 pending guest requests already. Please wait for your property manager to approve or decline one before submitting another.',
+    plate_required: 'Plate is required.',
+    plate_too_long: 'Plate is too long (max 12 characters).',
+    guest_name_required: 'Guest name is required.',
+    dates_required: 'Start and end dates are required.',
+    resident_not_found: 'Your resident record was not found. Please contact your property manager.',
+    role_not_authorized: 'Only residents can submit guest requests.',
+    unauthenticated: 'Session expired. Please sign in again.',
+  }
+
+  async function submitGuestAuthRequest() {
+    if (!resident) return
+    setGuestError('')
+    setGuestMsg('')
+    setGuestSubmitting(true)
+    try {
+      const { data, error } = await supabase.rpc('submit_guest_authorization_request', {
+        p_plate: newGuestForm.plate,
+        p_state: newGuestForm.state || 'TX',
+        p_vehicle_make: newGuestForm.make || null,
+        p_vehicle_model: newGuestForm.model || null,
+        p_vehicle_color: newGuestForm.color || null,
+        p_guest_name: newGuestForm.guest_name,
+        p_start_date: newGuestForm.start_date,
+        p_end_date: newGuestForm.end_date,
+      })
+      if (error) {
+        // 60-day CHECK + date-order CHECK bubble as postgres CHECK errors —
+        // catch here with friendly copy.
+        if (/60day|days.*60/i.test(error.message)) {
+          setGuestError('The date range exceeds the 60-day maximum.')
+        } else if (/dates_ordered/i.test(error.message)) {
+          setGuestError('End date must be on or after start date.')
+        } else {
+          setGuestError(error.message)
+        }
+        return
+      }
+      const err = (data as any)?.error
+      if (err) {
+        setGuestError(GUEST_ERROR_COPY[err] ?? `Request failed: ${err}`)
+        return
+      }
+      setGuestMsg('Guest request submitted. Your property manager will review it.')
+      setNewGuestForm({ plate: '', state: 'TX', make: '', model: '', color: '', guest_name: '', start_date: '', end_date: '' })
+      setShowGuestForm(false)
+      await fetchGuestAuths(resident.email)
+    } finally {
+      setGuestSubmitting(false)
+    }
+  }
+
   async function issueVisitorPass() {
     if (!visitorForm.plate || !resident) return
     setPassError('')
@@ -773,6 +853,15 @@ export default function ResidentPortal() {
             Violations{/* B210 (2026-06-24): pending-dispute count badge removed */}
           </button>
           <button style={tabStyle('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
+          <button style={tabStyle('guests')} onClick={() => setActiveTab('guests')}>
+            Guests{(() => {
+              const pendingCount = myGuestAuths.filter(g => g.status === 'pending').length
+              const unreadDeclined = myGuestAuths.filter(g => g.status === 'declined').length
+              const badgeCount = pendingCount || unreadDeclined
+              if (badgeCount === 0) return null
+              return <span style={{ background: unreadDeclined > 0 ? '#B71C1C' : '#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{badgeCount}</span>
+            })()}
+          </button>
         </div>
 
         {/* MY INFO TAB */}
@@ -1243,6 +1332,171 @@ export default function ResidentPortal() {
                   </div>
                 </div>
               ))
+            )}
+          </div>
+        )}
+
+        {/* RT-4 — GUESTS TAB — resident-submitted guest authorization
+            requests (manager-vetted multi-week, distinct from anonymous
+            24h visitor passes). Submits go through
+            submit_guest_authorization_request RPC; pending → PM approves
+            in CRM → active (shielded plate). See B214 for the enforcement
+            cascade and 60-day window rules. */}
+        {activeTab === 'guests' && (
+          <div>
+            {!showGuestForm && (
+              <button
+                onClick={() => { setShowGuestForm(true); setGuestError(''); setGuestMsg('') }}
+                style={{ width:'100%', padding:'12px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'14px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'14px' }}
+              >
+                + Request Guest Authorization
+              </button>
+            )}
+
+            {guestMsg && (
+              <div style={{ background:'#0a2e0a', border:'1px solid #2e7d32', borderRadius:'8px', padding:'10px 14px', marginBottom:'12px' }}>
+                <p style={{ color:'#a5d6a7', fontSize:'12.5px', margin:0 }}>{guestMsg}</p>
+              </div>
+            )}
+
+            {showGuestForm && (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'14px' }}>
+                <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0 0 6px' }}>Guest Authorization Request</p>
+                <p style={{ color:'#888', fontSize:'11.5px', margin:'0 0 14px', lineHeight:'1.5' }}>
+                  For a multi-day guest (family, eldercare, extended stay). Different from a visitor pass. Your property manager reviews and approves. Max 60 days per request; up to 3 pending at a time.
+                </p>
+
+                <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Plate *</label>
+                <input
+                  value={newGuestForm.plate}
+                  onChange={e => setNewGuestForm({...newGuestForm, plate: normalizePlate(e.target.value)})}
+                  placeholder="ABC1234"
+                  style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', textAlign:'center', boxSizing:'border-box' }}
+                />
+
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'12px' }}>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>State</label>
+                    <input
+                      value={newGuestForm.state}
+                      onChange={e => setNewGuestForm({...newGuestForm, state: e.target.value.toUpperCase().slice(0, 2)})}
+                      placeholder="TX"
+                      style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Color</label>
+                    <input
+                      value={newGuestForm.color}
+                      onChange={e => setNewGuestForm({...newGuestForm, color: e.target.value})}
+                      placeholder="White"
+                      style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'12px' }}>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Make</label>
+                    <input
+                      value={newGuestForm.make}
+                      onChange={e => setNewGuestForm({...newGuestForm, make: e.target.value})}
+                      placeholder="Toyota"
+                      style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Model</label>
+                    <input
+                      value={newGuestForm.model}
+                      onChange={e => setNewGuestForm({...newGuestForm, model: e.target.value})}
+                      placeholder="RAV4"
+                      style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
+                    />
+                  </div>
+                </div>
+
+                <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Guest Name *</label>
+                <input
+                  value={newGuestForm.guest_name}
+                  onChange={e => setNewGuestForm({...newGuestForm, guest_name: e.target.value})}
+                  placeholder="Jane Doe"
+                  style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
+                />
+
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'12px' }}>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Start Date *</label>
+                    <input type="date"
+                      value={newGuestForm.start_date}
+                      onChange={e => setNewGuestForm({...newGuestForm, start_date: e.target.value})}
+                      style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>End Date *</label>
+                    <input type="date"
+                      value={newGuestForm.end_date}
+                      onChange={e => setNewGuestForm({...newGuestForm, end_date: e.target.value})}
+                      style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }}
+                    />
+                  </div>
+                </div>
+
+                {guestError && (
+                  <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 12px', marginBottom:'10px' }}>
+                    <p style={{ color:'#f44336', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>{guestError}</p>
+                  </div>
+                )}
+
+                <div style={{ display:'flex', gap:'8px' }}>
+                  <button
+                    onClick={submitGuestAuthRequest}
+                    disabled={guestSubmitting || !newGuestForm.plate || !newGuestForm.guest_name || !newGuestForm.start_date || !newGuestForm.end_date}
+                    style={{ flex:1, padding:'11px', background: guestSubmitting ? '#555' : '#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: guestSubmitting ? 'not-allowed' : 'pointer' }}>
+                    {guestSubmitting ? 'Submitting…' : 'Submit for Approval'}
+                  </button>
+                  <button
+                    onClick={() => { setShowGuestForm(false); setGuestError('') }}
+                    style={{ padding:'11px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {myGuestAuths.length === 0 ? (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
+                <p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No guest requests yet</p>
+              </div>
+            ) : (
+              myGuestAuths.map(g => {
+                const pill = g.status === 'pending' ? { bg:'#3a2e0a', border:'#a16207', text:'Pending PM approval', color:'#fbbf24' }
+                           : g.status === 'active'  ? { bg:'#0a1628', border:'#3b82f6', text:'Approved · Do-Not-Tow', color:'#93c5fd' }
+                           : g.status === 'declined'? { bg:'#3a1a1a', border:'#b71c1c', text:'Declined', color:'#f44336' }
+                           : { bg:'#2a1e00', border:'#a16207', text:'Revoked', color:'#a16207' }
+                return (
+                  <div key={g.id} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px', gap:'10px' }}>
+                      <div>
+                        <p style={{ color:'white', fontFamily:'Courier New', fontSize:'17px', fontWeight:'bold', margin:'0' }}>{g.plate}</p>
+                        <p style={{ color:'#aaa', fontSize:'12.5px', margin:'4px 0 0' }}>{g.guest_name}</p>
+                      </div>
+                      <span style={{ background: pill.bg, color: pill.color, border: `1px solid ${pill.border}`, padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold', whiteSpace:'nowrap' }}>{pill.text}</span>
+                    </div>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px' }}>
+                      <div><span style={{ color:'#555' }}>Start</span><br/><span style={{ color:'#aaa' }}>{g.start_date}</span></div>
+                      <div><span style={{ color:'#555' }}>End</span><br/><span style={{ color:'#aaa' }}>{g.end_date}</span></div>
+                    </div>
+                    {g.status === 'declined' && g.declined_reason && (
+                      <div style={{ background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px', marginTop:'10px' }}>
+                        <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 3px' }}>Manager Note</p>
+                        <p style={{ color:'#aaa', fontSize:'12px', margin:'0' }}>{g.declined_reason}</p>
+                      </div>
+                    )}
+                  </div>
+                )
+              })
             )}
           </div>
         )}

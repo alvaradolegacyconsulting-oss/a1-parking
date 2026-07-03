@@ -65,6 +65,12 @@ interface Props {
   // (no permit granted). Empty diff → no audit write.
   onEditVehicle: (vehicleId: string | number, patch: Record<string, any>) => Promise<void>
   onEditResident: (residentId: string | number, patch: Record<string, any>) => Promise<void>
+  // RT-4 — resident-submitted guest requests. Approve gates on
+  // role+!isReadOnly (NOT canApproveVehicles — a guest is not a billed
+  // permit); Decline same. Optional dates lets PM trim a resident-proposed
+  // window at approve time; server clamps by the existing 60-day CHECK.
+  onApproveGuestAuthRequest: (id: number, dates?: { start_date?: string; end_date?: string }) => Promise<void>
+  onDeclineGuestAuthRequest: (id: number, reason: string) => Promise<void>
 }
 
 // Manager-portal design tokens (matched to existing manager/page.tsx palette).
@@ -131,6 +137,7 @@ export default function PmResidentCrm({
   onApprovePlateChange, onDeclinePlateChange,
   onDeactivateVehicle, onReactivateVehicle,
   onEditVehicle, onEditResident,
+  onApproveGuestAuthRequest, onDeclineGuestAuthRequest,
 }: Props) {
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
@@ -298,7 +305,14 @@ export default function PmResidentCrm({
                     onDeclineSpaceRequest={onDeclineSpaceRequest}
                   />
                 )}
-                {subTab === 'guests' && <GuestsPane resident={selected} />}
+                {subTab === 'guests' && (
+                  <GuestsPane
+                    resident={selected}
+                    isReadOnly={isReadOnly}
+                    onApproveGuestAuthRequest={onApproveGuestAuthRequest}
+                    onDeclineGuestAuthRequest={onDeclineGuestAuthRequest}
+                  />
+                )}
                 {subTab === 'activity' && <ActivityPane resident={selected} />}
               </div>
             </>
@@ -501,7 +515,7 @@ function SubTabBar({ tab, setTab, resident }: { tab: SubTab; setTab: (t: SubTab)
     { id: 'overview', label: 'Overview', badge: pendCount, hot: pendCount > 0 },
     { id: 'vehicles', label: 'Vehicles', badge: resident.vehicles.length },
     { id: 'spaces', label: 'Spaces', badge: resident.spaceRequest ? 1 : undefined, hot: !!resident.spaceRequest },
-    { id: 'guests', label: 'Guests', badge: resident.guests.length },
+    { id: 'guests', label: 'Guests', badge: resident.guests.length + resident.pendingGuestRequests.length, hot: resident.pendingGuestRequests.length > 0 },
     { id: 'activity', label: 'Activity' },
   ]
   return (
@@ -578,7 +592,8 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
             {resident.status === 'pending' && 'New registration awaiting approval. '}
             {pending > 0 && `${pending} vehicle${pending === 1 ? '' : 's'} pending. `}
             {resident.spaceRequest && '1 space request. '}
-            {underReview > 0 && `${underReview} plate${underReview === 1 ? '' : 's'} under review.`}
+            {underReview > 0 && `${underReview} plate${underReview === 1 ? '' : 's'} under review. `}
+            {resident.pendingGuestRequests.length > 0 && `${resident.pendingGuestRequests.length} guest request${resident.pendingGuestRequests.length === 1 ? '' : 's'}.`}
           </div>
           {(showApproveResident || showDeclineResident) && (
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -604,7 +619,7 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
         <Card title={
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <span>Authorized guests</span>
-            {resident.guests.length > 0 && (
+            {(resident.guests.length > 0 || resident.pendingGuestRequests.length > 0) && (
               <button onClick={onJumpToGuests} style={{
                 background: 'transparent', border: 'none', color: C.gold, fontSize: '11px',
                 fontFamily: 'inherit', cursor: 'pointer', padding: 0, letterSpacing: 'normal', textTransform: 'none',
@@ -612,9 +627,18 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
             )}
           </div>
         }>
-          {resident.guests.length === 0 ? (
+          {resident.pendingGuestRequests.length > 0 && (
+            <div style={{
+              border: `1px solid ${C.amberLine}`, background: C.amberSoft, borderRadius: '6px',
+              padding: '6px 9px', marginBottom: '8px', fontSize: '12px', color: C.text,
+            }}>
+              <b style={{ color: C.amber }}>{resident.pendingGuestRequests.length}</b>{' '}
+              guest request{resident.pendingGuestRequests.length === 1 ? '' : 's'} awaiting approval
+            </div>
+          )}
+          {resident.guests.length === 0 && resident.pendingGuestRequests.length === 0 ? (
             <div style={{ color: C.faint, fontSize: '12.5px' }}>None on file.</div>
-          ) : (
+          ) : resident.guests.length > 0 ? (
             <>
               <div style={{ color: C.text, fontSize: '13px', marginBottom: '4px' }}>
                 <b>{resident.guests.length}</b> {resident.guests.length === 1 ? 'guest' : 'guests'} on file
@@ -624,7 +648,7 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
                 {resident.guests.length > 2 && ` · +${resident.guests.length - 2} more`}
               </div>
             </>
-          )}
+          ) : null}
         </Card>
         <Card title={
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -1122,8 +1146,15 @@ function SpaceRequestCard({ req, isReadOnly, availableSpaces, onAssignSpaceReque
   )
 }
 
-function GuestsPane({ resident }: { resident: CrmResident }) {
-  if (resident.guests.length === 0) {
+function GuestsPane({ resident, isReadOnly, onApproveGuestAuthRequest, onDeclineGuestAuthRequest }: {
+  resident: CrmResident
+  isReadOnly: boolean
+  onApproveGuestAuthRequest: (id: number, dates?: { start_date?: string; end_date?: string }) => Promise<void>
+  onDeclineGuestAuthRequest: (id: number, reason: string) => Promise<void>
+}) {
+  const pending = resident.pendingGuestRequests
+  const active = resident.guests
+  if (pending.length === 0 && active.length === 0) {
     return (
       <div style={{ padding: '44px 20px', textAlign: 'center', color: C.faint }}>
         <div style={{ fontSize: '15px', color: C.muted, marginBottom: '5px' }}>No authorized guests</div>
@@ -1133,26 +1164,139 @@ function GuestsPane({ resident }: { resident: CrmResident }) {
   }
   return (
     <>
-      {resident.guests.map((g, i) => (
-        <div key={i} style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px',
-          padding: '12px 14px', border: `1px solid ${C.border}`, borderRadius: '10px',
-          marginBottom: '10px', background: C.panel2,
-        }}>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: '13.5px', color: C.text }}>
-              {(g as any).guest_name || (g as any).name || '(unnamed)'}
+      {/* RT-4 — pending requests block. Approve/Decline gated on !isReadOnly.
+          NOT gated on canApproveVehicles — a guest is not a billed permit
+          and fires zero meter, so the standing "permission gate for
+          permit-granting" rule doesn't apply. */}
+      {pending.length > 0 && (
+        <div style={{ marginBottom: '14px' }}>
+          <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.5px',
+            color: C.amber, fontWeight: 700, marginBottom: '8px' }}>
+            Pending PM approval ({pending.length})
+          </div>
+          {pending.map(g => (
+            <PendingGuestCard
+              key={g.id}
+              guest={g}
+              isReadOnly={isReadOnly}
+              onApprove={(dates) => onApproveGuestAuthRequest(g.id, dates)}
+              onDecline={(reason) => onDeclineGuestAuthRequest(g.id, reason)}
+            />
+          ))}
+        </div>
+      )}
+      {active.length > 0 && (
+        <div>
+          {pending.length > 0 && (
+            <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.5px',
+              color: C.muted, fontWeight: 700, marginBottom: '8px' }}>
+              Approved ({active.length})
             </div>
-            <div style={{ color: C.muted, fontSize: '12px', marginTop: '2px' }}>
-              <span style={{ fontFamily: 'Courier New' }}>{(g as any).plate || '—'}</span>
-              {(g as any).start_date && (g as any).end_date && (
-                <> · {(g as any).start_date} – {(g as any).end_date}</>
-              )}
+          )}
+          {active.map((g, i) => (
+            <div key={i} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px',
+              padding: '12px 14px', border: `1px solid ${C.border}`, borderRadius: '10px',
+              marginBottom: '10px', background: C.panel2,
+            }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '13.5px', color: C.text }}>
+                  {(g as any).guest_name || (g as any).name || '(unnamed)'}
+                </div>
+                <div style={{ color: C.muted, fontSize: '12px', marginTop: '2px' }}>
+                  <span style={{ fontFamily: 'Courier New' }}>{(g as any).plate || '—'}</span>
+                  {(g as any).start_date && (g as any).end_date && (
+                    <> · {(g as any).start_date} – {(g as any).end_date}</>
+                  )}
+                </div>
+              </div>
             </div>
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+function PendingGuestCard({ guest, isReadOnly, onApprove, onDecline }: {
+  guest: any
+  isReadOnly: boolean
+  onApprove: (dates?: { start_date?: string; end_date?: string }) => Promise<void>
+  onDecline: (reason: string) => Promise<void>
+}) {
+  const [showAdjust, setShowAdjust] = useState(false)
+  const [start, setStart] = useState(guest.start_date ?? '')
+  const [end, setEnd] = useState(guest.end_date ?? '')
+  const [declineReason, setDeclineReason] = useState<string | null>(null)
+  const submitApprove = async () => {
+    const dates = (showAdjust && (start !== guest.start_date || end !== guest.end_date))
+      ? { start_date: start, end_date: end }
+      : undefined
+    await onApprove(dates)
+  }
+  return (
+    <div style={{
+      border: `1px solid ${C.amberLine}`, background: C.amberSoft, borderRadius: '10px',
+      padding: '12px 14px', marginBottom: '10px',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: '13.5px', color: C.text }}>
+            {guest.guest_name || '(unnamed)'}
+          </div>
+          <div style={{ color: C.muted, fontSize: '12px', marginTop: '2px' }}>
+            <span style={{ ...plateChipStyle, fontSize: '13px', padding: '2px 8px' }}>{guest.plate || '—'}</span>
+            {guest.state && <span style={{ marginLeft: '6px' }}>· {guest.state}</span>}
+          </div>
+          <div style={{ color: C.muted, fontSize: '12px', marginTop: '4px' }}>
+            Requested: <b style={{ color: C.text }}>{guest.start_date}</b> – <b style={{ color: C.text }}>{guest.end_date}</b>
           </div>
         </div>
-      ))}
-    </>
+        {!isReadOnly && declineReason === null && (
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <button onClick={submitApprove} style={{
+              padding: '6px 12px', background: C.greenSoft, color: C.green,
+              border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '11.5px', fontWeight: 700, fontFamily: 'inherit',
+            }}>Approve</button>
+            <button onClick={() => setShowAdjust(v => !v)} style={{
+              padding: '6px 10px', background: 'transparent', color: C.muted,
+              border: `1px solid ${C.border2}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '11.5px', fontFamily: 'inherit',
+            }}>{showAdjust ? 'Hide adjust' : 'Adjust dates'}</button>
+            <button onClick={() => setDeclineReason('')} style={{
+              padding: '6px 12px', background: C.redSoft, color: C.red,
+              border: `1px solid ${C.redLine}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '11.5px', fontWeight: 700, fontFamily: 'inherit',
+            }}>Decline</button>
+          </div>
+        )}
+      </div>
+      {showAdjust && declineReason === null && (
+        <div style={{ marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <EditField label="Start date" value={start} onChange={setStart} placeholder="YYYY-MM-DD" />
+          <EditField label="End date" value={end} onChange={setEnd} placeholder="YYYY-MM-DD" />
+          <span style={{ color: C.faint, fontSize: '11px' }}>Max 60 days. Server clamps.</span>
+        </div>
+      )}
+      {declineReason !== null && (
+        <div style={{ marginTop: '10px' }}>
+          <EditField label="Decline reason (optional)" value={declineReason} onChange={setDeclineReason} placeholder="Note visible to resident" />
+          <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+            <button onClick={() => onDecline(declineReason)} style={{
+              padding: '6px 12px', background: C.redSoft, color: C.red,
+              border: `1px solid ${C.redLine}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '11.5px', fontWeight: 700, fontFamily: 'inherit',
+            }}>Confirm decline</button>
+            <button onClick={() => setDeclineReason(null)} style={{
+              padding: '6px 12px', background: 'transparent', color: C.muted,
+              border: `1px solid ${C.border2}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '11.5px', fontFamily: 'inherit',
+            }}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

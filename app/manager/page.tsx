@@ -284,6 +284,10 @@ export default function ManagerPortal() {
   const [crmSpacesAtProperty, setCrmSpacesAtProperty] = useState<CrmSpace[]>([])
   const [crmSpaceResidentTies, setCrmSpaceResidentTies] = useState<CrmSpaceResidentTie[]>([])
   const [crmGuestAuthsAtProperty, setCrmGuestAuthsAtProperty] = useState<GuestAuth[]>([])
+  // RT-4 — resident-submitted guest requests awaiting PM approve/decline.
+  // Separate from crmGuestAuthsAtProperty (status='active') so approve/decline
+  // handlers can pop rows here without touching the active-list on hot render.
+  const [crmPendingGuestRequestsAtProperty, setCrmPendingGuestRequestsAtProperty] = useState<GuestAuth[]>([])
   const [crmSpaceRequestsAtProperty, setCrmSpaceRequestsAtProperty] = useState<CrmSpaceRequest[]>([])
   // Slice 4 — pending plate changes at property. Manager sees property-
   // scoped rows via RLS (manager_own_plate_changes). Attached onto each
@@ -492,16 +496,20 @@ export default function ManagerPortal() {
   }
 
   async function fetchCrmDataForProperty(property: string) {
-    // Spaces + guest auths + pending space requests — three property-
-    // scoped batch queries, all fast under Commit 2 RLS. space_residents
-    // ties fetched once we know the space IDs (one more batch).
-    const [spacesRes, gaList, spaceReqsRes] = await Promise.all([
+    // Spaces + guest auths + pending space requests + pending guest
+    // requests — four property-scoped batch queries, all fast under
+    // Commit 2 RLS. space_residents ties fetched once we know the space
+    // IDs (one more batch).
+    const [spacesRes, gaList, spaceReqsRes, pendingGuestRes] = await Promise.all([
       supabase.from('spaces').select('id, label, type, status, is_active, assigned_to_resident_email, property').ilike('property', property),
       fetchActiveGuestAuths(supabase, { property }),
       // Slice 3.5 — correct columns. Actual schema has no requested_space_id
       // / requested_space_label (resident submits generically; PM picks the
       // space at approval time via a dropdown of available spaces).
       supabase.from('space_requests').select('id, resident_email, property, note, status, requested_at, decline_reason, assigned_space_id').ilike('property', property).eq('status', 'pending'),
+      // RT-4 — pending guest requests at this property. Manager RLS
+      // (manager_own_guest_auths) admits by property scope.
+      supabase.from('guest_authorizations').select('*').ilike('property', property).eq('status', 'pending').order('created_at', { ascending: true }),
     ])
     // Slice 4 — pending plate changes at property. Property-scoped by
     // RLS (manager_own_plate_changes). Fires alongside the rest so the
@@ -515,6 +523,7 @@ export default function ManagerPortal() {
     const spaces = (spacesRes.data ?? []) as CrmSpace[]
     setCrmSpacesAtProperty(spaces)
     setCrmGuestAuthsAtProperty(gaList)
+    setCrmPendingGuestRequestsAtProperty((pendingGuestRes.data ?? []) as GuestAuth[])
     setCrmSpaceRequestsAtProperty((spaceReqsRes.data ?? []) as CrmSpaceRequest[])
     if (spaces.length > 0) {
       const spaceIds = spaces.map(s => s.id)
@@ -630,6 +639,33 @@ export default function ManagerPortal() {
     setRevokeReason('')
     setGuestAuthError('')
     await refetchGuestAuths()
+  }
+
+  // ── RT-4: Approve / decline resident-submitted guest requests ──────
+  // Client just calls the DEFINER RPC; role gate + property scope +
+  // 60-day CHECK all enforced server-side. Optional dates let the PM
+  // trim a resident-proposed window at approve time.
+  async function approveGuestAuthRequestCrm(id: number, dates?: { start_date?: string; end_date?: string }) {
+    const { data, error } = await supabase.rpc('approve_guest_authorization_request', {
+      p_id: id,
+      p_start_date: dates?.start_date || null,
+      p_end_date: dates?.end_date || null,
+    })
+    if (error) { alert(`Approve failed: ${error.message}`); return }
+    const err = (data as any)?.error
+    if (err) { alert(`Approve failed: ${err}${(data as any)?.hint ? ' — ' + (data as any).hint : ''}`); return }
+    if (manager?.name) await fetchCrmDataForProperty(manager.name)
+  }
+
+  async function declineGuestAuthRequestCrm(id: number, reason: string) {
+    const { data, error } = await supabase.rpc('decline_guest_authorization_request', {
+      p_id: id,
+      p_reason: reason || null,
+    })
+    if (error) { alert(`Decline failed: ${error.message}`); return }
+    const err = (data as any)?.error
+    if (err) { alert(`Decline failed: ${err}`); return }
+    if (manager?.name) await fetchCrmDataForProperty(manager.name)
   }
 
   async function savePassLimit() {
@@ -3366,6 +3402,7 @@ export default function ManagerPortal() {
               guestAuths: crmGuestAuthsAtProperty,
               spaceRequests: crmSpaceRequestsAtProperty,
               pendingPlateChanges: crmPendingPlateChanges,
+              pendingGuestRequests: crmPendingGuestRequestsAtProperty,
             })}
             propertyName={manager.name}
             managerEmail={managerEmail}
@@ -3386,6 +3423,8 @@ export default function ManagerPortal() {
             onReactivateVehicle={(id) => reactivateVehicleCrm(id)}
             onEditVehicle={(id, patch) => editVehicleCosmetic(id, patch)}
             onEditResident={(id, patch) => editResidentCosmetic(id, patch)}
+            onApproveGuestAuthRequest={(id, dates) => approveGuestAuthRequestCrm(id, dates)}
+            onDeclineGuestAuthRequest={(id, reason) => declineGuestAuthRequestCrm(id, reason)}
           />
         )}
 
