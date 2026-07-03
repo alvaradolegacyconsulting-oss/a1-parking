@@ -1172,6 +1172,20 @@ export default function CompanyAdminPortal() {
       }
       return
     }
+    // 2026-07-02 (per-screen polish #3) — billing-impact notice
+    // before the INSERT commits. CA is the subscriber; no approval
+    // step, just informational so a CA understands their next
+    // invoice will reflect the new property. Tier-conditional copy:
+    // legacy shows "custom rate applies" since per-property $ is
+    // negotiated per proposal-code.
+    const perPropCopy =
+      ctx.tier === 'pm_only'            ? '$20/mo per property (PM-Only base)'
+      : ctx.tier === 'enforcement_only' ? '$15/mo per property (Enforcement-Only base)'
+      : /* legacy */                     'the custom per-property rate on your negotiated contract'
+    if (!window.confirm(`Adding "${newProperty.name}" will change your bill: ${perPropCopy}.\n\nContinue?`)) {
+      setPropMsg('')
+      return
+    }
     setPropMsg('')
     const { data, error: insErr } = await supabase.from('properties').insert([{
       name: newProperty.name, address: newProperty.address || null,
@@ -3083,16 +3097,26 @@ export default function CompanyAdminPortal() {
           <button style={tab('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
           <button style={tab('lookup')} onClick={() => setActiveTab('lookup')}>Plate Lookup</button>
           <button style={tab('violations')} onClick={() => setActiveTab('violations')}>Violations</button>
-          <button style={tab('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
+          {/* 2026-07-02 (per-screen polish #1) — Visitors, Authorized
+              Guests, and Spaces are PM-track surfaces. Hidden for
+              enforcement_only + legacy CAs. Render-side only; server-
+              side track-guards deferred to post-launch pass. */}
+          {getCompanyContext().tier === 'pm_only' && (
+            <button style={tab('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
+          )}
           {/* B214 — manager-vetted multi-week guest authorizations. CA-portal
               variant scans cross-property (all company properties). Form's
               property dropdown sources from CA's own company's ACTIVE
               properties only (Jose lock 2026-06-20). */}
-          <button style={tab('guest-auth')} onClick={() => setActiveTab('guest-auth')}>Authorized Guests</button>
+          {getCompanyContext().tier === 'pm_only' && (
+            <button style={tab('guest-auth')} onClick={() => setActiveTab('guest-auth')}>Authorized Guests</button>
+          )}
           {/* Spaces v1 commit 4 — CA cross-property single-view tab with
               property selector. Sibling to manager Spaces tab; uses the same
               app/lib/spaces.ts helpers + same 6 RPC mutation surfaces. */}
-          <button style={tab('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
+          {getCompanyContext().tier === 'pm_only' && (
+            <button style={tab('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
+          )}
           <button style={tab('qrcodes')} onClick={() => setActiveTab('qrcodes')}>QR Codes</button>
           <button style={tab('manage')} onClick={() => { setActiveTab('manage'); if (!manageLoaded) loadManageData() }}>Manage</button>
           {/* B219 Layer 2b (2026-06-25): Analytics tab button HIDDEN.
@@ -4775,8 +4799,21 @@ export default function CompanyAdminPortal() {
                         || hasFeature(FEATURE_FLAGS.LEASING_AGENT_ROLE, getCompanyContext()) === true) && (
                         <option value="leasing_agent">Leasing Agent</option>
                       )}
-                      <option value="driver">Driver</option>
-                      <option value="resident">Resident</option>
+                      {/* 2026-07-02 (per-screen polish #2) — role-add
+                          gating by track. PM (pm_only) doesn't hire
+                          drivers (drivers are enforcement's operator
+                          role); ENF + LEG don't manage residents (that's
+                          PM's surface). Admin always sees everything.
+                          Render-side only — server RPCs (insert_user_role)
+                          still accept any role for a CA today; server-
+                          side gate deferred with the rest of the
+                          post-launch track-guard pass. */}
+                      {(role?.role === 'admin' || getCompanyContext().tier !== 'pm_only') && (
+                        <option value="driver">Driver</option>
+                      )}
+                      {(role?.role === 'admin' || getCompanyContext().tier === 'pm_only') && (
+                        <option value="resident">Resident</option>
+                      )}
                     </select>
                     {newUser.role === 'resident' && (
                       <p style={{ color:'#fbbf24', fontSize:'11px', margin:'-6px 0 12px' }}>
