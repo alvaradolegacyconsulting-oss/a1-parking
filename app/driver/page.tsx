@@ -390,8 +390,14 @@ export default function DriverPortal() {
     // valid reference-data absence, NOT a deauthorization signal.
     const SAFE_VEHICLE_COLS = 'plate, is_active, status, year, color, make, model, property, space, resident_email'
 
-    const { data: activeVeh } = await supabase
-      .from('vehicles').select(SAFE_VEHICLE_COLS).ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', true).single()
+    // Slice 4 — appended `id, status` so we can enrich under-review with
+    // the pending plate change when the vehicle exists but is mid-change.
+    // Runtime concat defeats the tuple-typed inference; local `any` cast
+    // is fine since SAFE_VEHICLE_COLS already includes every field we
+    // read below.
+    const activeVehRes: any = await supabase
+      .from('vehicles').select(SAFE_VEHICLE_COLS + ', id, status').ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', true).single()
+    const activeVeh: any = activeVehRes.data
     if (activeVeh) {
       const { data: assignedSpacesRaw } = await supabase.rpc('derive_space_allowed_plates', {
         p_property:       selectedProperty,
@@ -400,7 +406,23 @@ export default function DriverPortal() {
       // RPC returns JSONB array; supabase-js types it as `unknown`.
       // Empty/null both render as no space (dash) per invariant.
       const assignedSpaces = Array.isArray(assignedSpacesRaw) ? assignedSpacesRaw : []
-      setSearching(false); setResult({ status: 'authorized', data: { ...activeVeh, _assigned_spaces: assignedSpaces } }); return
+      // Slice 4 — under-review enrichment. When the found vehicle has a
+      // pending plate change, attach it so the render shows a "plate
+      // change under review" banner alongside AUTHORIZED. The old plate
+      // (which is what the driver scanned) stays enforce-valid — do NOT
+      // downgrade to a warning; still show green AUTHORIZED, just add a
+      // context banner explaining a change is in flight.
+      let underReviewChange: any = null
+      if (activeVeh.status === 'under_review') {
+        const { data: pc } = await supabase
+          .from('vehicle_plate_changes')
+          .select('id, old_plate, new_plate, submitted_at')
+          .eq('vehicle_id', activeVeh.id)
+          .eq('status', 'pending')
+          .maybeSingle()
+        if (pc) underReviewChange = pc
+      }
+      setSearching(false); setResult({ status: 'authorized', data: { ...activeVeh, _assigned_spaces: assignedSpaces, _pending_plate_change: underReviewChange } }); return
     }
 
     const { data: expiredVeh } = await supabase
@@ -424,6 +446,30 @@ export default function DriverPortal() {
         : expiredVeh.status === 'declined' ? 'declined'
         : 'expired'
       setSearching(false); setResult({ status: resultStatus, data: { ...expiredVeh, _assigned_spaces: assignedSpaces } }); return
+    }
+
+    // Slice 4 — Do-Not-Tow safety branch (SAFETY-CRITICAL):
+    // Driver scanned a plate that ISN'T on any current vehicle row. Before
+    // treating as visitor/guest/unauthorized, check whether this plate is
+    // the NEW plate of a pending vehicle_plate_changes row. If so, the
+    // resident has requested this plate on their vehicle and it's awaiting
+    // PM decision — the driver must NOT tow. Show a bright do-not-tow
+    // signal with old→new + submitted date.
+    //
+    // Property-scoped by RLS (driver_read_plate_changes admits driver at
+    // own-company properties); additional client-side .ilike('property',
+    // selectedProperty) filter narrows to the property the driver picked.
+    const { data: pendingPc } = await supabase
+      .from('vehicle_plate_changes')
+      .select('id, vehicle_id, old_plate, new_plate, submitted_at, property')
+      .ilike('new_plate', clean)
+      .ilike('property', selectedProperty)
+      .eq('status', 'pending')
+      .order('submitted_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (pendingPc) {
+      setSearching(false); setResult({ status: 'plate_under_review', data: pendingPc }); return
     }
 
     // B214 — guest_authorizations stage 2.5 of the enforcement cascade.
@@ -1466,8 +1512,8 @@ export default function DriverPortal() {
                   // orange=visitor). LOUD distinction per Jose 2026-06-20 —
                   // guest_authorized is the newest status with no driver muscle
                   // memory; tow-by-default risk is highest here.
-                  background: result.status === 'authorized' ? '#061406' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
-                  border: `1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
+                  background: result.status === 'authorized' ? '#061406' : result.status === 'plate_under_review' ? '#241a08' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
+                  border: `1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'plate_under_review' ? '#a16207' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
                 }}>
                   {result.status === 'authorized' && (
                     <>
@@ -1483,6 +1529,24 @@ export default function DriverPortal() {
                           aware). Allowed plates per space included by design
                           (driver's operational context). */}
                       <p style={{ color: '#4caf50', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>✓ AUTHORIZED</p>
+                      {/* Slice 4 — plate change under review banner. Attached
+                          to authorized-vehicle result when vehicles.status =
+                          'under_review'. Old plate (what the driver scanned)
+                          is STILL enforce-valid — the authorized status
+                          stands. Banner just tells the driver a change is
+                          in flight, so they see the same context the PM
+                          sees. */}
+                      {result.data._pending_plate_change && (
+                        <div style={{ background: '#3a2e0a', border: '1px solid #a16207', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px' }}>
+                          <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '12px', margin: '0 0 6px' }}>⚠ Plate change under review — old plate remains valid</p>
+                          <p style={{ color: '#fef3c7', fontSize: '12px', margin: '0', lineHeight: '1.5' }}>
+                            <span style={{ fontFamily: 'Courier New' }}>{result.data._pending_plate_change.old_plate}</span>
+                            {' → '}
+                            <span style={{ fontFamily: 'Courier New', fontWeight: 'bold' }}>{result.data._pending_plate_change.new_plate}</span>
+                            <span style={{ color: '#aaa', marginLeft: '8px' }}>· submitted {new Date(result.data._pending_plate_change.submitted_at).toLocaleDateString()}</span>
+                          </p>
+                        </div>
+                      )}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Property</span><br /><span style={{ color: '#4caf50', fontSize: '13px' }}>{result.data.property}</span></div>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
@@ -1519,6 +1583,34 @@ export default function DriverPortal() {
                         style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
+                    </>
+                  )}
+
+                  {/* Slice 4 SAFETY-CRITICAL — driver scanned the NEW plate
+                      of a resident's pending plate change. The plate isn't
+                      on vehicles yet (old plate is still there), so the
+                      normal cascade would have returned notfound. This
+                      branch surfaces DO NOT TOW instead, with old→new
+                      context so the driver understands what they see. */}
+                  {result.status === 'plate_under_review' && (
+                    <>
+                      <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '17px', margin: '0 0 8px' }}>⚠ DO NOT TOW</p>
+                      <p style={{ color: '#fef3c7', fontSize: '13px', margin: '0 0 12px', lineHeight: '1.5' }}>
+                        This plate is a resident's <b>pending plate change</b> awaiting property-manager approval. The vehicle is still authorized under its prior plate.
+                      </p>
+                      <div style={{ background: '#0f1117', border: '1px solid #a16207', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '12px' }}>
+                          <div>
+                            <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Prior plate (still enforce-valid)</span><br />
+                            <span style={{ color: '#aaa', fontFamily: 'Courier New', fontSize: '14px' }}>{result.data.old_plate}</span>
+                          </div>
+                          <div>
+                            <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Requested plate (scanned)</span><br />
+                            <span style={{ color: '#fbbf24', fontFamily: 'Courier New', fontSize: '14px', fontWeight: 'bold' }}>{result.data.new_plate}</span>
+                          </div>
+                        </div>
+                        <p style={{ color: '#888', fontSize: '11px', margin: '8px 0 0' }}>Submitted {new Date(result.data.submitted_at).toLocaleDateString()}</p>
+                      </div>
                     </>
                   )}
 

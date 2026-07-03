@@ -47,6 +47,20 @@ export interface CrmSpaceResidentTie {
   resident_email: string
 }
 
+// Slice 4 — plate re-approval lifecycle. Populated only when a vehicle's
+// row in vehicle_plate_changes carries status='pending'. Attached to the
+// vehicle via enrichment (Phase 3 in buildCrmResidents) so the CRM
+// VehicleCard can render Do-Not-Tow + old→new + approve/decline without
+// a per-vehicle query.
+export interface CrmPendingPlateChange {
+  id: number
+  vehicle_id: number
+  old_plate: string
+  new_plate: string
+  submitted_by: string
+  submitted_at: string
+}
+
 export interface CrmSpaceRequest {
   id: number
   resident_email: string
@@ -89,8 +103,22 @@ export function buildCrmResidents(input: {
   spaceResidentTies: CrmSpaceResidentTie[]
   guestAuths: GuestAuth[]
   spaceRequests: CrmSpaceRequest[]
+  pendingPlateChanges?: CrmPendingPlateChange[]
 }): CrmResident[] {
   const allResidents = [...input.pendingResidents, ...input.residents]
+
+  // Slice 4 — Attach pendingPlateChange onto its vehicle IN PLACE before
+  // grouping. Vehicles are stored by reference in every CrmResident.vehicles;
+  // enriching the source rows here means the CRM VehicleCard reads
+  // `v.pendingPlateChange` directly without a second pass.
+  if (input.pendingPlateChanges && input.pendingPlateChanges.length > 0) {
+    const pcByVehicle = new Map<number, CrmPendingPlateChange>()
+    for (const pc of input.pendingPlateChanges) pcByVehicle.set(pc.vehicle_id, pc)
+    for (const v of input.vehicles) {
+      const pc = pcByVehicle.get(v.id)
+      if (pc) v.pendingPlateChange = pc
+    }
+  }
 
   // Vehicles: index by lowered email, and by unit as fallback.
   const vehiclesByEmail = new Map<string, any[]>()

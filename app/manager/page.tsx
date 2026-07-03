@@ -54,7 +54,7 @@ import CredentialsModal from '../components/CredentialsModal'
 // 2–6. Toggle: flip PM_CRM_ENABLED to false to fall back to the legacy
 // render below (kept intact for rollback until slice 2 retires it).
 import PmResidentCrm from '../components/PmResidentCrm'
-import { buildCrmResidents, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest } from '../lib/pm-crm'
+import { buildCrmResidents, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
 
 const PM_CRM_ENABLED = true
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
@@ -285,6 +285,10 @@ export default function ManagerPortal() {
   const [crmSpaceResidentTies, setCrmSpaceResidentTies] = useState<CrmSpaceResidentTie[]>([])
   const [crmGuestAuthsAtProperty, setCrmGuestAuthsAtProperty] = useState<GuestAuth[]>([])
   const [crmSpaceRequestsAtProperty, setCrmSpaceRequestsAtProperty] = useState<CrmSpaceRequest[]>([])
+  // Slice 4 — pending plate changes at property. Manager sees property-
+  // scoped rows via RLS (manager_own_plate_changes). Attached onto each
+  // vehicle via buildCrmResidents's Phase-3 enrichment.
+  const [crmPendingPlateChanges, setCrmPendingPlateChanges] = useState<CrmPendingPlateChange[]>([])
   // B70: Plate Lookup tab state. Distinct name from the Spaces-tab
   // `plateQuery` further down to avoid the variable collision.
   const [lookupPlate, setLookupPlate] = useState('')
@@ -499,6 +503,15 @@ export default function ManagerPortal() {
       // space at approval time via a dropdown of available spaces).
       supabase.from('space_requests').select('id, resident_email, property, note, status, requested_at, decline_reason, assigned_space_id').ilike('property', property).eq('status', 'pending'),
     ])
+    // Slice 4 — pending plate changes at property. Property-scoped by
+    // RLS (manager_own_plate_changes). Fires alongside the rest so the
+    // CRM VehicleCard renders the Do-Not-Tow banner on first paint.
+    const platesRes = await supabase
+      .from('vehicle_plate_changes')
+      .select('id, vehicle_id, old_plate, new_plate, submitted_by, submitted_at, property, status')
+      .ilike('property', property)
+      .eq('status', 'pending')
+    setCrmPendingPlateChanges((platesRes.data ?? []) as CrmPendingPlateChange[])
     const spaces = (spacesRes.data ?? []) as CrmSpace[]
     setCrmSpacesAtProperty(spaces)
     setCrmGuestAuthsAtProperty(gaList)
@@ -1467,6 +1480,60 @@ export default function ManagerPortal() {
     console.info('[decline_space_request]', { site: 'crm-decline', requestId, result })
     fetchCrmDataForProperty(manager.name)
     fetchPendingSpaceRequests(manager.name)
+  }
+
+  // PM CRM slice 4 — plate-change handlers. Route through DEFINER RPCs:
+  //   approve_plate_change (gated on can_approve_vehicles; substitution,
+  //     NO callSyncOnAdd — permit count unchanged, meter untouched)
+  //   decline_plate_change (role gate only; old plate stays valid)
+  // The RPCs write their own audit_logs rows internally.
+  //
+  // METER-ZERO: neither handler nor RPC invokes callSyncOnAdd. A plate
+  // change is a substitution, not a new permit. Firing the meter here
+  // would double-count the existing permit — the exact bug Jose called
+  // out for the guardrail. Verified by the probe scanning audit_logs for
+  // any permit-sync row in the approve window (there should be none).
+  async function approvePlateChange(changeId: number) {
+    if (!manager?.name) return
+    const { data, error } = await supabase.rpc('approve_plate_change', { p_change_id: changeId })
+    if (error) {
+      alert(`Approve plate change failed: ${error.message}`)
+      console.error('[approve_plate_change] RPC error:', error)
+      return
+    }
+    const result = data as { ok?: boolean; error?: string; old_plate?: string; new_plate?: string } | null
+    if (!result?.ok) {
+      alert(`Approve plate change failed: ${result?.error ?? 'unknown'}`)
+      console.error('[approve_plate_change] RPC returned error:', result?.error)
+      return
+    }
+    console.info('[approve_plate_change]', { site: 'crm', changeId, old_plate: result.old_plate, new_plate: result.new_plate, meter_fired: false })
+    fetchCrmDataForProperty(manager.name)
+    fetchVehicles(manager.name)
+  }
+
+  async function declinePlateChange(changeId: number) {
+    if (!manager?.name) return
+    const reason = window.prompt('Decline reason (optional — surfaced to the resident):', '')
+    if (reason === null) return  // Cancel pressed
+    const { data, error } = await supabase.rpc('decline_plate_change', {
+      p_change_id: changeId,
+      p_decline_reason: reason.trim() || null,
+    })
+    if (error) {
+      alert(`Decline plate change failed: ${error.message}`)
+      console.error('[decline_plate_change] RPC error:', error)
+      return
+    }
+    const result = data as { ok?: boolean; error?: string } | null
+    if (!result?.ok) {
+      alert(`Decline plate change failed: ${result?.error ?? 'unknown'}`)
+      console.error('[decline_plate_change] RPC returned error:', result?.error)
+      return
+    }
+    console.info('[decline_plate_change]', { site: 'crm', changeId })
+    fetchCrmDataForProperty(manager.name)
+    fetchVehicles(manager.name)
   }
 
   async function declineResident(r: any) {
@@ -3116,6 +3183,7 @@ export default function ManagerPortal() {
               spaceResidentTies: crmSpaceResidentTies,
               guestAuths: crmGuestAuthsAtProperty,
               spaceRequests: crmSpaceRequestsAtProperty,
+              pendingPlateChanges: crmPendingPlateChanges,
             })}
             propertyName={manager.name}
             managerEmail={managerEmail}
@@ -3130,6 +3198,8 @@ export default function ManagerPortal() {
             onReleaseSpace={(spaceId, email) => releaseSpaceForResident(spaceId, email)}
             onAssignSpaceRequest={(reqId, spaceId) => assignSpaceForRequest(reqId, spaceId)}
             onDeclineSpaceRequest={(reqId) => declineSpaceRequestFromCrm(reqId)}
+            onApprovePlateChange={(changeId) => approvePlateChange(changeId)}
+            onDeclinePlateChange={(changeId) => declinePlateChange(changeId)}
           />
         )}
 

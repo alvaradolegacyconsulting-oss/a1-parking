@@ -50,6 +50,11 @@ export default function ResidentPortal() {
   const [limitStatus, setLimitStatus] = useState<PlateLimitStatus | null>(null)
   const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null)
   const [editingVehicle, setEditingVehicle] = useState<any>({})
+  // Slice 4 — resident's own pending plate changes, indexed by vehicle_id.
+  // Fetched alongside vehicles; used to render the "Plate change under
+  // review" pill on the vehicle card + suppress the "Request Plate Change"
+  // affordance (one-in-flight rule).
+  const [pendingPlateChangesByVehicle, setPendingPlateChangesByVehicle] = useState<Record<number, { id: number; old_plate: string; new_plate: string; submitted_at: string }>>({})
   const [showRequestForm, setShowRequestForm] = useState(false)
   const [newVehicle, setNewVehicle] = useState({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
   const [requestMsg, setRequestMsg] = useState('')
@@ -220,6 +225,65 @@ export default function ResidentPortal() {
     } else {
       setVehicles(vehs)
     }
+    // Slice 4 — resident's OWN pending plate changes. Scoped by
+    // resident_read_own_plate_changes RLS (submitted_by ILIKE jwt.email).
+    // Vehicle IDs from the just-set vehicles are used to filter; if the
+    // resident has no vehicles the query is skipped.
+    const vehIds = vehs.map((v: any) => v.id).filter(Boolean)
+    if (vehIds.length > 0) {
+      const { data: pcs } = await supabase
+        .from('vehicle_plate_changes')
+        .select('id, vehicle_id, old_plate, new_plate, submitted_at')
+        .in('vehicle_id', vehIds)
+        .eq('status', 'pending')
+      const map: Record<number, { id: number; old_plate: string; new_plate: string; submitted_at: string }> = {}
+      for (const pc of pcs ?? []) map[pc.vehicle_id] = { id: pc.id, old_plate: pc.old_plate, new_plate: pc.new_plate, submitted_at: pc.submitted_at }
+      setPendingPlateChangesByVehicle(map)
+    } else {
+      setPendingPlateChangesByVehicle({})
+    }
+  }
+
+  async function requestPlateChange(vehicle: any) {
+    // Slice 4 — resident-side plate change submission (RT-3).
+    // Gate: vehicle status MUST be 'active' (approved). Not 'pending'
+    // (still under initial review — edit freely instead). Not 'under_review'
+    // (already one in flight; one-pending rule).
+    if (vehicle.status !== 'active') {
+      alert('Plate changes are available only on approved vehicles.')
+      return
+    }
+    // Disclaimer per Jose 2026-07-03: at submit, resident must see the
+    // "old plate stays valid" contract explicitly.
+    const disclaimer = 'Your plate change is not active until approved by your property manager. Your current plate stays valid until then — do not remove it.\n\nContinue?'
+    if (!window.confirm(disclaimer)) return
+    const raw = window.prompt('New plate:', '')
+    if (raw === null) return
+    const normalized = normalizePlate(raw)
+    if (!normalized) { alert('Please enter a valid plate.'); return }
+    if (normalized === normalizePlate(vehicle.plate)) { alert('New plate is the same as the current plate.'); return }
+    const { data, error } = await supabase.rpc('submit_plate_change', {
+      p_vehicle_id: vehicle.id,
+      p_new_plate: normalized,
+    })
+    if (error) {
+      alert(`Submit failed: ${error.message}`)
+      console.error('[submit_plate_change] RPC error:', error)
+      return
+    }
+    const result = data as { ok?: boolean; error?: string; hint?: string } | null
+    if (!result?.ok) {
+      // Handle the one-pending case with a clean message per RT-3 spec.
+      if (result?.error === 'already_pending') {
+        alert('You already have a plate change under review. Wait for your manager\'s decision or contact them.')
+        return
+      }
+      alert(`Submit failed: ${result?.error ?? 'unknown'}`)
+      console.error('[submit_plate_change] RPC returned error:', result)
+      return
+    }
+    // Refresh to render the new under_review state.
+    fetchVehicles(resident.unit, resident.property, resident.email)
   }
 
   async function fetchPasses(unit: string) {
@@ -928,6 +992,35 @@ export default function ResidentPortal() {
                               {isEditing ? 'Cancel Edit' : 'Edit'}
                             </button>
                           )}
+                          {/* Slice 4 — Request Plate Change. Gated on
+                              status === 'active' per Jose 2026-07-03 rule:
+                              existing AND approved only. Pending vehicles
+                              stay freely editable (nothing authorized yet);
+                              under_review is locked (one-in-flight rule).
+                              A pending change on this vehicle is announced
+                              by the under-review pill below. */}
+                          {v.status === 'active' && !pendingPlateChangesByVehicle[v.id] && (
+                            <button onClick={() => requestPlateChange(v)}
+                              style={{ width:'100%', padding:'7px', background:'transparent', color:'#f0a340', border:'1px solid #a16207', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial', marginTop:'6px' }}>
+                              Request Plate Change
+                            </button>
+                          )}
+                          {pendingPlateChangesByVehicle[v.id] && (() => {
+                            const pc = pendingPlateChangesByVehicle[v.id]
+                            return (
+                              <div style={{ background:'#3a2e0a', border:'1px solid #a16207', borderRadius:'8px', padding:'10px 12px', marginTop:'8px' }}>
+                                <p style={{ color:'#fbbf24', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 6px' }}>Plate change under review</p>
+                                <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' }}>
+                                  <span style={{ fontFamily:'Courier New', color:'#aaa', textDecoration:'line-through', fontSize:'13px' }}>{pc.old_plate}</span>
+                                  <span style={{ color:'#fbbf24' }}>→</span>
+                                  <span style={{ fontFamily:'Courier New', color:'#C9A227', fontWeight:'bold', fontSize:'13px' }}>{pc.new_plate}</span>
+                                </div>
+                                <p style={{ color:'#aaa', fontSize:'11px', margin:'6px 0 0', lineHeight:'1.5' }}>
+                                  Waiting on manager approval. Your current plate stays valid until they decide — do not remove it.
+                                </p>
+                              </div>
+                            )
+                          })()}
                         </div>
 
                         <div style={{ paddingBottom:'4px' }}>

@@ -43,6 +43,12 @@ interface Props {
   onReleaseSpace: (spaceId: number, residentEmail: string) => Promise<void>
   onAssignSpaceRequest: (requestId: number, spaceId: number) => Promise<void>
   onDeclineSpaceRequest: (requestId: number) => Promise<void>
+  // Slice 4 — plate re-approval handlers. Approve gated on
+  // canApproveVehicles (permit-granting rule); Decline role-only per
+  // Jose's standing rule. Meter-none: neither callback fires
+  // callSyncOnAdd — a plate change is a substitution, not a new permit.
+  onApprovePlateChange: (changeId: number) => Promise<void>
+  onDeclinePlateChange: (changeId: number) => Promise<void>
 }
 
 // Manager-portal design tokens (matched to existing manager/page.tsx palette).
@@ -106,6 +112,7 @@ export default function PmResidentCrm({
   onApproveResident, onDeclineResident,
   onApproveAllPending,
   onReleaseSpace, onAssignSpaceRequest, onDeclineSpaceRequest,
+  onApprovePlateChange, onDeclinePlateChange,
 }: Props) {
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
@@ -255,6 +262,8 @@ export default function PmResidentCrm({
                     isReadOnly={isReadOnly}
                     onApproveVehicle={onApproveVehicle}
                     onDeclineVehicle={onDeclineVehicle}
+                    onApprovePlateChange={onApprovePlateChange}
+                    onDeclinePlateChange={onDeclinePlateChange}
                   />
                 )}
                 {subTab === 'spaces' && (
@@ -589,12 +598,14 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
   )
 }
 
-function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle }: {
+function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
   onApproveVehicle: (id: string | number) => Promise<void>
   onDeclineVehicle: (id: string | number) => Promise<void>
+  onApprovePlateChange: (changeId: number) => Promise<void>
+  onDeclinePlateChange: (changeId: number) => Promise<void>
 }) {
   if (resident.vehicles.length === 0) {
     return (
@@ -613,21 +624,25 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
           isReadOnly={isReadOnly}
           onApproveVehicle={onApproveVehicle}
           onDeclineVehicle={onDeclineVehicle}
+          onApprovePlateChange={onApprovePlateChange}
+          onDeclinePlateChange={onDeclinePlateChange}
         />
       ))}
       <div style={{ fontSize: '11px', color: C.faint, marginTop: '10px', fontStyle: 'italic' }}>
-        Deactivate + Plate re-approval land in slices 4, 5.
+        Deactivate lands slice 5.
       </div>
     </>
   )
 }
 
-function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle }: {
+function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange }: {
   v: any
   canApproveVehicles: boolean
   isReadOnly: boolean
   onApproveVehicle: (id: string | number) => Promise<void>
   onDeclineVehicle: (id: string | number) => Promise<void>
+  onApprovePlateChange: (changeId: number) => Promise<void>
+  onDeclinePlateChange: (changeId: number) => Promise<void>
 }) {
   const s = (v.status ?? '').toLowerCase()
   const stat = s === 'under_review'
@@ -640,8 +655,15 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   const ymm = [v.year, v.make, v.model].filter(Boolean).join(' ') || '—'
   const status = (v.status ?? '').toLowerCase()
   const isPending = status === 'pending'
+  const isUnderReview = status === 'under_review'
   const showApprove = isPending && canApproveVehicles && !isReadOnly
   const showDecline = isPending && !isReadOnly
+  // Slice 4 — plate re-approval affordances. pendingPlateChange is
+  // attached by buildCrmResidents Phase 3 when the vehicle has a
+  // vehicle_plate_changes row with status='pending'.
+  const pc = v.pendingPlateChange
+  const showApprovePlateChange = isUnderReview && !!pc && canApproveVehicles && !isReadOnly
+  const showDeclinePlateChange = isUnderReview && !!pc && !isReadOnly
   return (
     <div style={{
       border: `1px solid ${C.border}`, borderRadius: '10px', padding: '14px',
@@ -676,6 +698,53 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
             }}>Decline</button>
           )}
         </div>
+      )}
+      {/* Slice 4 — Do-Not-Tow banner + old→new plates + Approve new/Keep current.
+          Renders only when the vehicle is under_review AND a pendingPlateChange
+          row is attached. The old plate stays enforce-valid until the PM decides
+          (both DB invariant + driver plate lookup honor this). */}
+      {isUnderReview && pc && (
+        <>
+          <div style={{
+            marginTop: '12px', background: C.amberSoft, border: `1px solid ${C.amberLine}`,
+            borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', display: 'flex',
+            gap: '9px', alignItems: 'flex-start',
+          }}>
+            <span style={{ color: C.amber, fontSize: '15px', marginTop: '1px' }}>⚠</span>
+            <div>
+              <b style={{ color: C.amber }}>Do not tow — plate change under review.</b>{' '}
+              <span style={{ color: C.text }}>
+                The prior plate stays valid until you decide. Old → new:
+              </span>
+              <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <div style={{ ...plateChipStyle, opacity: 0.55, textDecoration: 'line-through', fontSize: '13px' }}>{pc.old_plate}</div>
+                <span style={{ color: C.amber, fontWeight: 800, fontSize: '18px' }}>→</span>
+                <div style={{ ...plateChipStyle, fontSize: '13px' }}>{pc.new_plate}</div>
+                <span style={{ color: C.faint, fontSize: '11px' }}>
+                  submitted {new Date(pc.submitted_at).toLocaleDateString()}
+                </span>
+              </div>
+            </div>
+          </div>
+          {(showApprovePlateChange || showDeclinePlateChange) && (
+            <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+              {showApprovePlateChange && (
+                <button onClick={() => onApprovePlateChange(pc.id)} title="Substitutes the new plate on this vehicle. No permit charge — substitution, not a new permit." style={{
+                  flex: 1, padding: '8px', background: C.greenSoft, color: C.green,
+                  border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>Approve new plate</button>
+              )}
+              {showDeclinePlateChange && (
+                <button onClick={() => onDeclinePlateChange(pc.id)} style={{
+                  flex: showApprovePlateChange ? 1 : undefined, padding: '8px 14px', background: C.redSoft, color: C.red,
+                  border: `1px solid ${C.redLine}`, borderRadius: '6px',
+                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>Keep current plate</button>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
