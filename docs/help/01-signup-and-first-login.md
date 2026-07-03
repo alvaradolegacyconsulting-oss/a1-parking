@@ -69,8 +69,8 @@ If you land on a page that doesn't match what you expected, double-check that yo
 
 ### If you're a Company Admin
 
-1. **Verify your tier** — Click the **Plan** tab. Confirm your tier shows correctly (Starter / Growth / Legacy for Enforcement, or Essential / Professional / Enterprise for Property Management).
-2. **Review your limits** — On the Plan tab, see how many properties, drivers, and other resources your tier includes.
+1. **Verify your tier** — Click the **Plan** tab. Confirm your tier shows correctly: **PM-Only**, **Enforcement-Only**, or **Legacy**.
+2. **Review your usage** — On the Plan tab, see your active properties, drivers (Enforcement-Only), or visitor-pass usage (PM-Only). Usage is what drives your bill; see [Understanding Your Tier](03-understanding-your-tier.md) for the pricing model.
 3. **Set up your company profile** — Head to [Account Setup](02-account-setup.md) to complete logo upload, support contact, and other settings.
 
 ### If you're a Manager

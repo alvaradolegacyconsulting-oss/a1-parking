@@ -32,7 +32,7 @@ ShieldMyLot supports two issuance paths:
 
 ### Manager-issued passes
 
-Property managers (and leasing agents on Growth+ tiers) can issue visitor passes from the manager portal. This is the right path for:
+Property managers (and leasing agents, where the Leasing Agent role is included in your tier configuration) can issue visitor passes from the manager portal. This is the right path for:
 - Walk-in requests at the leasing office
 - Service provider scheduling done by the property
 - Event-specific bulk passes (with property owner approval)
@@ -62,29 +62,22 @@ Why this exists: prevents a single problem vehicle from getting unlimited author
 
 This limit is set **per property** and is configurable by the property manager. Default values are reasonable for most properties; adjust if your property has unusual needs.
 
-### Monthly cap per property
+### Monthly usage per property
 
-How many total passes can be issued at a property per calendar month, summed across all residents and manager-issued passes.
+Your Plan tab shows visitor pass usage per property for the current calendar month. Usage is tracked but not tier-capped on PM-Only — issue what your operation needs.
 
-| PM Tier | Monthly cap per property |
-|---|---|
-| Essential | 50 |
-| Professional | 200 |
-| Enterprise | Unlimited |
+If a property is unusually busy (lots of resident guests, frequent contractors) and usage looks abnormal for your operation, the Plan tab is the place to spot the trend.
 
-If a property is busy (lots of resident guests, frequent contractors), the cap can fill up quickly. Track usage at the start of the month — if you're using 30 passes in week 1, you'll hit the Essential cap by week 2.
+Legacy accounts may have negotiated per-property monthly caps as part of their proposal-code configuration. Your Plan tab reflects any caps that apply.
 
 ### Maximum pass duration
 
-How long a single pass can be active.
+Individual visitor passes have a maximum duration — the manager can set a shorter default per property, and residents can set their own within that bound. Typical defaults:
 
-| PM Tier | Maximum duration |
-|---|---|
-| Essential | 12 hours |
-| Professional | 24 hours |
-| Enterprise | 48 hours |
+- **PM-Only**: 24 hours per pass
+- **Legacy**: whatever your proposal-code specified
 
-For visits longer than the max (e.g., a week-long stay with family), the resident or manager would issue multiple consecutive passes.
+For visits longer than the max (e.g., a week-long stay with family), the resident or manager can issue multiple consecutive passes.
 
 ---
 

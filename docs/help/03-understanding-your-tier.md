@@ -3,218 +3,162 @@ title: "Understanding Your Tier"
 category: "Getting Started"
 audience: ["company_admin", "manager"]
 tier_required: "any"
-last_updated: "2026-05-20"
+last_updated: "2026-07-02"
 related: ["account-setup", "billing-and-tier-changes", "adding-properties"]
 ---
 
 # Understanding Your Tier
 
-Your tier determines what your ShieldMyLot™ account can do — how many properties, how many drivers, what features are available, and what limits apply. This guide explains how to read your Plan tab and decide whether your current tier fits your needs.
+Your tier determines what your ShieldMyLot™ account can do — which surfaces you see, which features are available, and what drives your bill. This guide explains how to read your Plan tab and confirm your account is set up correctly.
 
-## What is a tier?
+## The three tiers
 
-A tier is your subscription level. ShieldMyLot offers tiered pricing because customer needs vary enormously — a single-property towing company and a 50-property towing company have different requirements. Lower tiers cost less and have lower limits; higher tiers cost more and unlock more capacity and more features.
+ShieldMyLot offers three subscription tiers. You're on exactly one of them:
 
-You're on one of these tiers:
-
-### Enforcement track (towing companies)
-
-| Tier | Designed for |
+| Tier | Best for |
 |---|---|
-| **Starter** | Small operations, 1-5 properties, up to 3 drivers |
-| **Growth** | Mid-size operations, 6-15 properties, growing team |
-| **Legacy** | Established operations, unlimited properties and drivers, all features |
+| **PM-Only** | Property management firms managing residential communities: resident registration, assigned parking, visitor passes, guest authorizations. Self-serve. |
+| **Enforcement-Only** | Towing and enforcement operators serving multiple properties: violation intake, tow tickets, plate lookup, driver management. Self-serve. |
+| **Legacy** | Custom-negotiated pricing for larger deployments or hybrid needs (property management + enforcement combined, or non-standard terms). Onboarded via a proposal code from ShieldMyLot. |
 
-### Property Management track (PM firms)
+You picked your tier at signup (or Legacy customers, via the proposal code you were sent). Your tier stays the same until you or ShieldMyLot changes it deliberately.
 
-| Tier | Designed for |
-|---|---|
-| **Essential** | Small portfolios, 1-3 properties, basic visitor pass management |
-| **Professional** | Mid-size portfolios, 4-10 properties, higher visitor pass volume |
-| **Enterprise** | Large portfolios, unlimited properties, all features |
+---
+
+## What each tier includes
+
+### PM-Only
+
+For property management firms. The surfaces you'll use:
+
+- **Add and manage properties** — one or many
+- **Resident management** — invite residents, approve new registrations, view resident vehicles
+- **Reserved parking (Spaces)** — assign residents to parking spaces; residents can request specific spaces
+- **Visitor passes** — issue and monitor visitor passes per property
+- **Guest authorizations** — multi-week authorized guest vehicles vetted by the property manager
+- **Property managers** — invite as many property manager accounts as you need; no cap
+
+You do **not** have:
+- Violation intake / tow ticket workflows (those belong to the enforcement operator serving your property)
+- Driver operator accounts
+
+### Enforcement-Only
+
+For towing and enforcement operators. The surfaces you'll use:
+
+- **Add and manage properties** — one or many, each with its own Chapter 2308 authorization documents
+- **Driver management** — invite drivers, assign properties, control tow-ticket regeneration authority
+- **Violation intake** — drivers file violations with photos and (optional) video
+- **Tow tickets and evidence** — generate compliant tickets, attach evidence, exempt-plate lists
+- **Plate lookup** — look up plates across all your assigned properties
+- **Property managers** — invite as many property manager accounts as you need; no cap
+
+You do **not** have:
+- Reserved parking / Spaces
+- Visitor pass issuance (that's a PM-track feature)
+- Guest authorization
+
+### Legacy
+
+Custom deployments that don't fit the two standard tracks. Legacy accounts are onboarded via a proposal code from ShieldMyLot, and pricing and included features are set at proposal time.
+
+Depending on how your Legacy account was configured, you may have:
+- PM-Only surfaces, Enforcement-Only surfaces, or both
+- Any combination of features from the two tracks
+
+Your Plan tab reflects your actual configuration.
+
+---
+
+## What drives your bill
+
+ShieldMyLot's pricing is designed so **you only pay for what you use**.
+
+### PM-Only
+
+- **Monthly base** — $179 per month
+- **Per property** — $20 per active property per month
+- **Per approved permit (graduated)** — Only PM-Only meters permits. A "permit" is an approved resident vehicle. Rate scales down as volume grows:
+
+  | Approved permits | Rate per permit |
+  |---|---|
+  | 1 – 50 | $2.00 |
+  | 51 – 200 | $1.75 |
+  | 201 – 500 | $1.50 |
+  | 501 + | $1.25 |
+
+  The meter fires when a manager approves a resident's vehicle. Declined vehicles are free. Pending vehicles are free.
+
+### Enforcement-Only
+
+- **Monthly base** — $199 per month
+- **Per property** — $15 per active property per month
+- **No per-permit meter, no per-driver charge** — Add as many drivers as your operation needs at no additional charge.
+
+### Legacy
+
+- Custom pricing set at proposal-code issue time. Numbers vary by contract.
+
+### Cost drivers, in plain terms
+
+- **Adding a property** raises your bill by the per-property amount, immediately reflected on your next invoice.
+- **Approving a resident vehicle (PM-Only only)** counts as one permit. Rate depends on which bracket you're in.
+- **Adding drivers, property managers, or leasing agents** does not affect your bill.
+- **Declining a vehicle** does not affect your bill.
+
+---
+
+## What is NOT capped
+
+Some limits from prior ShieldMyLot versions have been retired:
+
+- **No property-manager cap** on any tier. Invite as many property manager accounts as you need.
+- **No driver cap** on Enforcement-Only. Add as many drivers as your operation needs.
+- **No per-driver charge.**
+- **No per-space charge.** Reserved parking is a PM-Only feature at no additional cost.
 
 ---
 
 ## Reading the Plan tab
 
-The **Plan** tab in your Company Admin portal shows everything about your subscription in one place.
+The **Plan** tab in your Company Admin portal shows:
 
-You'll see four main sections:
+- Your current tier
+- Active property count
+- (Enforcement-Only) Active driver count
+- (PM-Only) Visitor pass usage per property this month
+- Feature availability for your tier
 
-### 1. Tier summary
+Each usage number shows what's currently active. Your bill reflects the same active resources.
 
-At the top, your current tier name and track type. For example: "Enforcement · Legacy" or "Property Management · Professional."
-
-If this doesn't match what you signed up for, contact support@shieldmylot.com immediately.
-
-### 2. Hard limits (capacity)
-
-These are numeric caps on resources you can create:
-
-**For Enforcement:**
-- **Properties** — Maximum active properties (Starter: 5, Growth: 15, Legacy: unlimited)
-- **Drivers** — Maximum active driver accounts (Starter: 3, Growth: 10, Legacy: unlimited)
-- **Photos per violation** — Maximum photos a driver can attach (Starter: 3, Growth: 10, Legacy: unlimited)
-- **Video duration** — Maximum length of evidence video (Starter: 30s, Growth: 60s, Legacy: 120s)
-
-**For Property Management:**
-- **Properties** — Maximum active properties (Essential: 3, Professional: 10, Enterprise: unlimited)
-- **Visitor passes per property per month** — Total passes any single property can issue in a calendar month (Essential: 50, Professional: 200, Enterprise: unlimited)
-- **Maximum visitor pass duration** — How long a single pass can last (Essential: 12 hours, Professional: 24 hours, Enterprise: 48 hours)
-
-Each limit displays current usage next to the cap, e.g., "Properties: 4 of 5" or "Drivers: 7 of 10."
-
-### 3. Feature availability
-
-Beyond the numeric limits, your tier determines which capabilities your account has access to. These aren't settings anyone turns on or off — they're included (or not) based entirely on your tier. If a capability is part of your tier, it's available to your whole company automatically. If it's not part of your tier, upgrading is the way to unlock it.
-
-- **Advanced analytics** — Detailed reporting beyond basic violation counts (Growth+/Professional+)
-- **Tow records CSV export** — Download your tow records as a CSV file for use in your own back-office tools (Growth+)
-- **API access (read-only)** — Programmatic access to your data for custom integrations (Legacy/Enterprise)
-- **Leasing agent role** — Additional user role for read-mostly portal access (Growth+/Professional+)
-- **AI-powered docs search** — Smart search across the help center that surfaces answers in context (Growth+/Professional+)
-- **Premium video tutorial library** — Curated video walkthroughs of key workflows and best practices (Legacy/Enterprise)
-
-On the Plan tab, each capability shows green/checked if your tier includes it, gray if it doesn't. Neither you nor your managers can toggle these individually — they follow your tier. To gain a capability that's currently gray, upgrade to a tier that includes it.
-
-### 4. Custom arrangements (if applicable)
-
-If your account has any custom pricing or limit arrangements with ShieldMyLot, those are reflected in the limits and features above — you'll see your actual effective limits, not the default tier limits.
-
-If you have questions about custom arrangements, contact support@shieldmylot.com.
+If any tier or feature information looks incorrect, contact support@shieldmylot.com.
 
 ---
 
-## What happens when you hit a limit
-
-ShieldMyLot enforces limits in two ways:
-
-### Hard stops (most limits)
-
-When you try to create a resource beyond your limit, the **+ Add** button is replaced with an upgrade prompt.
-
-You can't add the resource until you either:
-- Deactivate an existing resource (frees up the slot)
-- Upgrade your tier (raises the limit)
-
-### Soft caps (some limits)
-
-For limits where blocking would cause operational pain (e.g., a driver in the field needing to submit a violation):
-
-- **Photo cap per violation** — Driver can take more photos than the cap; only the first N (per tier) are saved. The driver sees a notice.
-- **Video duration** — Driver can record longer than the cap; only the first N seconds (per tier) are saved. The driver sees a notice.
-
-Soft caps prevent operational interruption while still respecting the tier boundary.
-
----
-
-## When to upgrade
-
-Common signals that you've outgrown your current tier:
-
-**You're approaching property limits**
-If you have 13 of 15 properties on Growth, you're close to needing Legacy. Wait until you actually need #16, but plan ahead.
-
-**Your drivers are hitting photo or video caps regularly**
-If drivers report "the cap is too low for tough tows" or "I need more video time on these," upgrading the tier gives them more evidence headroom.
-
-**You want analytics you can't currently access**
-Growth (advanced analytics) gives substantially more visibility than Starter. If you're flying blind on operational metrics, upgrade.
-
-**You want CSV export of your tow records**
-Available on Growth and above. If you're importing tow data into your own back-office tools today and copying it by hand, the upgrade lets you download a clean CSV instead.
-
-**You want AI-powered docs search**
-Available on Growth and above. If your team spends time hunting through documentation for answers, smart search gets them to relevant information faster.
-
-**You want premium video tutorials**
-Available on Legacy and Enterprise. A curated video library covering workflows, best practices, and edge cases — useful for onboarding new staff or refreshing your team's knowledge.
-
----
-
-## When to downgrade
-
-Less common, but valid:
-
-**You closed properties and your operations shrank**
-If you're at 6 properties and using Growth (limit 15), downgrading to Starter could save money. But Starter's lower limits (3 drivers, 30s video, 3 photos per violation) may not work for you operationally.
-
-**You don't use the higher-tier features**
-If you're on Legacy but never use tow records CSV export or the video tutorial library, you may be over-paying.
-
-**Important:** Downgrading isn't instant. If you currently have 10 properties and downgrade to Starter (limit 5), you don't automatically lose 5 properties — but you can't add any new ones until you deactivate down to 5. Plan downgrades carefully.
-
-See [Billing and Tier Changes](../shared/13-billing-and-tier-changes.md) for the upgrade/downgrade process.
-
----
-
-## What stays the same across tiers
+## What stays the same across all tiers
 
 Regardless of tier, every customer gets:
 
 - **Full audit trails** — Every action is logged
-- **Soft-delete with audit** for evidence (photos, videos) — Enforcement only
-- **Texas Chapter 2308 workflow features** — Available regardless of tier (compliance with the law remains the operator's responsibility)
-- **Customer data security** — Same encryption, same access controls
-- **Mobile-friendly portals** — All roles can use their portal on phone, tablet, or computer
-- **Support access** — Email support; response time varies by tier
-
-Tier affects capacity and advanced features, never security or core functionality.
+- **Texas Chapter 2308 workflow support** — Available on all tracks (compliance with the law remains the operator's responsibility)
+- **Same security controls** — Encryption, RLS, access control apply identically
+- **Same portal quality** — All roles can use their portal on phone, tablet, or computer
+- **Email support** — Response terms outlined in your subscription agreement
 
 ---
 
-## What if I'm not sure which tier is right?
+## Changing tiers
 
-If you're a new customer trying to decide:
+Most customers pick a tier that fits their operation and stay there. If your needs change materially — a PM firm starts running its own enforcement, or an enforcement operator wants PM features — contact us at support@shieldmylot.com and we'll discuss a Legacy configuration.
 
-**Starter / Essential** — If you have 1-3 properties and a small team. Test the platform with minimal commitment.
-
-**Growth / Professional** — If you have 4-10 properties or expect to grow. This is the "real business" tier with advanced analytics.
-
-**Legacy / Enterprise** — If you have 10+ properties or want all features unlocked. The premium tier with the full video tutorial library and priority support.
-
-Still unsure? Talk to us at support@shieldmylot.com. We'll look at your operational size and recommend a tier that fits without over-committing.
-
----
-
-## Tier comparison at a glance
-
-### Enforcement track
-
-| Feature | Starter | Growth | Legacy |
-|---|---|---|---|
-| Active properties | 5 | 15 | Unlimited |
-| Active drivers | 3 | 10 | Unlimited |
-| Photos per violation | 3 | 10 | Unlimited |
-| Video duration | 30s | 60s | 120s |
-| Advanced analytics | — | ✓ | ✓ |
-| Tow records CSV export | — | ✓ | ✓ |
-| Leasing agent role | — | ✓ | ✓ |
-| AI-powered docs search | — | ✓ | ✓ |
-| Premium video tutorial library | — | — | ✓ |
-| API access | — | — | ✓ |
-
-### Property Management track
-
-| Feature | Essential | Professional | Enterprise |
-|---|---|---|---|
-| Active properties | 3 | 10 | Unlimited |
-| Visitor passes / property / month | 50 | 200 | Unlimited |
-| Maximum pass duration | 12h | 24h | 48h |
-| Advanced analytics | — | ✓ | ✓ |
-| Leasing agent role | — | ✓ | ✓ |
-| AI-powered docs search | — | ✓ | ✓ |
-| Premium video tutorial library | — | — | ✓ |
-| API access | — | — | ✓ |
-
-For current pricing, see your service agreement or the pricing page at shieldmylot.com.
+See [Billing and Tier Changes](13-billing-and-tier-changes.md) for the full process.
 
 ---
 
 ## Next steps
 
 - **Set up the rest of your account:** [Account Setup](02-account-setup.md)
-- **Add your first property:** [Adding Properties](../enforcement-track/04-adding-properties.md) (Enforcement) or [Property Management Overview](../property-management-track/08-property-management-overview.md) (PM)
-- **Understand billing:** [Billing and Tier Changes](../shared/13-billing-and-tier-changes.md)
+- **Add your first property:** [Adding Properties](04-adding-properties.md)
+- **Understand billing:** [Billing and Tier Changes](13-billing-and-tier-changes.md)
 
 Questions? Email support@shieldmylot.com.

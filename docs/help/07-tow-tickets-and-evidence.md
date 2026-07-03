@@ -19,7 +19,7 @@ After confirmation, several things become available:
 - Tow ticket generation
 - Evidence retention and review
 - Post-confirmation media management (with audit trail)
-- Tow records CSV export (Growth+ tiers)
+- Tow records CSV export (available where included in your tier configuration; see Plan tab)
 
 ---
 
@@ -151,13 +151,11 @@ These limits exist because evidence integrity is essential. Confirmed violations
 
 ---
 
-## Tow records CSV export (Growth+ tiers)
+## Tow records CSV export
 
 ShieldMyLot can download your tow records as a CSV file, so you can use them in your own back-office tools, spreadsheets, or accounting software.
 
-This feature is available on:
-- Enforcement: Growth tier and above
-- Property Management: not applicable
+This feature is available on Enforcement-Only accounts and on Legacy configurations that include the enforcement track. Property-management-only accounts do not have tow tickets and therefore do not have this export. Check your Plan tab for availability.
 
 ### How to export
 

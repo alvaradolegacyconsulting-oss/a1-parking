@@ -1,10 +1,10 @@
 ---
 title: "Adding Properties"
-category: "Enforcement Track"
+category: "Shared"
 audience: ["company_admin", "manager"]
 tier_required: "any"
-last_updated: "2026-05-20"
-related: ["provisioning-drivers", "submitting-violations", "understanding-your-tier"]
+last_updated: "2026-07-02"
+related: ["provisioning-drivers", "submitting-violations", "understanding-your-tier", "billing-and-tier-changes"]
 ---
 
 # Adding Properties
@@ -38,9 +38,19 @@ In the Company Admin portal, click the **Manage** tab.
 
 ### Step 2: Click "+ Add Property"
 
-If you're under your tier's property limit, you'll see a gold "+ Add Property" button. Click it.
+Click the "+ Add Property" button in the Manage tab.
 
-If you're already at your tier's limit, you'll see an upgrade prompt instead. See [Understanding Your Tier](../getting-started/03-understanding-your-tier.md) for upgrade information.
+### A note on billing
+
+Adding a property changes your bill. Per-property rate depends on your tier:
+
+- **PM-Only** — $20/month per property (added to your base of $179/month)
+- **Enforcement-Only** — $15/month per property (added to your base of $199/month)
+- **Legacy** — the custom per-property rate set at proposal-code issue time; reflected on your invoices
+
+Before the property is created, the portal shows a confirmation with the per-property cost so you can double-check. You do not need approval from anyone else to add a property — you're the subscriber and the change applies to your next invoice automatically.
+
+See [Billing and Tier Changes](13-billing-and-tier-changes.md) for the full pricing model.
 
 ### Step 3: Fill in the property form
 
@@ -111,19 +121,11 @@ A manager can be assigned to multiple properties. See [Provisioning Drivers](05-
 
 ---
 
-## Property tier limits
+## Property caps
 
-Your tier determines how many active properties you can have:
+**PM-Only** and **Enforcement-Only** do not cap the number of properties. Add as many as your operation needs — the per-property monthly rate applies to each (see [Billing and Tier Changes](13-billing-and-tier-changes.md)).
 
-| Enforcement Tier | Property Limit |
-|---|---|
-| Starter | 5 |
-| Growth | 15 |
-| Legacy | Unlimited |
-
-If you have a custom pricing arrangement with ShieldMyLot, your limits may differ from the standard tier defaults. Check the **Plan** tab to see your effective limit.
-
-When you hit your limit, the **+ Add Property** button is replaced with an upgrade prompt. You can deactivate an existing property to free up a slot, or upgrade your tier.
+**Legacy** accounts may have property caps as part of their proposal-code configuration. Your Plan tab reflects any cap that applies to your account.
 
 ---
 

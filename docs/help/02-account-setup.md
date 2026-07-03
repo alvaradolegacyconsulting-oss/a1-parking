@@ -114,9 +114,9 @@ The new admin will receive their credentials directly from you (see [Signup and 
 
 **Important:** Company admins have full access to all properties, all drivers, all financial information, and all user management. Only add people you trust with that level of access. For more limited access:
 
-- **Manager** — Manages one or more specific properties. Sees only those properties.
-- **Leasing agent** — Read-mostly access; assists managers. Available on Growth tier and above.
-- **Driver** — Field enforcement. Submits violations, scans plates, generates tow tickets.
+- **Manager** — Manages one or more specific properties. Sees only those properties. Available on all tiers.
+- **Leasing agent** — Read-mostly access; assists managers. Available where the Leasing Agent feature is included in your tier configuration (Plan tab shows availability).
+- **Driver** — Field enforcement. Submits violations, scans plates, generates tow tickets. Available on Enforcement-Only and Legacy configurations that include the enforcement track.
 
 See [Provisioning Drivers](../enforcement-track/05-provisioning-drivers.md) for the driver-specific workflow.
 
@@ -127,11 +127,11 @@ See [Provisioning Drivers](../enforcement-track/05-provisioning-drivers.md) for 
 Click the **Plan** tab to confirm your tier is set correctly.
 
 What to verify:
-- **Tier name** matches what you signed up for (Starter / Growth / Legacy for Enforcement, or Essential / Professional / Enterprise for Property Management)
-- **Track type** is correct (Enforcement vs. Property Management)
-- **Property limit** matches your expected usage
-- **Driver limit** (Enforcement only) matches your operational team size
-- **Other feature flags** (analytics, tow records CSV export, etc.) are what you expect
+- **Tier name** matches what you signed up for: **PM-Only**, **Enforcement-Only**, or **Legacy**
+- **Track surfaces** are correct (Enforcement-Only shows violations/tow tickets; PM-Only shows visitor passes / Spaces / guest authorizations; Legacy shows what your proposal-code specified)
+- **Active property count** is what you expect
+- **Active driver count** (Enforcement-Only) matches your operational team size
+- **Feature flags** shown on the Plan tab match your tier's included set
 
 If something looks wrong, contact support@shieldmylot.com immediately. Tier configuration errors are easier to fix at setup than after you've started using the platform heavily.
 

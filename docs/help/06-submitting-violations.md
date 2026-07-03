@@ -66,31 +66,21 @@ Photos are evidence. They are also your strongest protection against disputes.
 3. **The signage itself** — A close-up of the no-parking or restricted-parking sign that the vehicle is violating.
 4. **Specific violation details** — If the violation is "expired permit", photograph the windshield showing the expired permit. If "blocking fire lane", show the fire lane markings.
 
-**Photo tier limits:**
+**Photo caps:**
 
-| Enforcement Tier | Photos per violation |
-|---|---|
-| Starter | 3 |
-| Growth | 10 |
-| Legacy | Unlimited |
+The number of photos per violation and the video duration limit are set by your tier's configuration. Your Plan tab shows the current limits for your account.
 
-**File size limit:** 10MB per photo (any tier).
+**File size limit:** 10MB per photo.
 
-If you try to attach more photos than your tier allows, you'll see an error message. You can remove individual photos with the X button before submitting.
+If you try to attach more photos than your account's cap allows, you'll see an error message. You can remove individual photos with the X button before submitting.
 
 ### Step 5: Attach video (optional)
 
 A short video can settle disputes that photos alone can't. Walk around the vehicle while narrating ("Vehicle parked in fire lane, signage visible to my left, plate ABC1234, time stamp 11:35pm December 12").
 
-**Video tier limits:**
+**Video duration cap:** set by your tier's configuration; check the Plan tab for the current limit on your account.
 
-| Enforcement Tier | Maximum video duration |
-|---|---|
-| Starter | 30 seconds |
-| Growth | 60 seconds |
-| Legacy | 120 seconds |
-
-**File size limit:** 150MB (any tier).
+**File size limit:** 150MB.
 
 Video uploads use a resumable protocol — if you lose your connection mid-upload, ShieldMyLot will resume from the last completed chunk when your connection returns. You don't need to start over.
 

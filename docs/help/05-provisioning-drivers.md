@@ -31,19 +31,13 @@ If someone needs limited platform access but isn't a field driver, consider the 
 
 ---
 
-## Driver tier limits
+## Driver caps and pricing
 
-Your tier determines how many active driver accounts you can have:
+**Enforcement-Only** does not cap the number of driver accounts, and there is no per-driver charge. Invite as many drivers as your operation needs.
 
-| Enforcement Tier | Driver Limit |
-|---|---|
-| Starter | 3 |
-| Growth | 10 |
-| Legacy | Unlimited |
+Drivers who leave your company should be deactivated, not deleted, to preserve audit trails.
 
-Drivers who leave your company should be deactivated, not deleted, to preserve audit trails. Deactivated drivers don't count against your limit.
-
-If you have a custom pricing arrangement with ShieldMyLot, your effective limit may differ from the standard tier defaults. Check the **Plan** tab.
+**Legacy** accounts may have driver caps as part of their proposal-code configuration. Your Plan tab reflects any cap that applies.
 
 ---
 

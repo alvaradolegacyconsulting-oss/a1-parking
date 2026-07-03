@@ -74,8 +74,8 @@ For each property:
 
 If you have on-site staff who manage day-to-day operations, give them their own accounts.
 
-- **Property managers** are assigned to specific properties; they handle resident registration approvals and visitor pass operations.
-- **Leasing agents** (Growth+ tiers) have read-mostly access to assist managers without making changes.
+- **Property managers** are assigned to specific properties; they handle resident registration approvals and visitor pass operations. There is no cap on the number of property manager accounts.
+- **Leasing agents** have read-mostly access to assist managers without making changes. Available where included in your tier configuration (see Plan tab).
 
 ### 4. Set up resident QR codes
 
@@ -118,44 +118,22 @@ This separation of responsibilities is intentional. You're not the enforcer; you
 
 ---
 
-## PM tier features
+## Which tier does PM run on?
 
-The PM track has three tiers with different limits and features:
+PM firms sign up on **PM-Only** (self-serve) or **Legacy** (custom-negotiated for larger deployments or hybrid needs).
 
-### Essential
+**PM-Only** includes:
+- Add and manage as many properties as your operation needs (per-property monthly charge applies — see [Billing and Tier Changes](13-billing-and-tier-changes.md))
+- Resident registration + approvals
+- Reserved parking (Spaces)
+- Visitor passes
+- Guest authorizations
+- Unlimited property manager accounts
+- Unlimited leasing agent accounts (where included)
 
-For small portfolios (1-3 properties) with modest visitor pass volume.
+**Legacy** is for property management firms with custom requirements (proposal-code onboarded). Rates, limits, and included features are set at proposal-code issue time and reflected on your Plan tab.
 
-- Up to 3 active properties
-- 50 visitor passes per property per month
-- Maximum visitor pass duration: 12 hours
-- Standard analytics
-- Resident self-registration
-
-### Professional
-
-For mid-size portfolios (4-10 properties) with higher visitor activity.
-
-- Up to 10 active properties
-- 200 visitor passes per property per month
-- Maximum visitor pass duration: 24 hours
-- Advanced analytics
-- Leasing agent role (read-mostly assist role)
-- AI-powered docs search
-
-### Enterprise
-
-For large portfolios (unlimited properties) with full feature access.
-
-- Unlimited active properties
-- Unlimited visitor passes per property per month
-- Maximum visitor pass duration: 48 hours
-- All Professional features
-- API access (read-only)
-- Premium video tutorial library
-- Priority support
-
-For full tier details, see [Understanding Your Tier](../getting-started/03-understanding-your-tier.md).
+For the full pricing model, see [Understanding Your Tier](03-understanding-your-tier.md) and [Billing and Tier Changes](13-billing-and-tier-changes.md).
 
 ---
 

@@ -114,71 +114,23 @@ A complete first message often resolves issues in one round-trip. A vague "it do
 
 ---
 
-## Response times by tier
+## Support by tier
 
-ShieldMyLot's response time commitments vary by tier:
+> **Provisional — updated per your subscription agreement.** The support model below reflects today's operating terms. The final SaaS Subscription Agreement (currently in review) may adjust specifics; the version in effect on the date of your subscription controls.
 
-| Tier (Enforcement) | First response | Resolution target |
-|---|---|---|
-| Starter | 1 business day | Best effort |
-| Growth | 4 business hours | 1 business day |
-| Legacy | 1 business hour | Same day (business hours) |
+**Support terms are subject to the terms of your subscription agreement.**
 
-| Tier (Property Management) | First response | Resolution target |
-|---|---|---|
-| Essential | 1 business day | Best effort |
-| Professional | 4 business hours | 1 business day |
-| Enterprise | 1 business hour | Same day (business hours) |
+| Tier | Support |
+|---|---|
+| **PM-Only** | Email support |
+| **Enforcement-Only** | Email support |
+| **Legacy** | Priority email support + dedicated escalation path |
 
-**What "first response" means:** You'll hear back within this window confirming we've received your message and have started looking. Complex issues may take longer to fully resolve, but you'll get an acknowledgment in the response time window.
+**What "email support" means:** Send an email to support@shieldmylot.com and we'll respond during business hours. Complex issues may take longer to fully resolve, but you'll get an acknowledgment.
 
-**What "business hours" means:** Monday-Friday, 9 AM - 6 PM Central Time, excluding US federal holidays.
+**What "priority email support + dedicated escalation path" means (Legacy):** Faster first-response targeting during business hours and a specific escalation contact for production-blocking issues, detailed in your service agreement.
 
-For after-hours emergencies, see "Emergency contact" below.
-
----
-
-## AI-powered docs search (Growth+ tiers)
-
-Growth and higher tiers have access to AI-powered search across the ShieldMyLot help center. Type a question in natural language ("How do I issue a visitor pass for an extended stay?") and the search surfaces the relevant doc sections with direct answers.
-
-This isn't a chatbot — it doesn't hold conversations or take actions. It's a smart way to find information faster than browsing or keyword search.
-
-Use it for:
-- Finding the right doc when you're not sure which section covers your question
-- Quick answers to common operational questions
-- Onboarding new staff who don't know the platform yet
-
-The docs themselves are always available to all tiers — AI-powered search is the upgrade.
-
-## Video tutorial library (Legacy / Enterprise)
-
-Legacy and Enterprise customers get access to a premium video tutorial library covering:
-- Step-by-step walkthroughs of common workflows
-- Best practices from experienced operators
-- Edge case handling
-- Quarterly updates with new content
-
-Videos are useful for:
-- Training new staff visually rather than asking them to read docs
-- Refreshing your team on rarely-used features
-- Sharing with property owner clients to explain your enforcement workflow
-
-A subset of introductory videos is available to all tiers as part of the public help center. The full library is gated to the premium tiers.
-
----
-
-## Priority support (Legacy / Enterprise)
-
-Legacy and Enterprise customers have access to priority support:
-
-- **4-hour first response** during business hours
-- **Same-day resolution targeting** for issues that don't require engineering work
-- **Dedicated escalation path** for production-blocking issues
-- **Quarterly check-in calls** to review usage, address rough edges, plan for upcoming needs
-- **Scheduled video calls** available on request for complex situations
-
-If you're on a priority-support tier, you'll have additional contact details (escalation email, phone) in your service agreement.
+**Business hours:** Monday–Friday, 9 AM – 6 PM Central Time, excluding US federal holidays. For after-hours emergencies, see "Emergency contact" below.
 
 ---
 
@@ -256,7 +208,7 @@ We don't decide who you should tow, what your enforcement policy should be, or h
 Disagreements between a resident and a towing operator (or between a resident and a property manager) are between those parties — and, if it escalates, possibly the courts. ShieldMyLot is the operational support layer; we don't take sides in disputes between our customers' customers.
 
 **Custom development on demand**
-We don't build custom features for individual customers as part of standard support. Enterprise-tier customers may have access to more flexibility — discuss specifics with us.
+We don't build custom features for individual customers as part of standard support. Legacy customers may have access to more flexibility as part of their negotiated agreement — discuss specifics with us.
 
 **Training programs**
 We provide help documentation (you're reading some now). We don't currently offer formal training programs or certification.
@@ -269,10 +221,10 @@ We provide help documentation (you're reading some now). We don't currently offe
 We can't intervene in your relationship with your company. We can help you reset your own password or recover account access, but we can't override your company admin's authority over their account. If your company admin is unresponsive for an extended period, this is a business issue between you and your employer.
 
 **Can I get a phone number to call?**
-We don't publish a general support phone number — email is the contact channel for most situations. Legacy and Enterprise customers can schedule video calls for complex situations. This may change as we scale.
+We don't publish a general support phone number — email is the contact channel for most situations. Legacy customers with a dedicated escalation path may have alternate contact details in their service agreement. This may change as we scale.
 
 **Can I schedule a call to walk through something?**
-For Legacy / Enterprise customers, yes — scheduled video calls are part of priority support. For other tiers, we'll do our best via email. If you really need a call, mention it in your request and we'll see what we can arrange.
+For Legacy customers, scheduled video calls are part of the priority-support arrangement. For PM-Only and Enforcement-Only, we'll do our best via email. If you really need a call, mention it in your request and we'll see what we can arrange.
 
 **How do I report a security vulnerability?**
 Email support@shieldmylot.com with **SECURITY** in the subject line. We treat security reports as priority regardless of tier. Please don't publicly disclose vulnerabilities before we've had a chance to respond.
