@@ -49,6 +49,14 @@ import SearchableResidentPicker, { type SearchableResidentPickerResult } from '.
 import DeactivateResidentModal, { type CoResident } from '../components/DeactivateResidentModal'
 import SpaceDetailModal from '../components/SpaceDetailModal'
 import CredentialsModal from '../components/CredentialsModal'
+// PM Resident CRM (slice 1) — replaces the Residents tab with a unified
+// list + detail surface. Read-only in slice 1; actions land in slices
+// 2–6. Toggle: flip PM_CRM_ENABLED to false to fall back to the legacy
+// render below (kept intact for rollback until slice 2 retires it).
+import PmResidentCrm from '../components/PmResidentCrm'
+import { buildCrmResidents, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest } from '../lib/pm-crm'
+
+const PM_CRM_ENABLED = true
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
@@ -269,6 +277,14 @@ export default function ManagerPortal() {
   const [auditLoaded, setAuditLoaded] = useState(false)
   const [pendingResidents, setPendingResidents] = useState<any[]>([])
   const [residentNotes, setResidentNotes] = useState<Record<string, string>>({})
+  // PM Resident CRM slice 1 — property-scoped batch loads. Grouped
+  // client-side in buildCrmResidents (app/lib/pm-crm.ts). Zero per-
+  // resident queries. Fetched from fetchAll(property) alongside vehicles/
+  // passes/residents; already property-scoped so no extra RLS load.
+  const [crmSpacesAtProperty, setCrmSpacesAtProperty] = useState<CrmSpace[]>([])
+  const [crmSpaceResidentTies, setCrmSpaceResidentTies] = useState<CrmSpaceResidentTie[]>([])
+  const [crmGuestAuthsAtProperty, setCrmGuestAuthsAtProperty] = useState<GuestAuth[]>([])
+  const [crmSpaceRequestsAtProperty, setCrmSpaceRequestsAtProperty] = useState<CrmSpaceRequest[]>([])
   // B70: Plate Lookup tab state. Distinct name from the Spaces-tab
   // `plateQuery` further down to avoid the variable collision.
   const [lookupPlate, setLookupPlate] = useState('')
@@ -465,6 +481,32 @@ export default function ManagerPortal() {
     // mount-time fetch fan-out so cold load doesn't pull 126+ rows.
     // B210 (2026-06-24): fetchDisputes call removed alongside the
     // resident dispute flow retirement.
+    // PM Resident CRM slice 1 — batch loads for the Residents tab's
+    // unified surface. Fired unconditionally (fast post-Commit-2 RLS
+    // sweep ba122ab); grouped client-side, zero per-resident queries.
+    fetchCrmDataForProperty(property)
+  }
+
+  async function fetchCrmDataForProperty(property: string) {
+    // Spaces + guest auths + pending space requests — three property-
+    // scoped batch queries, all fast under Commit 2 RLS. space_residents
+    // ties fetched once we know the space IDs (one more batch).
+    const [spacesRes, gaList, spaceReqsRes] = await Promise.all([
+      supabase.from('spaces').select('id, label, type, status, is_active, assigned_to_resident_email, property').ilike('property', property),
+      fetchActiveGuestAuths(supabase, { property }),
+      supabase.from('space_requests').select('id, resident_email, property, requested_space_id, requested_space_label, note, status, created_at').ilike('property', property),
+    ])
+    const spaces = (spacesRes.data ?? []) as CrmSpace[]
+    setCrmSpacesAtProperty(spaces)
+    setCrmGuestAuthsAtProperty(gaList)
+    setCrmSpaceRequestsAtProperty((spaceReqsRes.data ?? []) as CrmSpaceRequest[])
+    if (spaces.length > 0) {
+      const spaceIds = spaces.map(s => s.id)
+      const tiesRes = await supabase.from('space_residents').select('space_id, resident_email').in('space_id', spaceIds)
+      setCrmSpaceResidentTies((tiesRes.data ?? []) as CrmSpaceResidentTie[])
+    } else {
+      setCrmSpaceResidentTies([])
+    }
   }
 
   // B210 (2026-06-24): fetchDisputes / upholdDispute / resolveDispute
@@ -2889,8 +2931,25 @@ export default function ManagerPortal() {
           </div>
         )}
 
-        {/* RESIDENTS */}
-        {activeTab === 'residents' && (
+        {/* RESIDENTS — PM CRM (slice 1) */}
+        {activeTab === 'residents' && PM_CRM_ENABLED && manager && (
+          <PmResidentCrm
+            crmResidents={buildCrmResidents({
+              residents,
+              pendingResidents,
+              vehicles,
+              spaces: crmSpacesAtProperty,
+              spaceResidentTies: crmSpaceResidentTies,
+              guestAuths: crmGuestAuthsAtProperty,
+              spaceRequests: crmSpaceRequestsAtProperty,
+            })}
+            propertyName={manager.name}
+            managerEmail={managerEmail}
+          />
+        )}
+
+        {/* RESIDENTS — legacy render (kept behind !PM_CRM_ENABLED for rollback until slice 2) */}
+        {activeTab === 'residents' && !PM_CRM_ENABLED && (
           <div>
             {pendingResidents.length > 0 && (
               <div style={{ background:'#1a1400', border:'1px solid #a16207', borderRadius:'10px', padding:'14px', marginBottom:'16px' }}>
