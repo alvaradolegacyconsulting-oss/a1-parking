@@ -162,7 +162,7 @@ export default function PmResidentCrm({
         <InsightCard n={insights.activeResidents} label="Active residents" color={C.green} />
         <InsightCard
           n={insights.approvedPermits}
-          label={<>Approved permits <span style={{ color: C.faint, fontSize: '10.5px' }}>· metered*</span></>}
+          label="Approved permits"
           color={C.gold}
         />
       </div>
@@ -309,11 +309,9 @@ export default function PmResidentCrm({
       <div style={{
         maxWidth: '1300px', margin: '18px auto 0', padding: '11px 16px',
         border: `1px dashed ${C.border2}`, borderRadius: '10px',
-        color: C.faint, fontSize: '12px', background: 'rgba(201,162,39,0.03)',
+        color: C.faint, fontSize: '12px',
       }}>
-        <b style={{ color: C.gold }}>Slice 2 shipped.</b> Approve / Decline live (per-vehicle, per-resident cascade, bulk).
-        Remaining: Spaces multi/roommate/release (slice 3) · Plate re-approval (slice 4) · Deactivate (slice 5) · Inline edit (slice 6).
-        Property: <b>{propertyName}</b>. <span style={{ color: C.faint }}>*Approved permits = billed meter on PM-Only plans; activity metric on other tracks.</span>
+        Property: <b>{propertyName}</b>.
       </div>
     </div>
   )
