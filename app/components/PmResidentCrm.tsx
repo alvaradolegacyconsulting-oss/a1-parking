@@ -7,7 +7,7 @@
 // from the parent. Zero DB access here; grouping done in app/lib/pm-crm.ts.
 
 import { useMemo, useState } from 'react'
-import type { CrmResident, CrmInsights, CrmFilter } from '@/app/lib/pm-crm'
+import type { CrmResident, CrmFilter } from '@/app/lib/pm-crm'
 import { computeInsights, filterCrmRows, initials } from '@/app/lib/pm-crm'
 
 type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
@@ -16,6 +16,23 @@ interface Props {
   crmResidents: CrmResident[]
   propertyName: string
   managerEmail: string
+  // Slice 2 — permission gate (mirrors legacy 4 approve-affordance sites)
+  // + read-only mode for leasing_agent (Decline stays visible regardless
+  // per legacy).
+  canApproveVehicles: boolean
+  isReadOnly: boolean
+  // Slice 2 callbacks — parent owns state + meter accounting.
+  //   Per-vehicle Approve → parent's approveVehicle wrapper (1 sync).
+  //   Per-resident Approve → parent's approveResident wrapper (RPC direct
+  //     loop + 1 sync).
+  //   Bulk Approve-all → parent's approveAllPendingCrm (RPC direct loop
+  //     + 1 sync, no per-resident sync).
+  //   Decline paths → parent's declineVehicle / declineResident.
+  onApproveVehicle: (vehicleId: string | number) => Promise<void>
+  onDeclineVehicle: (vehicleId: string | number) => Promise<void>
+  onApproveResident: (resident: CrmResident) => Promise<void>
+  onDeclineResident: (resident: CrmResident) => Promise<void>
+  onApproveAllPending: (pendingResidents: CrmResident[]) => Promise<void>
 }
 
 // Manager-portal design tokens (matched to existing manager/page.tsx palette).
@@ -53,7 +70,13 @@ const chipOn: React.CSSProperties = {
   ...chipBase, borderColor: C.goldLine, background: C.goldSoft, color: C.gold, fontWeight: 600,
 }
 
-export default function PmResidentCrm({ crmResidents, propertyName }: Props) {
+export default function PmResidentCrm({
+  crmResidents, propertyName,
+  canApproveVehicles, isReadOnly,
+  onApproveVehicle, onDeclineVehicle,
+  onApproveResident, onDeclineResident,
+  onApproveAllPending,
+}: Props) {
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
   const [selectedEmail, setSelectedEmail] = useState<string | null>(
@@ -66,6 +89,10 @@ export default function PmResidentCrm({ crmResidents, propertyName }: Props) {
   const selected = useMemo(
     () => crmResidents.find(r => r.email.toLowerCase() === (selectedEmail ?? '').toLowerCase()) ?? null,
     [crmResidents, selectedEmail]
+  )
+  const needsApprovalResidents = useMemo(
+    () => crmResidents.filter(r => r.status === 'pending'),
+    [crmResidents]
   )
 
   return (
@@ -122,8 +149,12 @@ export default function PmResidentCrm({ crmResidents, propertyName }: Props) {
             </div>
           </div>
 
-          {/* Bulk lane (only visible on "needs" filter with 1+ items) — slice-1 read-only note; wiring in slice 2. */}
-          {filter === 'needs' && insights.needApproval > 0 && (
+          {/* Bulk lane — visible when filter="needs" and there's approval work.
+              Gated on canApproveVehicles (per Jose slice-2 rule: the bulk lane
+              is the easiest gate to forget). Delegates to onApproveAllPending
+              — parent's approveAllPendingCrm handles meter-once accounting
+              (RPC direct loop + ONE sync). */}
+          {filter === 'needs' && insights.needApproval > 0 && !isReadOnly && canApproveVehicles && (
             <div style={{
               margin: '11px 14px 0', padding: '10px 12px',
               border: `1px solid ${C.goldLine}`, background: C.goldSoft, borderRadius: '9px',
@@ -132,7 +163,12 @@ export default function PmResidentCrm({ crmResidents, propertyName }: Props) {
               <div style={{ fontSize: '12.5px', color: C.gold }}>
                 <b>{insights.needApproval}</b> residents with pending items
               </div>
-              <span style={{ fontSize: '11px', color: C.faint, fontStyle: 'italic' }}>Approve-all lands slice 2</span>
+              <button onClick={() => onApproveAllPending(needsApprovalResidents)} style={{
+                padding: '6px 12px', background: C.gold, color: '#0f1117', border: 'none',
+                borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: 700, fontFamily: 'inherit',
+              }}>
+                Approve all pending
+              </button>
             </div>
           )}
 
@@ -162,12 +198,34 @@ export default function PmResidentCrm({ crmResidents, propertyName }: Props) {
             <EmptyDetail />
           ) : (
             <>
-              <DetailHeader resident={selected} />
+              <DetailHeader
+                resident={selected}
+                canApproveVehicles={canApproveVehicles}
+                isReadOnly={isReadOnly}
+                onApproveResident={onApproveResident}
+                onDeclineResident={onDeclineResident}
+              />
               <FactsStrip resident={selected} />
               <SubTabBar tab={subTab} setTab={setSubTab} resident={selected} />
               <div style={{ padding: '16px' }}>
-                {subTab === 'overview' && <OverviewPane resident={selected} />}
-                {subTab === 'vehicles' && <VehiclesPane resident={selected} />}
+                {subTab === 'overview' && (
+                  <OverviewPane
+                    resident={selected}
+                    canApproveVehicles={canApproveVehicles}
+                    isReadOnly={isReadOnly}
+                    onApproveResident={onApproveResident}
+                    onDeclineResident={onDeclineResident}
+                  />
+                )}
+                {subTab === 'vehicles' && (
+                  <VehiclesPane
+                    resident={selected}
+                    canApproveVehicles={canApproveVehicles}
+                    isReadOnly={isReadOnly}
+                    onApproveVehicle={onApproveVehicle}
+                    onDeclineVehicle={onDeclineVehicle}
+                  />
+                )}
                 {subTab === 'spaces' && <SpacesPane resident={selected} />}
                 {subTab === 'guests' && <GuestsPane resident={selected} />}
                 {subTab === 'activity' && <ActivityPane resident={selected} />}
@@ -182,7 +240,8 @@ export default function PmResidentCrm({ crmResidents, propertyName }: Props) {
         border: `1px dashed ${C.border2}`, borderRadius: '10px',
         color: C.faint, fontSize: '12px', background: 'rgba(201,162,39,0.03)',
       }}>
-        <b style={{ color: C.gold }}>Slice 1 — read-only shell.</b> Actions (approve · decline · release · deactivate · edit) land in slices 2–6.
+        <b style={{ color: C.gold }}>Slice 2 shipped.</b> Approve / Decline live (per-vehicle, per-resident cascade, bulk).
+        Remaining: Spaces multi/roommate/release (slice 3) · Plate re-approval (slice 4) · Deactivate (slice 5) · Inline edit (slice 6).
         Property: <b>{propertyName}</b>. <span style={{ color: C.faint }}>*Approved permits = billed meter on PM-Only plans; activity metric on other tracks.</span>
       </div>
     </div>
@@ -272,7 +331,15 @@ function EmptyDetail() {
   )
 }
 
-function DetailHeader({ resident }: { resident: CrmResident }) {
+function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident }: {
+  resident: CrmResident
+  canApproveVehicles: boolean
+  isReadOnly: boolean
+  onApproveResident: (r: CrmResident) => Promise<void>
+  onDeclineResident: (r: CrmResident) => Promise<void>
+}) {
+  const showApprove = resident.status === 'pending' && canApproveVehicles && !isReadOnly
+  const showDecline = resident.status === 'pending' && !isReadOnly
   return (
     <div style={{ padding: '18px 20px 16px', borderBottom: `1px solid ${C.border}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap' }}>
@@ -292,6 +359,24 @@ function DetailHeader({ resident }: { resident: CrmResident }) {
             </div>
           </div>
         </div>
+        {(showApprove || showDecline) && (
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {showApprove && (
+              <button onClick={() => onApproveResident(resident)} title="Cascades to pending vehicles" style={{
+                padding: '8px 14px', background: C.greenSoft, color: C.green,
+                border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+                cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+              }}>Approve resident</button>
+            )}
+            {showDecline && (
+              <button onClick={() => onDeclineResident(resident)} style={{
+                padding: '8px 14px', background: C.redSoft, color: C.red,
+                border: `1px solid ${C.redLine}`, borderRadius: '6px',
+                cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+              }}>Decline</button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -375,9 +460,17 @@ function SubTabBar({ tab, setTab, resident }: { tab: SubTab; setTab: (t: SubTab)
 
 // ── Sub-tab panes ────────────────────────────────────────────────────
 
-function OverviewPane({ resident }: { resident: CrmResident }) {
+function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident }: {
+  resident: CrmResident
+  canApproveVehicles: boolean
+  isReadOnly: boolean
+  onApproveResident: (r: CrmResident) => Promise<void>
+  onDeclineResident: (r: CrmResident) => Promise<void>
+}) {
   const { pending, underReview } = resident.vehicleCounts
   const showCallout = resident.needsApproval
+  const showApproveResident = resident.status === 'pending' && canApproveVehicles && !isReadOnly
+  const showDeclineResident = resident.status === 'pending' && !isReadOnly
   return (
     <>
       {showCallout && (
@@ -393,7 +486,24 @@ function OverviewPane({ resident }: { resident: CrmResident }) {
             {resident.spaceRequest && '1 space request. '}
             {underReview > 0 && `${underReview} plate${underReview === 1 ? '' : 's'} under review.`}
           </div>
-          <span style={{ fontSize: '11px', color: C.faint, fontStyle: 'italic' }}>Approve buttons land slice 2</span>
+          {(showApproveResident || showDeclineResident) && (
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {showApproveResident && (
+                <button onClick={() => onApproveResident(resident)} title="Cascades to pending vehicles" style={{
+                  padding: '7px 12px', background: C.greenSoft, color: C.green,
+                  border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>Approve resident</button>
+              )}
+              {showDeclineResident && (
+                <button onClick={() => onDeclineResident(resident)} style={{
+                  padding: '7px 12px', background: C.redSoft, color: C.red,
+                  border: `1px solid ${C.redLine}`, borderRadius: '6px',
+                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>Decline</button>
+              )}
+            </div>
+          )}
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '14px' }}>
@@ -429,7 +539,13 @@ function OverviewPane({ resident }: { resident: CrmResident }) {
   )
 }
 
-function VehiclesPane({ resident }: { resident: CrmResident }) {
+function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle }: {
+  resident: CrmResident
+  canApproveVehicles: boolean
+  isReadOnly: boolean
+  onApproveVehicle: (id: string | number) => Promise<void>
+  onDeclineVehicle: (id: string | number) => Promise<void>
+}) {
   if (resident.vehicles.length === 0) {
     return (
       <div style={{ padding: '44px 20px', textAlign: 'center', color: C.faint }}>
@@ -440,15 +556,29 @@ function VehiclesPane({ resident }: { resident: CrmResident }) {
   }
   return (
     <>
-      {resident.vehicles.map(v => <VehicleCard key={v.id} v={v} />)}
+      {resident.vehicles.map(v => (
+        <VehicleCard
+          key={v.id} v={v}
+          canApproveVehicles={canApproveVehicles}
+          isReadOnly={isReadOnly}
+          onApproveVehicle={onApproveVehicle}
+          onDeclineVehicle={onDeclineVehicle}
+        />
+      ))}
       <div style={{ fontSize: '11px', color: C.faint, marginTop: '10px', fontStyle: 'italic' }}>
-        Approve · Decline · Deactivate · Plate re-approval land in slices 2, 4, 5.
+        Deactivate + Plate re-approval land in slices 4, 5.
       </div>
     </>
   )
 }
 
-function VehicleCard({ v }: { v: any }) {
+function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle }: {
+  v: any
+  canApproveVehicles: boolean
+  isReadOnly: boolean
+  onApproveVehicle: (id: string | number) => Promise<void>
+  onDeclineVehicle: (id: string | number) => Promise<void>
+}) {
   const s = (v.status ?? '').toLowerCase()
   const stat = s === 'under_review'
     ? { color: C.amber, bg: C.amberSoft, border: '#a16207', text: 'Plate under review' }
@@ -458,6 +588,10 @@ function VehicleCard({ v }: { v: any }) {
         ? { color: C.green, bg: C.greenSoft, border: C.greenLine, text: 'Approved' }
         : { color: C.faint, bg: 'transparent', border: C.border, text: (v.status || 'unknown') }
   const ymm = [v.year, v.make, v.model].filter(Boolean).join(' ') || '—'
+  const status = (v.status ?? '').toLowerCase()
+  const isPending = status === 'pending'
+  const showApprove = isPending && canApproveVehicles && !isReadOnly
+  const showDecline = isPending && !isReadOnly
   return (
     <div style={{
       border: `1px solid ${C.border}`, borderRadius: '10px', padding: '14px',
@@ -479,6 +613,24 @@ function VehicleCard({ v }: { v: any }) {
           color: stat.color, background: stat.bg, border: `1px solid ${stat.border}`, whiteSpace: 'nowrap',
         }}>{stat.text}</span>
       </div>
+      {(showApprove || showDecline) && (
+        <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+          {showApprove && (
+            <button onClick={() => onApproveVehicle(v.id)} style={{
+              flex: 1, padding: '8px', background: C.greenSoft, color: C.green,
+              border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+            }}>Approve</button>
+          )}
+          {showDecline && (
+            <button onClick={() => onDeclineVehicle(v.id)} style={{
+              flex: showApprove ? 1 : undefined, padding: '8px 14px', background: C.redSoft, color: C.red,
+              border: `1px solid ${C.redLine}`, borderRadius: '6px',
+              cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+            }}>Decline</button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

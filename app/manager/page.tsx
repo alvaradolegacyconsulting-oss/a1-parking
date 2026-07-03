@@ -1304,6 +1304,89 @@ export default function ManagerPortal() {
     if (pickedSpaceId) await refetchSpacesDashboard()
   }
 
+  // PM CRM slice 2 — bulk approve-all-pending for the CRM's Needs-approval
+  // lane. Meter-once accounting (per Jose guardrail 2026-07-03):
+  //   1. Loop resident UPDATE (no billing implication) + audit + email per resident.
+  //   2. SELECT all pending vehicles at property (covers cascade + standalone).
+  //   3. Loop approve_vehicle RPC DIRECT (bypasses the approveVehicle wrapper,
+  //      whose inner sync would fire N times = double-billing).
+  //   4. ONE callSyncOnAdd('permit') post-batch, only if approvedCount > 0.
+  // Track-conditional confirmation (PM-Only adds "as billable permits";
+  // other tracks drop that clause). Bulk lane must be gated on
+  // canApproveVehicles at the render site — this function assumes the
+  // caller has already checked the gate.
+  async function approveAllPendingCrm(pendingResidentsForBulk: any[]) {
+    if (!manager?.name) return
+    const { data: allPendingVehicles } = await supabase
+      .from('vehicles').select('id')
+      .ilike('property', manager.name).eq('status', 'pending')
+    const rCount = pendingResidentsForBulk.length
+    const vCount = (allPendingVehicles ?? []).length
+    if (rCount === 0 && vCount === 0) {
+      alert('No pending approvals.')
+      return
+    }
+    const ctx = getCompanyContext()
+    const parts: string[] = []
+    if (rCount > 0) parts.push(`${rCount} resident${rCount === 1 ? '' : 's'}`)
+    if (vCount > 0) parts.push(`${vCount} vehicle${vCount === 1 ? '' : 's'}`)
+    const scope = parts.join(' · ')
+    const suffix = ctx.tier === 'pm_only' && vCount > 0 ? ' as billable permits' : ''
+    if (!window.confirm(`Approve ${scope}${suffix}?`)) return
+
+    // 1. Resident UPDATEs — parallel, one email each.
+    await Promise.all(pendingResidentsForBulk.map(async r => {
+      await supabase.from('residents')
+        .update({ is_active: true, status: 'active' })
+        .eq('id', r.id)
+      const emailResult = await notifyResidentDecision({ residentId: String(r.id), decision: 'approved', note: null })
+      await logAudit({
+        action: 'APPROVE_RESIDENT',
+        table_name: 'residents',
+        record_id: r.id,
+        new_values: {
+          name: r.name, unit: r.unit, property: manager.name,
+          batch: 'crm_bulk',
+          email_sent: emailResult.ok,
+          message_id: emailResult.message_id,
+        },
+      })
+    }))
+
+    // 2 + 3. Vehicle RPC loop direct. logAudit per row for parity with
+    // the legacy path's per-row audit.
+    const vIds = (allPendingVehicles ?? []).map(v => v.id)
+    const results = await Promise.all(vIds.map(async id => {
+      const { data, error } = await supabase.rpc('approve_vehicle', {
+        p_vehicle_id:   id,
+        p_manager_note: null,
+      })
+      if (error) {
+        console.error('[approve_vehicle] RPC error in approveAllPendingCrm:', error.message, { vehicleId: id })
+        return 'error'
+      }
+      const r = data as { ok?: boolean; action?: string } | null
+      if (r?.ok) {
+        console.info('[approve_vehicle]', { site: 'approveAllPendingCrm', vehicleId: id, action: r.action })
+        await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'active', property: manager.name, batch: 'crm_bulk' } })
+        return r.action ?? 'unknown'
+      }
+      return 'rpc_error'
+    }))
+    const approvedCount = results.filter(a => a === 'approved').length
+    console.info('[B147-sync-batch-summary]', { site: 'approveAllPendingCrm', property: manager.name, batchSize: vIds.length, approvedCount, willFireSync: approvedCount > 0 })
+
+    // 4. ONE sync post-batch.
+    if (approvedCount > 0 && companyIdForSync) {
+      const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
+      console.info('[B147-sync-result]', { site: 'approveAllPendingCrm', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
+      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllPendingCrm', approvedCount, reason: syncRes.reason })
+    }
+
+    fetchResidents(manager.name)
+    fetchVehicles(manager.name)
+  }
+
   async function declineResident(r: any) {
     const note = residentNotes[r.id] || null
     await supabase.from('residents').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', r.id)
@@ -2119,14 +2202,17 @@ export default function ManagerPortal() {
 
         <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', background:'#1e2535', borderRadius:'8px', padding:'6px', marginBottom:'16px' }}>
           <button style={tabStyle('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
-          <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>
-            {/* Space Requests v1 — tab renamed to "Approvals"; badge is
-                the combined count of pending vehicles + pending space
-                requests. The route key 'vehicles' is preserved so deep-
-                links and prior muscle memory still work; only the label
-                changes. */}
-            Approvals{(pendingVehicles.length + pendingSpaceRequests.length) > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingVehicles.length + pendingSpaceRequests.length}</span>}
-          </button>
+          {/* CRM slice 2 — Approvals/Vehicles tab retired; approvals live on
+              the Residents CRM. Kept behind !PM_CRM_ENABLED so the legacy
+              route + render still work when the flag is flipped for rollback.
+              The 'vehicles' route key + state + all approve/decline
+              functions stay wired in the file so PM_CRM_ENABLED=false
+              produces the original behaviour byte-for-byte. */}
+          {!PM_CRM_ENABLED && (
+            <button style={tabStyle('vehicles')} onClick={() => setActiveTab('vehicles')}>
+              Approvals{(pendingVehicles.length + pendingSpaceRequests.length) > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingVehicles.length + pendingSpaceRequests.length}</span>}
+            </button>
+          )}
           <button style={tabStyle('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
           <button style={tabStyle('residents')} onClick={() => setActiveTab('residents')}>
             Residents{pendingResidents.length > 0 && <span style={{ background:'#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingResidents.length}</span>}
@@ -2181,7 +2267,7 @@ export default function ManagerPortal() {
         )}
 
         {/* VEHICLES */}
-        {activeTab === 'vehicles' && (
+        {activeTab === 'vehicles' && !PM_CRM_ENABLED && (
           <div>
             {pendingVehicles.length > 0 && (() => {
               const grouped = pendingVehicles.reduce((acc, v) => {
@@ -2951,6 +3037,13 @@ export default function ManagerPortal() {
             })}
             propertyName={manager.name}
             managerEmail={managerEmail}
+            canApproveVehicles={canApproveVehicles}
+            isReadOnly={isReadOnly}
+            onApproveVehicle={(id) => approveVehicle(String(id))}
+            onDeclineVehicle={(id) => declineVehicle(String(id))}
+            onApproveResident={(r) => approveResident(r)}
+            onDeclineResident={(r) => declineResident(r)}
+            onApproveAllPending={(rs) => approveAllPendingCrm(rs)}
           />
         )}
 

@@ -135,10 +135,32 @@ export function buildCrmResidents(input: {
     if (email && !spaceReqByEmail.has(email)) spaceReqByEmail.set(email, sr)
   }
 
+  // Count residents per unit so we can warn about ambiguous unit-fallback
+  // attribution at shared units (slice-2 guardrail per Jose 2026-07-03).
+  const residentsPerUnit = new Map<string, number>()
+  for (const r of allResidents) {
+    const u = norm(r.unit)
+    if (u) residentsPerUnit.set(u, (residentsPerUnit.get(u) ?? 0) + 1)
+  }
+
   return allResidents.map((r): CrmResident => {
     const email = norm(r.email)
     const unit = norm(r.unit)
-    const vs = vehiclesByEmail.get(email) ?? (!email && unit ? (vehiclesByUnit.get(unit) ?? []) : [])
+    let vs = vehiclesByEmail.get(email) ?? []
+    if (vs.length === 0 && !email && unit) {
+      vs = vehiclesByUnit.get(unit) ?? []
+      // Ambiguous-attribution guard: unit-fallback fired at a unit with >1
+      // resident. Surface (not silence) so any real-world drift is loud.
+      if (vs.length > 0 && (residentsPerUnit.get(unit) ?? 0) > 1) {
+        console.warn('[pm-crm] vehicle unit-fallback matched at shared unit — ambiguous attribution', {
+          unit,
+          resident_id: r.id,
+          resident_name: r.name,
+          matched_vehicle_ids: vs.map((v: any) => v.id),
+          note: 'resident had no email; vehicle attribution may be wrong. Verify resident_email on the vehicle rows.',
+        })
+      }
+    }
     const counts = countVehicles(vs)
     const gs = guestsByEmail.get(email) ?? guestsByUnit.get(unit) ?? []
     const ss = spacesByEmail.get(email) ?? []
