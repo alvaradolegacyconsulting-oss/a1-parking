@@ -31,7 +31,12 @@ export default function ResidentPortal() {
   // the legacy residents.space free-text field on My Info render.
   // Null when the resident has no active space assigned — the render
   // falls back to "—" honestly.
-  const [assignedSpace, setAssignedSpace] = useState<{ space_number: string; type: string | null } | null>(null)
+  // Slice 3.5 — multi-space per resident. Read from spaces + space_residents
+  // (v1.1 SoT), fall back to spaces.assigned_to_resident_email for legacy
+  // single-resident rows. NEVER read residents.space free-text field —
+  // that's the drift class we're closing. Column is `label` (canonical
+  // v1+ name), not `space_number` (backfilled legacy).
+  const [assignedSpaces, setAssignedSpaces] = useState<Array<{ id: number; label: string; type: string | null }>>([])
   const [passes, setPasses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -128,21 +133,36 @@ export default function ResidentPortal() {
       fetchVehicles(data.unit, data.property, data.email)
       fetchPasses(data.unit)
       fetchSpaceRequest(data.email)
-      // 2026-07-02 (per-screen polish #7) — fetch the resident's real
-      // active space assignment. Belt-and-suspenders filter:
-      // status='assigned' + is_active=true + email match. maybeSingle
-      // returns null if the resident is truly without a space, which
-      // the render treats as "—" honestly.
+      // Slice 3.5 — multi-space fetch from the SoT (spaces + space_residents).
+      // PRIMARY: resolve space IDs via space_residents ties (v1.1 multi-
+      // resident source). FALLBACK: legacy single-resident rows where
+      // spaces.assigned_to_resident_email matches (pre-v1.1 data). Union
+      // both sets, then fetch the full space rows once. Same SoT the CRM
+      // + slice 3 read from — never residents.space.
       if (data.email) {
-        const { data: spaceRow } = await supabase
-          .from('spaces')
-          .select('space_number, type')
-          .eq('is_active', true)
-          .eq('status', 'assigned')
-          .ilike('property', data.property)
-          .ilike('assigned_to_resident_email', data.email.toLowerCase())
-          .maybeSingle()
-        if (spaceRow) setAssignedSpace(spaceRow as { space_number: string; type: string | null })
+        const emailLower = data.email.toLowerCase()
+        const [{ data: ties }, { data: legacyRows }] = await Promise.all([
+          supabase.from('space_residents').select('space_id').ilike('resident_email', emailLower),
+          supabase.from('spaces').select('id').ilike('assigned_to_resident_email', emailLower),
+        ])
+        const spaceIds = Array.from(new Set([
+          ...(ties ?? []).map(t => t.space_id as number),
+          ...(legacyRows ?? []).map(r => r.id as number),
+        ]))
+        if (spaceIds.length > 0) {
+          const { data: fullRows } = await supabase
+            .from('spaces')
+            .select('id, label, type')
+            .in('id', spaceIds)
+            .eq('is_active', true)
+            .eq('status', 'assigned')
+            .ilike('property', data.property)
+          setAssignedSpaces((fullRows ?? []).map(r => ({
+            id: r.id as number,
+            label: (r.label as string) ?? '',
+            type: (r.type as string | null) ?? null,
+          })))
+        }
       }
       if (data.property) {
         const { data: prop } = await supabase
@@ -646,8 +666,12 @@ export default function ResidentPortal() {
             <p style={{ color:'#aaa', fontSize:'12px', margin:'4px 0 0' }}>{resident.unit} · {resident.property}</p>
           </div>
           <div style={{ textAlign:'right' }}>
-            <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>Assigned Space</p>
-            <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'18px', margin:'2px 0 0', fontFamily:'Courier New' }}>{resident.space || '—'}</p>
+            <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>Assigned Space{assignedSpaces.length > 1 && 's'}</p>
+            {/* Slice 3.5 — SoT: assignedSpaces[] fetched from spaces +
+                space_residents. resident.space (legacy free-text) NOT
+                read here — that was the drift bug (PM assigns → resident
+                still sees "—"). Comma-joined labels for multi-space. */}
+            <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'18px', margin:'2px 0 0', fontFamily:'Courier New' }}>{assignedSpaces.length > 0 ? assignedSpaces.map(s => s.label).join(', ') : '—'}</p>
             {/* Request a Space affordance — surfaces when no pending
                 request exists. Hidden when pending pill is visible
                 above (one action at a time; pending = wait for decision). */}
@@ -713,20 +737,20 @@ export default function ResidentPortal() {
             ) : (
               <>
                 {(() => {
-                  // 2026-07-02 (per-screen polish #7) — Assigned Space
-                  // pulls from the real spaces table (assignedSpace
-                  // state) instead of the legacy residents.space free-
-                  // text column. Falls back to "—" honestly when the
-                  // resident has no active space assigned.
+                  // Slice 3.5 — Multi-space support. Reads from the SoT
+                  // via assignedSpaces[] (spaces + space_residents), NOT
+                  // the legacy residents.space free-text column. Falls
+                  // back to "—" honestly when the resident has no active
+                  // space assigned.
                   //
                   // Approved plates on the space = the resident's own
                   // vehicles at their unit that are currently active
-                  // (status='active' + is_active=true). Shown only if a
-                  // space is assigned.
-                  const spaceLabel = assignedSpace
-                    ? `${assignedSpace.space_number}${assignedSpace.type ? ` (${assignedSpace.type})` : ''}`
+                  // (status='active' + is_active=true). Shown only if
+                  // at least one space is assigned.
+                  const spaceLabel = assignedSpaces.length > 0
+                    ? assignedSpaces.map(s => `${s.label}${s.type ? ` (${s.type})` : ''}`).join(', ')
                     : '—'
-                  const approvedPlates = assignedSpace
+                  const approvedPlates = assignedSpaces.length > 0
                     ? vehicles
                         .filter((v: any) => v.status === 'active' && v.is_active === true)
                         .map((v: any) => v.plate)
@@ -738,7 +762,7 @@ export default function ResidentPortal() {
                     { label: 'Phone',          value: resident.phone || '—' },
                     { label: 'Unit',           value: resident.unit },
                     { label: 'Property',       value: resident.property },
-                    { label: 'Assigned Space', value: spaceLabel },
+                    { label: assignedSpaces.length > 1 ? 'Assigned Spaces' : 'Assigned Space', value: spaceLabel },
                     ...(approvedPlates.length > 0 ? [{ label: 'Approved plates', value: approvedPlates.join(', ') }] : []),
                     { label: 'Lease End',      value: resident.lease_end ? new Date(resident.lease_end).toLocaleDateString() : '—' },
                   ].map((item, i) => (

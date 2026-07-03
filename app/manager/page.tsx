@@ -494,7 +494,10 @@ export default function ManagerPortal() {
     const [spacesRes, gaList, spaceReqsRes] = await Promise.all([
       supabase.from('spaces').select('id, label, type, status, is_active, assigned_to_resident_email, property').ilike('property', property),
       fetchActiveGuestAuths(supabase, { property }),
-      supabase.from('space_requests').select('id, resident_email, property, requested_space_id, requested_space_label, note, status, created_at').ilike('property', property),
+      // Slice 3.5 — correct columns. Actual schema has no requested_space_id
+      // / requested_space_label (resident submits generically; PM picks the
+      // space at approval time via a dropdown of available spaces).
+      supabase.from('space_requests').select('id, resident_email, property, note, status, requested_at, decline_reason, assigned_space_id').ilike('property', property).eq('status', 'pending'),
     ])
     const spaces = (spacesRes.data ?? []) as CrmSpace[]
     setCrmSpacesAtProperty(spaces)
@@ -3116,6 +3119,7 @@ export default function ManagerPortal() {
             })}
             propertyName={manager.name}
             managerEmail={managerEmail}
+            availableSpaces={crmSpacesAtProperty.filter(s => s.status === 'available' && s.is_active).map(s => ({ id: s.id, label: s.label, type: s.type }))}
             canApproveVehicles={canApproveVehicles}
             isReadOnly={isReadOnly}
             onApproveVehicle={(id) => approveVehicle(String(id))}

@@ -7,7 +7,7 @@
 // from the parent. Zero DB access here; grouping done in app/lib/pm-crm.ts.
 
 import { useMemo, useState } from 'react'
-import type { CrmResident, CrmFilter, CrmResidentSpace } from '@/app/lib/pm-crm'
+import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace } from '@/app/lib/pm-crm'
 import { computeInsights, filterCrmRows, initials } from '@/app/lib/pm-crm'
 
 type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
@@ -16,6 +16,10 @@ interface Props {
   crmResidents: CrmResident[]
   propertyName: string
   managerEmail: string
+  // Slice 3.5 — available-spaces pool for the "Assign space" picker on
+  // pending space requests. Sourced from crmSpacesAtProperty filtered
+  // client-side to status='available' + is_active.
+  availableSpaces: Array<Pick<CrmSpace, 'id' | 'label' | 'type'>>
   // Slice 2 — permission gate (mirrors legacy 4 approve-affordance sites)
   // + read-only mode for leasing_agent (Decline stays visible regardless
   // per legacy).
@@ -96,7 +100,7 @@ const plateChipStyle: React.CSSProperties = {
 }
 
 export default function PmResidentCrm({
-  crmResidents, propertyName,
+  crmResidents, propertyName, availableSpaces,
   canApproveVehicles, isReadOnly,
   onApproveVehicle, onDeclineVehicle,
   onApproveResident, onDeclineResident,
@@ -257,6 +261,7 @@ export default function PmResidentCrm({
                   <SpacesPane
                     resident={selected}
                     isReadOnly={isReadOnly}
+                    availableSpaces={availableSpaces}
                     onReleaseSpace={onReleaseSpace}
                     onAssignSpaceRequest={onAssignSpaceRequest}
                     onDeclineSpaceRequest={onDeclineSpaceRequest}
@@ -676,9 +681,10 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   )
 }
 
-function SpacesPane({ resident, isReadOnly, onReleaseSpace, onAssignSpaceRequest, onDeclineSpaceRequest }: {
+function SpacesPane({ resident, isReadOnly, availableSpaces, onReleaseSpace, onAssignSpaceRequest, onDeclineSpaceRequest }: {
   resident: CrmResident
   isReadOnly: boolean
+  availableSpaces: Array<Pick<CrmSpace, 'id' | 'label' | 'type'>>
   onReleaseSpace: (spaceId: number, residentEmail: string) => Promise<void>
   onAssignSpaceRequest: (requestId: number, spaceId: number) => Promise<void>
   onDeclineSpaceRequest: (requestId: number) => Promise<void>
@@ -705,6 +711,7 @@ function SpacesPane({ resident, isReadOnly, onReleaseSpace, onAssignSpaceRequest
         <SpaceRequestCard
           req={resident.spaceRequest}
           isReadOnly={isReadOnly}
+          availableSpaces={availableSpaces}
           onAssignSpaceRequest={onAssignSpaceRequest}
           onDeclineSpaceRequest={onDeclineSpaceRequest}
         />
@@ -778,38 +785,62 @@ function SpaceCard({ s, residentEmail, isReadOnly, onReleaseSpace }: {
   )
 }
 
-function SpaceRequestCard({ req, isReadOnly, onAssignSpaceRequest, onDeclineSpaceRequest }: {
+function SpaceRequestCard({ req, isReadOnly, availableSpaces, onAssignSpaceRequest, onDeclineSpaceRequest }: {
   req: NonNullable<CrmResident['spaceRequest']>
   isReadOnly: boolean
+  availableSpaces: Array<{ id: number; label: string; type: string | null }>
   onAssignSpaceRequest: (requestId: number, spaceId: number) => Promise<void>
   onDeclineSpaceRequest: (requestId: number) => Promise<void>
 }) {
-  const canAssign = !isReadOnly && !!req.requested_space_id
+  const [pickedSpaceId, setPickedSpaceId] = useState<string>('')
   const canDecline = !isReadOnly
+  const canAssign = !isReadOnly && availableSpaces.length > 0 && pickedSpaceId !== ''
   return (
     <div style={{
       border: `1px solid ${C.goldLine}`, borderRadius: '10px', padding: '12px 14px',
       marginBottom: '10px', background: C.goldSoft,
     }}>
       <div style={{ fontWeight: 600, fontSize: '13.5px', color: C.text }}>
-        Space request: {req.requested_space_label || `#${req.requested_space_id ?? '—'}`}
+        Space request from resident
       </div>
       <div style={{ color: C.muted, fontSize: '12px', marginTop: '2px' }}>
-        Requested {new Date(req.created_at).toLocaleDateString()} · awaiting decision
+        Requested {new Date(req.requested_at).toLocaleDateString()} · awaiting decision
       </div>
       {req.note && (
         <div style={{ color: C.muted, fontSize: '12px', marginTop: '6px', fontStyle: 'italic' }}>
           "{req.note}"
         </div>
       )}
+      {!isReadOnly && (
+        <>
+          {availableSpaces.length > 0 ? (
+            <div style={{ marginTop: '10px' }}>
+              <label style={{ color: C.faint, fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.6px', fontWeight: 700 }}>Pick a space to assign</label>
+              <select value={pickedSpaceId} onChange={e => setPickedSpaceId(e.target.value)} style={{
+                width: '100%', background: C.panel2, border: `1px solid ${C.border2}`, borderRadius: '8px',
+                padding: '8px 10px', color: C.text, fontSize: '13px', fontFamily: 'inherit', marginTop: '4px',
+              }}>
+                <option value=''>— Select an available space —</option>
+                {availableSpaces.map(s => (
+                  <option key={s.id} value={String(s.id)}>{s.label}{s.type ? ` (${s.type})` : ''}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div style={{ color: C.faint, fontSize: '12px', marginTop: '10px', fontStyle: 'italic' }}>
+              No available spaces at this property. Generate more via the Spaces tab or decline this request.
+            </div>
+          )}
+        </>
+      )}
       {(canAssign || canDecline) && (
         <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
           {canAssign && (
-            <button onClick={() => onAssignSpaceRequest(req.id, req.requested_space_id!)} style={{
+            <button onClick={() => onAssignSpaceRequest(req.id, parseInt(pickedSpaceId, 10))} style={{
               padding: '7px 12px', background: C.greenSoft, color: C.green,
               border: `1px solid ${C.greenLine}`, borderRadius: '6px',
               cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
-            }}>Assign requested space</button>
+            }}>Assign space</button>
           )}
           {canDecline && (
             <button onClick={() => onDeclineSpaceRequest(req.id)} style={{

@@ -51,11 +51,11 @@ export interface CrmSpaceRequest {
   id: number
   resident_email: string
   property: string
-  requested_space_id?: number | null
-  requested_space_label?: string | null
   note?: string | null
   status: string
-  created_at: string
+  requested_at: string
+  decline_reason?: string | null
+  assigned_space_id?: number | null
 }
 
 export interface CrmResident {
