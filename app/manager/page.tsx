@@ -58,7 +58,7 @@ import { buildCrmResidents, type CrmSpace, type CrmSpaceResidentTie, type CrmSpa
 
 const PM_CRM_ENABLED = true
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
-import { normalizePlate } from '../lib/plate'
+import { normalizePlate, assertPlateUniqueAtProperty } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -1603,6 +1603,15 @@ export default function ManagerPortal() {
       // Permit-Door Piece 1 §1/§2 — vehicle insert state via the centralized
       // helper (PM-Only → pending → approval is the metering chokepoint;
       // all other tiers → active, preserving today's behavior).
+      // Slice-4 close-out (Jose 2026-07-03) — enforcement-integrity guard.
+      // Reject if this plate is already active on another vehicle at
+      // this property. Same-property scope; deactivated plates OK to
+      // reuse. Server-side backstop would be a partial unique index —
+      // flagged as future hardening after the TEST1 duplicate at Bayou
+      // Heights gets cleaned up.
+      const collisionErr = await assertPlateUniqueAtProperty(supabase, normalizedPlate, manager.name)
+      if (collisionErr) { alert(collisionErr); return }
+
       const initState = initialVehicleState(getCompanyContext().tier)
       const { error } = await supabase.from('vehicles').insert([{
         ...newVehicle,
@@ -1720,6 +1729,20 @@ export default function ManagerPortal() {
         // metering chokepoint); all other tiers → active (preserves
         // today's behavior since this is the manager-trusted
         // resident-create cascade, not a self-register).
+        // Slice-4 close-out (Jose 2026-07-03) — enforcement-integrity
+        // guard on the addResident cascade insert. Same rule + helper
+        // as the addVehicle path above. Cascade-fatal: if the plate is
+        // duped, the whole resident-add flow rolls back (resident insert
+        // has already committed; caller handles rollback / message via
+        // its existing try/finally). Instead of hard-throwing, surface
+        // a soft alert and skip only the vehicle insert — the resident
+        // stays, they can add the vehicle later via Edit Resident.
+        const cascadePlateNormalized = normalizePlate(newResident.vehicle_plate)
+        const cascadeCollisionErr = await assertPlateUniqueAtProperty(supabase, cascadePlateNormalized, manager.name)
+        if (cascadeCollisionErr) {
+          alert(cascadeCollisionErr + '\n\nThe resident record was created without the vehicle. Add it later via Edit Resident.')
+        } else {
+
         const cascadeInitState = initialVehicleState(getCompanyContext().tier)
         const { error: vehErr } = await supabase.from('vehicles').insert([{
           plate: normalizePlate(newResident.vehicle_plate),
@@ -1742,6 +1765,7 @@ export default function ManagerPortal() {
         } else {
           await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizePlate(newResident.vehicle_plate), source: 'ADD_RESIDENT', unit: newResident.unit, property: manager.name, resident_email: targetEmail } })
         }
+        }  // end else — collision guard passed
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)

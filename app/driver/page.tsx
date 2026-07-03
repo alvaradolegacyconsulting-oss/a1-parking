@@ -1538,7 +1538,11 @@ export default function DriverPortal() {
                           sees. */}
                       {result.data._pending_plate_change && (
                         <div style={{ background: '#3a2e0a', border: '1px solid #a16207', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px' }}>
-                          <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '12px', margin: '0 0 6px' }}>⚠ Plate change under review — old plate remains valid</p>
+                          {/* Slice-4 close-out (Jose 2026-07-03) — imperative
+                              headline anchored on the authorization fact:
+                              current plate stays valid = the vehicle is
+                              still authorized under it. */}
+                          <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '12px', margin: '0 0 6px' }}>⚠ DO NOT TOW — plate change under review by PM. Current plate stays valid.</p>
                           <p style={{ color: '#fef3c7', fontSize: '12px', margin: '0', lineHeight: '1.5' }}>
                             <span style={{ fontFamily: 'Courier New' }}>{result.data._pending_plate_change.old_plate}</span>
                             {' → '}
@@ -1594,9 +1598,18 @@ export default function DriverPortal() {
                       context so the driver understands what they see. */}
                   {result.status === 'plate_under_review' && (
                     <>
-                      <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '17px', margin: '0 0 8px' }}>⚠ DO NOT TOW</p>
-                      <p style={{ color: '#fef3c7', fontSize: '13px', margin: '0 0 12px', lineHeight: '1.5' }}>
-                        This plate is a resident's <b>pending plate change</b> awaiting property-manager approval. The vehicle is still authorized under its prior plate.
+                      {/* Slice-4 close-out (Jose 2026-07-03) — authorization-
+                          anchored copy. Headline is the protective imperative;
+                          body is the AUTHORIZATION determination (vehicle is
+                          authorized under its current plate), not a bare
+                          status. App voice = authorization; the human owns
+                          the enforcement call. */}
+                      <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '17px', margin: '0 0 8px' }}>⚠ DO NOT TOW — plate change under review</p>
+                      <p style={{ color: '#fef3c7', fontSize: '13px', margin: '0 0 4px', lineHeight: '1.5' }}>
+                        Vehicle is <b>authorized</b> under its current plate ({result.data.old_plate}).
+                      </p>
+                      <p style={{ color: '#aaa', fontSize: '12.5px', margin: '0 0 12px', lineHeight: '1.5' }}>
+                        Scanned plate ({result.data.new_plate}) is a pending change awaiting PM approval.
                       </p>
                       <div style={{ background: '#0f1117', border: '1px solid #a16207', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '12px' }}>

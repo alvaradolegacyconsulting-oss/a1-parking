@@ -268,15 +268,38 @@ async function main() {
   console.log(`  change row: status=${change2After?.status} decline_reason=${JSON.stringify(change2After?.decline_reason)}`)
   console.log(`  [6] ${test6 ? '🟢 PASS' : '🔴 FAIL'}\n`)
 
+  // ── [8] COLLISION GUARD (slice-4 close-out) ──────────────────────
+  // State at this point: vehicle A has plate=BBB5678, status='active'
+  // (test 4 approved BBB5678, test 6 declined a subsequent change and
+  // left BBB5678 in place). Provision sibling vehicle with plate CCC0000
+  // at same property; resident A tries to change to CCC0000 → block.
+  console.log('─── [8] COLLISION GUARD — plate already authorized ──────────')
+  await admin.from('vehicles').insert({
+    plate: 'CCC0000', resident_email: RES_B_EMAIL, unit: '2', property: PROP_NAME,
+    status: 'active', is_active: true,
+  })
+  const linkA_col = await admin.auth.admin.generateLink({ type: 'magiclink', email: RES_A_EMAIL })
+  const clientA_col = createClient(URL, ANON, { auth: { autoRefreshToken: false, persistSession: false } })
+  await clientA_col.auth.verifyOtp({ token_hash: (linkA_col.data!.properties as any).hashed_token, type: 'magiclink' })
+  const collRes = await clientA_col.rpc('submit_plate_change', {
+    p_vehicle_id: vehicleId,
+    p_new_plate: 'CCC0000',
+  })
+  await clientA_col.auth.signOut()
+  console.log(`  RPC returned: ${JSON.stringify(collRes.data)}`)
+  const collErr = (collRes.data as { error?: string } | null)?.error
+  const test8 = collErr === 'plate_already_authorized'
+  console.log(`  [8] ${test8 ? '🟢 PASS — collision blocked with plate_already_authorized' : '🔴 FAIL — collision NOT blocked'}\n`)
+
   // ── Cleanup ───────────────────────────────────────────────────────
   console.log('─── CLEANUP ─────────────────────────────────────────────────')
   await cleanup(admin, originalProperties)
   console.log('  ✓ cleaned up\n')
 
-  const allPass = test1 && test2 && test3 && test4 && test5 && test6 && test7
+  const allPass = test1 && test2 && test3 && test4 && test5 && test6 && test7 && test8
   console.log(`════════════════════════════════════════════════════════════════`)
-  console.log(`OVERALL: ${allPass ? '🟢🟢 ALL 7 ASSERTIONS PASS' : '🔴 FAIL — investigate above'}`)
-  console.log(`[1] submit: ${test1 ? '🟢' : '🔴'}  [2] driver OLD: ${test2 ? '🟢' : '🔴'}  [3] driver NEW: ${test3 ? '🟢' : '🔴'}  [4] approve+meter-zero: ${test4 ? '🟢' : '🔴'}  [5] one-in-flight: ${test5 ? '🟢' : '🔴'}  [6] decline: ${test6 ? '🟢' : '🔴'}  [7] RLS: ${test7 ? '🟢' : '🔴'}`)
+  console.log(`OVERALL: ${allPass ? '🟢🟢 ALL 8 ASSERTIONS PASS' : '🔴 FAIL — investigate above'}`)
+  console.log(`[1] submit: ${test1 ? '🟢' : '🔴'}  [2] driver OLD: ${test2 ? '🟢' : '🔴'}  [3] driver NEW: ${test3 ? '🟢' : '🔴'}  [4] approve+meter-zero: ${test4 ? '🟢' : '🔴'}  [5] one-in-flight: ${test5 ? '🟢' : '🔴'}  [6] decline: ${test6 ? '🟢' : '🔴'}  [7] RLS: ${test7 ? '🟢' : '🔴'}  [8] collision: ${test8 ? '🟢' : '🔴'}`)
   process.exit(allPass ? 0 : 1)
 }
 

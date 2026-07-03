@@ -278,6 +278,13 @@ export default function ResidentPortal() {
         alert('You already have a plate change under review. Wait for your manager\'s decision or contact them.')
         return
       }
+      // Slice-4 close-out (Jose 2026-07-03) — enforcement-integrity guard.
+      // The requested plate is already active on another vehicle at the
+      // same property. Never two authorized vehicles under one plate.
+      if (result?.error === 'plate_already_authorized') {
+        alert('That plate is already authorized on another vehicle at this property. Contact your manager.')
+        return
+      }
       alert(`Submit failed: ${result?.error ?? 'unknown'}`)
       console.error('[submit_plate_change] RPC returned error:', result)
       return
