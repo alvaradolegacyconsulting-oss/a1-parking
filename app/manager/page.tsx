@@ -2937,7 +2937,13 @@ export default function ManagerPortal() {
             crmResidents={buildCrmResidents({
               residents,
               pendingResidents,
-              vehicles,
+              // Union both slices — fetchVehicles splits state into
+              // `pendingVehicles` (status='pending') vs `vehicles` (rest).
+              // The CRM needs BOTH to render pending-vehicle badges and to
+              // cascade-approve correctly in slice 2. countVehicles sorts
+              // by status downstream, so passing the union yields the
+              // right approved/pending/underReview counts.
+              vehicles: [...vehicles, ...pendingVehicles],
               spaces: crmSpacesAtProperty,
               spaceResidentTies: crmSpaceResidentTies,
               guestAuths: crmGuestAuthsAtProperty,
