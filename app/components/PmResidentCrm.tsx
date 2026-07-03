@@ -70,6 +70,25 @@ const chipOn: React.CSSProperties = {
   ...chipBase, borderColor: C.goldLine, background: C.goldSoft, color: C.gold, fontWeight: 600,
 }
 
+// Shared plate-chip style — every CRM site that renders a plate as a
+// license-plate-shaped chip (dark fill, mono text) reuses this. Explicit
+// `color: C.text` — dark fill + inherited color was the contrast bug in
+// slice 2 (JO3M4M4 unreadable until selected). Any future plate chip in
+// slice 3+ (roommate rows use inline mono, not chips; slice 4 plate-
+// re-approval renders old→new chips) should spread this.
+const plateChipStyle: React.CSSProperties = {
+  fontFamily: 'Courier New',
+  fontWeight: 800,
+  fontSize: '16px',
+  letterSpacing: '1px',
+  color: C.text,
+  background: '#0e1015',
+  border: `1.5px solid ${C.border2}`,
+  borderRadius: '6px',
+  padding: '5px 11px',
+  display: 'inline-block',
+}
+
 export default function PmResidentCrm({
   crmResidents, propertyName,
   canApproveVehicles, isReadOnly,
@@ -599,11 +618,7 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
         <div>
-          <div style={{
-            fontFamily: 'Courier New', fontWeight: 800, fontSize: '16px', letterSpacing: '1px',
-            background: '#0e1015', border: `1.5px solid ${C.border2}`, borderRadius: '6px',
-            padding: '5px 11px', display: 'inline-block',
-          }}>{v.plate}</div>
+          <div style={plateChipStyle}>{v.plate}</div>
           <div style={{ color: C.muted, fontSize: '12.5px', marginTop: '7px' }}>
             {ymm}{v.color && ` · ${v.color}`}
           </div>
