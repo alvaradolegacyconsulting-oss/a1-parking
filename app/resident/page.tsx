@@ -152,29 +152,38 @@ export default function ResidentPortal() {
       fetchSpaceRequest(data.email)
       fetchGuestAuths(data.email)
       // Slice 3.5 — multi-space fetch from the SoT (spaces + space_residents).
-      // PRIMARY: resolve space IDs via space_residents ties (v1.1 multi-
-      // resident source). FALLBACK: legacy single-resident rows where
-      // spaces.assigned_to_resident_email matches (pre-v1.1 data). Union
-      // both sets, then fetch the full space rows once. Same SoT the CRM
-      // + slice 3 read from — never residents.space.
+      // space_residents ties are AUTHORITATIVE (v1.1 multi-resident source);
+      // spaces.assigned_to_resident_email is the pre-v1.1 fallback for
+      // rows the v1.1 backfill hasn't covered. Union both sets of ids,
+      // fetch full rows once. Same SoT the CRM builds from.
+      //
+      // BUG-1 fix (2026-07-04): dropped the redundant
+      // `.ilike('property', data.property)` filter. RLS
+      // (resident_read_own_spaces) already scopes reads to spaces at the
+      // resident's own property, so the client filter was defense-in-
+      // depth that turned into a data-drift trap — any trailing-whitespace
+      // / punctuation delta between residents.property and spaces.property
+      // silently dropped the space. Same class as the roommate-tie miss.
       if (data.email) {
         const emailLower = data.email.toLowerCase()
-        const [{ data: ties }, { data: legacyRows }] = await Promise.all([
+        const [tiesRes, legacyRes] = await Promise.all([
           supabase.from('space_residents').select('space_id').ilike('resident_email', emailLower),
           supabase.from('spaces').select('id').ilike('assigned_to_resident_email', emailLower),
         ])
+        if (tiesRes.error) console.error('[BUG-1-resident-ties-fetch-failed]', { email: emailLower, error: tiesRes.error.message })
+        if (legacyRes.error) console.error('[BUG-1-resident-legacy-fetch-failed]', { email: emailLower, error: legacyRes.error.message })
         const spaceIds = Array.from(new Set([
-          ...(ties ?? []).map(t => t.space_id as number),
-          ...(legacyRows ?? []).map(r => r.id as number),
+          ...(tiesRes.data ?? []).map(t => t.space_id as number),
+          ...(legacyRes.data ?? []).map(r => r.id as number),
         ]))
         if (spaceIds.length > 0) {
-          const { data: fullRows } = await supabase
+          const { data: fullRows, error: rowsErr } = await supabase
             .from('spaces')
             .select('id, label, type')
             .in('id', spaceIds)
             .eq('is_active', true)
             .eq('status', 'assigned')
-            .ilike('property', data.property)
+          if (rowsErr) console.error('[BUG-1-resident-spaces-fetch-failed]', { email: emailLower, error: rowsErr.message })
           setAssignedSpaces((fullRows ?? []).map(r => ({
             id: r.id as number,
             label: (r.label as string) ?? '',

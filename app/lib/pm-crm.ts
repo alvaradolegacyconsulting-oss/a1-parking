@@ -145,24 +145,49 @@ export function buildCrmResidents(input: {
     }
   }
 
-  // Spaces: primary via space_residents ties (multi-resident SoT), fallback
-  // via spaces.assigned_to_resident_email (legacy single-resident).
-  const spacesById = new Map<number, CrmSpace>()
-  for (const s of input.spaces) spacesById.set(s.id, s)
-
+  // Spaces grouping — BUG-1 fix (2026-07-04). space_residents ties are
+  // AUTHORITATIVE. Legacy `assigned_to_resident_email` fallback is per-
+  // space and applies ONLY when that specific space has NO ties AND its
+  // legacy assignee column is set (genuine pre-v1.1 row).
+  //
+  // Prior behavior fell back per-EMAIL: if the ties array was empty for
+  // any reason (silent fetch failure, race, wrong scope), the whole
+  // second loop treated `assigned_to_resident_email` as SoT for every
+  // space. That masked a multi-resident space (assigned_to_resident_email
+  // = NULL by v1.1 design) as unassigned for the roommate whose tie was
+  // the only source. Result: G-1 (French Quarter, May + Joe as ties)
+  // vanished from Joe's assignedSpaces while his primaries surfaced
+  // through the fallback. Per-space fallback preserves the pre-v1.1
+  // legacy correctness without the silent-substitute misbehavior.
   const spacesByEmail = new Map<string, CrmSpace[]>()
+
+  // Index ties by space_id for O(1) per-space lookup.
+  const tieEmailsBySpaceId = new Map<number, string[]>()
   for (const tie of input.spaceResidentTies) {
     const email = norm(tie.resident_email)
     if (!email) continue
-    const s = spacesById.get(tie.space_id)
-    if (!s) continue
-    const list = spacesByEmail.get(email) ?? []
-    list.push(s); spacesByEmail.set(email, list)
+    const list = tieEmailsBySpaceId.get(tie.space_id) ?? []
+    list.push(email)
+    tieEmailsBySpaceId.set(tie.space_id, list)
   }
+
   for (const s of input.spaces) {
-    const email = norm(s.assigned_to_resident_email)
-    if (!email) continue
-    if (!spacesByEmail.has(email)) spacesByEmail.set(email, [s])
+    const tiedEmails = tieEmailsBySpaceId.get(s.id) ?? []
+    if (tiedEmails.length > 0) {
+      // Authoritative: attribute this space to every tied resident.
+      for (const email of tiedEmails) {
+        const list = spacesByEmail.get(email) ?? []
+        list.push(s)
+        spacesByEmail.set(email, list)
+      }
+      continue
+    }
+    // No ties for this specific space — legacy fallback (pre-v1.1 row).
+    const legacyEmail = norm(s.assigned_to_resident_email)
+    if (!legacyEmail) continue
+    const list = spacesByEmail.get(legacyEmail) ?? []
+    list.push(s)
+    spacesByEmail.set(legacyEmail, list)
   }
 
   // Guest auths: by email OR unit.

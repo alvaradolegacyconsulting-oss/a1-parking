@@ -519,19 +519,35 @@ export default function ManagerPortal() {
       .select('id, vehicle_id, old_plate, new_plate, submitted_by, submitted_at, property, status')
       .ilike('property', property)
       .eq('status', 'pending')
-    setCrmPendingPlateChanges((platesRes.data ?? []) as CrmPendingPlateChange[])
+    // BUG-1 fix (2026-07-04): fetch space_residents ties BEFORE the
+    // state batch so spaces + ties transition atomically. Prior order
+    // set spaces first, then awaited ties, then set ties — creating a
+    // render window where the CRM builder ran with spaces populated
+    // but ties empty. buildCrmResidents' legacy fallback then treated
+    // the roommate-shared space (assigned_to_resident_email = NULL by
+    // v1.1 design) as unassigned for the roommate. Making the ties
+    // fetch part of the atomic setState eliminates the window.
     const spaces = (spacesRes.data ?? []) as CrmSpace[]
-    setCrmSpacesAtProperty(spaces)
-    setCrmGuestAuthsAtProperty(gaList)
-    setCrmPendingGuestRequestsAtProperty((pendingGuestRes.data ?? []) as GuestAuth[])
-    setCrmSpaceRequestsAtProperty((spaceReqsRes.data ?? []) as CrmSpaceRequest[])
+    let ties: CrmSpaceResidentTie[] = []
     if (spaces.length > 0) {
       const spaceIds = spaces.map(s => s.id)
       const tiesRes = await supabase.from('space_residents').select('space_id, resident_email').in('space_id', spaceIds)
-      setCrmSpaceResidentTies((tiesRes.data ?? []) as CrmSpaceResidentTie[])
-    } else {
-      setCrmSpaceResidentTies([])
+      if (tiesRes.error) {
+        // Loud failure — the CRM builder's legacy fallback would otherwise
+        // silently reproduce the pre-v1.1 assignment shape, hiding roommate
+        // ties. Log so the same-class regression can't ship unnoticed.
+        console.error('[BUG-1-ties-fetch-failed]', {
+          property, spaceCount: spaceIds.length, error: tiesRes.error.message,
+        })
+      }
+      ties = (tiesRes.data ?? []) as CrmSpaceResidentTie[]
     }
+    setCrmPendingPlateChanges((platesRes.data ?? []) as CrmPendingPlateChange[])
+    setCrmSpacesAtProperty(spaces)
+    setCrmSpaceResidentTies(ties)
+    setCrmGuestAuthsAtProperty(gaList)
+    setCrmPendingGuestRequestsAtProperty((pendingGuestRes.data ?? []) as GuestAuth[])
+    setCrmSpaceRequestsAtProperty((spaceReqsRes.data ?? []) as CrmSpaceRequest[])
   }
 
   // B210 (2026-06-24): fetchDisputes / upholdDispute / resolveDispute
