@@ -71,6 +71,16 @@ interface Props {
   // window at approve time; server clamps by the existing 60-day CHECK.
   onApproveGuestAuthRequest: (id: number, dates?: { start_date?: string; end_date?: string }) => Promise<void>
   onDeclineGuestAuthRequest: (id: number, reason: string) => Promise<void>
+  // RT-D — resident deactivate / reactivate. Deactivate = role +
+  // !isReadOnly (NOT canApproveVehicles — deactivation grants no permit,
+  // same rule as vehicle deactivate). Reactivate button only rendered on
+  // an inactive resident. All cascade side-effects (vehicles via
+  // trimDepartedResidentVehicles, spaces via DB trigger, co-resident
+  // modal, F2 pending space-requests cancel, F3 pending guest-auth
+  // requests cancel) live in the handler; this component only exposes
+  // the affordance + gates.
+  onDeactivateResident: (r: CrmResident) => Promise<void>
+  onReactivateResident: (r: CrmResident) => Promise<void>
 }
 
 // Manager-portal design tokens (matched to existing manager/page.tsx palette).
@@ -138,6 +148,7 @@ export default function PmResidentCrm({
   onDeactivateVehicle, onReactivateVehicle,
   onEditVehicle, onEditResident,
   onApproveGuestAuthRequest, onDeclineGuestAuthRequest,
+  onDeactivateResident, onReactivateResident,
 }: Props) {
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
@@ -266,6 +277,8 @@ export default function PmResidentCrm({
                 isReadOnly={isReadOnly}
                 onApproveResident={onApproveResident}
                 onDeclineResident={onDeclineResident}
+                onDeactivateResident={onDeactivateResident}
+                onReactivateResident={onReactivateResident}
               />
               <FactsStrip resident={selected} />
               <SubTabBar tab={subTab} setTab={setSubTab} resident={selected} />
@@ -414,15 +427,22 @@ function EmptyDetail() {
   )
 }
 
-function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident }: {
+function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onDeactivateResident, onReactivateResident }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
   onApproveResident: (r: CrmResident) => Promise<void>
   onDeclineResident: (r: CrmResident) => Promise<void>
+  onDeactivateResident: (r: CrmResident) => Promise<void>
+  onReactivateResident: (r: CrmResident) => Promise<void>
 }) {
   const showApprove = resident.status === 'pending' && canApproveVehicles && !isReadOnly
   const showDecline = resident.status === 'pending' && !isReadOnly
+  // RT-D — deactivate on ACTIVE resident (role + !isReadOnly, no permit-
+  // gate). Reactivate only when currently inactive. Both hidden on
+  // pending residents (approve/decline is the correct action there).
+  const showDeactivate = resident.status === 'active' && resident.is_active && !isReadOnly
+  const showReactivate = resident.status === 'active' && !resident.is_active && !isReadOnly
   return (
     <div style={{ padding: '18px 20px 16px', borderBottom: `1px solid ${C.border}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap' }}>
@@ -442,7 +462,7 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
             </div>
           </div>
         </div>
-        {(showApprove || showDecline) && (
+        {(showApprove || showDecline || showDeactivate || showReactivate) && (
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {showApprove && (
               <button onClick={() => onApproveResident(resident)} title="Cascades to pending vehicles" style={{
@@ -457,6 +477,24 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
                 border: `1px solid ${C.redLine}`, borderRadius: '6px',
                 cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
               }}>Decline</button>
+            )}
+            {showDeactivate && (
+              <button onClick={() => onDeactivateResident(resident)}
+                title="Deactivate resident — cascades to vehicles (drops enforcement), frees spaces, offers co-resident deactivate, cancels pending requests"
+                style={{
+                  padding: '8px 14px', background: C.redSoft, color: C.red,
+                  border: `1px solid ${C.redLine}`, borderRadius: '6px',
+                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>Deactivate resident</button>
+            )}
+            {showReactivate && (
+              <button onClick={() => onReactivateResident(resident)}
+                title="Reactivate resident — restores their own owner-stamped vehicles; cascade-swept unit vehicles are NOT auto-restored"
+                style={{
+                  padding: '8px 14px', background: C.greenSoft, color: C.green,
+                  border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>Reactivate resident</button>
             )}
           </div>
         )}

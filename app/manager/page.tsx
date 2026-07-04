@@ -2097,6 +2097,49 @@ export default function ManagerPortal() {
     // no free_space client call needed.
     await trimDepartedResidentVehicles(r?.email, r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
     await cascadeVehiclesIfUnitVacant(r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
+    // RT-D — F2/F3 cascade: cancel this resident's PENDING space_requests
+    // and PENDING guest_authorizations so nothing dangles under an
+    // inactive resident. Auto-declined requests are terminal and NOT
+    // auto-restored on reactivate (same class as B150 unit-cascade
+    // casualties — reactivated resident must re-submit).
+    const lowerEmail = (r?.email ?? '').toLowerCase()
+    if (lowerEmail) {
+      // space_requests_decided_consistency_chk requires decided_by_email
+      // + decided_at on any pending → decided transition. Stamp both.
+      const { data: srDecl } = await supabase.from('space_requests')
+        .update({
+          status: 'declined',
+          decline_reason: 'resident_deactivated',
+          decided_by_email: managerEmail,
+          decided_at: new Date().toISOString(),
+        })
+        .ilike('resident_email', lowerEmail).eq('status', 'pending')
+        .select('id')
+      const declinedSrIds = (srDecl ?? []).map(x => x.id)
+      if (declinedSrIds.length > 0) {
+        await logAudit({
+          action: 'DECLINE_SPACE_REQUEST_CASCADE', table_name: 'space_requests',
+          record_id: declinedSrIds.join(','),
+          new_values: { status: 'declined', reason: 'resident_deactivated',
+                        cascade_source: 'DEACTIVATE_RESIDENT',
+                        resident_id: residentId, count: declinedSrIds.length },
+        })
+      }
+      const { data: gaDecl } = await supabase.from('guest_authorizations')
+        .update({ status: 'declined', declined_reason: 'resident_deactivated' })
+        .ilike('resident_email', lowerEmail).eq('status', 'pending')
+        .select('id')
+      const declinedGaIds = (gaDecl ?? []).map(x => x.id)
+      if (declinedGaIds.length > 0) {
+        await logAudit({
+          action: 'DECLINE_GUEST_AUTH_CASCADE', table_name: 'guest_authorizations',
+          record_id: declinedGaIds.join(','),
+          new_values: { status: 'declined', reason: 'resident_deactivated',
+                        cascade_source: 'DEACTIVATE_RESIDENT',
+                        resident_id: residentId, count: declinedGaIds.length },
+        })
+      }
+    }
   }
 
   // Orchestrates: target + any opted-in co-residents. Sequential (a manager
@@ -3429,6 +3472,8 @@ export default function ManagerPortal() {
             onEditResident={(id, patch) => editResidentCosmetic(id, patch)}
             onApproveGuestAuthRequest={(id, dates) => approveGuestAuthRequestCrm(id, dates)}
             onDeclineGuestAuthRequest={(id, reason) => declineGuestAuthRequestCrm(id, reason)}
+            onDeactivateResident={(r) => deactivateResident(String(r.id))}
+            onReactivateResident={(r) => reactivateResident(String(r.id))}
           />
         )}
 
