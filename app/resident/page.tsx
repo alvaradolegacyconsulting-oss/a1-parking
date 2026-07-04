@@ -13,6 +13,7 @@ import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { displayTowReason } from '../lib/tow-reasons'
 import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
+import { guestAuthDisplayStatus } from '../lib/guest-auth'
 // B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
 import { evaluatePortalGate } from '../lib/portal-account-gate'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
@@ -1161,16 +1162,12 @@ export default function ResidentPortal() {
                                 <div><label style={lbl}>Make</label><input value={editingVehicle.make || ''} onChange={e => setEditingVehicle({...editingVehicle, make: e.target.value})} style={inp} /></div>
                                 <div><label style={lbl}>Model</label><input value={editingVehicle.model || ''} onChange={e => setEditingVehicle({...editingVehicle, model: e.target.value})} style={inp} /></div>
                                 <div><label style={lbl}>Year</label><input value={editingVehicle.year || ''} onChange={e => setEditingVehicle({...editingVehicle, year: e.target.value})} style={inp} /></div>
-                                <div style={{ gridColumn:'span 2' }}>
-                                  <label style={lbl}>Unit</label>
-                                  <input value={editingVehicle.unit || ''} disabled readOnly style={lockedInp} />
-                                  <p style={helperTxt}>Contact your property manager to change your unit.</p>
-                                </div>
-                                <div style={{ gridColumn:'span 2' }}>
-                                  <label style={lbl}>Space</label>
-                                  <input value={editingVehicle.space || ''} disabled readOnly style={lockedInp} />
-                                  <p style={helperTxt}>Space is assigned by your property manager.</p>
-                                </div>
+                                {/* COPY-2 (2026-07-04): removed Unit + Space —
+                                    both are read-only and already surface at
+                                    the top of the portal (Unit in the header,
+                                    Assigned Spaces in the header + My Info).
+                                    An edit form shouldn't render fields the
+                                    resident can't edit. */}
                               </div>
                               <button onClick={saveVehicle} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Save Changes</button>
                             </div>
@@ -1480,10 +1477,20 @@ export default function ResidentPortal() {
               </div>
             ) : (
               myGuestAuths.map(g => {
-                const pill = g.status === 'pending' ? { bg:'#3a2e0a', border:'#a16207', text:'Pending PM approval', color:'#fbbf24' }
-                           : g.status === 'active'  ? { bg:'#0a1628', border:'#3b82f6', text:'Approved · Do-Not-Tow', color:'#93c5fd' }
-                           : g.status === 'declined'? { bg:'#3a1a1a', border:'#b71c1c', text:'Declined', color:'#f44336' }
-                           : { bg:'#2a1e00', border:'#a16207', text:'Revoked', color:'#a16207' }
+                // COPY-1 (2026-07-04): window-aware label. Drops "Do-Not-Tow"
+                // phrasing (enforcement promise, not resident-facing status),
+                // adds "starts <Mon D>" for future-window guests + "Expired"
+                // for past-window. Palette varies by key: upcoming = amber
+                // (contextually "not yet"), active/upcoming/expired maps to
+                // its own visual so a future-start guest doesn't misread as
+                // "why is my approved car unauthorized right now".
+                const display = guestAuthDisplayStatus(g)
+                const pill = display.key === 'pending'  ? { bg:'#3a2e0a', border:'#a16207', color:'#fbbf24' }
+                           : display.key === 'upcoming' ? { bg:'#2a1e00', border:'#a16207', color:'#fbbf24' }
+                           : display.key === 'active'   ? { bg:'#0a1628', border:'#3b82f6', color:'#93c5fd' }
+                           : display.key === 'expired'  ? { bg:'#20242e', border:'#3a4055', color:'#8b919e' }
+                           : display.key === 'declined' ? { bg:'#3a1a1a', border:'#b71c1c', color:'#f44336' }
+                           : /* revoked */                { bg:'#2a1e00', border:'#a16207', color:'#a16207' }
                 return (
                   <div key={g.id} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'10px', gap:'10px' }}>
@@ -1491,7 +1498,7 @@ export default function ResidentPortal() {
                         <p style={{ color:'white', fontFamily:'Courier New', fontSize:'17px', fontWeight:'bold', margin:'0' }}>{g.plate}</p>
                         <p style={{ color:'#aaa', fontSize:'12.5px', margin:'4px 0 0' }}>{g.guest_name}</p>
                       </div>
-                      <span style={{ background: pill.bg, color: pill.color, border: `1px solid ${pill.border}`, padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold', whiteSpace:'nowrap' }}>{pill.text}</span>
+                      <span style={{ background: pill.bg, color: pill.color, border: `1px solid ${pill.border}`, padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold', whiteSpace:'nowrap' }}>{display.label}</span>
                     </div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px' }}>
                       <div><span style={{ color:'#555' }}>Start</span><br/><span style={{ color:'#aaa' }}>{g.start_date}</span></div>

@@ -82,6 +82,47 @@ export function spanDays(startDate: string, endDate: string): number {
   return daysUntilExpiry(endDate) - daysUntilExpiry(startDate) + 1
 }
 
+/** Short display of an ISO date, e.g. "Aug 5". */
+export function formatShortDate(isoDate: string): string {
+  const d = new Date(isoDate + 'T00:00:00')
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+/**
+ * COPY-1 (2026-07-04): Window-aware display status for a guest auth row.
+ * Called on both resident + manager surfaces (NEVER on driver enforcement —
+ * that stays the authorization determination + does not use these labels).
+ *
+ * Rules:
+ *   pending  → "Pending PM approval"
+ *   declined → "Declined"
+ *   revoked  → "Revoked"
+ *   active w/ start_date > today → "Approved · starts <Mon D>"  (future window)
+ *   active w/ today > end_date   → "Expired"                     (past window)
+ *   active within window         → "Approved"                    (drops the
+ *                                  "Do-Not-Tow" phrasing per Jose 2026-07-04:
+ *                                  parallels Revoked/Expired; do-not-tow is
+ *                                  an enforcement promise, not a resident-
+ *                                  facing determination)
+ *
+ * key returned distinguishes the visual class for callers that want to
+ * palette pills differently (upcoming ≠ active).
+ */
+export function guestAuthDisplayStatus(g: {
+  status: string
+  start_date: string
+  end_date: string
+}): { label: string; key: 'pending' | 'upcoming' | 'active' | 'expired' | 'declined' | 'revoked' } {
+  if (g.status === 'pending')  return { label: 'Pending PM approval', key: 'pending' }
+  if (g.status === 'declined') return { label: 'Declined',            key: 'declined' }
+  if (g.status === 'revoked')  return { label: 'Revoked',             key: 'revoked' }
+  // status === 'active' (or any other truthy status defaults to active-window logic)
+  const today = todayIso()
+  if (g.start_date > today) return { label: `Approved · starts ${formatShortDate(g.start_date)}`, key: 'upcoming' }
+  if (g.end_date < today)   return { label: 'Expired', key: 'expired' }
+  return { label: 'Approved', key: 'active' }
+}
+
 /**
  * Pre-submit overlap check (Finding 2 from B214 preflight — overlap is allowed
  * by design, no DB unique constraint, but the form surfaces a soft warning so

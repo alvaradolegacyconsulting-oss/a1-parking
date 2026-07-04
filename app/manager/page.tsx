@@ -24,6 +24,7 @@ import {
   isExpiringSoon,
   findOverlappingActiveAuth,
   fetchActiveGuestAuths,
+  guestAuthDisplayStatus,
 } from '../lib/guest-auth'
 // Spaces v1 — dashboard-primary architecture with filtered/paginated list.
 // All mutations route through the 6 DEFINER RPCs (assign/reassign/free/
@@ -4392,12 +4393,24 @@ export default function ManagerPortal() {
               return filteredGuestAuths.map(g => {
               const expSoon = isExpiringSoon(g.end_date)
               const daysLeft = daysUntilExpiry(g.end_date)
+              // COPY-1 (2026-07-04): window-aware label. This panel shows
+              // fetchActiveGuestAuths() = status='active' only, so the
+              // relevant sub-states are upcoming (future start), active
+              // (in window), expired (past — only visible until the
+              // fetch refreshes if end_date crosses today mid-session),
+              // plus expSoon-in-window highlight.
+              const display = guestAuthDisplayStatus(g)
+              const pillLabel = expSoon && display.key === 'active'
+                ? `Expires in ${daysLeft}d`
+                : display.label
+              const pillBg = expSoon || display.key === 'upcoming' ? '#3a2a08' : '#0a1628'
+              const pillColor = expSoon || display.key === 'upcoming' ? '#fbbf24' : '#3b82f6'
               return (
                 <div key={g.id} style={{ background:'#161b26', border:`1px solid ${expSoon ? '#f59e0b' : '#2a2f3d'}`, borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
                     <p style={{ color:'#3b82f6', fontFamily:'Courier New', fontSize:'18px', fontWeight:'bold', margin:'0' }}>{g.plate}</p>
-                    <span style={{ background: expSoon ? '#3a2a08' : '#0a1628', color: expSoon ? '#fbbf24' : '#3b82f6', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>
-                      {expSoon ? `Expires in ${daysLeft}d` : 'Active'}
+                    <span style={{ background: pillBg, color: pillColor, padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>
+                      {pillLabel}
                     </span>
                   </div>
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px', marginBottom:'10px' }}>
