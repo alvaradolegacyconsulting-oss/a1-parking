@@ -35,6 +35,12 @@ export interface CrmAuthorizedPlate {
   owner_name: string
   owner_unit: string
   isThisResident: boolean
+  // CLARIFY (2026-07-04): under-review vehicles keep their OLD plate
+  // enforce-valid until PM approves the plate-change. When true, `plate`
+  // is the OLD plate (from vehicle_plate_changes.old_plate) and the
+  // render tags it "· plate change under review" so the space list
+  // stays honest.
+  plateChangeUnderReview: boolean
 }
 
 export interface CrmResidentSpace extends CrmSpace {
@@ -325,18 +331,41 @@ export function buildCrmResidents(input: {
         if (!isThisResident) roommateCount++
         const other = rowByEmail.get(tiedEmail)
         if (!other) continue
-        // Only APPROVED vehicles are enforcement-authorized to park at
-        // the assigned space. Pending / under_review / declined excluded.
+        // CLARIFY (2026-07-04): only ACTIVE tied residents contribute
+        // plates. A deactivated resident's plates are unauthorized (their
+        // vehicles are is_active=false via the RT-D cascade + trigger
+        // auto-freed the space tie anyway); belt-and-suspenders filter
+        // here regardless.
+        if (other.is_active === false) continue
         for (const v of other.vehicles) {
           const st = norm(v.status)
-          if (st !== 'active' && st !== 'approved') continue
-          authorizedPlates.push({
-            plate: v.plate ?? '',
-            owner_email: other.email,
-            owner_name: other.name,
-            owner_unit: other.unit,
-            isThisResident,
-          })
+          // Deactivated vehicles excluded regardless of status.
+          if (v.is_active === false) continue
+          if (st === 'active' || st === 'approved') {
+            // Approved vehicle → current plate is enforce-valid.
+            authorizedPlates.push({
+              plate: v.plate ?? '',
+              owner_email: other.email,
+              owner_name: other.name,
+              owner_unit: other.unit,
+              isThisResident,
+              plateChangeUnderReview: false,
+            })
+          } else if (st === 'under_review' && v.pendingPlateChange) {
+            // Plate-change review in flight — OLD plate stays enforce-
+            // valid until approve/decline. Show the OLD plate with the
+            // under-review marker; the pending NEW plate is NOT yet
+            // authorized so it does not appear on the space.
+            authorizedPlates.push({
+              plate: v.pendingPlateChange.old_plate ?? v.plate ?? '',
+              owner_email: other.email,
+              owner_name: other.name,
+              owner_unit: other.unit,
+              isThisResident,
+              plateChangeUnderReview: true,
+            })
+          }
+          // pending / declined / anything else → not enforce-valid → skip.
         }
       }
       return { ...s, authorizedPlates, roommateCount }

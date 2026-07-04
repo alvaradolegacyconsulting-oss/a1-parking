@@ -1102,6 +1102,9 @@ function SpaceCard({ s, residentEmail, isReadOnly, onReleaseSpace }: {
             {!p.isThisResident && p.owner_unit && (
               <span style={{ color: C.faint }}> · Unit {p.owner_unit}</span>
             )}
+            {p.plateChangeUnderReview && (
+              <span style={{ color: C.amber }}> · plate change under review</span>
+            )}
           </span>
           <span style={{
             fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '20px', flex: 'none', whiteSpace: 'nowrap',
