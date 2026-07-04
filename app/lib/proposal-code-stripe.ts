@@ -92,10 +92,45 @@ export function isPremiumCode(code: Pick<ProposalCodeForStripe, 'base_tier'>): b
   return code.base_tier === 'premium'
 }
 
-function lineItemsForTrack(track: Track): LineItem[] {
-  return track === 'enforcement'
-    ? ['base', 'per_property', 'per_driver']
+/**
+ * Line items to create for a proposal code, applying:
+ *   • per_driver retirement (Slice 1 Commit 5 form drop → 2026-07-04 lib
+ *     drop — Enforcement per_driver removed everywhere else; this was
+ *     the last stale reference).
+ *   • Legacy $0-override omit (2026-07-04 architect Option (b)): when a
+ *     Legacy code has an EXPLICIT $0 override on a line item, that item
+ *     is omitted entirely — no Stripe Price is created, no subscription
+ *     line at redemption. Guardrail: only omit on EXPLICIT $0 override,
+ *     NEVER on a fallback that resolved to 0 (that would silently drop
+ *     a line the catalog default expected). Only Legacy codes; non-Legacy
+ *     always get their full track set.
+ *
+ * Exported so start-billing can compute expectedLines using the same
+ * shape logic — single source of truth for the sub structure.
+ *
+ * per_permit customization (PM-Only) for custom Legacy codes is Gap 2 —
+ * deferred as Bar-2 per architect 2026-07-04 (A1 doesn't meter).
+ */
+export function lineItemsForCode(
+  code: Pick<ProposalCodeForStripe, 'base_tier_type' | 'base_tier'
+                                 | 'custom_base_fee' | 'custom_per_property_fee'>
+): LineItem[] {
+  const trackLines: LineItem[] = code.base_tier_type === 'enforcement'
+    ? ['base', 'per_property']
     : ['base', 'per_property']
+
+  if (code.base_tier !== 'legacy') return trackLines
+
+  return trackLines.filter(li => {
+    const override = li === 'base'
+      ? code.custom_base_fee
+      : li === 'per_property'
+        ? code.custom_per_property_fee
+        : null
+    // Omit only when the OVERRIDE is explicitly 0 — not on null (fallback)
+    // or on any positive value.
+    return !(override != null && Number(override) === 0)
+  })
 }
 
 function lineItemLabel(li: LineItem): string {
@@ -176,7 +211,7 @@ export async function createStripePricesForProposalCode(
     )
   }
 
-  const lineItems = lineItemsForTrack(code.base_tier_type)
+  const lineItems = lineItemsForCode(code)
   const prices: CreatedPrice[] = []
   let createdCount = 0
   let recoveredCount = 0

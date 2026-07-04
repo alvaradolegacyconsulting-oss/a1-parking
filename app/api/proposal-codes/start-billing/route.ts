@@ -4,6 +4,7 @@ import { getStripe, getStripeMode } from '../../../lib/stripe'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { getStripeBillingEnabled } from '../../../lib/platform-flags'
+import { lineItemsForCode } from '../../../lib/proposal-code-stripe'
 
 // B66.7 — proposal-code → Stripe Subscription bridge.
 //
@@ -60,6 +61,12 @@ export const maxDuration = 30
 // per the migration's nullable choice). For redeem-time consistency
 // with the admin-set negotiated quantities, the migration ensures
 // new codes have integer values from the admin form.
+//
+// per_driver branch retained as dead-code fallthrough for historical
+// codes only — Slice 1 Commit 5 + 2026-07-04 fix retired per_driver
+// from issue-time creation, so no NEW code has a per_driver Price row.
+// includedDrivers stays in the signature for signature stability across
+// existing historical proposal_codes that carry a value.
 function quantityFor(lineItem: string, includedProperties: number | null, includedDrivers: number | null): number {
   if (lineItem === 'base') return 1
   if (lineItem === 'per_property') return includedProperties ?? 1
@@ -119,9 +126,11 @@ export async function POST(request: Request) {
   }
 
   // ── Find the redeemed proposal code linked to this company ────────
+  // BAR-1 fix 2026-07-04: added custom_*_fee cols so lineItemsForCode()
+  // can apply Legacy $0-omit consistently with issue-time creation.
   const { data: code, error: codeErr } = await supabase
     .from('proposal_codes')
-    .select('id, code, client_name, base_tier_type, base_tier, collection_method, included_properties, included_drivers')
+    .select('id, code, client_name, base_tier_type, base_tier, collection_method, included_properties, included_drivers, custom_base_fee, custom_per_property_fee, custom_per_driver_fee')
     .eq('company_id', companyId!)
     .eq('status', 'redeemed')
     .maybeSingle()
@@ -141,7 +150,20 @@ export async function POST(request: Request) {
   if (priceErr) {
     return NextResponse.json({ error: 'price lookup failed: ' + priceErr.message }, { status: 503 })
   }
-  const expectedLines = code.base_tier_type === 'enforcement' ? 3 : 2
+  // BAR-1 fix 2026-07-04: compute expected via lineItemsForCode()
+  // (single source of truth with issue-time creation). Handles:
+  //   • per_driver retired (Enforcement now 2 lines, not 3)
+  //   • Legacy $0-omit — if admin explicitly set custom_per_property_fee=0
+  //     on a Legacy code, that line was NOT created; expected count
+  //     reflects that. A1's shape (Legacy Enforcement, per_property=$0)
+  //     resolves to expected=1 (base only).
+  const expectedLineItems = lineItemsForCode({
+    base_tier_type: code.base_tier_type as 'enforcement' | 'property_management',
+    base_tier: code.base_tier as any,
+    custom_base_fee: code.custom_base_fee,
+    custom_per_property_fee: code.custom_per_property_fee,
+  })
+  const expectedLines = expectedLineItems.length
   if (!priceRows || priceRows.length !== expectedLines) {
     return NextResponse.json(
       { error: `proposal-code Prices missing for code ${code.code} (mode=${mode}): expected ${expectedLines}, got ${priceRows?.length ?? 0}. Re-issue the code to recreate Prices.` },
