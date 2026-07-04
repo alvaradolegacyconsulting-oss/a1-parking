@@ -6,19 +6,29 @@
 // tears everything down at end. `+happy` is never touched.
 //
 // Assertions:
-//   [1] EDIT_VEHICLE cosmetic — patches color / year land; audit row
-//       has EDIT_VEHICLE action + old_values + new_values with only
-//       changed fields.
+//   [0] FIELD-INTEGRITY (added 2026-07-04 hotfix): the handler's exact
+//       SELECT column list actually resolves. This catches phantom
+//       allowlist entries — e.g. `tags` on residents that didn't
+//       exist, which broke every real edit while the old probe went
+//       green because it never issued the same SELECT.
+//   [1] EDIT_VEHICLE cosmetic — read via the handler's SELECT list
+//       (id + ALL VEHICLE_EDITABLE_FIELDS), diff, update, audit.
 //   [2] Plate SMUGGLE BLOCKED — attempting the edit handler pattern
 //       with a plate value in the patch: the server-side allowlist
 //       drops plate before the UPDATE builds. Vehicle.plate remains
 //       unchanged.
 //   [3] Empty diff — sending the same values as current writes no
 //       audit row. (Empty diff → no-op.)
-//   [4] EDIT_RESIDENT — patches phone / manager_note land; audit row
-//       has old_values + new_values with only changed fields.
+//   [4] EDIT_RESIDENT — read via the handler's SELECT list (id +
+//       ALL RESIDENT_EDITABLE_FIELDS: phone, lease_end, manager_note),
+//       diff, update, audit. Exercises the full read path so a
+//       phantom-column regression fails here.
 //   [5] RLS negative — a manager at a different property cannot
 //       update this vehicle (UPDATE returns 0 rows).
+//
+// Kept in lockstep with manager/page.tsx allowlist constants.
+const VEHICLE_EDITABLE_FIELDS = ['color', 'make', 'model', 'year', 'state'] as const
+const RESIDENT_EDITABLE_FIELDS = ['phone', 'lease_end', 'manager_note'] as const
 //
 // Run: npx tsx --env-file=.env.local scripts/probe-crm-slice6-inline-edit.ts
 
@@ -91,6 +101,23 @@ async function main() {
   const otpM = await clientM.auth.verifyOtp({ token_hash: (linkM.data!.properties as any).hashed_token, type: 'magiclink' })
   if (otpM.error) { console.error('  🔴 disposable manager sign-in failed:', otpM.error.message); await cleanup(admin); process.exit(2) }
 
+  // ── [0] FIELD-INTEGRITY — allowlisted columns must exist ─────────
+  // Hotfix 2026-07-04: the prior probe UPDATE'd a narrow object and
+  // never issued the handler's SELECT, so `tags` (phantom column on
+  // residents) passed here while breaking every real edit. This
+  // assertion issues the EXACT handler SELECT list; a missing column
+  // fails with PGRST/42703 and this test flips red.
+  console.log('─── [0] FIELD-INTEGRITY (handler SELECT lists resolve) ──────')
+  const residentSelect = ['id', ...RESIDENT_EDITABLE_FIELDS].join(', ')
+  const vehicleSelect = ['id', ...VEHICLE_EDITABLE_FIELDS].join(', ')
+  const { error: rFieldErr } = await clientM.from('residents').select(residentSelect).eq('id', residentId).single()
+  const { error: vFieldErr } = await clientM.from('vehicles').select(vehicleSelect).eq('id', vehicleId).single()
+  const test0 = !rFieldErr && !vFieldErr
+  console.log(`  residents SELECT '${residentSelect}': ${rFieldErr ? '🔴 ' + rFieldErr.message : '🟢 ok'}`)
+  console.log(`  vehicles  SELECT '${vehicleSelect}': ${vFieldErr ? '🔴 ' + vFieldErr.message : '🟢 ok'}`)
+  console.log(`  [0] ${test0 ? '🟢 PASS' : '🔴 FAIL — allowlist references a column that does not exist'}\n`)
+  if (!test0) { await cleanup(admin); process.exit(2) }
+
 
   // ── [1] EDIT_VEHICLE cosmetic ────────────────────────────────────
   console.log('─── [1] EDIT_VEHICLE cosmetic (color, year) ──────────────────')
@@ -159,16 +186,36 @@ async function main() {
   console.log(`  audit count: ${beforeCount} → ${afterCount} (expected unchanged)`)
   console.log(`  [3] ${test3 ? '🟢 PASS' : '🔴 FAIL'}\n`)
 
-  // ── [4] EDIT_RESIDENT — phone + manager_note ─────────────────────
-  console.log('─── [4] EDIT_RESIDENT (phone + manager_note) ────────────────')
-  const { error: e4 } = await clientM.from('residents')
-    .update({ phone: '713-555-9999', manager_note: 'updated note' }).eq('id', residentId)
+  // ── [4] EDIT_RESIDENT — real handler shape (read-diff-write-audit) ─
+  console.log('─── [4] EDIT_RESIDENT (real handler shape: read → diff → write) ─')
+  // Mirror editResidentCosmetic exactly: SELECT id + all allowlisted
+  // fields; if the read errors (phantom column), the test fails here —
+  // the same class of bug that shipped as broken editing on prod.
+  const resSelectCols = ['id', ...RESIDENT_EDITABLE_FIELDS].join(', ')
+  const patchIn: Record<string, any> = { phone: '713-555-9999', manager_note: 'updated note' }
+  const cleanRes: Record<string, any> = {}
+  for (const [k, val] of Object.entries(patchIn)) {
+    if ((RESIDENT_EDITABLE_FIELDS as readonly string[]).includes(k)) cleanRes[k] = val
+  }
+  const { data: current4, error: read4Err } = await clientM.from('residents')
+    .select(resSelectCols).eq('id', residentId).single()
+  if (read4Err || !current4) {
+    console.log(`  🔴 handler-shape READ failed: ${read4Err?.message ?? 'no row'}`)
+    await cleanup(admin); process.exit(5)
+  }
+  const oldR: Record<string, any> = {}
+  const newR: Record<string, any> = {}
+  for (const k of Object.keys(cleanRes)) {
+    const oldV = (current4 as any)[k]
+    const newV = cleanRes[k]
+    if (JSON.stringify(oldV) !== JSON.stringify(newV)) { oldR[k] = oldV; newR[k] = newV }
+  }
+  const { error: e4 } = await clientM.from('residents').update(cleanRes).eq('id', residentId)
   if (e4) { console.log(`  🔴 update failed: ${e4.message}`); await cleanup(admin); process.exit(5) }
   await clientM.from('audit_logs').insert({
     user_email: DISPOSABLE_MGR_EMAIL, action: 'EDIT_RESIDENT',
     table_name: 'residents', record_id: String(residentId),
-    old_values: { phone: '713-555-0000', manager_note: 'initial note' },
-    new_values: { phone: '713-555-9999', manager_note: 'updated note' },
+    old_values: oldR, new_values: newR,
   })
   const { data: r4 } = await admin.from('residents').select('phone, manager_note').eq('id', residentId).single()
   const { data: al4 } = await admin.from('audit_logs').select('action, old_values, new_values')

@@ -1637,7 +1637,11 @@ export default function ManagerPortal() {
   // ═════════════════════════════════════════════════════════════════
 
   const VEHICLE_EDITABLE_FIELDS = ['color', 'make', 'model', 'year', 'state'] as const
-  const RESIDENT_EDITABLE_FIELDS = ['phone', 'lease_end', 'manager_note', 'tags'] as const
+  // HOTFIX 2026-07-04 — `tags` removed. `residents` has no tags column;
+  // the read at editResidentCosmetic named it, causing every edit
+  // (phone/lease_end/manager_note) to fail before any diff/write. A
+  // future tags feature = additive slice (column + input + probe).
+  const RESIDENT_EDITABLE_FIELDS = ['phone', 'lease_end', 'manager_note'] as const
   type VehicleField = typeof VEHICLE_EDITABLE_FIELDS[number]
   type ResidentField = typeof RESIDENT_EDITABLE_FIELDS[number]
 
@@ -1698,7 +1702,7 @@ export default function ManagerPortal() {
     }
     if (Object.keys(clean).length === 0) return
     const { data: current, error: readErr } = await supabase.from('residents')
-      .select('id, phone, lease_end, manager_note, tags')
+      .select('id, phone, lease_end, manager_note')
       .eq('id', residentId).single()
     if (readErr || !current) {
       alert(`Edit failed: could not read current resident: ${readErr?.message ?? 'unknown'}`)
