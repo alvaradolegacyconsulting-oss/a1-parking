@@ -38,9 +38,10 @@ async function callSyncOnAdd(
 import { TIER_DISPLAY_NAME, TIER_PRICING, TIER_CONFIG, type TierType } from '../lib/tier-config'
 
 // CA CRM redesign (Slice 1+) — mirrors PM_CRM_ENABLED precedent from the
-// resident CRM arc. Flipped true once Slices 1-5 land + UAT clears. Old
-// tabs stay behind `!CA_CRM_REDESIGN` so we can rollback without a revert.
-const CA_CRM_REDESIGN = false
+// resident CRM arc. Flipped true 2026-07-05 (Slices 0-5 shipped +
+// ENF_LEGACY all-on). Old tabs stay behind `!CA_CRM_REDESIGN` so
+// rollback = revert this one-line commit; no re-work.
+const CA_CRM_REDESIGN = true
 // B65.2: account_state gate (spec §3.4) — defense in depth with login dispatch.
 // B66.5 commit 4.3: extended for past_due banner + suspended redirect era shift.
 import { gateAccountState, AccountState } from '../lib/account-state'
