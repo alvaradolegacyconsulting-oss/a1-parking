@@ -1699,8 +1699,26 @@ export default function CompanyAdminPortal() {
     }
   }
 
-  async function createDriver() {
-    if (!newDriver.name || !newDriver.email) { setDriverMsg('Name and email are required'); return }
+  // Round 2 Item A — accept optional override payload so the consolidated
+  // Add User form can pass fresh values in the same tick without waiting
+  // for a setNewDriver setState cycle (which would race — createDriver
+  // reads state captured at handler-create time). Default reads newDriver.
+  type DriverInvitePayload = {
+    name: string
+    email: string
+    phone: string
+    operator_license: string
+    assigned_properties: string[]
+  }
+  async function createDriver(override?: Partial<DriverInvitePayload>): Promise<boolean> {
+    const payload: DriverInvitePayload = {
+      name: override?.name ?? newDriver.name,
+      email: override?.email ?? newDriver.email,
+      phone: override?.phone ?? newDriver.phone,
+      operator_license: override?.operator_license ?? newDriver.operator_license,
+      assigned_properties: override?.assigned_properties ?? newDriver.assigned_properties,
+    }
+    if (!payload.name || !payload.email) { setDriverMsg('Name and email are required'); return false }
     // Phase 2a: race-guard before creating the auth user, so a tier-blocked
     // attempt doesn't leave an orphaned auth account. Admin bypasses (Q3).
     if (role?.role !== 'admin') {
@@ -1710,12 +1728,12 @@ export default function CompanyAdminPortal() {
         const limit = getLimit(FEATURE_FLAGS.MAX_DRIVERS, ctx)
         const opened = offerForcedUpgrade(
           `You're at your ${limit}-driver limit. Upgrade to continue.`,
-          () => { setDriverMsg(''); createDriver() },
+          () => { setDriverMsg(''); createDriver(override) },
         )
         if (!opened) {
           setDriverMsg(`Driver limit reached (${limit}). Contact support to expand your account.`)
         }
-        return
+        return false
       }
     }
     setDriverMsg('Sending invite...')
@@ -1731,18 +1749,18 @@ export default function CompanyAdminPortal() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: newDriver.email,
+          email: payload.email,
           role: 'driver',
-          name: newDriver.name,
-          property: newDriver.assigned_properties,
-          phone: newDriver.phone || null,
-          operator_license: newDriver.operator_license || null,
+          name: payload.name,
+          property: payload.assigned_properties,
+          phone: payload.phone || null,
+          operator_license: payload.operator_license || null,
         }),
       })
       const json = await res.json()
       if (!res.ok || !json?.ok) {
         setDriverMsg('Error: ' + (json?.error || 'Failed to invite driver'))
-        return
+        return false
       }
       if (json.warning) {
         // Route returned ok:true with a non-fatal warning (e.g. drivers entity
@@ -1750,13 +1768,13 @@ export default function CompanyAdminPortal() {
         // Surface friendly copy to the CA; raw warning stays in console for
         // debugging without leaking RLS / DB error text into the UI.
         console.warn('[createDriver] route warning:', json.warning)
-        setDriverMsg(`Invite sent to ${newDriver.email}, but the driver record didn't fully save — contact support if the driver doesn't appear in your list.`)
+        setDriverMsg(`Invite sent to ${payload.email}, but the driver record didn't fully save — contact support if the driver doesn't appear in your list.`)
       } else {
-        setDriverMsg(`Invite email sent to ${newDriver.email}`)
+        setDriverMsg(`Invite email sent to ${payload.email}`)
       }
     } catch (e) {
       setDriverMsg('Error: ' + (e instanceof Error ? e.message : String(e)))
-      return
+      return false
     }
 
     // B147 3b — sync to Stripe AFTER the route's DB writes succeed. PM-track
@@ -1774,13 +1792,14 @@ export default function CompanyAdminPortal() {
     // grandfather backstop after a no-active-subscriptions audit.
     console.info('[B147-driver-sync-gated]', {
       site: 'createDriver',
-      email: newDriver.email,
+      email: payload.email,
       reason: 'per_driver retired in new 3-tier model; reconcileAtRenewal handles any grandfathered per_driver items at boundary',
     })
 
     setNewDriver({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] })
     setShowAddDriver(false)
     fetchCompanyDrivers()
+    return true
   }
 
   async function updateDriver() {
@@ -5653,15 +5672,24 @@ export default function CompanyAdminPortal() {
 
               return (
                 <div>
-                  {userMsg && msgBox(userMsg)}
-                  {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg('') })}
-                  {/* CA CRM refactor 2026-07-05 — Add User form carried inline.
-                      Uses createUser handler (verified — accepts role/property/etc at create;
-                      separate from name-only edit allowlist). */}
+                  {(userMsg || driverMsg) && msgBox(userMsg || driverMsg)}
+                  {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg(''); setDriverMsg('') })}
+                  {/* Round 2 Item A — consolidated Add User form.
+                      Role-aware: Manager shows approve-permit field;
+                      Driver shows phone + operator_license (used on tow
+                      tickets — MUST be captured up front to avoid
+                      creating a driver whose ticket prints blank).
+                      Submit branches on role:
+                        Driver → createDriver({name/email from newUser,
+                                 phone/license from newDriver, assigned
+                                 from newUser.property}). Uses the override
+                                 arg so the fresh payload never depends on
+                                 unmirrored state.
+                        Manager/LA/Resident → createUser() as before. */}
                   {showAddUser && isCA && (
                     <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', margin:'8px 0 12px' }}>
                       <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New User</p>
-                      <label style={lbl}>Full Name</label>
+                      <label style={lbl}>Full Name{newUser.role === 'driver' ? ' *' : ''}</label>
                       <input value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} placeholder="Jane Doe" style={inp} />
                       <label style={lbl}>Email *</label>
                       <input type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="user@example.com" style={inp} />
@@ -5694,9 +5722,12 @@ export default function CompanyAdminPortal() {
                         </>
                       )}
                       {newUser.role === 'driver' && (
-                        <p style={{ color:'#fbbf24', fontSize:'11px', margin:'-4px 0 10px', lineHeight:'1.4' }}>
-                          Drivers also need phone + operator license (used on tow tickets). Use the <b>+ Add Driver</b> button below for the full driver form.
-                        </p>
+                        <>
+                          <label style={lbl}>Phone</label>
+                          <input value={newDriver.phone} onChange={e => setNewDriver({ ...newDriver, phone: e.target.value })} placeholder="(713) 555-0100" style={inp} />
+                          <label style={lbl}>Operator License</label>
+                          <input value={newDriver.operator_license || ''} onChange={e => setNewDriver({ ...newDriver, operator_license: e.target.value })} placeholder="TX-DR-12345" style={inp} />
+                        </>
                       )}
                       <label style={lbl}>Property</label>
                       <select value={newUser.property} onChange={e => setNewUser({ ...newUser, property: e.target.value })} style={inp}>
@@ -5704,35 +5735,29 @@ export default function CompanyAdminPortal() {
                         {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
                       </select>
                       <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
-                        <button onClick={createUser} disabled={createUserSubmitting}
+                        <button
+                          onClick={async () => {
+                            if (newUser.role === 'driver') {
+                              const ok = await createDriver({
+                                name: newUser.name,
+                                email: newUser.email,
+                                phone: newDriver.phone,
+                                operator_license: newDriver.operator_license,
+                                assigned_properties: newUser.property ? [newUser.property] : [],
+                              })
+                              if (ok) {
+                                setNewUser({ name: '', email: '', role: 'manager', property: '' })
+                                setShowAddUser(false)
+                              }
+                            } else {
+                              await createUser()
+                            }
+                          }}
+                          disabled={createUserSubmitting}
                           style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: createUserSubmitting ? 'not-allowed' : 'pointer', opacity: createUserSubmitting ? 0.6 : 1, fontFamily:'Arial' }}>
                           {createUserSubmitting ? 'Creating…' : 'Create User'}
                         </button>
-                        <button onClick={() => { setShowAddUser(false); setUserMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
-                      </div>
-                    </div>
-                  )}
-                  {/* Add Driver + form (carried so it works under the redesign). */}
-                  {isCA && !showAddDriver && (
-                    <button onClick={() => { setShowAddDriver(true); setDriverMsg('') }}
-                      style={{ display:'block', width:'100%', padding:'10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', margin:'6px 0' }}>
-                      + Add Driver
-                    </button>
-                  )}
-                  {showAddDriver && isCA && (
-                    <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', margin:'8px 0 12px' }}>
-                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Driver</p>
-                      <label style={lbl}>Full Name *</label>
-                      <input value={newDriver.name} onChange={e => setNewDriver({ ...newDriver, name: e.target.value })} placeholder="John Smith" style={inp} />
-                      <label style={lbl}>Email *</label>
-                      <input type="email" value={newDriver.email} onChange={e => setNewDriver({ ...newDriver, email: e.target.value })} placeholder="driver@example.com" style={inp} />
-                      <label style={lbl}>Phone</label>
-                      <input value={newDriver.phone} onChange={e => setNewDriver({ ...newDriver, phone: e.target.value })} placeholder="(713) 555-0100" style={inp} />
-                      <label style={lbl}>Operator License</label>
-                      <input value={newDriver.operator_license || ''} onChange={e => setNewDriver({ ...newDriver, operator_license: e.target.value })} placeholder="TX-DR-12345" style={inp} />
-                      <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
-                        <button onClick={createDriver} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Create Driver</button>
-                        <button onClick={() => { setShowAddDriver(false); setDriverMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                        <button onClick={() => { setShowAddUser(false); setUserMsg(''); setDriverMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                       </div>
                     </div>
                   )}
