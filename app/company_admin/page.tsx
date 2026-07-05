@@ -256,6 +256,12 @@ export default function CompanyAdminPortal() {
   // (unchanged). Field allowlists locked at handler top per architect spec.
   const [editingUserEmail, setEditingUserEmail] = useState<string | null>(null)
   const [editingUserName, setEditingUserName] = useState<string>('')
+  // CA CRM — active-only carry-over (pre-flag-flip parity with legacy pills).
+  // Per-section state — matches today's per-tab behavior so toggling
+  // "show inactive" in Properties does NOT also flip People. Default = true
+  // (active-only) mirrors the legacy pill's initial state.
+  const [crmPropertiesShowActive, setCrmPropertiesShowActive] = useState<boolean>(true)
+  const [crmPeopleShowActive, setCrmPeopleShowActive] = useState<boolean>(true)
   const [showAddProperty, setShowAddProperty] = useState(false)
   // B51a: new properties can optionally land with expiration date + notes at
   // create time. PDF upload deferred to the Edit form because Storage paths
@@ -4746,9 +4752,11 @@ export default function CompanyAdminPortal() {
               const ctx = getCompanyContext()
               const showResidentQR = hasFeature(FEATURE_FLAGS.RESIDENT_PORTAL, ctx) === true
               const q = crmPropertySearch.trim().toLowerCase()
-              const filtered = properties.filter(p =>
-                !q || String(p.name || '').toLowerCase().includes(q) || String(p.address || '').toLowerCase().includes(q)
-              )
+              const filtered = properties
+                .filter(p => crmPropertiesShowActive ? p.is_active : true)
+                .filter(p =>
+                  !q || String(p.name || '').toLowerCase().includes(q) || String(p.address || '').toLowerCase().includes(q)
+                )
               const selected = properties.find(p => p.id === selectedPropertyId)
                 ?? filtered[0]
                 ?? null
@@ -4777,6 +4785,15 @@ export default function CompanyAdminPortal() {
                         <input value={crmPropertySearch} onChange={e => setCrmPropertySearch(e.target.value)}
                           placeholder="Search name, address…"
                           style={{ width:'100%', padding:'8px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', fontSize:'12px', fontFamily:'Arial', boxSizing:'border-box' }} />
+                        {/* Active-only carry-over — default true, matches legacy pill. */}
+                        <button onClick={() => setCrmPropertiesShowActive(s => !s)}
+                          style={{ marginTop:'8px', padding:'4px 10px',
+                            background: crmPropertiesShowActive ? '#1a1f2e' : '#111',
+                            color: crmPropertiesShowActive ? '#C9A227' : '#555',
+                            border:`1px solid ${crmPropertiesShowActive ? '#C9A227' : '#333'}`,
+                            borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial' }}>
+                          {crmPropertiesShowActive ? '● Active only' : '○ Show all'}
+                        </button>
                       </div>
                       <div style={{ maxHeight:'560px', overflow:'auto' }}>
                         {filtered.length === 0 ? (
@@ -5169,10 +5186,17 @@ export default function CompanyAdminPortal() {
                 LAs). Drivers get the existing setEditingDriver / updateDriver
                 widget verbatim — no new driver mutation. */}
             {manageSection === 'users' && CA_CRM_REDESIGN && (() => {
-              const managers = companyUsers.filter((u: any) => u.role === 'manager')
-              const leasingAgents = companyUsers.filter((u: any) => u.role === 'leasing_agent')
+              // Active-only carry-over — default true, matches legacy pill.
+              // Applied to each group; toggle affordance sits at section top.
+              const managers = companyUsers
+                .filter((u: any) => u.role === 'manager')
+                .filter((u: any) => crmPeopleShowActive ? u.is_active !== false : true)
+              const leasingAgents = companyUsers
+                .filter((u: any) => u.role === 'leasing_agent')
+                .filter((u: any) => crmPeopleShowActive ? u.is_active !== false : true)
               // Drivers are stored in the drivers table; we use companyDrivers state.
-              const drivers = companyDrivers || []
+              const drivers = (companyDrivers || [])
+                .filter((d: any) => crmPeopleShowActive ? d.is_active !== false : true)
 
               function CanApproveBadge({ u }: { u: any }) {
                 // CA CRM Slice 3: "Can't approve" in RED replacing "No approve" copy.
@@ -5274,6 +5298,15 @@ export default function CompanyAdminPortal() {
                 <div>
                   {userMsg && msgBox(userMsg)}
                   {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg('') })}
+                  {/* Active-only carry-over — one toggle covers all 3 groups. */}
+                  <button onClick={() => setCrmPeopleShowActive(s => !s)}
+                    style={{ marginTop:'4px', padding:'4px 12px',
+                      background: crmPeopleShowActive ? '#1a1f2e' : '#111',
+                      color: crmPeopleShowActive ? '#C9A227' : '#555',
+                      border:`1px solid ${crmPeopleShowActive ? '#C9A227' : '#333'}`,
+                      borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial' }}>
+                    {crmPeopleShowActive ? '● Active only' : '○ Show all'}
+                  </button>
 
                   {/* Group: Managers */}
                   <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'16px 0 8px', fontWeight:'bold' }}>
