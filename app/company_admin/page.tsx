@@ -5033,9 +5033,32 @@ export default function CompanyAdminPortal() {
                         <label style={lbl}>Notes</label>
                         <textarea value={newProperty.authorization_notes} maxLength={1000} onChange={e => setNewProperty({ ...newProperty, authorization_notes: e.target.value })} placeholder="Renewal terms, contact info, special conditions" style={{ ...inp, minHeight:'56px', resize:'vertical' as const }} />
                       </div>
+                      {/* Spaces v1 commit 4 — per-type reserved space pool (optional).
+                          Restored here after 4b071a6 dropped it from the new Add
+                          form. saveProperty already calls runSpacePoolGenerate
+                          off spacePoolCounts — this JSX just feeds that state.
+                          Add-only per Jose lock #3: lowering a count does NOT
+                          remove existing spaces — use Decommission for that. */}
+                      <div style={{ marginTop:'8px', padding:'10px 12px', background:'#0d1520', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                        <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 4px' }}>Reserved space pool (optional)</p>
+                        <p style={{ color:'#555', fontSize:'10px', margin:'0 0 8px', fontStyle:'italic' }}>Enter how many spaces of each type to generate. Labels auto-assign (CP-1, G-1, etc.). Rename via the Spaces tab. <strong>Add-only</strong>: lowering a number does NOT remove existing spaces — use Decommission for that.</p>
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))', gap:'8px' }}>
+                          {SPACE_TYPES.map(t => (
+                            <div key={t}>
+                              <label style={{ ...lbl, fontSize:'10px' }}>{TYPE_LABELS[t]}</label>
+                              <input type="number" min="0" value={spacePoolCounts[t]}
+                                onChange={e => setSpacePoolCounts({ ...spacePoolCounts, [t]: e.target.value })}
+                                placeholder="0" style={inp} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                       <div style={{ display:'flex', gap:'8px', marginTop:'10px' }}>
-                        <button onClick={saveProperty} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Add Property</button>
-                        <button onClick={() => { setShowAddProperty(false); setPropMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                        <button onClick={saveProperty} disabled={spacePoolSubmitting}
+                          style={{ flex:1, padding:'11px', background: spacePoolSubmitting ? '#555' : '#C9A227', color: spacePoolSubmitting ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: spacePoolSubmitting ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
+                          {spacePoolSubmitting ? 'Generating spaces…' : 'Add Property'}
+                        </button>
+                        <button onClick={() => { setShowAddProperty(false); setPropMsg(''); setSpacePoolCounts({ regular: '', carport: '', garage: '', covered: '', handicap: '', employee: '' }) }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                       </div>
                     </div>
                   )}
@@ -5256,9 +5279,32 @@ export default function CompanyAdminPortal() {
                                 <textarea value={editingProperty.authorization_notes || ''} maxLength={1000} onChange={e => setEditingProperty({ ...editingProperty, authorization_notes: e.target.value })} style={{ ...inp, minHeight:'50px', resize:'vertical' as const }} />
                                 <p style={{ color:'#555', fontSize:'10px', margin:'0', fontStyle:'italic' }}>PDF changes save instantly. Expiration + notes save on Save Changes below.</p>
                               </div>
+                              {/* Spaces v1 commit 4 — per-type reserved space pool
+                                  (additive on EDIT). Restored here after 4b071a6
+                                  dropped it from the new CRM Edit form. RPC skips
+                                  existing labels; lowered count silently no-ops.
+                                  Decrement path NOT supported — removal is per-space
+                                  Decommission via the Spaces tab. */}
+                              <div style={{ marginTop:'8px', padding:'10px 12px', background:'#161b26', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                                <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 4px' }}>Reserved space pool — add more</p>
+                                <p style={{ color:'#555', fontSize:'10px', margin:'0 0 8px', fontStyle:'italic' }}>Adds N more spaces of each type after Save. Labels auto-assign sequentially. <strong>Lowering a number does NOT remove existing spaces</strong> — use the Spaces tab&apos;s Decommission action.</p>
+                                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(110px, 1fr))', gap:'8px' }}>
+                                  {SPACE_TYPES.map(t => (
+                                    <div key={t}>
+                                      <label style={{ ...lbl, fontSize:'10px' }}>{TYPE_LABELS[t]}</label>
+                                      <input type="number" min="0" value={spacePoolCounts[t]}
+                                        onChange={e => setSpacePoolCounts({ ...spacePoolCounts, [t]: e.target.value })}
+                                        placeholder="0" style={inp} />
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
                               <div style={{ display:'flex', gap:'8px', marginTop:'12px' }}>
-                                <button onClick={updateProperty} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Save Changes</button>
-                                <button onClick={() => setEditingProperty(null)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                                <button onClick={updateProperty} disabled={spacePoolSubmitting}
+                                  style={{ flex:1, padding:'10px', background: spacePoolSubmitting ? '#555' : '#C9A227', color: spacePoolSubmitting ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor: spacePoolSubmitting ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
+                                  {spacePoolSubmitting ? 'Generating spaces…' : 'Save Changes'}
+                                </button>
+                                <button onClick={() => { setEditingProperty(null); setSpacePoolCounts({ regular: '', carport: '', garage: '', covered: '', handicap: '', employee: '' }) }} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                               </div>
                             </div>
                           )}
