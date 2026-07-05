@@ -282,9 +282,12 @@ export default function CompanyAdminPortal() {
   const [allFacilities, setAllFacilities] = useState<any[]>([])
   const [showAddFacility, setShowAddFacility] = useState(false)
   // B120: vsf_license_number captured on CA add (display via Manage>Storage list).
-  // CA edit of facilities is a pre-existing scope gap; admin portal handles edits.
+  // Slice 0 (2026-07-05): CA edit + deactivate wired.
+  // Pattern mirrors admin/page.tsx:862-878; RLS company_admin_own_facilities
+  // (FOR ALL, company-scoped) already admits both mutations at the DB layer.
   const [newFacility, setNewFacility] = useState({ name: '', address: '', phone: '', email: '', vsf_license_number: '' })
   const [facilityMsg, setFacilityMsg] = useState('')
+  const [editingFacility, setEditingFacility] = useState<any | null>(null)
   const [companyAuditLogs, setCompanyAuditLogs] = useState<any[]>([])
   const [auditDateFilter, setAuditDateFilter] = useState('week')
   const [auditSearch, setAuditSearch] = useState('')
@@ -1122,10 +1125,15 @@ export default function CompanyAdminPortal() {
   async function fetchAllFacilitiesManage() {
     // B154 — defensive .eq('company', ...) alongside company-scoped RLS.
     // Manage > Storage tab — CA's own company's facilities only.
+    // Slice 0 (2026-07-05): dropped is_active=true so deactivated
+    // facilities stay visible to CA for review/reactivate. Active/Inactive
+    // pill in the render distinguishes state. The is_active guard for
+    // downstream pickers (driver tow-ticket + violation form) lives at
+    // their fetch sites (driver/page.tsx:248) — CA visibility does not
+    // affect enforcement selection.
     const { data } = await supabase
       .from('storage_facilities')
       .select('*')
-      .eq('is_active', true)
       .ilike('company', role?.company ?? '')
       .order('name')
     setAllFacilities(data || [])
@@ -1889,6 +1897,47 @@ export default function CompanyAdminPortal() {
     setFacilityMsg('Facility added!')
     setNewFacility({ name: '', address: '', phone: '', email: '', vsf_license_number: '' })
     setShowAddFacility(false)
+    fetchAllFacilitiesManage()
+    fetchStorageFacilities()
+  }
+
+  // Slice 0 (2026-07-05): CA edit + activate/deactivate handlers.
+  // Mirrors admin/page.tsx:862-878 pattern verbatim (fields, audit
+  // actions, refetch shape) so the two portals stay behavior-consistent.
+  // RLS company_admin_own_facilities admits both UPDATE calls at the DB
+  // layer (FOR ALL, company-scoped USING + WITH CHECK).
+  //
+  // Cascade note (verified 2026-07-05): tow-ticket rows carry
+  // tow_storage_name/address/phone DENORMALIZED onto the violation row
+  // at generation time. Historical tickets stay intact when a facility
+  // deactivates. Only forward impact: driver/page.tsx:248 picker
+  // filters .eq('is_active', true) — deactivated facilities drop from
+  // the tow-ticket generation dropdown, which is the intended behavior.
+  async function saveFacility() {
+    if (!editingFacility) return
+    if (!editingFacility.name || !editingFacility.address) {
+      setFacilityMsg('Name and address are required'); return
+    }
+    const { error } = await supabase.from('storage_facilities').update({
+      name: editingFacility.name,
+      address: editingFacility.address,
+      phone: editingFacility.phone || null,
+      email: editingFacility.email || null,
+      vsf_license_number: editingFacility.vsf_license_number || null,
+    }).eq('id', editingFacility.id)
+    if (error) { setFacilityMsg('Error: ' + error.message); return }
+    await auditLog('EDIT_FACILITY', 'storage_facilities', String(editingFacility.id), editingFacility)
+    setFacilityMsg('Facility updated.')
+    setEditingFacility(null)
+    fetchAllFacilitiesManage()
+    fetchStorageFacilities()
+  }
+
+  async function toggleFacility(f: any, active: boolean) {
+    if (!active && !confirm(`Deactivate "${f.name}"?\n\nDrivers won't be able to select this facility on new tow tickets. Historical tickets referencing this facility keep their stored storage info (name/address/phone) unchanged.`)) return
+    const { error } = await supabase.from('storage_facilities').update({ is_active: active }).eq('id', f.id)
+    if (error) { setFacilityMsg('Error: ' + error.message); return }
+    await auditLog(active ? 'ACTIVATE_FACILITY' : 'DEACTIVATE_FACILITY', 'storage_facilities', String(f.id), { is_active: active })
     fetchAllFacilitiesManage()
     fetchStorageFacilities()
   }
@@ -5248,22 +5297,58 @@ export default function CompanyAdminPortal() {
                   </div>
                 )}
 
-                {allFacilities.map((f, i) => (
-                  <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
-                      <div>
-                        <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{f.name}</p>
-                        <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{f.address}</p>
-                        {f.phone && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{f.phone}</p>}
-                        {f.email && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{f.email}</p>}
-                        {f.vsf_license_number && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>VSF #: {f.vsf_license_number}</p>}
+                {allFacilities.map((f, i) => {
+                  const isEditing = editingFacility?.id === f.id
+                  if (isEditing) {
+                    return (
+                      <div key={i} style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                        <p style={{ color:'#C9A227', fontSize:'11px', margin:'0 0 10px', textTransform:'uppercase', letterSpacing:'0.08em', fontWeight:'bold' }}>Edit facility</p>
+                        <label style={lbl}>Name *</label>
+                        <input value={editingFacility.name || ''} onChange={e => setEditingFacility({ ...editingFacility, name: e.target.value })} style={inp} />
+                        <label style={lbl}>Address *</label>
+                        <input value={editingFacility.address || ''} onChange={e => setEditingFacility({ ...editingFacility, address: e.target.value })} style={inp} />
+                        <label style={lbl}>Phone</label>
+                        <input value={editingFacility.phone || ''} onChange={e => setEditingFacility({ ...editingFacility, phone: e.target.value })} style={inp} />
+                        <label style={lbl}>Email</label>
+                        <input type="email" value={editingFacility.email || ''} onChange={e => setEditingFacility({ ...editingFacility, email: e.target.value })} style={inp} />
+                        <label style={lbl}>VSF License #</label>
+                        <input value={editingFacility.vsf_license_number || ''} onChange={e => setEditingFacility({ ...editingFacility, vsf_license_number: e.target.value })} style={inp} />
+                        <div style={{ display:'flex', gap:'8px', marginTop:'10px' }}>
+                          <button onClick={saveFacility} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Save</button>
+                          <button onClick={() => { setEditingFacility(null); setFacilityMsg('') }} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                        </div>
                       </div>
-                      <span style={{ background: f.is_active ? '#1a3a1a' : '#2a1a1a', color: f.is_active ? '#4caf50' : '#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
-                        {f.is_active ? 'Active' : 'Inactive'}
-                      </span>
+                    )
+                  }
+                  return (
+                    <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:'10px' }}>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{f.name}</p>
+                          <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{f.address}</p>
+                          {f.phone && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{f.phone}</p>}
+                          {f.email && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{f.email}</p>}
+                          {f.vsf_license_number && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>VSF #: {f.vsf_license_number}</p>}
+                        </div>
+                        <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'6px', flex:'none' }}>
+                          <span style={{ background: f.is_active ? '#1a3a1a' : '#2a1a1a', color: f.is_active ? '#4caf50' : '#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>
+                            {f.is_active ? 'Active' : 'Inactive'}
+                          </span>
+                          <div style={{ display:'flex', gap:'6px' }}>
+                            <button onClick={() => setEditingFacility({ ...f })}
+                              style={{ padding:'5px 10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', fontSize:'10.5px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Edit</button>
+                            {f.is_active
+                              ? <button onClick={() => toggleFacility(f, false)}
+                                  style={{ padding:'5px 10px', background:'#2a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'5px', fontSize:'10.5px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Deactivate</button>
+                              : <button onClick={() => toggleFacility(f, true)}
+                                  style={{ padding:'5px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'5px', fontSize:'10.5px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Reactivate</button>
+                            }
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
                 {allFacilities.length === 0 && <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No storage facilities found</p></div>}
               </div>
             )}
