@@ -269,6 +269,11 @@ export default function CompanyAdminPortal() {
   // the same predicate logic — one source of truth.
   const [crmActivityPropertyFilter, setCrmActivityPropertyFilter] = useState<string>('')
   const [crmActivityDriverFilter, setCrmActivityDriverFilter] = useState<string>('')
+  // CA CRM Slice 5 — company-level logo change in the account header + Partners
+  // active-only toggle. Company logo is a new capability (per-property logo
+  // existed; company-level did not). Narrow allowlist enforced at handler top.
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string>('')
+  const [crmPartnersShowActive, setCrmPartnersShowActive] = useState<boolean>(true)
   const [showAddProperty, setShowAddProperty] = useState(false)
   // B51a: new properties can optionally land with expiration date + notes at
   // create time. PDF upload deferred to the Edit form because Storage paths
@@ -455,6 +460,15 @@ export default function CompanyAdminPortal() {
   // Phase 2a: Plan tab is standalone — fetches its own counts on activation
   // rather than depending on Manage tab's lifecycle.
   useEffect(() => { if (activeTab === 'plan') loadPlanData() }, [activeTab, selectedProperty])
+  // CA CRM Slice 5 — stale-tab reset. If flag is on and current activeTab is
+  // one of the tabs removed from the new nav ('lookup', 'qrcodes', 'plan'),
+  // route the user to 'overview' so they don't sit on an unreachable tab.
+  // Only fires when CA_CRM_REDESIGN is true — no-op on legacy nav.
+  useEffect(() => {
+    if (!CA_CRM_REDESIGN) return
+    const REMOVED_TABS = ['lookup', 'qrcodes', 'plan']
+    if (REMOVED_TABS.includes(activeTab)) setActiveTab('overview')
+  }, [activeTab])
   // B214: lazy-load guest auths on tab activation. CA scope = all active
   // company properties (cross-property; manager portal is single-property).
   useEffect(() => { if (activeTab === 'guest-auth' && properties.length > 0) refetchGuestAuths() }, [activeTab, properties])
@@ -532,6 +546,14 @@ export default function CompanyAdminPortal() {
 
     setUser(authUser)
     setRole(roleData)
+    // CA CRM Slice 5 — bootstrap companyLogoUrl for the account-header change-
+    // logo affordance (behind CA_CRM_REDESIGN). Existing useResolvedLogo covers
+    // the localStorage/resolved-display path; this is the SoT for the edit
+    // affordance so a save round-trips against the actual DB row.
+    if (roleData?.company) {
+      const { data: c } = await supabase.from('companies').select('logo_url').ilike('name', roleData.company).maybeSingle()
+      setCompanyLogoUrl((c as any)?.logo_url || '')
+    }
 
     // B66.5 commit 4.3: account_state gate (extended from B65.2 baseline).
     // Admin role has no company, so it skips the gate entirely. For
@@ -1948,6 +1970,29 @@ export default function CompanyAdminPortal() {
     fetchStorageFacilities()
   }
 
+  // CA CRM Slice 5 — company-level logo change (behind CA_CRM_REDESIGN).
+  // Narrow allowlist: {logo_url} only. RLS on companies admits CA UPDATE
+  // of own row (same pattern as update_my_company_tdlr RPC). Audit action
+  // EDIT_COMPANY_LOGO (SCREAMING_SNAKE) with old/new URL diff.
+  const COMPANY_LOGO_EDITABLE_FIELDS = ['logo_url'] as const
+  async function saveCompanyLogo(newLogoUrl: string) {
+    if (!role?.company) return
+    const patch: Record<string, any> = {}
+    for (const [k, v] of Object.entries({ logo_url: newLogoUrl })) {
+      if ((COMPANY_LOGO_EDITABLE_FIELDS as readonly string[]).includes(k)) patch[k] = v
+    }
+    if (Object.keys(patch).length === 0) return
+    const { data: current, error: readErr } = await supabase.from('companies')
+      .select('logo_url').ilike('name', role.company).maybeSingle()
+    if (readErr) { alert(`Logo update failed: ${readErr.message}`); return }
+    const oldUrl = (current as any)?.logo_url ?? null
+    if (JSON.stringify(oldUrl) === JSON.stringify(newLogoUrl)) return
+    const { error: updErr } = await supabase.from('companies').update(patch).ilike('name', role.company)
+    if (updErr) { alert(`Logo update failed: ${updErr.message}`); return }
+    await auditLog('EDIT_COMPANY_LOGO', 'companies', role.company, { old_values: { logo_url: oldUrl }, new_values: { logo_url: newLogoUrl } })
+    setCompanyLogoUrl(newLogoUrl)
+  }
+
   // Slice 0 (2026-07-05): CA edit + activate/deactivate handlers.
   // Mirrors admin/page.tsx:862-878 pattern verbatim (fields, audit
   // actions, refetch shape) so the two portals stay behavior-consistent.
@@ -3172,6 +3217,21 @@ export default function CompanyAdminPortal() {
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{role?.company || 'ShieldMyLot'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Company Admin Portal</p>
+          {/* CA CRM Slice 5 — company-level change-logo affordance in the
+              account header, behind CA_CRM_REDESIGN. Reuses existing logoField
+              (file input + preview) + uploadLogo (Storage upload). Narrow
+              allowlist enforced in saveCompanyLogo — {logo_url} only, never
+              tier / stripe / other company fields. */}
+          {CA_CRM_REDESIGN && role?.company && (
+            <div style={{ marginTop:'10px', display:'inline-block' }}>
+              {logoField(
+                companyLogoUrl,
+                url => saveCompanyLogo(url),
+                `companies/${String(role.company).toLowerCase().replace(/\s+/g,'-')}-logo`,
+                `ca_company_logo`
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
@@ -3299,6 +3359,70 @@ export default function CompanyAdminPortal() {
 
         {/* Tabs + tab content — hidden in review mode so the review screen owns focus */}
         {violationStage !== 'review' && (<>
+        {/* CA CRM Slice 5 — 6-section top nav behind CA_CRM_REDESIGN.
+            Properties · People · Partners · Activity · Insights · Billing.
+            Overview stays as its own tab (stat tiles landing surface).
+            Track-gated Partners + Activity + PM-specific tabs preserve the
+            behavior seen post-ENF_LEGACY-all-on (Legacy sees everything;
+            enforcement_only + pm_only see their track-specific set).
+            QR Codes / Plan / Bulk Upload / Plate Lookup omitted from new
+            nav (their functions re-homed elsewhere or standalone).
+            Legacy nav preserved behind `!CA_CRM_REDESIGN`. */}
+        {CA_CRM_REDESIGN && (() => {
+          const ctx = getCompanyContext()
+          const showActivity = hasFeature(FEATURE_FLAGS.VIOLATION_DOCUMENTATION, ctx) === true
+          const showPartners = hasFeature(FEATURE_FLAGS.STORAGE_FACILITY_MANAGEMENT, ctx) === true
+          const showPMExtras = hasFeature(FEATURE_FLAGS.PROPERTY_MANAGEMENT, ctx) === true
+          // Route helper — sets both activeTab and manageSection when needed.
+          const goto = (t: string, ms?: string) => {
+            setActiveTab(t)
+            if (ms) setManageSection(ms as any)
+            if (t === 'manage' && !manageLoaded) loadManageData()
+          }
+          const partnerSelected = activeTab === 'manage' && manageSection === 'storage'
+          const propertiesSelected = activeTab === 'manage' && manageSection === 'properties'
+          const peopleSelected = activeTab === 'manage' && manageSection === 'users'
+          const isSelected = (t: string) => activeTab === t
+          const styleFor = (selected: boolean) => ({
+            flex:1, padding:'8px 2px', border:'none', borderRadius:'6px',
+            cursor:'pointer', fontWeight:'bold' as const, fontSize:'11px',
+            background: selected ? '#C9A227' : 'transparent',
+            color: selected ? '#0f1117' : '#888',
+            fontFamily: 'Arial, sans-serif',
+          })
+          return (
+            <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px', flexWrap:'wrap' }}>
+              <button style={styleFor(isSelected('overview'))} onClick={() => goto('overview')}>Overview</button>
+              <button style={styleFor(propertiesSelected)} onClick={() => goto('manage', 'properties')}>Properties</button>
+              <button style={styleFor(peopleSelected)} onClick={() => goto('manage', 'users')}>People</button>
+              {showPartners && (
+                <button style={styleFor(partnerSelected)} onClick={() => goto('manage', 'storage')}>Partners</button>
+              )}
+              {showActivity && (
+                <button style={styleFor(isSelected('violations'))} onClick={() => goto('violations')}>Activity</button>
+              )}
+              {/* PM extras — visitor + guest-auth + spaces surface only on
+                  PM-track (Legacy also shows post-ENF_LEGACY-all-on). Match the
+                  existing tier==='pm_only' gate for now; a Legacy-inclusive
+                  gate could use hasFeature(VISITOR_PASS_SELF_SERVICE) but
+                  the current gate compiles behavior — leave as-is until the
+                  Bar-2 catalog-facing tier-picker rewrite. */}
+              {showPMExtras && ctx.tier === 'pm_only' && (
+                <button style={styleFor(isSelected('visitors'))} onClick={() => goto('visitors')}>Visitors</button>
+              )}
+              {showPMExtras && ctx.tier === 'pm_only' && (
+                <button style={styleFor(isSelected('guest-auth'))} onClick={() => goto('guest-auth')}>Guests</button>
+              )}
+              {showPMExtras && ctx.tier === 'pm_only' && (
+                <button style={styleFor(isSelected('spaces'))} onClick={() => goto('spaces')}>Spaces</button>
+              )}
+              <button style={styleFor(isSelected('insights'))} onClick={() => goto('insights')}>Insights</button>
+              <button style={styleFor(isSelected('billing'))} onClick={() => goto('billing')}>Billing</button>
+            </div>
+          )
+        })()}
+        {/* Legacy nav — preserved behind !CA_CRM_REDESIGN */}
+        {!CA_CRM_REDESIGN && (
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
           <button style={tab('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
           <button style={tab('lookup')} onClick={() => setActiveTab('lookup')}>Plate Lookup</button>
@@ -3364,6 +3488,7 @@ export default function CompanyAdminPortal() {
             </button>
           )}
         </div>
+        )}
 
         {/* ── OVERVIEW ── */}
         {activeTab === 'overview' && (
@@ -5384,17 +5509,21 @@ export default function CompanyAdminPortal() {
                     : leasingAgents.map((u, i) => <PeopleRow key={`la${i}`} u={u} />)
                   }
 
-                  {/* Group: Drivers (Enforcement/Legacy) — Enf-only visibility
-                      handled at track/gate level in later slice (architect note).
-                      For A1 (Legacy) drivers surface today; PM-Only tracks that
-                      have no driver workflow show an empty list which is honest. */}
-                  <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'16px 0 8px', fontWeight:'bold' }}>
-                    Drivers <span style={{ color:'#555' }}>({drivers.length})</span>
-                  </p>
-                  {drivers.length === 0
-                    ? <p style={{ color:'#555', fontSize:'12px' }}>No drivers.</p>
-                    : drivers.map((d, i) => <DriverRow key={`d${i}`} d={d} />)
-                  }
+                  {/* Group: Drivers — Slice 5 adds hasFeature(DRIVER_PORTAL)
+                      track-gate so PM-Only doesn't see an empty Drivers group.
+                      Legacy (all-on) shows drivers; Enforcement-Only (interim
+                      snapshot) shows drivers; PM-Only hides. */}
+                  {hasFeature(FEATURE_FLAGS.DRIVER_PORTAL, getCompanyContext()) === true && (
+                    <>
+                      <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'16px 0 8px', fontWeight:'bold' }}>
+                        Drivers <span style={{ color:'#555' }}>({drivers.length})</span>
+                      </p>
+                      {drivers.length === 0
+                        ? <p style={{ color:'#555', fontSize:'12px' }}>No drivers.</p>
+                        : drivers.map((d, i) => <DriverRow key={`d${i}`} d={d} />)
+                      }
+                    </>
+                  )}
                 </div>
               )
             })()}
@@ -5857,6 +5986,18 @@ export default function CompanyAdminPortal() {
                 </div>
                 {facilityMsg && msgBox(facilityMsg)}
                 {isCA && addBtn('+ Add Storage Facility', () => { setShowAddFacility(true); setFacilityMsg('') })}
+                {/* CA CRM Slice 5 — Partners active-only toggle (behind flag).
+                    Matches Properties/People carry-over: default true. */}
+                {CA_CRM_REDESIGN && (
+                  <button onClick={() => setCrmPartnersShowActive(s => !s)}
+                    style={{ marginBottom:'10px', padding:'4px 12px',
+                      background: crmPartnersShowActive ? '#1a1f2e' : '#111',
+                      color: crmPartnersShowActive ? '#C9A227' : '#555',
+                      border:`1px solid ${crmPartnersShowActive ? '#C9A227' : '#333'}`,
+                      borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial' }}>
+                    {crmPartnersShowActive ? '● Active only' : '○ Show all'}
+                  </button>
+                )}
 
                 {showAddFacility && isCA && (
                   <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
@@ -5878,7 +6019,9 @@ export default function CompanyAdminPortal() {
                   </div>
                 )}
 
-                {allFacilities.map((f, i) => {
+                {allFacilities
+                  .filter((f: any) => (CA_CRM_REDESIGN && crmPartnersShowActive) ? f.is_active : true)
+                  .map((f, i) => {
                   const isEditing = editingFacility?.id === f.id
                   if (isEditing) {
                     return (
