@@ -158,7 +158,9 @@ export default function CompanyAdminPortal() {
   const [properties, setProperties] = useState<any[]>([])
   const [selectedProperty, setSelectedProperty] = useState<any>(null)
   const [stats, setStats] = useState({ total_vehicles: 0, violations_today: 0, violations_week: 0, active_passes: 0 })
-  const [activeTab, setActiveTab] = useState('overview')
+  // CA CRM Round 2 punch-list B4 — default landing = Insights when redesign on
+  // (v4 IA: subscriber sees ops metrics first, not the empty stat grid).
+  const [activeTab, setActiveTab] = useState(CA_CRM_REDESIGN ? 'insights' : 'overview')
 
   // B66.4 — Billing tab state. billingData populated on tab activate
   // (loadBillingData); portalLoading guards the "Manage Billing" button.
@@ -1491,16 +1493,16 @@ export default function CompanyAdminPortal() {
     // Tier-conditional YES-confirm copy (PM-Only mentions billing).
     if (newUser.role === 'manager') {
       if (newManagerCanApprove === null) {
-        setUserMsg('Please select whether this manager can approve vehicle registrations.')
+        setUserMsg('Please select whether this manager can approve permits.')
         return
       }
       const targetName = newUser.name.trim() || newUser.email.trim()
       const isPmOnly = getCompanyContext().tier === 'pm_only'
       const confirmMsg = newManagerCanApprove === false
-        ? `${targetName} will not be able to approve new vehicle registrations.`
+        ? `${targetName} will not be able to approve permits.`
         : isPmOnly
-          ? `I authorize ${targetName} to approve vehicle registrations, which initiates billing at the graduated permit rate.`
-          : `I authorize ${targetName} to approve vehicle registrations.`
+          ? `Authorize ${targetName} for permit / vehicle authorization? Each approved permit is metered on your monthly bill.`
+          : `Authorize ${targetName} for permit / vehicle authorization?`
       if (!window.confirm(confirmMsg)) {
         setUserMsg('')
         return
@@ -1865,10 +1867,10 @@ export default function CompanyAdminPortal() {
     const targetName = manager.name || manager.email
     const isPmOnly = getCompanyContext().tier === 'pm_only'
     const msg = !allowed
-      ? `${targetName} will not be able to approve new vehicle registrations.`
+      ? `${targetName} will not be able to approve permits.`
       : isPmOnly
-        ? `I authorize ${targetName} to approve vehicle registrations, which initiates billing at the graduated permit rate.`
-        : `I authorize ${targetName} to approve vehicle registrations.`
+        ? `Authorize ${targetName} for permit / vehicle authorization? Each approved permit is metered on your monthly bill.`
+        : `Authorize ${targetName} for permit / vehicle authorization?`
     if (!window.confirm(msg)) return
 
     const { data, error } = await supabase.rpc('set_manager_approve_permission', {
@@ -3097,9 +3099,13 @@ export default function CompanyAdminPortal() {
   // between cards gives the browser one page per property. No new
   // deps — browser Print dialog handles the PDF export.
   function printAllPropertyQRSigns() {
+    // Bulk QR reads from the always-mounted hidden mount at the end of the
+    // main render (id="qr-bulk-<propId>"). Prior code read `qr-<propId>`,
+    // which never existed AND only mounted under the QR Codes tab —
+    // double bug. Hidden mount keeps DOM stable regardless of activeTab.
     const cards: string[] = []
     for (const prop of properties || []) {
-      const canvasId = `qr-${prop.id}`
+      const canvasId = `qr-bulk-${prop.id}`
       const container = document.getElementById(canvasId)
       const canvas = container?.querySelector('canvas') as HTMLCanvasElement | null
       if (!canvas) continue
@@ -3214,7 +3220,10 @@ export default function CompanyAdminPortal() {
             handled in mount logic; past_due is the new banner-only stage). */}
         {pastDueBanner && <PastDueBanner {...pastDueBanner} />}
 
-        <div style={{ marginBottom:'16px', textAlign:'center' }}>
+        {/* Centered branding block — HIDDEN behind CA_CRM_REDESIGN per v4 IA.
+            Company identity still surfaces via the box at :3248 below.
+            Change-logo affordance moves to Audit/Settings surface (post-launch). */}
+        {!CA_CRM_REDESIGN && <div style={{ marginBottom:'16px', textAlign:'center' }}>
           <img src={resolvedLogo} alt={role?.company || 'ShieldMyLot'}
             style={{ width:'60px', height:'60px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 8px' }}
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
@@ -3243,7 +3252,7 @@ export default function CompanyAdminPortal() {
                 }} />
             </label>
           )}
-        </div>
+        </div>}
 
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div>
@@ -3273,7 +3282,10 @@ export default function CompanyAdminPortal() {
           </button>
         </div>
 
-        {properties.length > 1 && (
+        {/* Property switcher + selected-property banner — HIDDEN behind
+            CA_CRM_REDESIGN per v4 IA (each section has its own property
+            filter; global switcher is redundant). */}
+        {!CA_CRM_REDESIGN && properties.length > 1 && (
           <div style={{ marginBottom:'14px' }}>
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Viewing Property</label>
             <select onChange={e => switchProperty(e.target.value)} value={selectedProperty?.name || ''} style={{ ...inp, marginTop:'6px', fontSize:'13px' }}>
@@ -3282,14 +3294,16 @@ export default function CompanyAdminPortal() {
           </div>
         )}
 
-        {selectedProperty && (
+        {!CA_CRM_REDESIGN && selectedProperty && (
           <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px' }}>
             <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0' }}>{selectedProperty.name}</p>
             <p style={{ color:'#aaa', fontSize:'12px', margin:'3px 0 0' }}>{selectedProperty.address || ''}{selectedProperty.pm_name ? ` · ${selectedProperty.pm_name}` : ''}</p>
           </div>
         )}
 
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px', marginBottom:'14px' }}>
+        {/* Stat tiles — HIDDEN behind CA_CRM_REDESIGN per v4 IA
+            (Insights carries the operational metrics). */}
+        {!CA_CRM_REDESIGN && <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px', marginBottom:'14px' }}>
           {[
             { label:'Vehicles', value:stats.total_vehicles, color:'#C9A227' },
             { label:'Today', value:stats.violations_today, color:'#f44336' },
@@ -3301,7 +3315,7 @@ export default function CompanyAdminPortal() {
               <p style={{ color:s.color, fontSize:'24px', fontWeight:'bold', margin:'4px 0 0', fontFamily:'Courier New' }}>{s.value}</p>
             </div>
           ))}
-        </div>
+        </div>}
 
         {/* B18 resume banner — unfinished drafts from prior tab-closes.
             B38: per-draft Review + Discard controls when N > 1; the
@@ -3508,8 +3522,9 @@ export default function CompanyAdminPortal() {
         </div>
         )}
 
-        {/* ── OVERVIEW ── */}
-        {activeTab === 'overview' && (
+        {/* ── OVERVIEW ── Behind CA_CRM_REDESIGN: lean to Plan strip only.
+             Legacy render preserved behind !flag. */}
+        {activeTab === 'overview' && !CA_CRM_REDESIGN && (
           <div>
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Recent Violations</p>
@@ -5615,15 +5630,27 @@ export default function CompanyAdminPortal() {
                       </select>
                       {newUser.role === 'manager' && (
                         <>
-                          <label style={lbl}>Approve Vehicle Registrations? *</label>
+                          <label style={lbl}>Can approve permits? *</label>
                           <select value={newManagerCanApprove === null ? '' : newManagerCanApprove ? 'yes' : 'no'}
                             onChange={e => { const v = e.target.value; setNewManagerCanApprove(v === 'yes' ? true : v === 'no' ? false : null) }}
                             style={inp}>
                             <option value="">— Select —</option>
-                            <option value="yes">Yes — manager can approve vehicles</option>
-                            <option value="no">No — manager cannot approve vehicles</option>
+                            <option value="yes">Yes — can approve permits (tied to vehicles)</option>
+                            <option value="no">No — cannot approve permits</option>
                           </select>
+                          {/* PM-Only inline billable note — track-aware.
+                              Enforcement track has no metered permit line. */}
+                          {getCompanyContext().tier === 'pm_only' && (
+                            <p style={{ color:'#888', fontSize:'11px', margin:'4px 0 0', lineHeight:'1.4' }}>
+                              Note: on PM-Only, each approved permit is metered on your monthly bill.
+                            </p>
+                          )}
                         </>
+                      )}
+                      {newUser.role === 'driver' && (
+                        <p style={{ color:'#fbbf24', fontSize:'11px', margin:'-4px 0 10px', lineHeight:'1.4' }}>
+                          Drivers also need phone + operator license (used on tow tickets). Use the <b>+ Add Driver</b> button below for the full driver form.
+                        </p>
                       )}
                       <label style={lbl}>Property</label>
                       <select value={newUser.property} onChange={e => setNewUser({ ...newUser, property: e.target.value })} style={inp}>
@@ -5689,39 +5716,75 @@ export default function CompanyAdminPortal() {
                     {crmPeopleShowActive ? '● Active only' : '○ Show all'}
                   </button>
 
-                  {/* Group: Managers */}
-                  <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'16px 0 8px', fontWeight:'bold' }}>
-                    Managers <span style={{ color:'#555' }}>({managers.length})</span>
-                  </p>
-                  {managers.length === 0
-                    ? <p style={{ color:'#555', fontSize:'12px' }}>No managers.</p>
-                    : managers.map((u, i) => <PeopleRow key={`m${i}`} u={u} />)
-                  }
+                  {/* Round 2 punch-list D — collapsible group headers.
+                      Reuses legacy collapsedCAGroups Set + toggleCAGroup
+                      handler; keys 'manager' / 'leasing_agent' / 'driver'
+                      match the legacy path so state carries across a flag
+                      toggle. Default expanded (empty Set). */}
+                  {(() => {
+                    const collapsedM = collapsedCAGroups.has('manager')
+                    return (
+                      <div style={{ marginTop:'16px' }}>
+                        <div onClick={() => toggleCAGroup('manager')}
+                          style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', cursor:'pointer', padding:'6px 4px', marginBottom:'8px' }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                            <span style={{ color:'#888', fontSize:'11px' }}>{collapsedM ? '▶' : '▼'}</span>
+                            <span style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', fontWeight:'bold' }}>
+                              Managers <span style={{ color:'#555' }}>({managers.length})</span>
+                            </span>
+                          </div>
+                        </div>
+                        {!collapsedM && (managers.length === 0
+                          ? <p style={{ color:'#555', fontSize:'12px' }}>No managers.</p>
+                          : managers.map((u: any, i: number) => <PeopleRow key={`m${i}`} u={u} />)
+                        )}
+                      </div>
+                    )
+                  })()}
 
-                  {/* Group: Leasing Agents */}
-                  <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'16px 0 8px', fontWeight:'bold' }}>
-                    Leasing agents <span style={{ color:'#555' }}>({leasingAgents.length})</span>
-                  </p>
-                  {leasingAgents.length === 0
-                    ? <p style={{ color:'#555', fontSize:'12px' }}>No leasing agents.</p>
-                    : leasingAgents.map((u, i) => <PeopleRow key={`la${i}`} u={u} />)
-                  }
+                  {(() => {
+                    const collapsedL = collapsedCAGroups.has('leasing_agent')
+                    return (
+                      <div style={{ marginTop:'16px' }}>
+                        <div onClick={() => toggleCAGroup('leasing_agent')}
+                          style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', cursor:'pointer', padding:'6px 4px', marginBottom:'8px' }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                            <span style={{ color:'#888', fontSize:'11px' }}>{collapsedL ? '▶' : '▼'}</span>
+                            <span style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', fontWeight:'bold' }}>
+                              Leasing agents <span style={{ color:'#555' }}>({leasingAgents.length})</span>
+                            </span>
+                          </div>
+                        </div>
+                        {!collapsedL && (leasingAgents.length === 0
+                          ? <p style={{ color:'#555', fontSize:'12px' }}>No leasing agents.</p>
+                          : leasingAgents.map((u: any, i: number) => <PeopleRow key={`la${i}`} u={u} />)
+                        )}
+                      </div>
+                    )
+                  })()}
 
-                  {/* Group: Drivers — Slice 5 adds hasFeature(DRIVER_PORTAL)
-                      track-gate so PM-Only doesn't see an empty Drivers group.
-                      Legacy (all-on) shows drivers; Enforcement-Only (interim
-                      snapshot) shows drivers; PM-Only hides. */}
-                  {hasFeature(FEATURE_FLAGS.DRIVER_PORTAL, getCompanyContext()) === true && (
-                    <>
-                      <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'16px 0 8px', fontWeight:'bold' }}>
-                        Drivers <span style={{ color:'#555' }}>({drivers.length})</span>
-                      </p>
-                      {drivers.length === 0
-                        ? <p style={{ color:'#555', fontSize:'12px' }}>No drivers.</p>
-                        : drivers.map((d, i) => <DriverRow key={`d${i}`} d={d} />)
-                      }
-                    </>
-                  )}
+                  {/* Group: Drivers — Slice 5 hasFeature(DRIVER_PORTAL) track-gate
+                      preserved (PM-Only hides). */}
+                  {hasFeature(FEATURE_FLAGS.DRIVER_PORTAL, getCompanyContext()) === true && (() => {
+                    const collapsedD = collapsedCAGroups.has('driver')
+                    return (
+                      <div style={{ marginTop:'16px' }}>
+                        <div onClick={() => toggleCAGroup('driver')}
+                          style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', cursor:'pointer', padding:'6px 4px', marginBottom:'8px' }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                            <span style={{ color:'#888', fontSize:'11px' }}>{collapsedD ? '▶' : '▼'}</span>
+                            <span style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', fontWeight:'bold' }}>
+                              Drivers <span style={{ color:'#555' }}>({drivers.length})</span>
+                            </span>
+                          </div>
+                        </div>
+                        {!collapsedD && (drivers.length === 0
+                          ? <p style={{ color:'#555', fontSize:'12px' }}>No drivers.</p>
+                          : drivers.map((d: any, i: number) => <DriverRow key={`d${i}`} d={d} />)
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })()}
@@ -5785,7 +5848,7 @@ export default function CompanyAdminPortal() {
                         (PM-Only mentions billing). */}
                     {newUser.role === 'manager' && (
                       <>
-                        <label style={lbl}>Approve Vehicle Registrations? *</label>
+                        <label style={lbl}>Can approve permits? *</label>
                         <select
                           value={newManagerCanApprove === null ? '' : newManagerCanApprove ? 'yes' : 'no'}
                           onChange={e => {
@@ -5794,12 +5857,12 @@ export default function CompanyAdminPortal() {
                           }}
                           style={inp}>
                           <option value="">— Select —</option>
-                          <option value="yes">Yes — manager can approve vehicles</option>
-                          <option value="no">No — manager cannot approve vehicles</option>
+                          <option value="yes">Yes — can approve permits (tied to vehicles)</option>
+                          <option value="no">No — cannot approve permits</option>
                         </select>
                         <p style={{ color:'#555', fontSize:'11px', margin:'-6px 0 12px' }}>
                           {getCompanyContext().tier === 'pm_only'
-                            ? 'PM-Only billing: approvals initiate per-permit billing. You can change this later in the user list.'
+                            ? 'PM-Only billing: each approved permit is metered on your monthly bill. You can change this later in the user list.'
                             : 'Required choice. You can change this later in the user list.'}
                         </p>
                       </>
@@ -7382,6 +7445,20 @@ export default function CompanyAdminPortal() {
           }}
         />
       )}
+
+      {/* Always-mounted hidden QR canvases for Bulk QR (Plan-strip button
+          at :6872 → printAllPropertyQRSigns → reads canvas.toDataURL()).
+          Hidden mount survives tab switches; ids are stable per-property. */}
+      <div aria-hidden style={{ position:'absolute', width:0, height:0, overflow:'hidden', opacity:0, pointerEvents:'none' }}>
+        {(properties || []).map((prop: any) => {
+          const url = `${BASE_URL}/visitor?property=${encodeURIComponent(prop.name)}`
+          return (
+            <div key={`qr-bulk-${prop.id}`} id={`qr-bulk-${prop.id}`}>
+              <QRCodeCanvas value={url} size={200} level="H" includeMargin={true} />
+            </div>
+          )
+        })}
+      </div>
     </main>
   )
 }
