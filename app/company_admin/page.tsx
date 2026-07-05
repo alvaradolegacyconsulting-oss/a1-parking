@@ -247,6 +247,9 @@ export default function CompanyAdminPortal() {
   const [manageLoaded, setManageLoaded] = useState(false)
 
   const [editingProperty, setEditingProperty] = useState<any>(null)
+  // CA CRM Slice 2: two-panel Properties CRM selected-row state (behind CA_CRM_REDESIGN).
+  const [selectedPropertyId, setSelectedPropertyId] = useState<number | null>(null)
+  const [crmPropertySearch, setCrmPropertySearch] = useState('')
   const [showAddProperty, setShowAddProperty] = useState(false)
   // B51a: new properties can optionally land with expiration date + notes at
   // create time. PDF upload deferred to the Edit form because Storage paths
@@ -4669,8 +4672,216 @@ export default function CompanyAdminPortal() {
               ))}
             </div>
 
-            {/* SECTION 1 — Properties */}
-            {manageSection === 'properties' && (
+            {/* SECTION 1 — Properties (CA CRM Slice 2) — two-panel list+detail
+                behind CA_CRM_REDESIGN. Reuses existing state + handlers:
+                  · properties (already fetched at reloadProperties)
+                  · companyUsers (managers derivable — no new fetch)
+                  · updateProperty / togglePropertyActive (existing)
+                  · printQRSign (existing)
+                  · hasFeature(RESIDENT_PORTAL) to gate the resident-signup QR
+                Old flat-list render preserved behind !CA_CRM_REDESIGN for rollback. */}
+            {manageSection === 'properties' && CA_CRM_REDESIGN && (() => {
+              const ctx = getCompanyContext()
+              const showResidentQR = hasFeature(FEATURE_FLAGS.RESIDENT_PORTAL, ctx) === true
+              const q = crmPropertySearch.trim().toLowerCase()
+              const filtered = properties.filter(p =>
+                !q || String(p.name || '').toLowerCase().includes(q) || String(p.address || '').toLowerCase().includes(q)
+              )
+              const selected = properties.find(p => p.id === selectedPropertyId)
+                ?? filtered[0]
+                ?? null
+              const selectedName = selected?.name || ''
+              // Assigned managers — derive from companyUsers by role + property.
+              // Client-side filter, zero new fetches. Comparison lowercased on
+              // both sides for robustness against case drift in user_roles.property.
+              const assignedManagers = selected
+                ? companyUsers.filter((u: any) =>
+                    (u.role === 'manager' || u.role === 'leasing_agent')
+                    && Array.isArray(u.property)
+                    && u.property.some((p: string) => String(p).toLowerCase() === String(selectedName).toLowerCase())
+                  )
+                : []
+              return (
+                <div>
+                  {propMsg && msgBox(propMsg)}
+                  <div style={{ display:'grid', gridTemplateColumns:'340px 1fr', gap:'14px' }}>
+                    {/* Left list */}
+                    <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', overflow:'hidden' }}>
+                      <div style={{ padding:'14px 14px 10px', borderBottom:'1px solid #2a2f3d' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'10px' }}>
+                          <h3 style={{ margin:0, color:'white', fontSize:'14px', fontWeight:'bold' }}>Properties</h3>
+                          <span style={{ color:'#555', fontSize:'11px' }}>{filtered.length} {filtered.length === 1 ? 'property' : 'properties'}</span>
+                        </div>
+                        <input value={crmPropertySearch} onChange={e => setCrmPropertySearch(e.target.value)}
+                          placeholder="Search name, address…"
+                          style={{ width:'100%', padding:'8px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', fontSize:'12px', fontFamily:'Arial', boxSizing:'border-box' }} />
+                      </div>
+                      <div style={{ maxHeight:'560px', overflow:'auto' }}>
+                        {filtered.length === 0 ? (
+                          <div style={{ padding:'32px 16px', textAlign:'center', color:'#555', fontSize:'12px' }}>No properties match</div>
+                        ) : filtered.map(p => {
+                          const isSel = selected?.id === p.id
+                          return (
+                            <div key={p.id} onClick={() => setSelectedPropertyId(p.id)}
+                              style={{ padding:'12px 14px', borderBottom:'1px solid #2a2f3d', cursor:'pointer',
+                                background: isSel ? '#1e2535' : 'transparent',
+                                borderLeft: isSel ? '3px solid #C9A227' : '3px solid transparent' }}>
+                              <div style={{ display:'flex', justifyContent:'space-between', gap:'8px', alignItems:'baseline' }}>
+                                <span style={{ color:'white', fontSize:'13px', fontWeight:'bold' }}>{p.name}</span>
+                                <span style={{ background: p.is_active ? '#1a3a1a' : '#2a1a1a', color: p.is_active ? '#4caf50' : '#f44336',
+                                  padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold' }}>
+                                  {p.is_active ? 'Active' : 'Inactive'}
+                                </span>
+                              </div>
+                              <div style={{ color:'#888', fontSize:'11px', marginTop:'3px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                                {p.address || 'no address'}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Right detail */}
+                    <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'18px' }}>
+                      {!selected ? (
+                        <div style={{ padding:'44px 20px', textAlign:'center', color:'#555' }}>Select a property from the list</div>
+                      ) : (
+                        <>
+                          {/* Header */}
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:'12px', marginBottom:'16px', flexWrap:'wrap' }}>
+                            <div>
+                              <h2 style={{ margin:0, color:'white', fontSize:'20px', fontWeight:'bold' }}>{selected.name}</h2>
+                              <p style={{ margin:'4px 0 0', color:'#aaa', fontSize:'12.5px' }}>
+                                {selected.address || '—'}
+                                {(selected.city || selected.state || selected.zip) && (
+                                  <span style={{ color:'#888' }}> · {[selected.city, selected.state, selected.zip].filter(Boolean).join(', ')}</span>
+                                )}
+                              </p>
+                            </div>
+                            <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
+                              <button onClick={() => setEditingProperty({ ...selected })}
+                                style={{ padding:'8px 14px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', fontSize:'12px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Edit</button>
+                              {selected.is_active
+                                ? <button onClick={() => togglePropertyActive(selected)}
+                                    style={{ padding:'8px 14px', background:'#2a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', fontSize:'12px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Deactivate</button>
+                                : <button onClick={() => togglePropertyActive(selected)}
+                                    style={{ padding:'8px 14px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'6px', fontSize:'12px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Reactivate</button>
+                              }
+                            </div>
+                          </div>
+
+                          {/* Support contact */}
+                          <div style={{ marginBottom:'14px' }}>
+                            <p style={{ color:'#C9A227', fontSize:'10.5px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Support contact</p>
+                            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px 14px', fontSize:'12.5px', color:'#aaa' }}>
+                              <div><span style={{ color:'#555' }}>PM Name:</span> {selected.pm_name || '—'}</div>
+                              <div><span style={{ color:'#555' }}>PM Phone:</span> {selected.pm_phone || '—'}</div>
+                              <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>PM Email:</span> {selected.pm_email || '—'}</div>
+                            </div>
+                          </div>
+
+                          {/* Assigned managers */}
+                          <div style={{ marginBottom:'14px' }}>
+                            <p style={{ color:'#C9A227', fontSize:'10.5px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>
+                              Assigned managers <span style={{ color:'#555', fontSize:'10.5px', textTransform:'none', letterSpacing:'normal' }}>({assignedManagers.length})</span>
+                            </p>
+                            {assignedManagers.length === 0 ? (
+                              <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>No managers assigned to this property.</p>
+                            ) : (
+                              <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+                                {assignedManagers.map((u: any, i: number) => (
+                                  <div key={i} style={{ display:'flex', gap:'8px', fontSize:'12.5px', color:'#aaa' }}>
+                                    <span style={{ fontFamily:'Courier New' }}>{u.email}</span>
+                                    <span style={{ background: u.role === 'manager' ? 'rgba(201,162,39,0.14)' : 'rgba(80,150,210,0.14)',
+                                      color: u.role === 'manager' ? '#C9A227' : '#6fb2e0',
+                                      padding:'1px 7px', borderRadius:'10px', fontSize:'10px', fontWeight:'bold' }}>{u.role}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Authorization doc status */}
+                          <div style={{ marginBottom:'14px' }}>
+                            <p style={{ color:'#C9A227', fontSize:'10.5px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Authorization document</p>
+                            {selected.authorization_pdf_path ? (
+                              <div style={{ fontSize:'12.5px', color:'#aaa' }}>
+                                <span style={{ background:'#1a3a1a', color:'#4caf50', padding:'2px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>PDF on file</span>
+                                {selected.authorization_expiration_date && (
+                                  <span style={{ marginLeft:'10px', color:'#888' }}>Expires {selected.authorization_expiration_date}</span>
+                                )}
+                                <span style={{ marginLeft:'10px', color:'#555', fontSize:'11px' }}>· use Edit to replace / remove</span>
+                              </div>
+                            ) : (
+                              <div style={{ fontSize:'12.5px', color:'#aaa' }}>
+                                <span style={{ background:'#2a1a1a', color:'#f44336', padding:'2px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>Not uploaded</span>
+                                <span style={{ marginLeft:'10px', color:'#555', fontSize:'11px' }}>· use Edit to upload the signed PDF</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* QR block */}
+                          <div>
+                            <p style={{ color:'#C9A227', fontSize:'10.5px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px', fontWeight:'bold' }}>QR codes</p>
+                            <div style={{ display:'grid', gridTemplateColumns: showResidentQR ? '1fr 1fr' : '1fr', gap:'10px' }}>
+                              {/* Visitor Pass QR — always shown */}
+                              {(() => {
+                                const visitorUrl = `${BASE_URL}/visitor?property=${encodeURIComponent(selected.name)}`
+                                const canvasId = `qr-${selected.id}`
+                                return (
+                                  <div style={{ background:'#0d1520', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', textAlign:'center' }}>
+                                    <p style={{ color:'white', fontSize:'12px', fontWeight:'bold', margin:'0 0 8px' }}>Visitor Pass</p>
+                                    <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'10px' }}>
+                                      <QRCodeCanvas value={visitorUrl} size={140} level="H" includeMargin={true} />
+                                    </div>
+                                    <button onClick={() => printQRSign(canvasId, selected.name, selected.address || '')}
+                                      style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', fontSize:'11px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Print sign</button>
+                                  </div>
+                                )
+                              })()}
+                              {/* Resident Self-Registration QR — gated on RESIDENT_PORTAL.
+                                  Correct across the ENF_LEGACY transition automatically:
+                                    · today (ENF_LEGACY under-configured): A1 shows visitor only
+                                    · after ENF_LEGACY = all-on fix: A1 also shows resident-signup
+                                    · PM tracks: always shown
+                                    · Enforcement-Only: hidden (once matrix defines it) */}
+                              {showResidentQR && (() => {
+                                const regUrl = `${BASE_URL}/register?property=${encodeURIComponent(selected.name)}&company=${encodeURIComponent(role?.company || '')}`
+                                const canvasId = `qr-reg-${selected.id}`
+                                return (
+                                  <div style={{ background:'#0d1520', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', textAlign:'center' }}>
+                                    <p style={{ color:'white', fontSize:'12px', fontWeight:'bold', margin:'0 0 8px' }}>Resident Signup</p>
+                                    <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'10px' }}>
+                                      <QRCodeCanvas value={regUrl} size={140} level="H" includeMargin={true} />
+                                    </div>
+                                    <button onClick={() => printQRSign(canvasId, `${selected.name} — Resident Signup`, 'Scan to self-register · requires manager approval')}
+                                      style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', fontSize:'11px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Print sign</button>
+                                  </div>
+                                )
+                              })()}
+                            </div>
+                          </div>
+
+                          {/* When Edit is active on this property, render the existing
+                              inline edit form here so the upload/replace widget stays
+                              wired via existing handlers. */}
+                          {editingProperty && editingProperty.id === selected.id && (
+                            <div style={{ marginTop:'16px', paddingTop:'14px', borderTop:'1px solid #2a2f3d' }}>
+                              <p style={{ color:'#C9A227', fontSize:'11px', margin:'0 0 8px', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:'bold' }}>Edit property — full form</p>
+                              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 10px' }}>Save + upload/replace/remove auth PDF via the fields below (existing behaviour).</p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* SECTION 1 (LEGACY) — Properties flat list, behind !CA_CRM_REDESIGN */}
+            {manageSection === 'properties' && !CA_CRM_REDESIGN && (
               <div>
                 {propMsg && msgBox(propMsg)}
                 {(() => {
