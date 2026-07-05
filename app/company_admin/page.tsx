@@ -262,6 +262,13 @@ export default function CompanyAdminPortal() {
   // (active-only) mirrors the legacy pill's initial state.
   const [crmPropertiesShowActive, setCrmPropertiesShowActive] = useState<boolean>(true)
   const [crmPeopleShowActive, setCrmPeopleShowActive] = useState<boolean>(true)
+  // CA CRM Slice 4 (Activity) — two new filter dimensions layered on top of
+  // the existing time × status × search filter chain. Empty string = "All"
+  // → predicate is a no-op, so the legacy tab (CA_CRM_REDESIGN=false) is
+  // unaffected. Applied inside filteredViolations() so both branches share
+  // the same predicate logic — one source of truth.
+  const [crmActivityPropertyFilter, setCrmActivityPropertyFilter] = useState<string>('')
+  const [crmActivityDriverFilter, setCrmActivityDriverFilter] = useState<string>('')
   const [showAddProperty, setShowAddProperty] = useState(false)
   // B51a: new properties can optionally land with expiration date + notes at
   // create time. PDF upload deferred to the Edit form because Storage paths
@@ -2571,6 +2578,13 @@ export default function CompanyAdminPortal() {
       }
       // 'all' — no status predicate; voided rows visible with VOIDED badge
 
+      // Slice 4 — property + driver filters (Activity CRM). Empty state
+      // = "All" so this is a no-op unless a CRM dropdown is set. Case-
+      // insensitive exact-match on the stored value; both filters ANDed
+      // with the existing time × status × search chain.
+      if (crmActivityPropertyFilter && String(v.property || '').toLowerCase() !== crmActivityPropertyFilter.toLowerCase()) return false
+      if (crmActivityDriverFilter && String(v.driver_name || '').toLowerCase() !== crmActivityDriverFilter.toLowerCase()) return false
+
       // Search predicate (existing)
       if (!violationSearch) return true
       const q = violationSearch.toLowerCase()
@@ -3665,6 +3679,50 @@ export default function CompanyAdminPortal() {
         {/* ── VIOLATIONS ── */}
         {activeTab === 'violations' && (
           <div>
+            {/* CA CRM Slice 4 — Activity CRM filter strip additions
+                (property × driver), behind CA_CRM_REDESIGN. Layered on top
+                of the existing time × status × search chain via the shared
+                filteredViolations() predicate — one source of truth. Voided-
+                only-in-all rule (Gate 4 lock) preserved by construction:
+                the existing voided predicate runs first, so a voided row
+                that would drop under status='open' still drops here even
+                if it matches the new property/driver values. All existing
+                controls (regenerate / void / view / manage media / export)
+                render unchanged below — no new mutation. */}
+            {CA_CRM_REDESIGN && (() => {
+              // Distinct properties + driver names sourced from the current
+              // violations list itself — zero new fetches, exact match with
+              // what's filterable. Sorted client-side.
+              const propOpts = Array.from(new Set(
+                violations.map((v: any) => String(v.property || '').trim()).filter(Boolean)
+              )).sort()
+              const driverOpts = Array.from(new Set(
+                violations.map((v: any) => String(v.driver_name || '').trim()).filter(Boolean)
+              )).sort()
+              const selectStyle: React.CSSProperties = {
+                flex:1, padding:'8px 10px', background:'#1e2535', border:'1px solid #3a4055',
+                borderRadius:'8px', color:'white', fontSize:'12px', fontFamily:'Arial',
+                boxSizing:'border-box' as const, cursor:'pointer',
+              }
+              return (
+                <div style={{ display:'flex', gap:'8px', marginBottom:'10px', flexWrap:'wrap' }}>
+                  <select value={crmActivityPropertyFilter} onChange={e => setCrmActivityPropertyFilter(e.target.value)} style={selectStyle}>
+                    <option value="">All properties</option>
+                    {propOpts.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <select value={crmActivityDriverFilter} onChange={e => setCrmActivityDriverFilter(e.target.value)} style={selectStyle}>
+                    <option value="">All drivers</option>
+                    {driverOpts.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                  {(crmActivityPropertyFilter || crmActivityDriverFilter) && (
+                    <button onClick={() => { setCrmActivityPropertyFilter(''); setCrmActivityDriverFilter('') }}
+                      style={{ padding:'8px 12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'8px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial' }}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
             <input value={violationSearch} onChange={e => setViolationSearch(e.target.value)}
               placeholder="Search plate, violation type, location..."
               style={{ ...inp, fontSize:'13px', padding:'11px 12px', marginBottom:'10px' }}
