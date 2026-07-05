@@ -136,6 +136,23 @@ const ENF_GROWTH: TierConfigShape = {
 }
 
 // Enforcement: legacy ──────────────────────────────────────────────────
+// ENF_LEGACY (2026-07-05 all-on flip) — Legacy is Legacy regardless of
+// track. Prior shape ({...ENF_GROWTH + 10 overrides}) had the PM flags
+// off (RESIDENT_PORTAL=false, PROPERTY_MANAGEMENT=false, etc.) inherited
+// from ENF_STARTER — which meant A1 (Enforcement-track Legacy) would
+// launch without the resident portal + PM CRM it's supposed to have.
+// The 8 additions below close that gap: all PM flags on + visitor-pass
+// caps at max. Post-flip ENF_LEGACY ≡ PM_LEGACY.
+//
+// CLONE BREAK (2026-07-05): ENF_ENFORCEMENT_ONLY (below) captures a
+// verbatim snapshot of ENF_LEGACY's pre-all-on shape so the barebones
+// tier does NOT move when we grow ENF_LEGACY. The real
+// ENF_ENFORCEMENT_ONLY barebones-PM matrix (60s / 10 photos / no
+// resident self-service / premium off) lands as its own slice BEFORE
+// public_signup_open flips.
+//
+// ENF_PREMIUM = {...ENF_LEGACY} at :163 inherits the all-on additions —
+// intended (Premium ≥ Legacy in capability floor).
 const ENF_LEGACY: TierConfigShape = {
   ...ENF_GROWTH,
   [F.MAX_PROPERTIES]: -1,
@@ -153,6 +170,16 @@ const ENF_LEGACY: TierConfigShape = {
   [F.VIDEO_UPLOADS_FULL]: true,
   [F.PRIORITY_SUPPORT]: true,
   [F.DEDICATED_ACCOUNT_MANAGER]: true,
+
+  // ── ENF_LEGACY all-on additions (2026-07-05) — 6 PM booleans + 2 visitor caps ──
+  [F.PROPERTY_MANAGEMENT]: true,
+  [F.RESIDENT_SELF_REGISTRATION]: true,
+  [F.VISITOR_PASS_SELF_SERVICE]: true,
+  [F.RESIDENT_PORTAL]: true,
+  [F.VEHICLE_REGISTRY]: true,
+  [F.MULTIPLE_MANAGERS_PER_PROPERTY]: true,
+  [F.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH]: -1,
+  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 48,
 }
 
 // Enforcement: premium ─────────────────────────────────────────────────
@@ -260,19 +287,97 @@ const PM_ENTERPRISE: TierConfigShape = {
   [F.DEDICATED_ACCOUNT_MANAGER]: true,
 }
 
-// Slice 1 Commit 5 — new 3-tier shapes. Cloned from the high tier of
-// each track (LEGACY/ENTERPRISE) so all features default-on under the
-// new model. The full hasFeature() feature-matrix definition (esp.
-// Enforcement-Only barebones-PM surface) is the NEXT slice's work;
-// this commit just provides "sane high defaults" so existing
-// hasFeature consumers don't return undefined for the new tier keys.
-const ENF_ENFORCEMENT_ONLY: TierConfigShape = { ...ENF_LEGACY }
+// ENF_ENFORCEMENT_ONLY — INTERIM (2026-07-05): verbatim snapshot of
+// ENF_LEGACY's PRE-all-on shape, spelled out explicitly so this
+// barebones tier does NOT move when ENF_LEGACY grows PM flags above.
+// Every one of the 32 flags + 6 caps captured as literal so any future
+// change to ENF_GROWTH / ENF_STARTER / ENF_LEGACY cannot silently drag
+// enf_only along.
+//
+// THIS IS NOT THE FINAL barebones matrix. The real
+// ENF_ENFORCEMENT_ONLY (60s video / 10 photos / no resident self-
+// service / premium off) lands as its own Bar-2 slice BEFORE
+// public_signup_open flips (per architect's ENF_ENFORCEMENT_ONLY
+// barebones-PM matrix work, awaiting Jose per-flag calls).
+const ENF_ENFORCEMENT_ONLY: TierConfigShape = {
+  // Numeric caps (from ENF_LEGACY pre-flip)
+  [F.MAX_PROPERTIES]: -1,
+  [F.MAX_DRIVERS]: -1,
+  [F.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH]: 0,      // inherited from ENF_STARTER (never overridden)
+  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 0,            // inherited from ENF_STARTER (never overridden)
+  [F.VIDEO_MAX_DURATION_SECONDS]: 120,
+  [F.MAX_PHOTOS_PER_VIOLATION]: -1,
+  // Enforcement-track core (from ENF_STARTER + ENF_GROWTH AI_PLATE_SCANNING override)
+  [F.AI_PLATE_SCANNING]: true,
+  [F.VIOLATION_DOCUMENTATION]: true,
+  [F.TOW_TICKET_GENERATION]: true,
+  [F.TOWING_AUTHORIZATION_UI]: true,
+  [F.DRIVER_PORTAL]: true,
+  [F.STORAGE_FACILITY_MANAGEMENT]: true,
+  [F.PHOTO_UPLOADS]: true,
+  [F.FINDMYTOWEDCAR_LINKS]: true,
+  [F.CSV_EXPORT_BASIC]: true,
+  // Cross-track core (from ENF_STARTER)
+  [F.RESIDENT_MANAGEMENT]: true,
+  [F.VISITOR_PASS_MANAGEMENT]: true,
+  [F.MANAGER_PORTAL]: true,
+  [F.AUDIT_LOGS]: true,
+  [F.CUSTOM_LOGO_BRANDING]: true,
+  [F.MOBILE_FRIENDLY_PORTALS]: true,
+  [F.BASIC_DASHBOARDS]: true,
+  [F.EMAIL_SUPPORT]: true,
+  // PM-track flags — FALSE on enforcement track (barebones — the whole
+  // point). Frozen at the pre-flip shape so the ENF_LEGACY all-on move
+  // above does not touch enf_only.
+  [F.PROPERTY_MANAGEMENT]: false,
+  [F.RESIDENT_SELF_REGISTRATION]: false,
+  [F.VISITOR_PASS_SELF_SERVICE]: false,
+  [F.RESIDENT_PORTAL]: false,
+  [F.VEHICLE_REGISTRY]: false,
+  [F.MULTIPLE_MANAGERS_PER_PROPERTY]: false,
+  [F.MANAGER_PLATE_LOOKUP]: true,   // B75 — manual plate lookup baseline utility
+  // Tiered cross-track (from ENF_GROWTH + ENF_LEGACY overrides)
+  [F.LEASING_AGENT_ROLE]: true,
+  [F.ADVANCED_ANALYTICS]: true,
+  [F.CUSTOM_DATE_RANGE_EXPORTS]: true,
+  [F.ADVANCED_PDF_REPORTS]: true,
+  [F.PRIORITY_SUPPORT]: true,
+  [F.DEDICATED_ACCOUNT_MANAGER]: true,
+  [F.BULK_UPLOAD]: true,
+  // Tiered enforcement-only (from ENF_GROWTH + ENF_LEGACY overrides)
+  [F.TOWBOOK_CSV_EXPORT]: true,
+  [F.API_ACCESS_READ_ONLY]: true,
+  [F.VIDEO_UPLOADS_LIMITED]: false,   // Legacy override kept: full only
+  [F.VIDEO_UPLOADS_FULL]: true,
+}
+
 const PM_PM_ONLY: TierConfigShape = { ...PM_ENTERPRISE }
-// LEGACY is cross-track in the new model (a company can be tier=legacy
-// with tier_type=enforcement OR tier_type=property_management). Both
-// keys must exist under their respective TierType. PM-track legacy
-// clones the high-PM tier; ENF-track legacy uses the existing ENF_LEGACY.
-const PM_LEGACY: TierConfigShape = { ...PM_ENTERPRISE }
+// PM_LEGACY (2026-07-05 all-on flip) — Legacy is Legacy regardless of
+// track. Prior shape ({...PM_ENTERPRISE}) had all Enforcement flags off
+// inherited from PM_ESSENTIAL. The 15 additions below close that gap:
+// all Enforcement core + all tiered enforcement-only + numerics at max.
+// Post-flip ENF_LEGACY ≡ PM_LEGACY.
+const PM_LEGACY: TierConfigShape = {
+  ...PM_ENTERPRISE,
+  // ── Enforcement-track core ──
+  [F.AI_PLATE_SCANNING]: true,
+  [F.VIOLATION_DOCUMENTATION]: true,
+  [F.TOW_TICKET_GENERATION]: true,
+  [F.TOWING_AUTHORIZATION_UI]: true,
+  [F.DRIVER_PORTAL]: true,
+  [F.STORAGE_FACILITY_MANAGEMENT]: true,
+  [F.PHOTO_UPLOADS]: true,
+  [F.FINDMYTOWEDCAR_LINKS]: true,
+  [F.CSV_EXPORT_BASIC]: true,
+  // ── Tiered enforcement-only ──
+  [F.TOWBOOK_CSV_EXPORT]: true,
+  [F.API_ACCESS_READ_ONLY]: true,
+  [F.VIDEO_UPLOADS_FULL]: true,   // (VIDEO_UPLOADS_LIMITED stays inherited-false from PM chain)
+  // ── Numeric caps ──
+  [F.MAX_DRIVERS]: -1,
+  [F.VIDEO_MAX_DURATION_SECONDS]: 120,
+  [F.MAX_PHOTOS_PER_VIOLATION]: -1,
+}
 
 export const TIER_CONFIG: Record<TierType, Record<string, TierConfigShape>> = {
   enforcement: {
