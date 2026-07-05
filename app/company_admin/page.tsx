@@ -40,7 +40,7 @@ import { TIER_DISPLAY_NAME, TIER_PRICING, TIER_CONFIG, type TierType } from '../
 // CA CRM redesign (Slice 1+) — mirrors PM_CRM_ENABLED precedent from the
 // resident CRM arc. Flipped true once Slices 1-5 land + UAT clears. Old
 // tabs stay behind `!CA_CRM_REDESIGN` so we can rollback without a revert.
-const CA_CRM_REDESIGN = false
+const CA_CRM_REDESIGN = true
 // B65.2: account_state gate (spec §3.4) — defense in depth with login dispatch.
 // B66.5 commit 4.3: extended for past_due banner + suspended redirect era shift.
 import { gateAccountState, AccountState } from '../lib/account-state'
@@ -460,6 +460,9 @@ export default function CompanyAdminPortal() {
   // Phase 2a: Plan tab is standalone — fetches its own counts on activation
   // rather than depending on Manage tab's lifecycle.
   useEffect(() => { if (activeTab === 'plan') loadPlanData() }, [activeTab, selectedProperty])
+  // CA CRM Recovery — load plan data on Overview when the flag is on,
+  // so the inline Plan strip surfaces its metric numbers.
+  useEffect(() => { if (activeTab === 'overview' && CA_CRM_REDESIGN) loadPlanData() }, [activeTab, selectedProperty])
   // CA CRM Slice 5 — stale-tab reset. If flag is on and current activeTab is
   // one of the tabs removed from the new nav ('lookup', 'qrcodes', 'plan'),
   // route the user to 'overview' so they don't sit on an unreachable tab.
@@ -3217,20 +3220,28 @@ export default function CompanyAdminPortal() {
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{role?.company || 'ShieldMyLot'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Company Admin Portal</p>
-          {/* CA CRM Slice 5 — company-level change-logo affordance in the
-              account header, behind CA_CRM_REDESIGN. Reuses existing logoField
-              (file input + preview) + uploadLogo (Storage upload). Narrow
-              allowlist enforced in saveCompanyLogo — {logo_url} only, never
-              tier / stripe / other company fields. */}
+          {/* CA CRM Recovery — company-level change-logo affordance as a
+              small overlay on the avatar (matches v4 mockup — "Change logo"
+              chip on hover / click). Wraps a hidden file input; on file
+              select, uploads via uploadLogo → saveCompanyLogo. Narrow
+              allowlist enforced in saveCompanyLogo — {logo_url} only. */}
           {CA_CRM_REDESIGN && role?.company && (
-            <div style={{ marginTop:'10px', display:'inline-block' }}>
-              {logoField(
-                companyLogoUrl,
-                url => saveCompanyLogo(url),
-                `companies/${String(role.company).toLowerCase().replace(/\s+/g,'-')}-logo`,
-                `ca_company_logo`
-              )}
-            </div>
+            <label htmlFor="ca-crm-logo-input" style={{
+              display:'inline-block', marginTop:'8px', padding:'4px 10px',
+              fontSize:'11px', fontWeight:'bold', color:'#C9A227',
+              background:'#1e2535', border:'1px solid #C9A227', borderRadius:'12px',
+              cursor:'pointer', fontFamily:'Arial',
+            }}>
+              Change logo
+              <input id="ca-crm-logo-input" type="file" accept="image/*"
+                style={{ display:'none' }}
+                onChange={async e => {
+                  const f = e.target.files?.[0]
+                  if (!f) return
+                  await uploadLogo(f, `companies/${String(role.company).toLowerCase().replace(/\s+/g,'-')}-logo`, `ca_company_logo`, (url: string) => saveCompanyLogo(url))
+                  e.target.value = ''
+                }} />
+            </label>
           )}
         </div>
 
@@ -3238,7 +3249,9 @@ export default function CompanyAdminPortal() {
           <div>
             <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>{role?.company || 'Company Admin'}</p>
             <p style={{ color:'#aaa', fontSize:'11px', margin:'2px 0 0' }}>{user?.email}</p>
-            {(() => {
+            {/* Tier badges — HIDDEN behind CA_CRM_REDESIGN per v4 IA
+                (Plan strip carries tier). */}
+            {!CA_CRM_REDESIGN && (() => {
               const tierType = typeof window !== 'undefined' ? localStorage.getItem('company_tier_type') : null
               const tier = typeof window !== 'undefined' ? localStorage.getItem('company_tier') : null
               if (!tierType && !tier) return null
@@ -3418,6 +3431,11 @@ export default function CompanyAdminPortal() {
               )}
               <button style={styleFor(isSelected('insights'))} onClick={() => goto('insights')}>Insights</button>
               <button style={styleFor(isSelected('billing'))} onClick={() => goto('billing')}>Billing</button>
+              {/* Audit — 8th section per Jose's placement lock. Routes to
+                  the existing audit-log render (activeTab='manage' +
+                  manageSection='auditlog') so no content duplication. */}
+              <button style={styleFor(activeTab === 'manage' && manageSection === 'auditlog')}
+                onClick={() => { goto('manage', 'auditlog'); fetchCompanyAuditLogs() }}>Audit</button>
             </div>
           )
         })()}
@@ -4894,7 +4912,12 @@ export default function CompanyAdminPortal() {
         {/* ── MANAGE ── */}
         {activeTab === 'manage' && (
           <div>
-            {/* Sub-tab bar */}
+            {/* Sub-tab bar — HIDDEN when CA_CRM_REDESIGN is on. The v4 IA
+                surfaces Properties/People/Partners as top-level sections;
+                Manage internal state machine still routes content behind
+                the scenes (via manageSection), but the 6-button sub-nav
+                chrome disappears so the composed portal matches v4. */}
+            {!CA_CRM_REDESIGN && (
             <div style={{ display:'flex', gap:'3px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
               {(['properties', 'users', 'drivers', 'storage', 'company', 'auditlog'] as const).map(s => (
                 <button key={s}
@@ -4922,6 +4945,7 @@ export default function CompanyAdminPortal() {
                 </button>
               ))}
             </div>
+            )}
 
             {/* SECTION 1 — Properties (CA CRM Slice 2) — two-panel list+detail
                 behind CA_CRM_REDESIGN. Reuses existing state + handlers:
@@ -6589,8 +6613,11 @@ export default function CompanyAdminPortal() {
           </div>
         )}
 
-        {/* ── PLAN STRIP (CA CRM Slice 1, behind CA_CRM_REDESIGN) ── */}
-        {activeTab === 'plan' && CA_CRM_REDESIGN && (() => {
+        {/* ── PLAN STRIP (CA CRM Slice 1) — surfaces inside Overview when
+              CA_CRM_REDESIGN is on (per v4 IA: Overview = stat tiles +
+              Plan strip inline at top). Legacy 'plan' tab render preserved
+              behind !CA_CRM_REDESIGN below. */}
+        {activeTab === 'overview' && CA_CRM_REDESIGN && (() => {
           const ctx = getCompanyContext()
           const tierKey = String(ctx.tier || 'legacy')
           const tierTypeKey = (ctx.tier_type === 'pm' ? 'property_management' : ctx.tier_type) as 'enforcement' | 'property_management'
@@ -7022,6 +7049,45 @@ export default function CompanyAdminPortal() {
                   )}
                 </div>
               </>
+            )}
+            {/* CA CRM Recovery — Company info panel folded into Billing
+                when CA_CRM_REDESIGN is on (per Jose's placement lock).
+                TDLR license # is company-identity metadata that fits
+                billing/Stripe/tier alongside. Update via existing
+                update_my_company_tdlr RPC. Only shown behind the flag. */}
+            {CA_CRM_REDESIGN && (
+              <div style={{ marginTop:'24px', paddingTop:'16px', borderTop:'1px solid #2a2f3d' }}>
+                <p style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold', margin:'0 0 6px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Company info</p>
+                <p style={{ color:'#888', fontSize:'11.5px', margin:'0 0 12px', lineHeight:1.5 }}>
+                  TDLR license number appears on tow tickets your team issues. Leave blank if not applicable.
+                </p>
+                {companyTdlrMsg && msgBox(companyTdlrMsg)}
+                <label style={lbl}>TDLR License Number (optional)</label>
+                <input value={companyTdlrInput} onChange={e => setCompanyTdlrInput(e.target.value)}
+                  onFocus={async () => {
+                    if (!companyTdlrLoaded && role?.company) {
+                      const { data: c } = await supabase.from('companies').select('tdlr_license_number').ilike('name', role.company).maybeSingle()
+                      setCompanyTdlrInput((c?.tdlr_license_number as string | null) || '')
+                      setCompanyTdlrLoaded(true)
+                    }
+                  }}
+                  placeholder="Texas tow-company license #" style={inp} />
+                <button onClick={async () => {
+                  setCompanyTdlrSaving(true); setCompanyTdlrMsg('')
+                  const { data, error } = await supabase.rpc('update_my_company_tdlr', { p_tdlr: companyTdlrInput })
+                  setCompanyTdlrSaving(false)
+                  if (error) { setCompanyTdlrMsg('Error: ' + error.message); return }
+                  const result = data as { ok?: boolean; tdlr_license_number?: string | null; error?: string }
+                  if (!result?.ok) { setCompanyTdlrMsg('Error: ' + (result?.error || 'unknown')); return }
+                  setCompanyTdlrInput(result.tdlr_license_number || '')
+                  setCompanyTdlrMsg('Saved.')
+                }} disabled={companyTdlrSaving}
+                  style={{ marginTop:12, padding:'10px 16px', background: companyTdlrSaving ? '#2a2f3d' : '#C9A227',
+                    color: companyTdlrSaving ? '#555' : '#0f1117', fontWeight:'bold', fontSize:'12px',
+                    border:'none', borderRadius:'8px', cursor: companyTdlrSaving ? 'not-allowed' : 'pointer', fontFamily:'Arial' }}>
+                  {companyTdlrSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
             )}
           </div>
         )}
