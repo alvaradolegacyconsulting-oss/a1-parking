@@ -35,7 +35,12 @@ async function callSyncOnAdd(
     return { ok: false, reason: (e as Error).message }
   }
 }
-import { TIER_DISPLAY_NAME, type TierType } from '../lib/tier-config'
+import { TIER_DISPLAY_NAME, TIER_PRICING, TIER_CONFIG, type TierType } from '../lib/tier-config'
+
+// CA CRM redesign (Slice 1+) — mirrors PM_CRM_ENABLED precedent from the
+// resident CRM arc. Flipped true once Slices 1-5 land + UAT clears. Old
+// tabs stay behind `!CA_CRM_REDESIGN` so we can rollback without a revert.
+const CA_CRM_REDESIGN = false
 // B65.2: account_state gate (spec §3.4) — defense in depth with login dispatch.
 // B66.5 commit 4.3: extended for past_due banner + suspended redirect era shift.
 import { gateAccountState, AccountState } from '../lib/account-state'
@@ -208,6 +213,10 @@ export default function CompanyAdminPortal() {
   // per property. Populated by loadPlanData() when the Plan tab activates.
   const [visitorPassesThisMonth, setVisitorPassesThisMonth] = useState<Record<string, number>>({})
   const [planLoading, setPlanLoading] = useState(false)
+  // CA CRM Slice 1: approved-permit count for the Plan strip permit tile
+  // (PM-track only). Loaded in loadPlanData; same predicate as
+  // countActiveRecords(). Enforcement-track tier renders "—" for this tile.
+  const [approvedPermitCount, setApprovedPermitCount] = useState<number>(0)
 
   const [storageFacilities, setStorageFacilities] = useState<any[]>([])
   const [ticketTarget, setTicketTarget] = useState<any>(null)
@@ -1118,6 +1127,22 @@ export default function CompanyAdminPortal() {
       setVisitorPassesThisMonth(counts)
     } else {
       setVisitorPassesThisMonth({})
+    }
+    // CA CRM Slice 1: approved-permit count for the Plan strip (PM-track
+    // only). Same predicate as countActiveRecords() at
+    // stripe-mutations.ts:207-210 so the CA surface matches the meter's
+    // input. Not billing-framed here (see [[feedback_billing_is_subscriber_only]]:
+    // metered/billed phrasing owned by Slice 7 Part B; this tile just
+    // shows the operational count with an "Approved permits" label).
+    if (propNames.length > 0) {
+      const { count } = await supabase.from('vehicles')
+        .select('id', { count: 'exact', head: true })
+        .in('property', propNames)
+        .eq('status', 'active')
+        .eq('is_active', true)
+      setApprovedPermitCount(count ?? 0)
+    } else {
+      setApprovedPermitCount(0)
     }
     setPlanLoading(false)
   }
@@ -2928,6 +2953,53 @@ export default function CompanyAdminPortal() {
         <div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">Required before parking</p><p style="color:#856404;font-size:11px">Valid up to 24 hours · No app download needed</p></div>
         <div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner's expense</p></div>
       </div>
+      <script>window.onload=function(){window.print()}</script>
+    </body></html>`)
+    tw.document.close()
+  }
+
+  // CA CRM Slice 1: bulk print all per-property QR signs into a single
+  // multi-page print doc. Reuses each per-property QR canvas dataURL
+  // exactly like the single-QR printQRSign above; page-break-after
+  // between cards gives the browser one page per property. No new
+  // deps — browser Print dialog handles the PDF export.
+  function printAllPropertyQRSigns() {
+    const cards: string[] = []
+    for (const prop of properties || []) {
+      const canvasId = `qr-${prop.id}`
+      const container = document.getElementById(canvasId)
+      const canvas = container?.querySelector('canvas') as HTMLCanvasElement | null
+      if (!canvas) continue
+      const dataUrl = canvas.toDataURL('image/png')
+      cards.push(`
+        <div class="card">
+          <div class="hdr">
+            <p style="color:#C9A227;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:.1em">${role?.company || 'Visitor Parking'}</p>
+          </div>
+          <p style="font-size:22px;font-weight:bold;color:#111;margin-bottom:4px">Visitor Parking</p>
+          <p style="font-size:14px;color:#333;margin-bottom:20px">Scan to get your parking pass</p>
+          <img src="${dataUrl}" style="width:200px;height:200px;display:block;margin:0 auto 16px" />
+          <p style="font-size:15px;font-weight:bold;color:#111;margin-bottom:4px">${prop.name}</p>
+          <p style="font-size:11px;color:#555;margin-bottom:0">${prop.address || ''}</p>
+          <div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">Required before parking</p><p style="color:#856404;font-size:11px">Valid up to 24 hours · No app download needed</p></div>
+          <div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner's expense</p></div>
+        </div>
+      `)
+    }
+    if (cards.length === 0) return
+    const tw = window.open('', '_blank')
+    if (!tw) return
+    tw.document.write(`<!DOCTYPE html><html><head><title>All Property QR Signs</title><style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:Arial,sans-serif;background:white;padding:20px}
+      .card{max-width:380px;width:100%;text-align:center;border:3px solid #C9A227;border-radius:16px;padding:32px;margin:20px auto;page-break-after:always}
+      .card:last-of-type{page-break-after:auto}
+      .hdr{background:#0f1117;border-radius:8px;padding:12px;margin-bottom:20px}
+      .note{background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px;margin-top:14px}
+      .warn{background:#f8d7da;border:1px solid #f5c6cb;border-radius:6px;padding:10px;margin-top:10px}
+      @media print{body{padding:0}}
+    </style></head><body>
+      ${cards.join('')}
       <script>window.onload=function(){window.print()}</script>
     </body></html>`)
     tw.document.close()
@@ -5865,8 +5937,111 @@ export default function CompanyAdminPortal() {
           </div>
         )}
 
-        {/* ── PLAN (Phase 2a) ── */}
-        {activeTab === 'plan' && (() => {
+        {/* ── PLAN STRIP (CA CRM Slice 1, behind CA_CRM_REDESIGN) ── */}
+        {activeTab === 'plan' && CA_CRM_REDESIGN && (() => {
+          const ctx = getCompanyContext()
+          const tierKey = String(ctx.tier || 'legacy')
+          const tierTypeKey = (ctx.tier_type === 'pm' ? 'property_management' : ctx.tier_type) as 'enforcement' | 'property_management'
+          const isPM = tierTypeKey === 'property_management'
+          const isLegacy = tierKey === 'legacy'
+          const propertyCount = properties.length
+
+          // Plan label — track name, plus "Legacy" suffix when applicable.
+          const trackLabel = isPM ? 'Property Management' : 'Enforcement'
+          const planLabel = isLegacy ? `${trackLabel} · Legacy` : trackLabel
+
+          // Base + per-property — catalog tiers only. Legacy defers to
+          // Stripe portal for the real number ("Tailored rate").
+          const baseMonthly = TIER_PRICING[tierTypeKey]?.[tierKey] ?? 0
+          const perPropertyRate = isPM ? 20 : 15  // matches platform_settings seed for pm_only / enforcement_only
+          const catalogTotal = baseMonthly + perPropertyRate * propertyCount
+
+          // Entitlements — driven by TIER_CONFIG; expandable "What's included".
+          const tierCfg = TIER_CONFIG[tierTypeKey]?.[tierKey]
+
+          return (
+            <div style={{ display:'flex', flexDirection:'column', gap:'14px' }}>
+              {/* Plan label header */}
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'18px 20px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:'14px', flexWrap:'wrap' }}>
+                  <div>
+                    <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.1em', fontWeight:'bold', margin:'0 0 6px' }}>Your plan</p>
+                    <h2 style={{ color:'white', fontSize:'22px', margin:'0', fontWeight:'bold' }}>{planLabel}</h2>
+                    {isLegacy
+                      ? <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>Tailored rate · see Stripe billing portal for the current amount.</p>
+                      : <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>
+                          ${baseMonthly}/mo base + ${perPropertyRate}/property × {propertyCount} = <b style={{ color:'#C9A227' }}>${catalogTotal}/mo</b>
+                          <span style={{ color:'#555', fontSize:'11px', marginLeft:'6px' }}>* plus applicable taxes</span>
+                        </p>
+                    }
+                  </div>
+                  <button onClick={openBillingPortal} disabled={portalLoading}
+                    style={{ padding:'10px 16px', background: portalLoading ? '#2a2f3d' : '#C9A227', color: portalLoading ? '#555' : '#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'8px', cursor: portalLoading ? 'not-allowed' : 'pointer', fontFamily:'Arial', whiteSpace:'nowrap' }}>
+                    {portalLoading ? 'Opening Stripe portal…' : 'Manage billing in Stripe →'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 3-tile stat strip: properties · permits (PM only) · all-property QR */}
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'10px' }}>
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                  <div style={{ color:'#C9A227', fontSize:'22px', fontWeight:800, lineHeight:1 }}>{propertyCount}</div>
+                  <div style={{ color:'#aaa', fontSize:'11.5px', marginTop:'5px' }}>Properties</div>
+                </div>
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                  <div style={{ color: isPM ? '#C9A227' : '#555', fontSize:'22px', fontWeight:800, lineHeight:1 }}>
+                    {isPM ? approvedPermitCount : '—'}
+                  </div>
+                  <div style={{ color:'#aaa', fontSize:'11.5px', marginTop:'5px' }}>
+                    Approved permits {isPM && <span style={{ color:'#555', fontSize:'10.5px' }}>· metered</span>}
+                  </div>
+                </div>
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', display:'flex', flexDirection:'column', justifyContent:'space-between' }}>
+                  <div style={{ color:'#aaa', fontSize:'11.5px' }}>Bulk QR signs</div>
+                  <button onClick={printAllPropertyQRSigns} disabled={propertyCount === 0}
+                    style={{ padding:'8px 12px', background: propertyCount === 0 ? '#2a2f3d' : '#1e2535', color: propertyCount === 0 ? '#555' : '#C9A227', border:`1px solid ${propertyCount === 0 ? '#3a4055' : '#C9A227'}`, borderRadius:'6px', cursor: propertyCount === 0 ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                    All-property QR ↓
+                  </button>
+                </div>
+              </div>
+
+              {/* "What's included" expandable */}
+              <details style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px 18px' }}>
+                <summary style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold', cursor:'pointer', textTransform:'uppercase', letterSpacing:'0.06em' }}>
+                  What&apos;s included
+                </summary>
+                <div style={{ marginTop:'12px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px 16px', fontSize:'12px', color:'#aaa' }}>
+                  {tierCfg && Object.entries(tierCfg).map(([flag, val]) => {
+                    const on = val === true || (typeof val === 'number' && val !== 0)
+                    if (!on && typeof val !== 'number') return null
+                    const label = String(flag).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+                    const display = typeof val === 'number'
+                      ? (val === -1 ? 'unlimited' : String(val))
+                      : ''
+                    return (
+                      <div key={flag} style={{ display:'flex', justifyContent:'space-between', gap:'8px' }}>
+                        <span>{label}</span>
+                        <span style={{ color:'#C9A227' }}>{display || '✓'}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </details>
+
+              {/* Retain the Custom-overrides advisory chip */}
+              {ctx.proposal_code?.feature_overrides && Object.keys(ctx.proposal_code.feature_overrides).length > 0 && (
+                <div style={{ background:'#1a1400', border:'1px solid rgba(201,162,39,0.3)', borderRadius:'10px', padding:'11px 14px' }}>
+                  <p style={{ color:'#C9A227', fontSize:'11.5px', margin:'0' }}>
+                    ⚙ Custom proposal-code overrides active. Some limits/features above reflect those overrides.
+                  </p>
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* ── PLAN (Phase 2a) — LEGACY TAB, kept behind !CA_CRM_REDESIGN for rollback ── */}
+        {activeTab === 'plan' && !CA_CRM_REDESIGN && (() => {
           // B140 Item 2 — empty-localStorage detection. getCompanyContext()
           // returns a 'legacy'/'enforcement' fallback when localStorage
           // keys are missing (deliberate — refactoring that fallback is
