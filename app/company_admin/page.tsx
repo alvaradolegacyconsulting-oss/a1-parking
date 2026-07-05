@@ -250,6 +250,12 @@ export default function CompanyAdminPortal() {
   // CA CRM Slice 2: two-panel Properties CRM selected-row state (behind CA_CRM_REDESIGN).
   const [selectedPropertyId, setSelectedPropertyId] = useState<number | null>(null)
   const [crmPropertySearch, setCrmPropertySearch] = useState('')
+  // CA CRM Slice 3: People section — manager/leasing_agent inline name-edit
+  // state (Option A+). Narrow allowlist enforced at saveUserName; the driver
+  // Edit affordance routes through the existing setEditingDriver / updateDriver
+  // (unchanged). Field allowlists locked at handler top per architect spec.
+  const [editingUserEmail, setEditingUserEmail] = useState<string | null>(null)
+  const [editingUserName, setEditingUserName] = useState<string>('')
   const [showAddProperty, setShowAddProperty] = useState(false)
   // B51a: new properties can optionally land with expiration date + notes at
   // create time. PDF upload deferred to the Edit form because Storage paths
@@ -1968,6 +1974,62 @@ export default function CompanyAdminPortal() {
     await auditLog(active ? 'ACTIVATE_FACILITY' : 'DEACTIVATE_FACILITY', 'storage_facilities', String(f.id), { is_active: active })
     fetchAllFacilitiesManage()
     fetchStorageFacilities()
+  }
+
+  // CA CRM Slice 3 (Option A+) — manager/leasing_agent name-only edit.
+  // Narrow allowlist enforced at the top per architect + the resident-edit
+  // hotfix pattern. RLS company_admin_update_users already admits the
+  // UPDATE with role pinned to peer values by WITH CHECK, so no policy
+  // change needed. SELECT reads the exact allowlist to avoid the phantom-
+  // column class of bug that broke resident-edit before B60 hotfix.
+  //
+  // FIELD ALLOWLIST — LOCKED:
+  //   ✓ name
+  //   ⛔ email (identity)
+  //   ⛔ role (security — own path)
+  //   ⛔ company (scope-pinned by RLS anyway)
+  //   ⛔ property (own affordance elsewhere)
+  //   ⛔ is_active (own Deactivate/Activate path)
+  //   ⛔ can_approve_vehicles (own toggle)
+  const USER_NAME_EDIT_FIELDS = ['name'] as const
+  type UserNameEditField = typeof USER_NAME_EDIT_FIELDS[number]
+
+  async function saveUserName(email: string, patch: Partial<Record<UserNameEditField, any>>) {
+    const clean: Record<string, any> = {}
+    for (const [k, v] of Object.entries(patch)) {
+      if ((USER_NAME_EDIT_FIELDS as readonly string[]).includes(k)) clean[k] = v
+    }
+    if (Object.keys(clean).length === 0) return
+    const emailLc = email.toLowerCase()
+    // Handler-shape SELECT — reads the EXACT allowlist (name only). Any
+    // phantom column in the allowlist would fail here with 42703 before
+    // any write — same defence as the resident-edit hotfix.
+    const { data: current, error: readErr } = await supabase.from('user_roles')
+      .select('email, name')
+      .ilike('email', emailLc)
+      .maybeSingle()
+    if (readErr || !current) {
+      alert(`Edit failed: could not read current user: ${readErr?.message ?? 'not found'}`)
+      return
+    }
+    const oldVals: Record<string, any> = {}
+    const newVals: Record<string, any> = {}
+    for (const k of Object.keys(clean)) {
+      const oldV = (current as any)[k]
+      const newV = clean[k]
+      if (JSON.stringify(oldV) !== JSON.stringify(newV)) {
+        oldVals[k] = oldV
+        newVals[k] = newV
+      }
+    }
+    if (Object.keys(newVals).length === 0) return  // empty diff → no-op
+    const { error: updErr } = await supabase.from('user_roles').update(clean).ilike('email', emailLc)
+    if (updErr) {
+      alert(`Edit failed: ${updErr.message}`)
+      return
+    }
+    await auditLog('EDIT_USER', 'user_roles', emailLc, { old_values: oldVals, new_values: newVals })
+    fetchCompanyUsers()
   }
 
   async function toggleUserActive(email: string, activate: boolean) {
@@ -5101,8 +5163,153 @@ export default function CompanyAdminPortal() {
               </div>
             )}
 
-            {/* SECTION 2 — Users */}
-            {manageSection === 'users' && (
+            {/* SECTION 2 (CA CRM Slice 3) — People, grouped Managers /
+                Leasing Agents / Drivers. Behind CA_CRM_REDESIGN. Pure
+                presentation-layer reorg + one narrow name-edit (managers/
+                LAs). Drivers get the existing setEditingDriver / updateDriver
+                widget verbatim — no new driver mutation. */}
+            {manageSection === 'users' && CA_CRM_REDESIGN && (() => {
+              const managers = companyUsers.filter((u: any) => u.role === 'manager')
+              const leasingAgents = companyUsers.filter((u: any) => u.role === 'leasing_agent')
+              // Drivers are stored in the drivers table; we use companyDrivers state.
+              const drivers = companyDrivers || []
+
+              function CanApproveBadge({ u }: { u: any }) {
+                // CA CRM Slice 3: "Can't approve" in RED replacing "No approve" copy.
+                // Existing setManagerApprovePermission handler unchanged.
+                if (u.role !== 'manager') return null
+                const can = !!u.can_approve_vehicles
+                return (
+                  <button onClick={() => setManagerApprovePermission(u, !can)}
+                    title={can ? 'Approval authority GRANTED. Click to revoke.' : 'Approval authority NOT granted. Click to grant.'}
+                    style={{
+                      background: can ? '#1a3a1a' : '#3a1a1a',
+                      color: can ? '#4caf50' : '#f44336',
+                      border: `1px solid ${can ? '#2e7d32' : '#b71c1c'}`,
+                      padding:'2px 8px', borderRadius:'8px', fontSize:'10px',
+                      fontWeight:'bold', cursor:'pointer', fontFamily:'Arial',
+                    }}>
+                    {can ? '✓ Can approve' : "Can't approve"}
+                  </button>
+                )
+              }
+
+              function PeopleRow({ u }: { u: any }) {
+                const isDriver = u.role === 'driver'
+                const isMgrOrLA = u.role === 'manager' || u.role === 'leasing_agent'
+                const active = u.is_active !== false
+                const isEditingName = isMgrOrLA && editingUserEmail === u.email
+                return (
+                  <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', gap:'10px', flexWrap:'wrap', alignItems:'flex-start' }}>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        {isEditingName ? (
+                          <div style={{ display:'flex', gap:'6px', alignItems:'center', marginBottom:'4px' }}>
+                            <input value={editingUserName} onChange={e => setEditingUserName(e.target.value)}
+                              style={{ flex:1, background:'#1e2535', border:'1px solid #3a4055', borderRadius:'5px', padding:'5px 8px', color:'white', fontSize:'12.5px', fontFamily:'Arial' }} />
+                            <button onClick={async () => {
+                              await saveUserName(u.email, { name: editingUserName.trim() })
+                              setEditingUserEmail(null); setEditingUserName('')
+                            }}
+                              style={{ padding:'5px 10px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Save</button>
+                            <button onClick={() => { setEditingUserEmail(null); setEditingUserName('') }}
+                              style={{ padding:'5px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', fontSize:'11px', cursor:'pointer' }}>Cancel</button>
+                          </div>
+                        ) : (
+                          <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.name || '(unnamed)'}</p>
+                        )}
+                        <p style={{ color:'#888', fontSize:'11.5px', margin:'2px 0 0', fontFamily:'Courier New' }}>{u.email}</p>
+                        {isDriver && u.phone && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{u.phone}</p>}
+                        {isDriver && u.operator_license && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>License #: {u.operator_license}</p>}
+                        {Array.isArray(u.property) && u.property.length > 0 && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{u.property.join(', ')}</p>}
+                      </div>
+                      <div style={{ display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap' }}>
+                        <span style={{ background: active ? '#1a3a1a' : '#3a1a1a', color: active ? '#4caf50' : '#f44336',
+                          padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold' }}>
+                          {active ? 'Active' : 'Inactive'}
+                        </span>
+                        <CanApproveBadge u={u} />
+                      </div>
+                    </div>
+                    <div style={{ display:'flex', gap:'6px', marginTop:'8px', flexWrap:'wrap' }}>
+                      {/* Edit — routes to appropriate handler by role.
+                          Drivers: existing setEditingDriver / updateDriver widget.
+                          Managers/LAs: narrow name-only inline edit (this file). */}
+                      {isDriver ? (
+                        <button onClick={() => setEditingDriver({ ...u })}
+                          style={{ padding:'4px 10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Edit</button>
+                      ) : (
+                        <button onClick={() => { setEditingUserEmail(u.email); setEditingUserName(u.name || '') }}
+                          style={{ padding:'4px 10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Edit name</button>
+                      )}
+                      {!isDriver && (
+                        <button onClick={() => { setResetPwTarget(resetPwTarget === u.email ? null : u.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
+                          style={{ padding:'4px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor:'pointer', fontSize:'11px' }}>
+                          {resetPwTarget === u.email ? 'Cancel reset' : 'Reset Password'}
+                        </button>
+                      )}
+                      {isMgrOrLA && (
+                        active
+                          ? <button onClick={() => toggleUserActive(u.email, false)} disabled={togglingUser === u.email}
+                              style={{ padding:'4px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'5px', cursor:'pointer', fontSize:'11px' }}>Deactivate</button>
+                          : <button onClick={() => toggleUserActive(u.email, true)} disabled={togglingUser === u.email}
+                              style={{ padding:'4px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'5px', cursor:'pointer', fontSize:'11px' }}>Activate</button>
+                      )}
+                    </div>
+                  </div>
+                )
+              }
+
+              function DriverRow({ d }: { d: any }) {
+                // Composite view: driver from the drivers table + can_approve
+                // + is_active from user_roles (companyUsers) if a matching row exists.
+                const roleRow = (companyUsers as any[]).find(u => String(u.email).toLowerCase() === String(d.email).toLowerCase())
+                const u = roleRow || { email: d.email, role: 'driver', name: d.name,
+                  can_approve_vehicles: undefined, is_active: d.is_active,
+                  phone: d.phone, operator_license: d.operator_license }
+                return <PeopleRow u={u} />
+              }
+
+              return (
+                <div>
+                  {userMsg && msgBox(userMsg)}
+                  {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg('') })}
+
+                  {/* Group: Managers */}
+                  <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'16px 0 8px', fontWeight:'bold' }}>
+                    Managers <span style={{ color:'#555' }}>({managers.length})</span>
+                  </p>
+                  {managers.length === 0
+                    ? <p style={{ color:'#555', fontSize:'12px' }}>No managers.</p>
+                    : managers.map((u, i) => <PeopleRow key={`m${i}`} u={u} />)
+                  }
+
+                  {/* Group: Leasing Agents */}
+                  <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'16px 0 8px', fontWeight:'bold' }}>
+                    Leasing agents <span style={{ color:'#555' }}>({leasingAgents.length})</span>
+                  </p>
+                  {leasingAgents.length === 0
+                    ? <p style={{ color:'#555', fontSize:'12px' }}>No leasing agents.</p>
+                    : leasingAgents.map((u, i) => <PeopleRow key={`la${i}`} u={u} />)
+                  }
+
+                  {/* Group: Drivers (Enforcement/Legacy) — Enf-only visibility
+                      handled at track/gate level in later slice (architect note).
+                      For A1 (Legacy) drivers surface today; PM-Only tracks that
+                      have no driver workflow show an empty list which is honest. */}
+                  <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'16px 0 8px', fontWeight:'bold' }}>
+                    Drivers <span style={{ color:'#555' }}>({drivers.length})</span>
+                  </p>
+                  {drivers.length === 0
+                    ? <p style={{ color:'#555', fontSize:'12px' }}>No drivers.</p>
+                    : drivers.map((d, i) => <DriverRow key={`d${i}`} d={d} />)
+                  }
+                </div>
+              )
+            })()}
+
+            {/* SECTION 2 (LEGACY) — Users, behind !CA_CRM_REDESIGN */}
+            {manageSection === 'users' && !CA_CRM_REDESIGN && (
               <div>
                 {userMsg && msgBox(userMsg)}
                 {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg('') })}
