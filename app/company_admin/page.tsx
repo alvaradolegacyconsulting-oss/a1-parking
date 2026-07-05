@@ -3409,7 +3409,7 @@ export default function CompanyAdminPortal() {
               <button style={styleFor(propertiesSelected)} onClick={() => goto('manage', 'properties')}>Properties</button>
               <button style={styleFor(peopleSelected)} onClick={() => goto('manage', 'users')}>People</button>
               {showPartners && (
-                <button style={styleFor(partnerSelected)} onClick={() => goto('manage', 'storage')}>Partners</button>
+                <button style={styleFor(partnerSelected)} onClick={() => goto('manage', 'storage')}>Storage</button>
               )}
               {showActivity && (
                 <button style={styleFor(isSelected('violations'))} onClick={() => goto('violations')}>Activity</button>
@@ -4981,6 +4981,49 @@ export default function CompanyAdminPortal() {
               return (
                 <div>
                   {propMsg && msgBox(propMsg)}
+                  {/* CA CRM refactor 2026-07-05 — Add Property affordance carried
+                      into the Slice-2 CRM so it works under the redesign flag.
+                      Button + form fields inline; existing saveProperty handler. */}
+                  {isCA && !showAddProperty && (() => {
+                    const activeCount = properties.filter(p => p.is_active).length
+                    const limit = getLimit(FEATURE_FLAGS.MAX_PROPERTIES, ctx)
+                    const atLimit = limit >= 0 && activeCount >= limit
+                    if (atLimit) return null
+                    return addBtn('+ Add Property', () => { setShowAddProperty(true); setPropMsg('') })
+                  })()}
+                  {showAddProperty && isCA && (
+                    <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Property</p>
+                      {[
+                        { key:'name', label:'Property Name *', placeholder:'Sunset Apartments' },
+                        { key:'address', label:'Address', placeholder:'123 Main St' },
+                        { key:'city', label:'City', placeholder:'Houston' },
+                        { key:'state', label:'State', placeholder:'TX' },
+                        { key:'zip', label:'ZIP Code', placeholder:'77001' },
+                        { key:'visitor_capacity', label:'Visitor Capacity', placeholder:'120' },
+                        { key:'pm_name', label:'Property Manager Name', placeholder:'John Smith' },
+                        { key:'pm_phone', label:'PM Phone', placeholder:'(713) 555-0123' },
+                        { key:'pm_email', label:'PM Email', placeholder:'pm@example.com' },
+                      ].map(f => (
+                        <div key={f.key}>
+                          <label style={lbl}>{f.label}</label>
+                          <input value={(newProperty as any)[f.key]} onChange={e => setNewProperty({ ...newProperty, [f.key]: e.target.value })} placeholder={f.placeholder} style={inp} />
+                        </div>
+                      ))}
+                      <div style={{ marginTop:'8px', padding:'10px 12px', background:'#0d1520', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                        <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 6px' }}>Towing Authorization (optional)</p>
+                        <p style={{ color:'#555', fontSize:'10px', margin:'0 0 8px', fontStyle:'italic' }}>Upload the signed authorization PDF after saving — via Edit once the property exists.</p>
+                        <label style={lbl}>Expiration Date</label>
+                        <input type="date" value={newProperty.authorization_expiration_date} onChange={e => setNewProperty({ ...newProperty, authorization_expiration_date: e.target.value })} style={inp} />
+                        <label style={lbl}>Notes</label>
+                        <textarea value={newProperty.authorization_notes} maxLength={1000} onChange={e => setNewProperty({ ...newProperty, authorization_notes: e.target.value })} placeholder="Renewal terms, contact info, special conditions" style={{ ...inp, minHeight:'56px', resize:'vertical' as const }} />
+                      </div>
+                      <div style={{ display:'flex', gap:'8px', marginTop:'10px' }}>
+                        <button onClick={saveProperty} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Add Property</button>
+                        <button onClick={() => { setShowAddProperty(false); setPropMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
                   <div style={{ display:'grid', gridTemplateColumns:'340px 1fr', gap:'14px' }}>
                     {/* Left list */}
                     <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', overflow:'hidden' }}>
@@ -5149,13 +5192,59 @@ export default function CompanyAdminPortal() {
                             </div>
                           </div>
 
-                          {/* When Edit is active on this property, render the existing
-                              inline edit form here so the upload/replace widget stays
-                              wired via existing handlers. */}
+                          {/* CA CRM refactor 2026-07-05 — Edit form fields carried
+                              inline. Existing saveProperty handler + auth-doc
+                              upload/remove helpers. Fields mirror legacy edit form. */}
                           {editingProperty && editingProperty.id === selected.id && (
                             <div style={{ marginTop:'16px', paddingTop:'14px', borderTop:'1px solid #2a2f3d' }}>
-                              <p style={{ color:'#C9A227', fontSize:'11px', margin:'0 0 8px', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:'bold' }}>Edit property — full form</p>
-                              <p style={{ color:'#555', fontSize:'11px', margin:'0 0 10px' }}>Save + upload/replace/remove auth PDF via the fields below (existing behaviour).</p>
+                              <p style={{ color:'#C9A227', fontSize:'11px', margin:'0 0 10px', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:'bold' }}>Edit property</p>
+                              {[
+                                { key:'name', label:'Property Name *' },
+                                { key:'address', label:'Address' },
+                                { key:'city', label:'City' },
+                                { key:'state', label:'State' },
+                                { key:'zip', label:'ZIP Code' },
+                                { key:'visitor_capacity', label:'Visitor Capacity' },
+                                { key:'pm_name', label:'PM Name' },
+                                { key:'pm_phone', label:'PM Phone' },
+                                { key:'pm_email', label:'PM Email' },
+                              ].map(f => (
+                                <div key={f.key}>
+                                  <label style={lbl}>{f.label}</label>
+                                  <input value={(editingProperty as any)[f.key] || ''} onChange={e => setEditingProperty({ ...editingProperty, [f.key]: e.target.value })} style={inp} />
+                                </div>
+                              ))}
+                              {/* Auth-doc status + upload/replace/remove — reuses handlers already at file scope. */}
+                              <div style={{ marginTop:'8px', padding:'10px 12px', background:'#161b26', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                                <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 8px' }}>Authorization document</p>
+                                {editingProperty.authorization_pdf_path ? (
+                                  <div style={{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'8px' }}>
+                                    <span style={{ color:'#aaa', fontSize:'11px', flex:1, minWidth:0, wordBreak:'break-all' }}>📄 {editingProperty.authorization_pdf_path}</span>
+                                    <button onClick={() => viewAuthPdf(editingProperty.id)} style={{ padding:'4px 10px', background:'#1a1f2e', color:'#C9A227', fontSize:'11px', fontWeight:'bold', border:'1px solid #C9A227', borderRadius:'5px', cursor:'pointer', fontFamily:'Arial' }}>View</button>
+                                    <label style={{ padding:'4px 10px', background:'#1a1f2e', color:'#C9A227', fontSize:'11px', fontWeight:'bold', border:'1px solid #C9A227', borderRadius:'5px', cursor:'pointer', fontFamily:'Arial' }}>
+                                      Replace
+                                      <input type="file" accept="application/pdf" style={{ display:'none' }}
+                                        onChange={e => { const f = e.target.files?.[0]; if (f) uploadAuthPdf(editingProperty.id, f); e.target.value = '' }} />
+                                    </label>
+                                    <button onClick={() => removeAuthPdf(editingProperty.id, editingProperty.authorization_pdf_path)} style={{ padding:'4px 10px', background:'#2a1a1a', color:'#f44336', fontSize:'11px', fontWeight:'bold', border:'1px solid #b71c1c', borderRadius:'5px', cursor:'pointer', fontFamily:'Arial' }}>Remove</button>
+                                  </div>
+                                ) : (
+                                  <label style={{ display:'inline-block', padding:'6px 12px', background:'#1a1f2e', color:'#C9A227', fontSize:'11px', fontWeight:'bold', border:'1px solid #C9A227', borderRadius:'5px', cursor:'pointer', fontFamily:'Arial', marginBottom:'8px' }}>
+                                    Upload PDF
+                                    <input type="file" accept="application/pdf" style={{ display:'none' }}
+                                      onChange={e => { const f = e.target.files?.[0]; if (f) uploadAuthPdf(editingProperty.id, f); e.target.value = '' }} />
+                                  </label>
+                                )}
+                                <label style={lbl}>Expiration Date</label>
+                                <input type="date" value={editingProperty.authorization_expiration_date || ''} onChange={e => setEditingProperty({ ...editingProperty, authorization_expiration_date: e.target.value })} style={inp} />
+                                <label style={lbl}>Notes</label>
+                                <textarea value={editingProperty.authorization_notes || ''} maxLength={1000} onChange={e => setEditingProperty({ ...editingProperty, authorization_notes: e.target.value })} style={{ ...inp, minHeight:'50px', resize:'vertical' as const }} />
+                                <p style={{ color:'#555', fontSize:'10px', margin:'0', fontStyle:'italic' }}>PDF changes save instantly. Expiration + notes save on Save Changes below.</p>
+                              </div>
+                              <div style={{ display:'flex', gap:'8px', marginTop:'12px' }}>
+                                <button onClick={updateProperty} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Save Changes</button>
+                                <button onClick={() => setEditingProperty(null)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                              </div>
                             </div>
                           )}
                         </>
@@ -5505,6 +5594,91 @@ export default function CompanyAdminPortal() {
                 <div>
                   {userMsg && msgBox(userMsg)}
                   {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg('') })}
+                  {/* CA CRM refactor 2026-07-05 — Add User form carried inline.
+                      Uses createUser handler (verified — accepts role/property/etc at create;
+                      separate from name-only edit allowlist). */}
+                  {showAddUser && isCA && (
+                    <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', margin:'8px 0 12px' }}>
+                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New User</p>
+                      <label style={lbl}>Full Name</label>
+                      <input value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} placeholder="Jane Doe" style={inp} />
+                      <label style={lbl}>Email *</label>
+                      <input type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="user@example.com" style={inp} />
+                      <label style={lbl}>Role *</label>
+                      <select value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })} style={inp}>
+                        <option value="manager">Manager</option>
+                        {(role?.role === 'admin' || hasFeature(FEATURE_FLAGS.LEASING_AGENT_ROLE, getCompanyContext()) === true) && (
+                          <option value="leasing_agent">Leasing Agent</option>
+                        )}
+                        {(role?.role === 'admin' || getCompanyContext().tier !== 'pm_only') && (<option value="driver">Driver</option>)}
+                        {(role?.role === 'admin' || getCompanyContext().tier === 'pm_only') && (<option value="resident">Resident</option>)}
+                      </select>
+                      {newUser.role === 'manager' && (
+                        <>
+                          <label style={lbl}>Approve Vehicle Registrations? *</label>
+                          <select value={newManagerCanApprove === null ? '' : newManagerCanApprove ? 'yes' : 'no'}
+                            onChange={e => { const v = e.target.value; setNewManagerCanApprove(v === 'yes' ? true : v === 'no' ? false : null) }}
+                            style={inp}>
+                            <option value="">— Select —</option>
+                            <option value="yes">Yes — manager can approve vehicles</option>
+                            <option value="no">No — manager cannot approve vehicles</option>
+                          </select>
+                        </>
+                      )}
+                      <label style={lbl}>Property</label>
+                      <select value={newUser.property} onChange={e => setNewUser({ ...newUser, property: e.target.value })} style={inp}>
+                        <option value="">No specific property</option>
+                        {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
+                      </select>
+                      <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
+                        <button onClick={createUser} disabled={createUserSubmitting}
+                          style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: createUserSubmitting ? 'not-allowed' : 'pointer', opacity: createUserSubmitting ? 0.6 : 1, fontFamily:'Arial' }}>
+                          {createUserSubmitting ? 'Creating…' : 'Create User'}
+                        </button>
+                        <button onClick={() => { setShowAddUser(false); setUserMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                  {/* Add Driver + form (carried so it works under the redesign). */}
+                  {isCA && !showAddDriver && (
+                    <button onClick={() => { setShowAddDriver(true); setDriverMsg('') }}
+                      style={{ display:'block', width:'100%', padding:'10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial', margin:'6px 0' }}>
+                      + Add Driver
+                    </button>
+                  )}
+                  {showAddDriver && isCA && (
+                    <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', margin:'8px 0 12px' }}>
+                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New Driver</p>
+                      <label style={lbl}>Full Name *</label>
+                      <input value={newDriver.name} onChange={e => setNewDriver({ ...newDriver, name: e.target.value })} placeholder="John Smith" style={inp} />
+                      <label style={lbl}>Email *</label>
+                      <input type="email" value={newDriver.email} onChange={e => setNewDriver({ ...newDriver, email: e.target.value })} placeholder="driver@example.com" style={inp} />
+                      <label style={lbl}>Phone</label>
+                      <input value={newDriver.phone} onChange={e => setNewDriver({ ...newDriver, phone: e.target.value })} placeholder="(713) 555-0100" style={inp} />
+                      <label style={lbl}>Operator License</label>
+                      <input value={newDriver.operator_license || ''} onChange={e => setNewDriver({ ...newDriver, operator_license: e.target.value })} placeholder="TX-DR-12345" style={inp} />
+                      <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
+                        <button onClick={createDriver} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Create Driver</button>
+                        <button onClick={() => { setShowAddDriver(false); setDriverMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                  {/* Edit Driver form (carried inline; opens under the Drivers group when Edit clicked). */}
+                  {editingDriver && isCA && (
+                    <div style={{ background:'#0d1520', border:'2px solid #C9A227', borderRadius:'10px', padding:'16px', margin:'8px 0 12px' }}>
+                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Edit Driver — {editingDriver.name}</p>
+                      <label style={lbl}>Full Name</label>
+                      <input value={editingDriver.name || ''} onChange={e => setEditingDriver({ ...editingDriver, name: e.target.value })} style={inp} />
+                      <label style={lbl}>Phone</label>
+                      <input value={editingDriver.phone || ''} onChange={e => setEditingDriver({ ...editingDriver, phone: e.target.value })} style={inp} />
+                      <label style={lbl}>Operator License</label>
+                      <input value={editingDriver.operator_license || ''} onChange={e => setEditingDriver({ ...editingDriver, operator_license: e.target.value })} style={inp} />
+                      <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
+                        <button onClick={updateDriver} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Save Changes</button>
+                        <button onClick={() => setEditingDriver(null)} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
                   {/* Active-only carry-over — one toggle covers all 3 groups. */}
                   <button onClick={() => setCrmPeopleShowActive(s => !s)}
                     style={{ marginTop:'4px', padding:'4px 12px',
