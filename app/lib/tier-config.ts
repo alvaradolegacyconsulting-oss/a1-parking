@@ -179,7 +179,11 @@ const ENF_LEGACY: TierConfigShape = {
   [F.VEHICLE_REGISTRY]: true,
   [F.MULTIPLE_MANAGERS_PER_PROPERTY]: true,
   [F.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH]: -1,
-  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 48,
+  // 2026-07-05: uniform 24-hour cap across all tiers. Jose lock —
+  // "24 across the board, not a tier lever." Prior value (48) never
+  // matched the resident/visitor form dropdowns which hardcode 24 as
+  // maximum. What's Included auto-derives from this and now reads 24.
+  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 24,
 }
 
 // Enforcement: premium ─────────────────────────────────────────────────
@@ -196,7 +200,8 @@ const PM_ESSENTIAL: TierConfigShape = {
   [F.MAX_PROPERTIES]: 3,
   [F.MAX_DRIVERS]: 0,
   [F.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH]: 50,
-  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 12,
+  // 2026-07-05: uniform 24-hour cap per Jose lock (was 12).
+  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 24,
   // Phase 2a: PM tiers don't have driver/violation/video workflow.
   // 0 means "no video allowed on this track". Inherited by professional + enterprise.
   [F.VIDEO_MAX_DURATION_SECONDS]: 0,
@@ -280,7 +285,8 @@ const PM_ENTERPRISE: TierConfigShape = {
   ...PM_PROFESSIONAL,
   [F.MAX_PROPERTIES]: -1,
   [F.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH]: -1,
-  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 48,
+  // 2026-07-05: uniform 24-hour cap per Jose lock (was 48).
+  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 24,
 
   [F.ADVANCED_PDF_REPORTS]: true,
   [F.PRIORITY_SUPPORT]: true,
