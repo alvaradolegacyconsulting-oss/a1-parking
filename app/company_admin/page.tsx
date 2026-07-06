@@ -6089,8 +6089,13 @@ export default function CompanyAdminPortal() {
               </div>
             )}
 
-            {/* SECTION 3 — Drivers */}
-            {manageSection === 'drivers' && (
+            {/* SECTION 3 — Drivers (LEGACY sub-tab).
+                Defensive !CA_CRM_REDESIGN gate: the CRM top-nav never routes
+                to manageSection='drivers' (People CRM handles drivers under
+                the Users section), but a leaked state or stale bookmark
+                shouldn't be able to surface an Add Driver button while the
+                consolidated role-aware Add User is the intended path. */}
+            {manageSection === 'drivers' && !CA_CRM_REDESIGN && (
               <div>
                 {driverMsg && msgBox(driverMsg)}
                 {isCA && (() => {
@@ -7009,20 +7014,37 @@ export default function CompanyAdminPortal() {
                   What&apos;s included
                 </summary>
                 <div style={{ marginTop:'12px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px 16px', fontSize:'12px', color:'#aaa' }}>
-                  {tierCfg && Object.entries(tierCfg).map(([flag, val]) => {
-                    const on = val === true || (typeof val === 'number' && val !== 0)
-                    if (!on && typeof val !== 'number') return null
-                    const label = String(flag).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-                    const display = typeof val === 'number'
-                      ? (val === -1 ? 'unlimited' : String(val))
-                      : ''
-                    return (
-                      <div key={flag} style={{ display:'flex', justifyContent:'space-between', gap:'8px' }}>
-                        <span>{label}</span>
-                        <span style={{ color:'#C9A227' }}>{display || '✓'}</span>
-                      </div>
-                    )
-                  })}
+                  {(() => {
+                    // Display-label overrides for flag keys where the
+                    // auto-titlecase transform leaks an internal / branded
+                    // name (Towbook), mangles an acronym (Csv/Ai/Api), or
+                    // needs punctuation. Key = flag string value from
+                    // feature-flags.ts. Missing key = fall through to
+                    // auto-titlecase (harmless for well-named flags).
+                    const LABEL_OVERRIDES: Record<string, string> = {
+                      towbook_csv_export: 'Tow Records CSV Export',
+                      csv_export_basic: 'Basic CSV Export',
+                      ai_plate_scanning: 'AI Plate Scanning',
+                      api_access_read_only: 'API Access (Read-Only)',
+                      findmytowedcar_links: 'FindMyTowedCar Links',
+                    }
+                    return tierCfg && Object.entries(tierCfg).map(([flag, val]) => {
+                      const on = val === true || (typeof val === 'number' && val !== 0)
+                      if (!on && typeof val !== 'number') return null
+                      const flagKey = String(flag)
+                      const label = LABEL_OVERRIDES[flagKey]
+                        ?? flagKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+                      const display = typeof val === 'number'
+                        ? (val === -1 ? 'unlimited' : String(val))
+                        : ''
+                      return (
+                        <div key={flag} style={{ display:'flex', justifyContent:'space-between', gap:'8px' }}>
+                          <span>{label}</span>
+                          <span style={{ color:'#C9A227' }}>{display || '✓'}</span>
+                        </div>
+                      )
+                    })
+                  })()}
                 </div>
               </details>
 
