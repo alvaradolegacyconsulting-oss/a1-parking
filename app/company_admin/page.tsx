@@ -6983,11 +6983,22 @@ export default function CompanyAdminPortal() {
                     Approved permits {isPM && <span style={{ color:'#555', fontSize:'10.5px' }}>· metered</span>}
                   </div>
                 </div>
-                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', display:'flex', flexDirection:'column', justifyContent:'space-between' }}>
-                  <div style={{ color:'#aaa', fontSize:'11.5px' }}>Bulk QR signs</div>
+                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', display:'flex', flexDirection:'column', gap:'6px', justifyContent:'space-between' }}>
+                  <div style={{ color:'#aaa', fontSize:'11.5px' }}>QR signs</div>
                   <button onClick={printAllPropertyQRSigns} disabled={propertyCount === 0}
-                    style={{ padding:'8px 12px', background: propertyCount === 0 ? '#2a2f3d' : '#1e2535', color: propertyCount === 0 ? '#555' : '#C9A227', border:`1px solid ${propertyCount === 0 ? '#3a4055' : '#C9A227'}`, borderRadius:'6px', cursor: propertyCount === 0 ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}>
+                    style={{ padding:'8px 12px', background: propertyCount === 0 ? '#2a2f3d' : '#1e2535', color: propertyCount === 0 ? '#555' : '#C9A227', border:`1px solid ${propertyCount === 0 ? '#3a4055' : '#C9A227'}`, borderRadius:'6px', cursor: propertyCount === 0 ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}
+                    title="Prints one sign per property (N signs — one QR per lot).">
                     All-property QR ↓
+                  </button>
+                  {/* Round 3 Item 1 — Multi-property QR re-homed from the
+                      old QR Codes tab. One code = every property. Visitor
+                      scans it and picks the lot they're visiting.
+                      Reads from the always-mounted hidden #qr-company at
+                      the end of main render, so it prints from any tab. */}
+                  <button onClick={() => printQRSign('qr-company', role?.company || '', 'Select your property after scanning')}
+                    style={{ padding:'8px 12px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}
+                    title="Prints ONE sign — visitor scans and picks which property. Cheaper for tow-op signage.">
+                    Multi-property QR ↓
                   </button>
                 </div>
               </div>
@@ -7517,9 +7528,10 @@ export default function CompanyAdminPortal() {
         />
       )}
 
-      {/* Always-mounted hidden QR canvases for Bulk QR (Plan-strip button
-          at :6872 → printAllPropertyQRSigns → reads canvas.toDataURL()).
-          Hidden mount survives tab switches; ids are stable per-property. */}
+      {/* Always-mounted hidden QR canvases for Bulk QR + Multi-property QR
+          (Plan-strip buttons → printAllPropertyQRSigns / printQRSign('qr-company')
+          → reads canvas.toDataURL()). Hidden mount survives tab switches;
+          ids are stable per-property and per-company. */}
       <div aria-hidden style={{ position:'absolute', width:0, height:0, overflow:'hidden', opacity:0, pointerEvents:'none' }}>
         {(properties || []).map((prop: any) => {
           const url = `${BASE_URL}/visitor?property=${encodeURIComponent(prop.name)}`
@@ -7529,6 +7541,16 @@ export default function CompanyAdminPortal() {
             </div>
           )
         })}
+        {/* Company-level visitor-select QR — always mounted so the Plan-strip
+            "Multi-property QR ↓" button can print from any tab. Route
+            /visitor-select?company=… still resolves (verified). */}
+        {role?.company && (
+          <div id="qr-company">
+            <QRCodeCanvas
+              value={`${BASE_URL}/visitor-select?company=${encodeURIComponent(role.company)}`}
+              size={200} level="H" includeMargin={true} />
+          </div>
+        )}
       </div>
     </main>
   )
