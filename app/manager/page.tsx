@@ -1064,7 +1064,15 @@ export default function ManagerPortal() {
       console.info('[B147-sync-skipped]', { site: 'approveVehicle', reason: 'noop_already_active — vehicle was already approved; no quantity change' })
     }
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
-    fetchVehicles(manager.name)
+    // B231 parity — same refresh discipline as approveAllPendingCrm.
+    // Approving one vehicle can flip its resident's needsApproval when
+    // this was the resident's last pending item; the CRM display can't
+    // recompute that until pendingVehicles + the other CRM dimensions
+    // are current.
+    await Promise.all([
+      fetchVehicles(manager.name),
+      fetchCrmDataForProperty(manager.name),
+    ])
   }
 
   async function declineVehicle(id: string) {
@@ -1367,7 +1375,16 @@ export default function ManagerPortal() {
       setPendingResidentAssignSpaceId(prev => { const c = { ...prev }; delete c[r.id]; return c })
     }
     setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
-    fetchResidents(manager.name)
+    // B231 parity — approveResident cascades vehicle approval (see the
+    // per-row RPC loop above), so pendingVehicles state gets stale too
+    // if not refetched. Also refresh the CRM dimensions so
+    // needsApproval recomputes against the authoritative post-mutation
+    // truth (see approveAllPendingCrm comment).
+    await Promise.all([
+      fetchResidents(manager.name),
+      fetchVehicles(manager.name),
+      fetchCrmDataForProperty(manager.name),
+    ])
     // Refresh spaces dashboard + available-pool so the freshly-assigned
     // space disappears from the assign dropdowns for other pending rows.
     if (pickedSpaceId) await refetchSpacesDashboard()
@@ -1452,8 +1469,20 @@ export default function ManagerPortal() {
       if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllPendingCrm', approvedCount, reason: syncRes.reason })
     }
 
-    fetchResidents(manager.name)
-    fetchVehicles(manager.name)
+    // B231 — post-batch refresh gap. Was fire-and-forget on two
+    // dimensions; needsApproval is derived from FIVE (pending resident,
+    // pending vehicles, plate changes, space requests, guest auths).
+    // If ANY of the other three still populates needsApproval, the CRM
+    // bulk lane keeps rendering ("stays stale until manual refresh")
+    // even though the second click reports "No pending approvals" (the
+    // handler only checks residents + vehicles). Await both narrow
+    // fetches + refresh the CRM dimension state so needsApproval
+    // recomputes against the authoritative post-mutation truth.
+    await Promise.all([
+      fetchResidents(manager.name),
+      fetchVehicles(manager.name),
+      fetchCrmDataForProperty(manager.name),
+    ])
   }
 
   // PM CRM slice 3 — space-write handlers. Route through the existing
