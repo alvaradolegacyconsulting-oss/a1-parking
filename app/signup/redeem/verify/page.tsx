@@ -13,7 +13,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../../supabase'
-import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE, TEXAS_ATTESTATION_VERSION, TEXAS_ATTESTATION_TEXT } from '../../../lib/legal-versions'
+import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE, TEXAS_ATTESTATION_VERSION, TEXAS_ATTESTATION_TEXT, SAAS_VERSION, SAAS_DISPLAY_DATE } from '../../../lib/legal-versions'
+import SaasReadthroughGate from '../../../components/SaasReadthroughGate'
 // B76: post-activation bootstrap. Without this, /company_admin renders
 // with null localStorage and falls back to the 'Legacy Enforcement'
 // default until the user signs out and back in. See project_b76.
@@ -111,6 +112,14 @@ export default function VerifyLanding() {
   // unchanged (clickwrap + affirmative per-document action).
   const [tosChecked, setTosChecked] = useState(false)
   const [privacyChecked, setPrivacyChecked] = useState(false)
+  // B118 Layer 2 Commit 3 — SaaS scroll-to-sign gate state.
+  // saasReviewedAt is set BY THE GATE at unlock moment (canSign
+  // false→true, whichever OR-signal fires first). saasSigned flips
+  // true when the user clicks the gate's "Sign & Accept" button.
+  // Both flow into activate() → redeem_proposal_code RPC's new
+  // p_saas_version + p_saas_reviewed_at params.
+  const [saasReviewedAt, setSaasReviewedAt] = useState<string | null>(null)
+  const [saasSigned,     setSaasSigned]     = useState(false)
   // 2026-06-30 — Texas operator attestation on the redeem path
   // (parity with /signup). A1 onboards here and needs the same
   // attestation as the self-serve path. Recorded via the new
@@ -280,6 +289,7 @@ export default function VerifyLanding() {
     if (!tosChecked) return 'You must agree to the Terms of Service.'
     if (!privacyChecked) return 'You must agree to the Privacy Policy.'
     if (!attestChecked) return 'You must attest to the Texas operations terms.'
+    if (!saasSigned || !saasReviewedAt) return 'You must sign the SaaS Subscription Agreement.'
     return null
   }
 
@@ -303,6 +313,15 @@ export default function VerifyLanding() {
       p_tos_version: TOS_VERSION,
       p_privacy_version: PRIVACY_VERSION,
       p_attestation_version: TEXAS_ATTESTATION_VERSION,
+      // B118 Layer 2 Commit 3 — SaaS acceptance capture. Version is
+      // the SERVER-owned static import (never trusted from client
+      // storage), reviewed_at is client-stamped at the gate's unlock
+      // moment (T1 — see SaasReadthroughGate; guaranteed < T2 =
+      // accepted_at because the sign click can't fire before unlock).
+      // Both required by the RPC's SaaS INSERT guard; formError()
+      // above prevents activate() from firing without them.
+      p_saas_version: SAAS_VERSION,
+      p_saas_reviewed_at: saasReviewedAt,
       p_address: address.trim(),
       // p_ip_address omitted — browser can't reliably know its own IP
       // (Finding 7). Server-side proxy is a future commit if legal asks.
@@ -585,6 +604,25 @@ export default function VerifyLanding() {
                   {' '}({PRIVACY_DISPLAY_DATE}).
                 </span>
               </label>
+
+              {/* B118 Layer 2 Commit 3 — SaaS scroll-to-sign gate.
+                  Rendered after the three checkboxes (Texas, ToS,
+                  Privacy) but before the Activate button — it's the
+                  final approval step. `disabled` prop grays the sign
+                  button until the other three consents are granted,
+                  matching the same-order gating that formError()
+                  enforces. onSigned captures reviewedAt (stamped at
+                  the gate's unlock moment, T1) into state; the
+                  activate() call passes it to p_saas_reviewed_at.  */}
+              <SaasReadthroughGate
+                version={SAAS_VERSION}
+                displayDate={SAAS_DISPLAY_DATE}
+                disabled={!tosChecked || !privacyChecked || !attestChecked}
+                onSigned={({ reviewedAt }) => {
+                  setSaasReviewedAt(reviewedAt)
+                  setSaasSigned(true)
+                }}
+              />
 
               {submission.kind === 'error' && (
                 <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, padding: '10px 12px', marginTop: 14 }}>

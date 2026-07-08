@@ -47,6 +47,8 @@ import { supabase } from '../../supabase'
 import { TIER_PRICING } from '../../lib/tier-config'
 import { ENFORCEMENT_TIERS, PROPERTY_MANAGEMENT_TIERS } from '../../lib/tier-display'
 import { isOtpExpiredOrUsed } from '../../lib/otp-errors'
+import { SAAS_VERSION, SAAS_DISPLAY_DATE } from '../../lib/legal-versions'
+import SaasReadthroughGate from '../../components/SaasReadthroughGate'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -387,6 +389,41 @@ function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: In
   const trackLabel = tier.track === 'enforcement' ? 'Enforcement' : 'Property Management'
   const tierTitle = tier.tier.charAt(0).toUpperCase() + tier.tier.slice(1)
 
+  // B118 Layer 2 Commit 3 — SaaS acceptance state for self-serve.
+  // Fires the accept_saas_agreement RPC via /api/signup/accept-saas
+  // BEFORE the Stripe Checkout redirect. Gate must complete first;
+  // otherwise the tos_acceptances.saas row is never written and the
+  // user_roles.saas_accepted_version stays NULL for this signup.
+  //
+  // Self-serve is behind public_signup_open=false throughout Bar-1.
+  // This wiring exists for parity + Bar-2 readiness; A1 doesn't use
+  // this path (A1 = redeem).
+  const [saasSubmitting, setSaasSubmitting] = useState(false)
+  const [saasError,      setSaasError]      = useState<string | null>(null)
+  const [saasSigned,     setSaasSigned]     = useState(false)
+
+  const handleSaasSigned = async (info: { version: string, reviewedAt: string }) => {
+    setSaasError(null)
+    setSaasSubmitting(true)
+    try {
+      const res = await fetch('/api/signup/accept-saas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewedAt: info.reviewedAt }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as { error?: string }))
+        setSaasError(body.error || `Server returned ${res.status}. Refresh to retry.`)
+        return
+      }
+      setSaasSigned(true)
+    } catch (e) {
+      setSaasError((e as Error).message || 'Network error recording your SaaS acceptance.')
+    } finally {
+      setSaasSubmitting(false)
+    }
+  }
+
   // Recompute preview from display constants (matches /signup form).
   const tiers = tier.track === 'enforcement' ? ENFORCEMENT_TIERS : PROPERTY_MANAGEMENT_TIERS
   const td = tiers.find(t => t.name.toLowerCase() === tier.tier)
@@ -419,13 +456,27 @@ function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: In
         </div>
       </div>
 
-      <button onClick={onProceed} disabled={proceeding}
+      <SaasReadthroughGate
+        version={SAAS_VERSION}
+        displayDate={SAAS_DISPLAY_DATE}
+        disabled={saasSubmitting || saasSigned}
+        onSigned={handleSaasSigned}
+      />
+
+      {saasError && (
+        <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, padding: '10px 12px', marginTop: 10 }}>
+          <p style={{ color: '#f44336', fontSize: 13, margin: 0 }}>{saasError}</p>
+        </div>
+      )}
+
+      <button onClick={onProceed} disabled={proceeding || !saasSigned || saasSubmitting}
         style={{
-          width: '100%', padding: '16px', background: proceeding ? '#1e2535' : GOLD,
-          color: proceeding ? '#555' : '#0a0d14', fontWeight: 700, fontSize: 15,
-          border: 'none', borderRadius: 10, cursor: proceeding ? 'not-allowed' : 'pointer',
+          width: '100%', padding: '16px', marginTop: 14,
+          background: (proceeding || !saasSigned) ? '#1e2535' : GOLD,
+          color: (proceeding || !saasSigned) ? '#555' : '#0a0d14', fontWeight: 700, fontSize: 15,
+          border: 'none', borderRadius: 10, cursor: (proceeding || !saasSigned || saasSubmitting) ? 'not-allowed' : 'pointer',
         }}>
-        {proceeding ? 'Redirecting to checkout…' : 'Continue → Stripe Checkout'}
+        {proceeding ? 'Redirecting to checkout…' : (saasSigned ? 'Continue → Stripe Checkout' : 'Sign the SaaS Agreement to continue')}
       </button>
       <p style={{ color: MUTED, fontSize: 12, textAlign: 'center', margin: '14px 0 0' }}>
         Payment is securely handled by Stripe. You&apos;ll return to this site after completing checkout.
