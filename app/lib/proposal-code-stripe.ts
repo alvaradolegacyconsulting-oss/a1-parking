@@ -41,6 +41,38 @@ import { createSupabaseServiceClient } from './supabase-admin'
 //      if the standard catalog is missing — scripts/create-stripe-
 //      prices.ts must have populated the standard 30 first.
 //
+// ── PATTERN C — per-code Product (Legacy tier only) — B232 ─────────
+// Legacy is negotiated-only: scripts/create-stripe-prices.ts:20 +
+// :118-120 states "Legacy: ZERO standard rows". Pattern B would abort
+// at the catalog-Product SELECT — that latent gap surfaced when A1
+// (first real Legacy code) tried to issue.
+//
+// Fix: Legacy codes create their OWN Stripe Product at issue time.
+// One Product per code, shared across all its line items (a Product
+// with multiple Prices is the correct Stripe modeling for a single
+// negotiated deal). Metadata { sml_kind: 'legacy',
+// sml_proposal_code_id, sml_code } makes every Legacy Stripe object
+// enumerable for cleanup / test-artifact sweeps.
+//
+// Idempotency: deterministic key on (mode, code.id) — a mid-flight
+// retry returns the SAME Product ID rather than duplicating. DB-level
+// recovery (existing stripe_prices row for the same code carries the
+// Product ID we already minted) runs FIRST — cheap + covers >24h
+// retry windows past Stripe's idempotency-key TTL. Duplicates that
+// slip past both layers are still metadata-findable via the trio,
+// not silent orphans (June 16 orphan lesson).
+//
+// Track-agnostic: branches on code.base_tier === 'legacy' regardless
+// of code.base_tier_type — covers both enforcement.legacy AND
+// property_management.legacy shapes.
+//
+// Same tax_code as the standard catalog (SAAS_TAX_CODE =
+// 'txcd_10103001') so Legacy is taxed identically under Pattern A.
+//
+// NOTE: canonical B66 architecture doc B66_Architecture_Decisions_May20_2026.md
+// lives in the planning workspace, off-repo. Mirror this Pattern C
+// entry there so the design record stays in sync with the code.
+//
 // ── FAILURE MODES (issue-route caller maps to HTTP status) ──────────
 // • Stripe API failure → ProposalStripeError stage='stripe' → 502
 // • DB select/insert failure → stage='db' → 500
@@ -179,6 +211,65 @@ function formatNickname(clientName: string | null, li: LineItem): string {
   return `${cli} — ${lineItemLabel(li)}`
 }
 
+// B232 — Pattern C. Resolves the Stripe Product ID for a Legacy code:
+// one Product per code, reused across every line item. Two recovery
+// layers:
+//   1. DB-side: any existing stripe_prices row for this code (any line
+//      item, same mode) already carries a stripe_product_id we minted
+//      on a prior successful issue call. Reuse it — cheap + covers
+//      >24h retry windows past Stripe's idempotency-key TTL.
+//   2. Stripe-side: idempotent products.create with deterministic key
+//      sml-legacy-product-<mode>-<code.id>. Mid-flight retry returns
+//      the SAME Product ID rather than minting a duplicate.
+// Metadata trio makes the Product enumerable for cleanup sweeps.
+async function resolvePerCodeLegacyProduct(
+  stripe: ReturnType<typeof getStripe>,
+  supabase: ReturnType<typeof createSupabaseServiceClient>,
+  code: ProposalCodeForStripe,
+  mode: 'live' | 'test'
+): Promise<string> {
+  const { data: prior, error: priorErr } = await supabase
+    .from('stripe_prices')
+    .select('stripe_product_id')
+    .eq('proposal_code_id', code.id)
+    .eq('mode', mode)
+    .limit(1)
+    .maybeSingle()
+  if (priorErr) {
+    throw new ProposalStripeError(
+      'db',
+      `Legacy Product DB recovery probe failed for code ${code.code}: ${priorErr.message}`
+    )
+  }
+  if (prior?.stripe_product_id) return prior.stripe_product_id
+
+  const nickname = code.client_name?.trim() || '(unnamed code)'
+  let product
+  try {
+    product = await stripe.products.create(
+      {
+        name: `ShieldMyLot Legacy — ${code.code} — ${nickname}`,
+        // SaaS in TX = txcd_10103001 (matches SAAS_TAX_CODE in
+        // scripts/create-stripe-prices.ts). Pattern A tax_code
+        // consistency across catalog + Legacy.
+        tax_code: 'txcd_10103001',
+        metadata: {
+          sml_kind:             'legacy',
+          sml_proposal_code_id: String(code.id),
+          sml_code:             code.code,
+        },
+      },
+      { idempotencyKey: `sml-legacy-product-${mode}-${code.id}` }
+    )
+  } catch (e) {
+    throw new ProposalStripeError(
+      'stripe',
+      `Legacy Product create failed for code ${code.code}: ${(e as Error).message}`
+    )
+  }
+  return product.id
+}
+
 export async function createStripePricesForProposalCode(
   code: ProposalCodeForStripe
 ): Promise<IssueResult> {
@@ -216,6 +307,15 @@ export async function createStripePricesForProposalCode(
   let createdCount = 0
   let recoveredCount = 0
   let skippedCount = 0
+
+  // B232 — Pattern C: for Legacy, resolve the per-code Product ONCE
+  // upfront (before the loop). All line-item Prices share it. For
+  // Pattern B (standard tiers), Product resolution stays per-iteration
+  // inside the loop (different Product per line-item in the catalog).
+  const isLegacy = code.base_tier === 'legacy'
+  const legacyProductId = isLegacy
+    ? await resolvePerCodeLegacyProduct(stripe, supabase, code, mode)
+    : null
 
   for (const li of lineItems) {
     const dollars = resolveMonthlyDollars(code, li, ps as Record<string, unknown>)
@@ -266,61 +366,87 @@ export async function createStripePricesForProposalCode(
       action = 'recovered'
       recoveredCount++
     } else {
-      // 3. Product resolution — Pattern B: source the Product from the
-      //    standard catalog row at (track, tier, line_item, monthly, mode).
-      const { data: stdRow, error: stdErr } = await supabase
-        .from('stripe_prices')
-        .select('stripe_product_id')
-        .eq('tier_track', code.base_tier_type)
-        .eq('tier_name', code.base_tier)
-        .eq('line_item', li)
-        .eq('cycle', 'monthly')
-        .eq('mode', mode)
-        .is('proposal_code_id', null)
-        .maybeSingle()
-      if (stdErr) {
-        throw new ProposalStripeError(
-          'db',
-          `DB lookup for standard catalog Product failed (${code.base_tier_type}.${code.base_tier}.${li}.monthly.${mode}): ${stdErr.message}`
-        )
+      // 3. Product resolution — split on tier.
+      //
+      // Pattern C (Legacy): per-code Product hoisted upfront outside
+      // the loop (resolvePerCodeLegacyProduct above). All line-item
+      // Prices share the same Product ID.
+      //
+      // Pattern B (standard tiers): the Product is sourced from the
+      // standard catalog row at (track, tier, line_item, monthly, mode).
+      // Bails with precondition if the catalog row is missing.
+      if (isLegacy) {
+        // legacyProductId non-null by construction (resolved above
+        // when isLegacy is true).
+        stripeProductId = legacyProductId as string
+      } else {
+        const { data: stdRow, error: stdErr } = await supabase
+          .from('stripe_prices')
+          .select('stripe_product_id')
+          .eq('tier_track', code.base_tier_type)
+          .eq('tier_name', code.base_tier)
+          .eq('line_item', li)
+          .eq('cycle', 'monthly')
+          .eq('mode', mode)
+          .is('proposal_code_id', null)
+          .maybeSingle()
+        if (stdErr) {
+          throw new ProposalStripeError(
+            'db',
+            `DB lookup for standard catalog Product failed (${code.base_tier_type}.${code.base_tier}.${li}.monthly.${mode}): ${stdErr.message}`
+          )
+        }
+        if (!stdRow) {
+          throw new ProposalStripeError(
+            'precondition',
+            `Standard catalog Product missing for (${code.base_tier_type}.${code.base_tier}.${li}.monthly.${mode}). Run scripts/create-stripe-prices.ts first.`
+          )
+        }
+        stripeProductId = stdRow.stripe_product_id
       }
-      if (!stdRow) {
-        throw new ProposalStripeError(
-          'precondition',
-          `Standard catalog Product missing for (${code.base_tier_type}.${code.base_tier}.${li}.monthly.${mode}). Run scripts/create-stripe-prices.ts first.`
-        )
-      }
-      stripeProductId = stdRow.stripe_product_id
 
       let created
       try {
-        created = await stripe.prices.create({
-          product: stripeProductId,
-          unit_amount: amountCents,
-          currency: 'usd',
-          recurring: { interval: 'month' },
-          lookup_key: lookupKey,
-          nickname: formatNickname(code.client_name, li),
-          // B66.7 CP-1: proposal-code Prices are created here, OUTSIDE the
-          // standard catalog populator (scripts/create-stripe-prices.ts),
-          // so the B66.9 v2 migration that retrofitted tax_behavior on the
-          // standard catalog doesn't reach this code path. Without this,
-          // the proposal-code Prices ship as 'unspecified' tax_behavior
-          // and Stripe rejects the subscription create when default_tax_rates
-          // is attached (tax_behavior must be 'exclusive' or 'inclusive'
-          // on every Price in the subscription). Forward-only — no
-          // production proposal-code Prices exist yet (AP.D confirmed),
-          // so no migration of existing Prices needed.
-          tax_behavior: 'exclusive',
-          metadata: {
-            proposal_code: code.code,
-            proposal_code_id: String(code.id),
-            tier_track: code.base_tier_type,
-            tier_name: code.base_tier,
-            line_item: li,
-            cycle: 'monthly',
+        created = await stripe.prices.create(
+          {
+            product: stripeProductId,
+            unit_amount: amountCents,
+            currency: 'usd',
+            recurring: { interval: 'month' },
+            lookup_key: lookupKey,
+            nickname: formatNickname(code.client_name, li),
+            // B66.7 CP-1: proposal-code Prices are created here, OUTSIDE the
+            // standard catalog populator (scripts/create-stripe-prices.ts),
+            // so the B66.9 v2 migration that retrofitted tax_behavior on the
+            // standard catalog doesn't reach this code path. Without this,
+            // the proposal-code Prices ship as 'unspecified' tax_behavior
+            // and Stripe rejects the subscription create when default_tax_rates
+            // is attached (tax_behavior must be 'exclusive' or 'inclusive'
+            // on every Price in the subscription). Forward-only — no
+            // production proposal-code Prices exist yet (AP.D confirmed),
+            // so no migration of existing Prices needed.
+            tax_behavior: 'exclusive',
+            metadata: {
+              proposal_code: code.code,
+              proposal_code_id: String(code.id),
+              tier_track: code.base_tier_type,
+              tier_name: code.base_tier,
+              line_item: li,
+              cycle: 'monthly',
+              // B232 — enumeration metadata trio for cleanup sweeps.
+              // Same trio on the Legacy Product for parity.
+              sml_kind:             isLegacy ? 'legacy' : 'standard',
+              sml_proposal_code_id: String(code.id),
+              sml_code:             code.code,
+            },
           },
-        })
+          // B232 — deterministic idempotency key so mid-flight retries
+          // return the SAME Price, not a duplicate (June 16 orphan
+          // class). Key expires from Stripe after ~24h; the DB-side
+          // recovery layer (existing stripe_prices row) covers longer
+          // retry windows.
+          { idempotencyKey: `sml-price-${mode}-${code.id}-${li}` }
+        )
       } catch (e) {
         throw new ProposalStripeError('stripe', `Stripe Price create failed for ${lookupKey}: ${(e as Error).message}`)
       }

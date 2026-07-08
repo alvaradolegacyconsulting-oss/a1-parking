@@ -759,7 +759,14 @@ export default function ProposalCodeDetail() {
               if (row.custom_per_driver_fee > 30) warnings.push(`Per-driver $${row.custom_per_driver_fee}/mo is above typical $30 ceiling`)
             }
           }
-          const expectedPriceCount = row.base_tier_type === 'enforcement' ? 3 : 2
+          // B232 — count mirrors lineItemsForCode (server-only, can't import
+          // here). Both tracks default to 2 lines (base + per_property) —
+          // per_driver retired 2026-07-04. Legacy omits a line when the
+          // matching custom_*_fee is explicitly 0 (Legacy $0-override omit).
+          const isLegacy = row.base_tier === 'legacy'
+          const legacyBaseOmit = isLegacy && row.custom_base_fee != null && Number(row.custom_base_fee) === 0
+          const legacyPerPropOmit = isLegacy && row.custom_per_property_fee != null && Number(row.custom_per_property_fee) === 0
+          const expectedPriceCount = 2 - (legacyBaseOmit ? 1 : 0) - (legacyPerPropOmit ? 1 : 0)
           const modeUnknownBlocksIssue = !isPremium && stripeMode === null
           return (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
@@ -805,7 +812,10 @@ export default function ProposalCodeDetail() {
                     )}
 
                     <p style={{ color: '#aaa', fontSize: '12px', margin: '0 0 14px', lineHeight: 1.6 }}>
-                      <strong>{expectedPriceCount} Stripe Prices</strong> will be created (or recovered, on retry) in <code style={{ color: '#C9A227' }}>{stripeMode || '?'}</code> mode, backed by the standard catalog Products for {row.base_tier_type} / {row.base_tier}.
+                      <strong>{expectedPriceCount} Stripe Price{expectedPriceCount === 1 ? '' : 's'}</strong> will be created (or recovered, on retry) in <code style={{ color: '#C9A227' }}>{stripeMode || '?'}</code> mode
+                      {isLegacy
+                        ? <>, backed by <strong>1 per-code Product</strong> created at issue time (Pattern C — negotiated Legacy tier; no standard catalog Product required).</>
+                        : <>, backed by the standard catalog Products for {row.base_tier_type} / {row.base_tier}.</>}
                     </p>
                   </>
                 )}
