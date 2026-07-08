@@ -1,6 +1,13 @@
 import 'server-only'
 import { getStripe, getStripeMode } from './stripe'
 import { createSupabaseServiceClient } from './supabase-admin'
+// B233 — line-item derivation extracted to a non-server-only sibling
+// module so the admin confirm dialog can import the same source of
+// truth. Re-exported below for backward-compat with existing consumers
+// (start-billing/route.ts imports lineItemsForCode from THIS module).
+import { lineItemsForCode as _lineItemsForCode, type LineItem } from './proposal-code-line-items'
+export { type LineItem } from './proposal-code-line-items'
+export const lineItemsForCode = _lineItemsForCode
 
 // B66.2b commit 2 — Stripe Price creation for proposal codes.
 //
@@ -83,7 +90,8 @@ type Track = 'enforcement' | 'property_management'
 type TierName =
   | 'starter' | 'growth' | 'legacy' | 'premium'
   | 'essential' | 'professional' | 'enterprise'
-type LineItem = 'base' | 'per_property' | 'per_driver'
+// LineItem type moved to ./proposal-code-line-items (B233); re-exported
+// above so `import { LineItem } from './proposal-code-stripe'` still works.
 
 export interface ProposalCodeForStripe {
   id: number
@@ -124,46 +132,10 @@ export function isPremiumCode(code: Pick<ProposalCodeForStripe, 'base_tier'>): b
   return code.base_tier === 'premium'
 }
 
-/**
- * Line items to create for a proposal code, applying:
- *   • per_driver retirement (Slice 1 Commit 5 form drop → 2026-07-04 lib
- *     drop — Enforcement per_driver removed everywhere else; this was
- *     the last stale reference).
- *   • Legacy $0-override omit (2026-07-04 architect Option (b)): when a
- *     Legacy code has an EXPLICIT $0 override on a line item, that item
- *     is omitted entirely — no Stripe Price is created, no subscription
- *     line at redemption. Guardrail: only omit on EXPLICIT $0 override,
- *     NEVER on a fallback that resolved to 0 (that would silently drop
- *     a line the catalog default expected). Only Legacy codes; non-Legacy
- *     always get their full track set.
- *
- * Exported so start-billing can compute expectedLines using the same
- * shape logic — single source of truth for the sub structure.
- *
- * per_permit customization (PM-Only) for custom Legacy codes is Gap 2 —
- * deferred as Bar-2 per architect 2026-07-04 (A1 doesn't meter).
- */
-export function lineItemsForCode(
-  code: Pick<ProposalCodeForStripe, 'base_tier_type' | 'base_tier'
-                                 | 'custom_base_fee' | 'custom_per_property_fee'>
-): LineItem[] {
-  const trackLines: LineItem[] = code.base_tier_type === 'enforcement'
-    ? ['base', 'per_property']
-    : ['base', 'per_property']
-
-  if (code.base_tier !== 'legacy') return trackLines
-
-  return trackLines.filter(li => {
-    const override = li === 'base'
-      ? code.custom_base_fee
-      : li === 'per_property'
-        ? code.custom_per_property_fee
-        : null
-    // Omit only when the OVERRIDE is explicitly 0 — not on null (fallback)
-    // or on any positive value.
-    return !(override != null && Number(override) === 0)
-  })
-}
+// lineItemsForCode moved to ./proposal-code-line-items (B233); re-exported
+// at the top of this file so start-billing/route.ts's existing import
+// path (`import { lineItemsForCode } from '.../proposal-code-stripe'`)
+// keeps working without churn.
 
 function lineItemLabel(li: LineItem): string {
   if (li === 'base') return 'Base'

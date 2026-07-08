@@ -4,6 +4,10 @@ import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '../../../supabase'
 import { TIER_PRICING, TIER_DISPLAY_NAME, TierType } from '../../../lib/tier-config'
 import { FEATURE_FLAGS, isNumericFlag, FeatureFlag } from '../../../lib/feature-flags'
+// B233 — share the SAME lineItemsForCode used by the server-side
+// executor (proposal-code-stripe.ts) so the confirm-dialog preview
+// count/shape can't drift from what actually runs on Issue.
+import { lineItemsForCode } from '../../../lib/proposal-code-line-items'
 
 type Status = 'draft' | 'issued' | 'redeemed' | 'expired' | 'revoked'
 
@@ -759,14 +763,15 @@ export default function ProposalCodeDetail() {
               if (row.custom_per_driver_fee > 30) warnings.push(`Per-driver $${row.custom_per_driver_fee}/mo is above typical $30 ceiling`)
             }
           }
-          // B232 — count mirrors lineItemsForCode (server-only, can't import
-          // here). Both tracks default to 2 lines (base + per_property) —
-          // per_driver retired 2026-07-04. Legacy omits a line when the
-          // matching custom_*_fee is explicitly 0 (Legacy $0-override omit).
+          // B233 — one source of truth for line-item derivation, imported
+          // from the same module the server-side executor uses.
           const isLegacy = row.base_tier === 'legacy'
-          const legacyBaseOmit = isLegacy && row.custom_base_fee != null && Number(row.custom_base_fee) === 0
-          const legacyPerPropOmit = isLegacy && row.custom_per_property_fee != null && Number(row.custom_per_property_fee) === 0
-          const expectedPriceCount = 2 - (legacyBaseOmit ? 1 : 0) - (legacyPerPropOmit ? 1 : 0)
+          const expectedPriceCount = lineItemsForCode({
+            base_tier_type:          row.base_tier_type as 'enforcement' | 'property_management',
+            base_tier:               row.base_tier as any,
+            custom_base_fee:         row.custom_base_fee,
+            custom_per_property_fee: row.custom_per_property_fee,
+          }).length
           const modeUnknownBlocksIssue = !isPremium && stripeMode === null
           return (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
