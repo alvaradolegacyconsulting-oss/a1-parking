@@ -102,7 +102,15 @@ export default function VerifyLanding() {
   const [contactName, setContactName] = useState('')
   const [contactPhone, setContactPhone] = useState('')
   const [address, setAddress] = useState('')
+  // B118 Layer 2 Commit 2 (2026-07-07): split the single combined
+  // "I agree to ToS and Privacy" checkbox into two independent required
+  // checkboxes. Matches the two-row shape self-serve /signup + the
+  // first-login modal already use; RPC now writes two sibling rows
+  // (document_type='tos' + 'privacy') via
+  // 20260707_b118_layer2_redeem_two_click_and_stamp.sql. Legal effect
+  // unchanged (clickwrap + affirmative per-document action).
   const [tosChecked, setTosChecked] = useState(false)
+  const [privacyChecked, setPrivacyChecked] = useState(false)
   // 2026-06-30 — Texas operator attestation on the redeem path
   // (parity with /signup). A1 onboards here and needs the same
   // attestation as the self-serve path. Recorded via the new
@@ -269,7 +277,8 @@ export default function VerifyLanding() {
     if (!contactName.trim()) return 'Primary contact name is required.'
     if (!contactPhone.trim()) return 'Primary contact phone is required.'
     if (!address.trim()) return 'Billing address is required.'
-    if (!tosChecked) return 'You must agree to the Terms of Service and Privacy Policy.'
+    if (!tosChecked) return 'You must agree to the Terms of Service.'
+    if (!privacyChecked) return 'You must agree to the Privacy Policy.'
     if (!attestChecked) return 'You must attest to the Texas operations terms.'
     return null
   }
@@ -561,9 +570,17 @@ export default function VerifyLanding() {
                 <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
                   style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer', flexShrink: 0 }} />
                 <span style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>
-                  I agree to the{' '}
+                  I have read and agree to the{' '}
                   <a href="/terms" target="_blank" rel="noopener" style={{ color: GOLD, textDecoration: 'none' }}>Terms of Service</a>
-                  {' '}({TOS_DISPLAY_DATE}) and{' '}
+                  {' '}({TOS_DISPLAY_DATE}).
+                </span>
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={privacyChecked} onChange={e => setPrivacyChecked(e.target.checked)}
+                  style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer', flexShrink: 0 }} />
+                <span style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>
+                  I have read and agree to the{' '}
                   <a href="/privacy" target="_blank" rel="noopener" style={{ color: GOLD, textDecoration: 'none' }}>Privacy Policy</a>
                   {' '}({PRIVACY_DISPLAY_DATE}).
                 </span>
