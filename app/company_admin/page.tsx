@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
+import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId } from '../lib/tier'
 
@@ -2275,13 +2276,47 @@ export default function CompanyAdminPortal() {
       }
     }
 
-    const { data: expiredVeh } = await supabase.from('vehicles').select('*').ilike('plate', clean).eq('is_active', false).single()
+    // B230 Part B — CA cascade previously collapsed ALL is_active=false
+    // rows into 'expired' regardless of .status. Now splits on status:
+    //   'pending'   → 'pending'   (do-not-tow, permit approval pending)
+    //   'declined'  → 'declined'  (unauthorized, permit denied)
+    //   'expired' / other → 'expired'
+    // Excludes 'deactivated' explicitly (fall through to notfound) so
+    // deactivated permits don't leak as authorized-family states.
+    // Same safety-critical distinction the driver has made since B84.
+    const { data: expiredVeh } = await supabase.from('vehicles').select('*')
+      .ilike('plate', clean).eq('is_active', false).neq('status', 'deactivated').single()
     if (expiredVeh) {
       const inCompany = companyPropNames.includes((expiredVeh.property || '').toLowerCase())
-      if (inCompany) { setSearching(false); setResult({ status: 'expired', data: expiredVeh }); return }
+      if (inCompany) {
+        const resultStatus = expiredVeh.status === 'pending'  ? 'pending'
+                           : expiredVeh.status === 'declined' ? 'declined'
+                           : 'expired'
+        setSearching(false); setResult({ status: resultStatus, data: expiredVeh }); return
+      }
     }
 
     const propNames = properties.map((p: any) => p.name)
+
+    // B230 Part B — plate change under review (do-not-tow safety branch).
+    // Resident-submitted plate change awaiting PM decision. Matches on
+    // vehicle_plate_changes.new_plate + status='pending'; scoped to CA's
+    // portfolio properties (same shape as guest_authorizations below).
+    // Placed BEFORE guest_authorizations because a pending plate-change
+    // at a resident's own unit trumps a coincidental guest-auth match
+    // for the same plate. Mirrors driver's Slice 4 ordering.
+    const { data: pendingPc } = await supabase
+      .from('vehicle_plate_changes')
+      .select('id, vehicle_id, old_plate, new_plate, submitted_at, property')
+      .ilike('new_plate', clean)
+      .in('property', propNames)
+      .eq('status', 'pending')
+      .order('submitted_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (pendingPc) {
+      setSearching(false); setResult({ status: 'plate_under_review', data: pendingPc }); return
+    }
 
     // B214 — guest_authorizations stage 2.5 of the enforcement cascade.
     // CA-portal variant: scoped via .in('property', propNames) to ALL of the
@@ -3595,13 +3630,17 @@ export default function CompanyAdminPortal() {
                 {searching ? 'Searching...' : 'Search Plate'}
               </button>
 
-              {result && (
+              {result && (() => {
+                // B230 Part B — background/border now derived from shared
+                // PLATE_STATUS_META so pending + plate_under_review render
+                // as amber "under review" (not red) — matches driver
+                // enforcement semantics. Prior logic collapsed anything
+                // outside authorized/visitor/guest_authorized to red.
+                const meta = PLATE_STATUS_META[result.status as PlateStatus]
+                return (
                 <div style={{ marginTop:'16px', padding:'16px', borderRadius:'10px',
-                  // B214: guest_authorized = blue (parity with driver portal).
-                  // LOUD distinction per Jose 2026-06-20 — newest status, no
-                  // muscle memory, tow-by-default risk is highest here.
-                  background: result.status === 'authorized' ? '#061406' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
-                  border:`1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
+                  background: meta?.bg ?? '#140404',
+                  border:`1px solid ${meta?.border ?? '#991b1b'}`
                 }}>
                   {result.status === 'authorized' && (
                     <>
@@ -3659,6 +3698,57 @@ export default function CompanyAdminPortal() {
                       </button>
                     </>
                   )}
+                  {/* B230 Part B — pending permit (do-not-tow oversight). */}
+                  {result.status === 'pending' && (
+                    <>
+                      <p style={{ color:'#fbbf24', fontWeight:'bold', fontSize:'16px', margin:'0 0 8px' }}>⏳ UNDER REVIEW — DO NOT TREAT AS UNAUTHORIZED</p>
+                      <p style={{ color:'#fef3c7', fontSize:'13px', margin:'0 0 12px', lineHeight:'1.5' }}>{PLATE_STATUS_META['pending' as PlateStatus].pmSubtitle}</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Unit</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.unit ?? '—'}</span></div>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Property</span><br /><span style={{ color:'#fbbf24', fontSize:'13px' }}>{result.data.property}</span></div>
+                        <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Vehicle</span><br /><span style={{ color:'white', fontSize:'13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
+                      </div>
+                    </>
+                  )}
+                  {/* B230 Part B — plate change under review (do-not-tow oversight). */}
+                  {result.status === 'plate_under_review' && (
+                    <>
+                      <p style={{ color:'#fbbf24', fontWeight:'bold', fontSize:'16px', margin:'0 0 8px' }}>🔁 PLATE CHANGE UNDER REVIEW — DO NOT TREAT AS UNAUTHORIZED</p>
+                      <p style={{ color:'#fef3c7', fontSize:'13px', margin:'0 0 12px', lineHeight:'1.5' }}>{PLATE_STATUS_META['plate_under_review' as PlateStatus].pmSubtitle}</p>
+                      <div style={{ background:'#0f1117', border:'1px solid #a16207', borderRadius:'8px', padding:'10px 12px', marginBottom:'14px' }}>
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', fontSize:'12px' }}>
+                          <div>
+                            <span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Prior plate</span><br />
+                            <span style={{ color:'#aaa', fontFamily:'Courier New', fontSize:'14px' }}>{result.data.old_plate}</span>
+                          </div>
+                          <div>
+                            <span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Requested plate</span><br />
+                            <span style={{ color:'#fbbf24', fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }}>{result.data.new_plate}</span>
+                          </div>
+                        </div>
+                        {result.data.submitted_at && (
+                          <p style={{ color:'#888', fontSize:'11px', margin:'8px 0 0' }}>Submitted {new Date(result.data.submitted_at).toLocaleDateString()}</p>
+                        )}
+                      </div>
+                    </>
+                  )}
+                  {/* B230 Part B — declined permit (unauthorized, may tow —
+                      but distinct from "expired" so oversight sees the
+                      registration-denied context). */}
+                  {result.status === 'declined' && (
+                    <>
+                      <p style={{ color:'#f44336', fontWeight:'bold', fontSize:'16px', margin:'0 0 12px' }}>✗ PERMIT DECLINED</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Unit</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.unit ?? '—'}</span></div>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Property</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.property}</span></div>
+                        <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Vehicle</span><br /><span style={{ color:'white', fontSize:'13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
+                      </div>
+                      <button onClick={() => setShowViolation(true)}
+                        style={{ width:'100%', padding:'11px', background:'#991b1b', color:'white', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                        Issue Violation
+                      </button>
+                    </>
+                  )}
                   {result.status === 'expired' && (
                     <>
                       <p style={{ color:'#ff9800', fontWeight:'bold', fontSize:'16px', margin:'0 0 12px' }}>⚠ PERMIT EXPIRED</p>
@@ -3708,7 +3798,8 @@ export default function CompanyAdminPortal() {
                     </>
                   )}
                 </div>
-              )}
+                )
+              })()}
 
               {showViolation && (
                 <div style={{ marginTop:'14px', background:'#0f0505', border:'1px solid #991b1b', borderRadius:'10px', padding:'16px' }}>

@@ -14,6 +14,7 @@ import { hasFeature, getCompanyContext } from '../lib/tier'
 // tiers → active, preserving today's behavior).
 import { initialVehicleState } from '../lib/vehicle-state'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
+import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import SupportContact from '../components/SupportContact'
 import {
   type GuestAuth,
@@ -301,7 +302,11 @@ export default function ManagerPortal() {
   // B220 (2026-06-26): widened result_type union to include 'guest_authorized'
   // + added guest_name/valid_through fields (populated only on guest_authorized;
   // NULL on resident/visitor/unauthorized per the pm_plate_lookup RPC contract).
-  const [lookupResult, setLookupResult] = useState<{ result_type: 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized'; unit_number: string | null; queriedPlate: string; guest_name?: string | null; valid_through?: string | null } | null>(null)
+  // B230 Part B (2026-07-09): widened again to include 'pending' + 'plate_under_review'
+  // (Part A RPC changes now surface them; previously the manager's whitelist
+  // rejected them as "Unexpected response" and users saw "not authorized"
+  // instead of the actual under-review state).
+  const [lookupResult, setLookupResult] = useState<{ result_type: 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review'; unit_number: string | null; queriedPlate: string; guest_name?: string | null; valid_through?: string | null } | null>(null)
   const [lookupError, setLookupError] = useState('')
   const [managerCompany, setManagerCompany] = useState('')
   const [managerEmail, setManagerEmail] = useState('')
@@ -927,7 +932,11 @@ export default function ManagerPortal() {
       }
       const result = (data || {}) as Record<string, unknown>
       const kind = String(result.result_type || '')
-      if (kind !== 'resident' && kind !== 'visitor' && kind !== 'unauthorized') {
+      // B230 Part B (2026-07-09): 'pending' + 'plate_under_review' added
+      // to the whitelist. B220 added 'guest_authorized'. Any new
+      // pm_plate_lookup RPC return type must land here or renders will
+      // silently degrade to "Unexpected response from server."
+      if (kind !== 'resident' && kind !== 'visitor' && kind !== 'unauthorized' && kind !== 'guest_authorized' && kind !== 'pending' && kind !== 'plate_under_review') {
         setLookupError('Unexpected response from server.')
         return
       }
@@ -935,9 +944,11 @@ export default function ManagerPortal() {
       // user sees exactly what got searched + logged in the audit row.
       const normalized = normalizePlate(raw)
       setLookupResult({
-        result_type: kind as 'resident' | 'visitor' | 'unauthorized',
+        result_type: kind as 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review',
         unit_number: (result.unit_number as string | null) ?? null,
         queriedPlate: normalized,
+        guest_name:  (result.guest_name  as string | null) ?? null,
+        valid_through: (result.valid_through as string | null) ?? null,
       })
     } finally {
       setLookupBusy(false)
@@ -4186,6 +4197,56 @@ export default function ManagerPortal() {
                 )}
               </div>
             )}
+
+            {/* B230 Part B — pending permit (do-not-tow oversight).
+                Same shared amber palette as plate_under_review; distinct
+                copy: this is a resident whose permit approval is pending,
+                not a plate change. Load-bearing invariant: MUST NOT be
+                bucketed under "not authorized" or PMs verbally relay the
+                wrong state to the tow operator. */}
+            {lookupResult && lookupResult.result_type === 'pending' && (() => {
+              const meta = PLATE_STATUS_META['pending' as PlateStatus]
+              return (
+                <div style={{ background: meta.bg, border: `1px solid ${meta.border}`, borderRadius:'10px', padding:'18px' }}>
+                  <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Result for</p>
+                  <p style={{ color: meta.color, fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0 0 14px' }}>{lookupResult.queriedPlate}</p>
+                  <div style={{ display:'flex', alignItems:'center', gap:'12px', marginBottom:'12px' }}>
+                    <div style={{ width:'40px', height:'40px', borderRadius:'50%', background: meta.bg, border:`1px solid ${meta.border}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px' }}>⏳</div>
+                    <div>
+                      <p style={{ color: meta.color, fontSize:'14px', fontWeight:'bold', margin:'0' }}>{meta.pmHeadline}</p>
+                      {lookupResult.unit_number && (
+                        <p style={{ color:'#aaa', fontSize:'13px', margin:'2px 0 0' }}>Unit {lookupResult.unit_number}</p>
+                      )}
+                    </div>
+                  </div>
+                  <p style={{ color:'#fef3c7', fontSize:'12.5px', margin:'0', lineHeight:'1.5' }}>{meta.pmSubtitle}</p>
+                </div>
+              )
+            })()}
+
+            {/* B230 Part B — plate change under review (do-not-tow
+                oversight). Resident has submitted a plate change that's
+                awaiting your decision. Same amber palette as pending;
+                different copy focuses on the plate-change context. */}
+            {lookupResult && lookupResult.result_type === 'plate_under_review' && (() => {
+              const meta = PLATE_STATUS_META['plate_under_review' as PlateStatus]
+              return (
+                <div style={{ background: meta.bg, border: `1px solid ${meta.border}`, borderRadius:'10px', padding:'18px' }}>
+                  <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Result for</p>
+                  <p style={{ color: meta.color, fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0 0 14px' }}>{lookupResult.queriedPlate}</p>
+                  <div style={{ display:'flex', alignItems:'center', gap:'12px', marginBottom:'12px' }}>
+                    <div style={{ width:'40px', height:'40px', borderRadius:'50%', background: meta.bg, border:`1px solid ${meta.border}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px' }}>🔁</div>
+                    <div>
+                      <p style={{ color: meta.color, fontSize:'14px', fontWeight:'bold', margin:'0' }}>{meta.pmHeadline}</p>
+                      {lookupResult.unit_number && (
+                        <p style={{ color:'#aaa', fontSize:'13px', margin:'2px 0 0' }}>Unit {lookupResult.unit_number}</p>
+                      )}
+                    </div>
+                  </div>
+                  <p style={{ color:'#fef3c7', fontSize:'12.5px', margin:'0', lineHeight:'1.5' }}>{meta.pmSubtitle}</p>
+                </div>
+              )
+            })()}
 
             {lookupResult && lookupResult.result_type === 'unauthorized' && (
               <div style={{ background:'#2a1a1a', border:'1px solid #7a2222', borderRadius:'10px', padding:'18px' }}>
