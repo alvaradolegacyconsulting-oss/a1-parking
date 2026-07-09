@@ -13,11 +13,16 @@
 // moment of acceptance — bumping these strings does NOT retroactively
 // re-version existing rows.
 
-export const TOS_VERSION = '2026-05-21-draft-1'
-export const TOS_DISPLAY_DATE = 'May 21, 2026'
+// Bumped 2026-07-09 to the attorney finals delivered July 8, 2026.
+// Version strings key the tos_acceptances + user_roles.tos_accepted_version /
+// privacy_accepted_version columns; login-modal predicate at
+// app/login/page.tsx:301-303 re-fires the consent modal on any user whose
+// stored version != the string here.
+export const TOS_VERSION = '2026-07-08-v1'
+export const TOS_DISPLAY_DATE = 'July 8, 2026'
 
-export const PRIVACY_VERSION = '2026-05-21-draft-1'
-export const PRIVACY_DISPLAY_DATE = 'May 21, 2026'
+export const PRIVACY_VERSION = '2026-07-08-v1'
+export const PRIVACY_DISPLAY_DATE = 'July 8, 2026'
 
 // B66.3 + B95 — Texas operations attestation. Pinned to a 'v0' suffix
 // to signal pre-attorney-review draft wording. When attorney returns
