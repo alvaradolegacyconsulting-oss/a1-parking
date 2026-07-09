@@ -1141,7 +1141,15 @@ export default function ManagerPortal() {
       if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllForUnit', approvedCount: bulkApprovedCount, reason: syncRes.reason })
     }
     setUnitNotes(n => { const c = {...n}; delete c[unit]; return c })
-    fetchVehicles(manager.name)
+    // B231 — same refresh discipline as approveVehicle + approveResident +
+    // approveAllPendingCrm. Prior fire-and-forget on vehicles alone left
+    // the CRM's Needs-approval lane stale (needsApproval derives from 5
+    // dimensions; refreshing 1 is insufficient). Await both fetches so
+    // the queue reflects the mutation before the button re-enables.
+    await Promise.all([
+      fetchVehicles(manager.name),
+      fetchCrmDataForProperty(manager.name),
+    ])
   }
 
   // Permit-Door Piece 1 §5 — property-wide Approve-All Pending Vehicles.
@@ -1191,7 +1199,14 @@ export default function ManagerPortal() {
       console.info('[B147-sync-result]', { site: 'approveAllPendingProperty', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
       if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllPendingProperty', approvedCount, reason: syncRes.reason })
     }
-    fetchVehicles(manager.name)
+    // B231 — same refresh discipline as approveAllForUnit +
+    // approveAllPendingCrm. Refetch both vehicles + CRM dimensions so
+    // needsApproval recomputes against the authoritative post-mutation
+    // truth (not just the vehicles dimension).
+    await Promise.all([
+      fetchVehicles(manager.name),
+      fetchCrmDataForProperty(manager.name),
+    ])
   }
 
   async function declineAllForUnit(unitVehicles: any[], unit: string) {
