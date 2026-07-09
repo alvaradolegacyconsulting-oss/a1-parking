@@ -852,7 +852,29 @@ export default function CompanyAdminPortal() {
   async function fetchCompanyDrivers() {
     if (!role?.company) return
     const { data } = await supabase.from('drivers').select('*').ilike('company', role.company).order('name')
-    setCompanyDrivers(data || [])
+    // B234 L3 — fold user_roles.can_regenerate_tow_ticket per driver so
+    // the driver row can render the current toggle state without a
+    // second round-trip. Merge by lowercased email; drivers with no
+    // matching user_roles row (unlikely — every driver has a role)
+    // fall back to false (RPC default; safest).
+    const driversList = data || []
+    const emails = driversList.map((d: any) => String(d.email || '').toLowerCase()).filter(Boolean)
+    if (emails.length > 0) {
+      const { data: roleRows } = await supabase
+        .from('user_roles')
+        .select('email, can_regenerate_tow_ticket')
+        .in('email', emails)  // lowercased match; RLS admits CA→driver via own-company peer
+      const regenByEmail = new Map<string, boolean>(
+        (roleRows || []).map((r: any) => [String(r.email).toLowerCase(), r.can_regenerate_tow_ticket === true])
+      )
+      const merged = driversList.map((d: any) => ({
+        ...d,
+        can_regenerate_tow_ticket: regenByEmail.get(String(d.email || '').toLowerCase()) ?? false,
+      }))
+      setCompanyDrivers(merged)
+    } else {
+      setCompanyDrivers(driversList)
+    }
 
     // B66.5.1 (Item 2): extend invite-status fetch to cover the Drivers tab
     // surface. Same /api/admin/invite-status endpoint as fetchCompanyUsers;
@@ -5746,6 +5768,31 @@ export default function CompanyAdminPortal() {
                               style={{ padding:'4px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'5px', cursor:'pointer', fontSize:'11px' }}>Deactivate</button>
                           : <button onClick={() => toggleUserActive(u.email, true)} disabled={togglingUser === u.email}
                               style={{ padding:'4px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'5px', cursor:'pointer', fontSize:'11px' }}>Activate</button>
+                      )}
+                      {/* B234 L3 — grant/revoke driver regenerate-tow-ticket
+                          permission. RPC live since 20260627; button pattern
+                          + colors mirror the legacy Drivers-section variant
+                          at :6407 so the two surfaces look identical.
+                          Rendered only for active drivers (mirrors legacy;
+                          RPC also rejects with not_a_driver server-side). */}
+                      {isDriver && active && (
+                        <button
+                          onClick={() => setDriverRegenPermission(u, !u.can_regenerate_tow_ticket)}
+                          title={u.can_regenerate_tow_ticket
+                            ? 'Revoke regenerate-tow-ticket permission'
+                            : 'Grant regenerate-tow-ticket permission'}
+                          style={{
+                            padding:'4px 10px',
+                            background: u.can_regenerate_tow_ticket ? '#f59e0b' : '#1a1400',
+                            color:      u.can_regenerate_tow_ticket ? '#0f1117' : '#f59e0b',
+                            border:'1px solid #f59e0b',
+                            borderRadius:'5px',
+                            cursor:'pointer',
+                            fontSize:'11px',
+                            fontWeight: u.can_regenerate_tow_ticket ? 'bold' : 'normal',
+                          }}>
+                          {u.can_regenerate_tow_ticket ? '⟲ Revoke regen' : '⟲ Grant regen'}
+                        </button>
                       )}
                     </div>
                   </div>
