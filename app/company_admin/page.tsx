@@ -5,6 +5,7 @@ import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
+import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId } from '../lib/tier'
 
@@ -5237,7 +5238,7 @@ export default function CompanyAdminPortal() {
                               </p>
                             </div>
                             <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
-                              <button onClick={() => setEditingProperty({ ...selected })}
+                              <button onClick={() => { setEditingProperty({ ...selected }); scrollAndFocusEditPanel('ca-edit-property') }}
                                 style={{ padding:'8px 14px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', fontSize:'12px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Edit</button>
                               {selected.is_active
                                 ? <button onClick={() => togglePropertyActive(selected)}
@@ -5344,7 +5345,7 @@ export default function CompanyAdminPortal() {
                               inline. Existing saveProperty handler + auth-doc
                               upload/remove helpers. Fields mirror legacy edit form. */}
                           {editingProperty && editingProperty.id === selected.id && (
-                            <div style={{ marginTop:'16px', paddingTop:'14px', borderTop:'1px solid #2a2f3d' }}>
+                            <div id="ca-edit-property" style={{ marginTop:'16px', paddingTop:'14px', borderTop:'1px solid #2a2f3d' }}>
                               <p style={{ color:'#C9A227', fontSize:'11px', margin:'0 0 10px', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:'bold' }}>Edit property</p>
                               {[
                                 { key:'name', label:'Property Name *' },
@@ -5545,7 +5546,7 @@ export default function CompanyAdminPortal() {
                     </div>
                     {isCA && (
                       <div style={{ display:'flex', gap:'6px', marginTop:'10px' }}>
-                        <button onClick={() => { setEditingProperty({ ...prop, visitor_capacity: prop.visitor_capacity ? String(prop.visitor_capacity) : '' }); setPropMsg('') }}
+                        <button onClick={() => { setEditingProperty({ ...prop, visitor_capacity: prop.visitor_capacity ? String(prop.visitor_capacity) : '' }); setPropMsg(''); scrollAndFocusEditPanel('ca-edit-property-legacy') }}
                           style={{ flex:1, padding:'7px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Edit</button>
                         <button onClick={() => togglePropertyActive(prop)}
                           style={{ flex:1, padding:'7px', background: prop.is_active ? '#3a1a1a' : '#1a3a1a', color: prop.is_active ? '#f44336' : '#4caf50', border:`1px solid ${prop.is_active ? '#b71c1c' : '#2e7d32'}`, borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
@@ -5554,7 +5555,7 @@ export default function CompanyAdminPortal() {
                       </div>
                     )}
                     {editingProperty?.id === prop.id && isCA && (
-                      <div style={{ marginTop:'12px', padding:'12px', background:'#0d1520', borderRadius:'8px', border:'1px solid #3a4055' }}>
+                      <div id="ca-edit-property-legacy" style={{ marginTop:'12px', padding:'12px', background:'#0d1520', borderRadius:'8px', border:'1px solid #3a4055' }}>
                         {[
                           { key:'name', label:'Name *' }, { key:'address', label:'Address' },
                           { key:'city', label:'City' }, { key:'state', label:'State' },
@@ -5727,7 +5728,7 @@ export default function CompanyAdminPortal() {
                           Drivers: existing setEditingDriver / updateDriver widget.
                           Managers/LAs: narrow name-only inline edit (this file). */}
                       {isDriver ? (
-                        <button onClick={() => setEditingDriver({ ...u })}
+                        <button onClick={() => { setEditingDriver({ ...u }); scrollAndFocusEditPanel('ca-edit-driver') }}
                           style={{ padding:'4px 10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Edit</button>
                       ) : (
                         <button onClick={() => { setEditingUserEmail(u.email); setEditingUserName(u.name || '') }}
@@ -5854,7 +5855,7 @@ export default function CompanyAdminPortal() {
                   )}
                   {/* Edit Driver form (carried inline; opens under the Drivers group when Edit clicked). */}
                   {editingDriver && isCA && (
-                    <div style={{ background:'#0d1520', border:'2px solid #C9A227', borderRadius:'10px', padding:'16px', margin:'8px 0 12px' }}>
+                    <div id="ca-edit-driver" style={{ background:'#0d1520', border:'2px solid #C9A227', borderRadius:'10px', padding:'16px', margin:'8px 0 12px' }}>
                       <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Edit Driver — {editingDriver.name}</p>
                       <label style={lbl}>Full Name</label>
                       <input value={editingDriver.name || ''} onChange={e => setEditingDriver({ ...editingDriver, name: e.target.value })} style={inp} />
@@ -6260,7 +6261,7 @@ export default function CompanyAdminPortal() {
                 )}
 
                 {editingDriver && (
-                  <div style={{ background:'#0d1520', border:'2px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                  <div id="ca-edit-driver-legacy" style={{ background:'#0d1520', border:'2px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
                     <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Edit Driver — {editingDriver.name}</p>
                     <label style={lbl}>Full Name</label>
                     <input value={editingDriver.name || ''} onChange={e => setEditingDriver({ ...editingDriver, name: e.target.value })} style={inp} />
@@ -6344,7 +6345,7 @@ export default function CompanyAdminPortal() {
                     </div>
                     {isCA && (
                       <div style={{ display:'flex', gap:'6px', marginTop:'8px' }}>
-                        <button onClick={() => { setEditingDriver({...d, assigned_properties: Array.isArray(d.assigned_properties) ? d.assigned_properties : []}); setShowAddDriver(false); setDriverMsg('') }}
+                        <button onClick={() => { setEditingDriver({...d, assigned_properties: Array.isArray(d.assigned_properties) ? d.assigned_properties : []}); setShowAddDriver(false); setDriverMsg(''); scrollAndFocusEditPanel('ca-edit-driver-legacy') }}
                           style={{ flex:1, padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>
                           Edit
                         </button>
@@ -6453,7 +6454,7 @@ export default function CompanyAdminPortal() {
                   const isEditing = editingFacility?.id === f.id
                   if (isEditing) {
                     return (
-                      <div key={i} style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
+                      <div key={i} id="ca-edit-facility" style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
                         <p style={{ color:'#C9A227', fontSize:'11px', margin:'0 0 10px', textTransform:'uppercase', letterSpacing:'0.08em', fontWeight:'bold' }}>Edit facility</p>
                         <label style={lbl}>Name *</label>
                         <input value={editingFacility.name || ''} onChange={e => setEditingFacility({ ...editingFacility, name: e.target.value })} style={inp} />
@@ -6487,7 +6488,7 @@ export default function CompanyAdminPortal() {
                             {f.is_active ? 'Active' : 'Inactive'}
                           </span>
                           <div style={{ display:'flex', gap:'6px' }}>
-                            <button onClick={() => setEditingFacility({ ...f })}
+                            <button onClick={() => { setEditingFacility({ ...f }); scrollAndFocusEditPanel('ca-edit-facility') }}
                               style={{ padding:'5px 10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', fontSize:'10.5px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Edit</button>
                             {f.is_active
                               ? <button onClick={() => toggleFacility(f, false)}
