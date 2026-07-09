@@ -54,13 +54,25 @@ const DRY_RUN = !APPLY
 
 // Tenant tables — all EXPECTED to be 0 post-wipe. Also used for the
 // dry-run's "would delete" count readout.
+//
+// ORDER MATCHES THE MIGRATION'S EXECUTION ORDER (Phase 3a-3f in
+// migrations/20260709_prelaunch_wipe_TENANT_DATA.sql), so the dry-run
+// readout mirrors what the SQL will actually do. Custom stripe_prices
+// is handled separately (filtered by proposal_code_id IS NOT NULL).
 const TENANT_TABLES = [
-  'companies', 'properties', 'residents', 'vehicles', 'drivers',
-  'violations', 'visitor_passes', 'guest_authorizations',
-  'space_requests', 'space_residents', 'space_assignment_history', 'spaces',
-  'storage_facilities', 'flag_acknowledgments', 'dispute_requests',
-  'proposal_codes', 'tos_acceptances', 'stripe_events',
-  'vehicle_plate_changes', 'violation_photos', 'violation_videos',
+  // Phase 3b
+  'proposal_codes',
+  // Phase 3c — history
+  'audit_logs', 'tos_acceptances', 'stripe_events',
+  // Phase 3d — tenant leaves
+  'vehicle_plate_changes', 'dispute_requests',
+  'violation_photos', 'violation_videos', 'violations',
+  'space_residents', 'space_requests', 'space_assignment_history', 'spaces',
+  'guest_authorizations', 'visitor_passes', 'vehicles',
+  // Phase 3e — intermediate
+  'flag_acknowledgments', 'storage_facilities', 'residents', 'drivers',
+  // Phase 3f — parents
+  'properties', 'companies',
 ] as const
 
 async function prompt(rl: readline.Interface, question: string): Promise<string> {
