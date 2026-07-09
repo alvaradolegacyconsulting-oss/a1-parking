@@ -36,6 +36,8 @@ export async function handleInvoicePaymentActionRequired(
     .from('companies')
     .select('id')
     .eq('stripe_customer_id', customerId)
+    // Seed/Wipe Layer 1 — belt-and-suspenders (see customer-updated.ts).
+    .eq('company_env', 'production')
     .maybeSingle()
   if (lookupErr) {
     return { ok: false, reason: `companies lookup failed for customer ${customerId}: ${lookupErr.message}` }

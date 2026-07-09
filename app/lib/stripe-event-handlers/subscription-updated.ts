@@ -38,6 +38,8 @@ export async function handleSubscriptionUpdated(
     .from('companies')
     .select('id, stripe_subscription_id, subscription_status, account_state, past_due_since, name, display_name, tier, tier_type, dunning_day0_sent_at')
     .eq('stripe_subscription_id', sub.id)
+    // Seed/Wipe Layer 1 — belt-and-suspenders (see customer-updated.ts).
+    .eq('company_env', 'production')
     .maybeSingle()
   if (lookupErr) {
     return { ok: false, reason: `companies lookup failed for sub ${sub.id}: ${lookupErr.message}` }

@@ -26,6 +26,10 @@ export async function handleCustomerUpdated(
     .from('companies')
     .select('id')
     .eq('stripe_customer_id', customer.id)
+    // Seed/Wipe Layer 1 — belt-and-suspenders. Test/demo tenants never
+    // hold Stripe IDs, so this filter is defensive against a future bug
+    // that copies a real customer id onto a non-production row.
+    .eq('company_env', 'production')
     .maybeSingle()
   if (lookupErr) {
     return { ok: false, reason: `companies lookup failed for customer ${customer.id}: ${lookupErr.message}` }

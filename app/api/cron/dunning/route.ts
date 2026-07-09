@@ -172,6 +172,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { data: day3Rows, error: day3LookupErr } = await supabase
     .from('companies')
     .select('id, name, display_name, tier, tier_type, past_due_grace_until')
+    // Seed/Wipe Layer 1 — dunning is production-only; test/demo tenants
+    // never hold Stripe IDs and must never be dunned even if they did.
+    .eq('company_env', 'production')
     .eq('account_state', 'past_due')
     .lte('past_due_since', day3ThresholdIso)
     .is('dunning_day3_sent_at', null)
@@ -207,6 +210,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { data: day5Rows, error: day5LookupErr } = await supabase
     .from('companies')
     .select('id, name, display_name, tier, tier_type, past_due_grace_until')
+    // Seed/Wipe Layer 1 — production-only (see :173).
+    .eq('company_env', 'production')
     .eq('account_state', 'past_due')
     .lte('past_due_since', day5ThresholdIso)
     .is('dunning_day5_sent_at', null)
@@ -248,6 +253,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { data: pastDueRows, error: pdLookupErr } = await supabase
     .from('companies')
     .select('id, past_due_grace_until, name, display_name, tier, tier_type')
+    // Seed/Wipe Layer 1 — production-only (see :173).
+    .eq('company_env', 'production')
     .eq('account_state', 'past_due')
     .lte('past_due_grace_until', sweepStartIso)
 
@@ -373,6 +380,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { data: suspendedRows, error: suspLookupErr } = await supabase
     .from('companies')
     .select('id, stripe_subscription_id, suspension_grace_until, name, display_name, tier, tier_type')
+    // Seed/Wipe Layer 1 — production-only (see :173).
+    .eq('company_env', 'production')
     .eq('account_state', 'suspended')
     .lte('suspension_grace_until', new Date().toISOString())
 

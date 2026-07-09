@@ -28,6 +28,8 @@ export async function handleSubscriptionDeleted(
     .from('companies')
     .select('id')
     .eq('stripe_subscription_id', sub.id)
+    // Seed/Wipe Layer 1 — belt-and-suspenders (see customer-updated.ts).
+    .eq('company_env', 'production')
     .maybeSingle()
   if (lookupErr) {
     return { ok: false, reason: `companies lookup failed for sub ${sub.id}: ${lookupErr.message}` }
