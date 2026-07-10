@@ -5,6 +5,7 @@ import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useResolvedLogo } from '../lib/logo'
+import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import CredentialsModal from '../components/CredentialsModal'
 import { generateTempPassword } from '../lib/temp-password'
 
@@ -459,8 +460,9 @@ export default function AdminPortal() {
           }
         }
       }
-      await supabase.from('residents').update({ is_active: false }).ilike('property', propertyName)
-      await supabase.from('vehicles').update({ is_active: false }).ilike('property', propertyName)
+      // 2026-07-10 — escape ILIKE wildcards on the destructive cascade.
+      await supabase.from('residents').update({ is_active: false }).ilike('property', escapeIlikeValue(propertyName))
+      await supabase.from('vehicles').update({ is_active: false }).ilike('property', escapeIlikeValue(propertyName))
       await supabase.from('properties').update({ is_active: false }).eq('id', p.id)
       await auditLog(adminEmail, 'DEACTIVATE_PROPERTY_CASCADE', 'properties', p.id, {
         property: propertyName, users_affected: propertyUsers?.length || 0,
@@ -488,8 +490,9 @@ export default function AdminPortal() {
           console.error('[admin property-cascade] user_roles.is_active=true restore failed (auth unbans intact):', urErr.message, { property: propertyName, count: emails.length })
         }
       }
-      await supabase.from('residents').update({ is_active: true }).ilike('property', propertyName)
-      await supabase.from('vehicles').update({ is_active: true }).ilike('property', propertyName)
+      // 2026-07-10 — escape ILIKE wildcards on the reactivate cascade.
+      await supabase.from('residents').update({ is_active: true }).ilike('property', escapeIlikeValue(propertyName))
+      await supabase.from('vehicles').update({ is_active: true }).ilike('property', escapeIlikeValue(propertyName))
       await supabase.from('properties').update({ is_active: true }).eq('id', p.id)
       await auditLog(adminEmail, 'ACTIVATE_PROPERTY_CASCADE', 'properties', p.id, {
         property: propertyName, users_affected: propertyUsers?.length || 0,

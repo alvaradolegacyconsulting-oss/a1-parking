@@ -15,6 +15,7 @@ import { hasFeature, getCompanyContext } from '../lib/tier'
 import { initialVehicleState } from '../lib/vehicle-state'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
+import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import SupportContact from '../components/SupportContact'
 import {
   type GuestAuth,
@@ -67,15 +68,6 @@ import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tool
 // B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
 import { evaluatePortalGate } from '../lib/portal-account-gate'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
-
-// B166 — escape PostgREST ILIKE wildcards so user-entered values
-// (unit/property) can't over-match via embedded % or _. Email uses
-// .eq() instead (forward stamps are all-lowercase; underscore in the
-// local-part would otherwise be interpreted as ILIKE wildcard and
-// over-match on a destructive UPDATE).
-function escapeIlikeValue(s: string): string {
-  return s.replace(/[\\%_]/g, '\\$&')
-}
 
 // Slice 1 Commit 4b — client wrapper for the /api/billing/sync-on-add
 // route. Duplicated from app/company_admin/page.tsx (small DRY violation,
@@ -1091,10 +1083,11 @@ export default function ManagerPortal() {
     await logAudit({ action: 'DECLINE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'declined', property: manager.name } })
     const { data: veh } = await supabase.from('vehicles').select('unit, property').eq('id', id).single()
     if (veh) {
+      // 2026-07-10 — escape ILIKE wildcards (pre-B166 vestige).
       await supabase.from('residents')
         .update({ status: 'active', is_active: true })
-        .ilike('unit', veh.unit)
-        .ilike('property', veh.property)
+        .ilike('unit', escapeIlikeValue(veh.unit))
+        .ilike('property', escapeIlikeValue(veh.property))
         .eq('status', 'pending')
     }
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
@@ -1215,10 +1208,11 @@ export default function ManagerPortal() {
       supabase.from('vehicles').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', v.id)
         .then(() => logAudit({ action: 'DECLINE_VEHICLE', table_name: 'vehicles', record_id: v.id, new_values: { status: 'declined', property: manager.name } }))
     ))
+    // 2026-07-10 — escape ILIKE wildcards (pre-B166 vestige).
     await supabase.from('residents')
       .update({ status: 'active', is_active: true })
-      .ilike('unit', unit)
-      .ilike('property', manager.name)
+      .ilike('unit', escapeIlikeValue(unit))
+      .ilike('property', escapeIlikeValue(manager.name))
       .eq('status', 'pending')
     setUnitNotes(n => { const c = {...n}; delete c[unit]; return c })
     fetchVehicles(manager.name)
@@ -1809,7 +1803,8 @@ export default function ManagerPortal() {
   async function declineResident(r: any) {
     const note = residentNotes[r.id] || null
     await supabase.from('residents').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', r.id)
-    await supabase.from('vehicles').update({ is_active: false, status: 'declined' }).ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
+    // 2026-07-10 — escape ILIKE wildcards (pre-B166 vestige).
+    await supabase.from('vehicles').update({ is_active: false, status: 'declined' }).ilike('unit', escapeIlikeValue(r.unit)).ilike('property', escapeIlikeValue(manager.name)).eq('status', 'pending')
     // Send the decline email (with optional manager note) + capture
     // outcome for the audit. Email failure is non-fatal.
     const emailResult = await notifyResidentDecision({ residentId: r.id, decision: 'declined', note })

@@ -5,6 +5,7 @@ import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
+import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId } from '../lib/tier'
@@ -1652,11 +1653,14 @@ export default function CompanyAdminPortal() {
               .ilike('property', cascadeProperty)
               .eq('is_active', true)
             if (othersStillActive === 0) {
+              // 2026-07-10 — escape ILIKE wildcards on the destructive
+              // vehicles UPDATE. Read count above kept as-is (scope
+              // guardrail — this commit is writes only).
               const { data: archived } = await supabase
                 .from('vehicles')
                 .update({ is_active: false })
-                .ilike('unit', cascadeUnit)
-                .ilike('property', cascadeProperty)
+                .ilike('unit', escapeIlikeValue(cascadeUnit))
+                .ilike('property', escapeIlikeValue(cascadeProperty))
                 .eq('is_active', true)
                 .select('id, plate')
               if (archived && archived.length > 0) {
