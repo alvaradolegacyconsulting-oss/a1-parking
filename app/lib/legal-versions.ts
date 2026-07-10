@@ -35,18 +35,18 @@ export const PRIVACY_DISPLAY_DATE = 'July 8, 2026'
 // (no "pending review" hedging in user-visible text) and tightens
 // later without retroactive validity issues.
 // B118 Layer 2 Commit 3 — SaaS Subscription Agreement version pin.
-// PLACEHOLDER — attorney finals swap in via a text edit +
-// SAAS_VERSION bump (one-line runbook, no code changes). The '-draft-1'
-// suffix signals pre-attorney-review; final swap will bump to a
-// version like '2026-07-14-v1'.
+// Attorney final swapped 2026-07-10 (see app/components/SaasAgreementBody.tsx
+// header comment). Version bumped from the '2026-07-06-draft-1' placeholder
+// to '2026-07-10-v1' so tos_acceptances rows written from this point pin the
+// attorney-final text; earlier UAT rows retain the draft version string.
 //
 // Read at /signup/redeem/verify's activate() call to pin the
 // tos_acceptances.saas_version column. The gate re-fires for future
 // redeems when this string changes. Login-modal predicate does NOT
 // read saas_accepted_version — SaaS re-sign is deliberate UX, not
 // auto-prompt.
-export const SAAS_VERSION      = '2026-07-06-draft-1'
-export const SAAS_DISPLAY_DATE = 'July 6, 2026'
+export const SAAS_VERSION      = '2026-07-10-v1'
+export const SAAS_DISPLAY_DATE = 'July 10, 2026'
 
 export const TEXAS_ATTESTATION_VERSION = '2026-05-23-v0'
 export const TEXAS_ATTESTATION_TEXT = `I attest that:

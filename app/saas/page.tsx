@@ -21,16 +21,7 @@ export default function Saas() {
           <img src={logoUrl} alt="ShieldMyLot"
             style={{ width:'64px', height:'64px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 16px' }} />
           <h1 style={{ color:'#C9A227', fontSize:'26px', fontWeight:'bold', margin:'0 0 8px' }}>ShieldMyLot™ — SaaS Subscription Agreement</h1>
-          <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Draft — Pending Legal Review · Last updated: {SAAS_DISPLAY_DATE}</p>
-        </div>
-
-        <div style={{ background:'#2a1f0a', border:'1px solid #a16207', borderRadius:'8px', padding:'12px 16px', marginBottom:'24px' }}>
-          <p style={{ color:'#fbbf24', fontSize:'12px', fontWeight:'bold', margin:'0 0 6px', textTransform:'uppercase', letterSpacing:'0.05em' }}>
-            Draft placeholder — not for execution
-          </p>
-          <p style={{ color:'#eee', fontSize:'12.5px', lineHeight:'1.6', margin:0 }}>
-            The text below is a placeholder for building and smoke-testing the acceptance mechanism. Attorney-finalized text replaces this before any customer signs a live subscription.
-          </p>
+          <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Last updated: {SAAS_DISPLAY_DATE}</p>
         </div>
 
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'24px' }}>
