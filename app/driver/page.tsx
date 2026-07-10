@@ -1036,8 +1036,7 @@ export default function DriverPortal() {
         <img src="${getCachedLogoUrl(localStorage.getItem('company_logo'))}" class="logo" alt="" onerror="this.style.display='none'">
         <div>
           <div style="font-size:20px;font-weight:bold">${driver?.company || 'A1 Wrecker, LLC'}</div>
-          <div style="font-size:11px;color:#888;margin-top:2px">Houston's #1 Towing &amp; Recovery</div>
-          <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">OFFICIAL TOW TICKET</div>
+          <div style="font-size:15px;font-weight:bold;color:#C9A227;margin-top:3px">TOW TICKET</div>
         </div>
         <div style="margin-left:auto;text-align:right">
           <div style="font-size:10px;color:#888">Date / Time</div>

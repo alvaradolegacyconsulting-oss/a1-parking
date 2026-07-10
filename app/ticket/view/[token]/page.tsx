@@ -147,7 +147,7 @@ function TicketView({ violation: v, photos }: { violation: ViolationRow; photos:
           <div>
             <div style={{ fontSize: 20, fontWeight: 'bold' }}>Tow Ticket</div>
             <div style={{ fontSize: 15, fontWeight: 'bold', color: '#C9A227', marginTop: 3 }}>
-              OFFICIAL TOW TICKET
+              TOW TICKET
             </div>
           </div>
           <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
