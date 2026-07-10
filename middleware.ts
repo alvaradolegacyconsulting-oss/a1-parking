@@ -46,5 +46,15 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // 2026-07-10 — extended to bypass middleware for platform icon assets +
+  // the PWA manifest. Prior form only excluded favicon.ico; every other
+  // asset (icon.png, apple-icon.png, icon-192.png, icon-512.png,
+  // manifest.webmanifest) was matched by middleware and 307-redirected
+  // to /login for anon traffic. Symptom: Android install showed "S on
+  // grey" fallback because /icon-192.png returned an HTML redirect
+  // instead of a PNG. Same class of bug as the B65 publicPaths gap
+  // (2026-05-20) — asset paths must short-circuit before auth guard,
+  // not be added to publicPaths (avoids per-request middleware cost
+  // and Supabase.auth.getUser round-trip on every icon fetch).
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|icon-192.png|icon-512.png|manifest.webmanifest).*)'],
 }
