@@ -1884,14 +1884,26 @@ export default function CompanyAdminPortal() {
       return
     }
 
-    // Local-patch the row; cheaper than a full refetch for a single-
-    // column toggle. Mirrors the existing patch-then-stay-in-place
-    // pattern other CA mutations use.
+    // Local-patch BOTH state arrays so every surface reflects the
+    // new state without a refresh. B234 L3 reopen (2026-07-09): the
+    // CRM People path renders through DriverRow → PeopleRow, and
+    // DriverRow composites its `u` from companyUsers (the roleRow
+    // find), not from companyDrivers. Patching only companyDrivers
+    // (the original B234 L3 shape) left the CRM button stale — same
+    // class as B231. Patch companyUsers too; keep companyDrivers
+    // patch for the legacy surface that iterates it directly.
     setCompanyDrivers((prev: any[]) =>
       prev.map(d =>
         String(d.email).toLowerCase() === String(driver.email).toLowerCase()
           ? { ...d, can_regenerate_tow_ticket: allowed }
           : d
+      )
+    )
+    setCompanyUsers((prev: any[]) =>
+      prev.map(u =>
+        String(u.email).toLowerCase() === String(driver.email).toLowerCase()
+          ? { ...u, can_regenerate_tow_ticket: allowed }
+          : u
       )
     )
   }
@@ -5801,11 +5813,18 @@ export default function CompanyAdminPortal() {
 
               function DriverRow({ d }: { d: any }) {
                 // Composite view: driver from the drivers table + can_approve
-                // + is_active from user_roles (companyUsers) if a matching row exists.
+                // + is_active + can_regenerate_tow_ticket from user_roles
+                // (companyUsers) if a matching row exists. Fallback dict
+                // reads can_regenerate_tow_ticket from the drivers row
+                // itself (populated by fetchCompanyDrivers' user_roles
+                // fold) so the row still renders correct state if the
+                // roleRow is somehow missing (edge case; every driver
+                // should have a user_roles row in practice).
                 const roleRow = (companyUsers as any[]).find(u => String(u.email).toLowerCase() === String(d.email).toLowerCase())
                 const u = roleRow || { email: d.email, role: 'driver', name: d.name,
                   can_approve_vehicles: undefined, is_active: d.is_active,
-                  phone: d.phone, operator_license: d.operator_license }
+                  phone: d.phone, operator_license: d.operator_license,
+                  can_regenerate_tow_ticket: d.can_regenerate_tow_ticket === true }
                 return <PeopleRow u={u} />
               }
 
