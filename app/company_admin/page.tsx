@@ -3318,19 +3318,28 @@ export default function CompanyAdminPortal() {
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{role?.company || 'ShieldMyLot'}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Company Admin Portal</p>
-          {/* CA CRM Recovery — company-level change-logo affordance as a
-              small overlay on the avatar (matches v4 mockup — "Change logo"
-              chip on hover / click). Wraps a hidden file input; on file
-              select, uploads via uploadLogo → saveCompanyLogo. Narrow
-              allowlist enforced in saveCompanyLogo — {logo_url} only. */}
+          {/* Change-logo chip was previously nested here inside the
+              !CA_CRM_REDESIGN wrapper AND gated on CA_CRM_REDESIGN —
+              dead code since flag flip. Now lives in the compact
+              company-info bar below (visible on every CRM tab). */}
+        </div>}
+
+        <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:'12px' }}>
+          {/* Logo thumbnail — surfaces the company's uploaded logo on
+              every tab and doubles as the entry-point for the Change
+              logo affordance. The wrapper label + hidden file input
+              are the same uploadLogo → saveCompanyLogo pattern that
+              lived under !CA_CRM_REDESIGN before (dead-code since the
+              redesign flag flipped). Load-bearing for A1 tow-ticket
+              branding — driver/page.tsx:1036 reads
+              localStorage.getItem('company_logo') on ticket render. */}
           {CA_CRM_REDESIGN && role?.company && (
-            <label htmlFor="ca-crm-logo-input" style={{
-              display:'inline-block', marginTop:'8px', padding:'4px 10px',
-              fontSize:'11px', fontWeight:'bold', color:'#C9A227',
-              background:'#1e2535', border:'1px solid #C9A227', borderRadius:'12px',
-              cursor:'pointer', fontFamily:'Arial',
-            }}>
-              Change logo
+            <label htmlFor="ca-crm-logo-input" title="Click to change your company logo"
+              style={{ position:'relative', flexShrink:0, cursor:'pointer', display:'block' }}>
+              <img src={resolvedLogo} alt={role?.company || 'Company logo'}
+                onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                style={{ width:'40px', height:'40px', borderRadius:'8px', border:'1.5px solid #C9A227', background:'#0f1117', objectFit:'cover', display:'block' }} />
+              <span style={{ position:'absolute', bottom:'-4px', right:'-4px', background:'#C9A227', color:'#0f1117', fontSize:'9px', fontWeight:'bold', borderRadius:'8px', padding:'1px 5px', fontFamily:'Arial', border:'1.5px solid #161b26' }}>Edit</span>
               <input id="ca-crm-logo-input" type="file" accept="image/*"
                 style={{ display:'none' }}
                 onChange={async e => {
@@ -3341,10 +3350,7 @@ export default function CompanyAdminPortal() {
                 }} />
             </label>
           )}
-        </div>}
-
-        <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-          <div>
+          <div style={{ flex:1, minWidth:0 }}>
             <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0' }}>{role?.company || 'Company Admin'}</p>
             <p style={{ color:'#aaa', fontSize:'11px', margin:'2px 0 0' }}>{user?.email}</p>
             {/* Tier badges — HIDDEN behind CA_CRM_REDESIGN per v4 IA
