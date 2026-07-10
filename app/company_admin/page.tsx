@@ -557,8 +557,19 @@ export default function CompanyAdminPortal() {
     // logo affordance (behind CA_CRM_REDESIGN). Existing useResolvedLogo covers
     // the localStorage/resolved-display path; this is the SoT for the edit
     // affordance so a save round-trips against the actual DB row.
-    if (roleData?.company) {
-      const { data: c } = await supabase.from('companies').select('logo_url').ilike('name', roleData.company).maybeSingle()
+    //
+    // 2026-07-09 fix — keyed on companies.id, not ILIKE(name). Prior
+    // shape silently dropped rows on ILIKE mismatches (whitespace
+    // drift, name changes, RLS interactions) — the write attempts
+    // all audited "OK" but companies.logo_url stayed NULL because
+    // no row matched the WHERE clause. companyRow.id is available
+    // upstream via getCachedCompanyId (populated by company-bootstrap
+    // from the same fetch). Both the bootstrap SELECT here AND the
+    // UPDATE in saveCompanyLogo now key on id — no name-string
+    // dependency anywhere in the logo write path.
+    const bootstrapCompanyId = getCachedCompanyId()
+    if (bootstrapCompanyId != null) {
+      const { data: c } = await supabase.from('companies').select('logo_url').eq('id', bootstrapCompanyId).maybeSingle()
       setCompanyLogoUrl((c as any)?.logo_url || '')
     }
 
@@ -2037,19 +2048,39 @@ export default function CompanyAdminPortal() {
   const COMPANY_LOGO_EDITABLE_FIELDS = ['logo_url'] as const
   async function saveCompanyLogo(newLogoUrl: string) {
     if (!role?.company) return
+    // 2026-07-09 fix — key on companies.id (stable), NOT ILIKE(name)
+    // (denormalized string, drift-prone). Prior shape audited 7+ writes
+    // "OK" but companies.logo_url on the actual row (id=56 A1 Test
+    // Run 2) stayed NULL — the ILIKE match dropped rows silently.
+    // Verify-after-write becomes the assertion that we hit ONE row.
+    const companyId = getCachedCompanyId()
+    if (companyId == null) { alert('Logo update failed: session missing company_id. Please refresh and try again.'); return }
     const patch: Record<string, any> = {}
     for (const [k, v] of Object.entries({ logo_url: newLogoUrl })) {
       if ((COMPANY_LOGO_EDITABLE_FIELDS as readonly string[]).includes(k)) patch[k] = v
     }
     if (Object.keys(patch).length === 0) return
     const { data: current, error: readErr } = await supabase.from('companies')
-      .select('logo_url').ilike('name', role.company).maybeSingle()
+      .select('logo_url').eq('id', companyId).maybeSingle()
     if (readErr) { alert(`Logo update failed: ${readErr.message}`); return }
     const oldUrl = (current as any)?.logo_url ?? null
     if (JSON.stringify(oldUrl) === JSON.stringify(newLogoUrl)) return
-    const { error: updErr } = await supabase.from('companies').update(patch).ilike('name', role.company)
+    const { data: updRows, error: updErr } = await supabase.from('companies').update(patch).eq('id', companyId).select('id, logo_url')
     if (updErr) { alert(`Logo update failed: ${updErr.message}`); return }
-    await auditLog('EDIT_COMPANY_LOGO', 'companies', role.company, { old_values: { logo_url: oldUrl }, new_values: { logo_url: newLogoUrl } })
+    // Verify-after-write — the ILIKE-keyed prior version silently
+    // dropped rows; assert we actually mutated one and its logo_url
+    // matches. If the RLS admits the SELECT but not the UPDATE, the
+    // returned rows array will be empty here — surface the failure
+    // instead of silently succeeding.
+    if (!updRows || updRows.length === 0) {
+      alert('Logo update failed: no row matched or update blocked by permissions. Refresh and try again.')
+      return
+    }
+    if ((updRows[0] as any).logo_url !== newLogoUrl) {
+      alert(`Logo update failed: verify-after-write mismatch. Expected ${newLogoUrl}, got ${(updRows[0] as any).logo_url}`)
+      return
+    }
+    await auditLog('EDIT_COMPANY_LOGO', 'companies', String(companyId), { old_values: { logo_url: oldUrl }, new_values: { logo_url: newLogoUrl } })
     setCompanyLogoUrl(newLogoUrl)
     // 2026-07-09 fix — refresh the localStorage `company_logo` cache
     // in the SAME success path. Two-birds:
