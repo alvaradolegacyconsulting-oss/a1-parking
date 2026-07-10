@@ -38,7 +38,7 @@ export type SaasReadthroughGateProps = {
   version: string                                        // SAAS_VERSION from legal-versions.ts
   displayDate: string                                    // SAAS_DISPLAY_DATE
   disabled?: boolean                                     // parent gate (e.g., other checkboxes unchecked)
-  paneHeight?: number                                    // px; default 320
+  paneHeight?: number                                    // px; default 560 (bumped 2026-07-09 per attorney readability note)
   onSigned: (info: { version: string, reviewedAt: string }) => void
 }
 
@@ -48,7 +48,7 @@ export default function SaasReadthroughGate({
   version,
   displayDate,
   disabled = false,
-  paneHeight = 320,
+  paneHeight = 560,
   onSigned,
 }: SaasReadthroughGateProps) {
   const paneRef     = useRef<HTMLDivElement | null>(null)
@@ -131,11 +131,17 @@ export default function SaasReadthroughGate({
           background:'#0f1117',
           border:'1px solid #2a2f3d',
           borderRadius:'8px',
-          padding:'14px 16px',
-          maxHeight: `${paneHeight}px`,
+          padding:'16px 18px',
+          // Attorney readability fix (2026-07-09) — was 320px @ 13px/1.7.
+          // maxHeight uses min(paneHeight, 70vh) so tall panes don't
+          // overflow small viewports on mobile. IntersectionObserver
+          // + scroll-to-bottom detection are dimension-live (both
+          // derive from the pane's own scrollHeight/clientHeight at
+          // event time), so resize doesn't regress the unlock gate.
+          maxHeight: `min(${paneHeight}px, 70vh)`,
           overflowY:'auto',
-          fontSize:'13px',
-          lineHeight:'1.7',
+          fontSize:'14.5px',
+          lineHeight:'1.75',
         }}>
         <SaasAgreementBody />
         <div
