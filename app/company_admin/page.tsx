@@ -3327,25 +3327,26 @@ export default function CompanyAdminPortal() {
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:'12px' }}>
           {/* Logo thumbnail — surfaces the company's uploaded logo on
               every tab and doubles as the entry-point for the Change
-              logo affordance. The wrapper label + hidden file input
-              are the same uploadLogo → saveCompanyLogo pattern that
-              lived under !CA_CRM_REDESIGN before (dead-code since the
-              redesign flag flipped). Load-bearing for A1 tow-ticket
+              logo affordance. Wiring mirrors the working `logoField`
+              helper at :3271 verbatim: no htmlFor + no input id,
+              native label-child association only; sync onChange that
+              calls uploadLogo without await. Prior async + htmlFor
+              shape had onChange never firing (picker opened but no
+              change event landed). Load-bearing for A1 tow-ticket
               branding — driver/page.tsx:1036 reads
               localStorage.getItem('company_logo') on ticket render. */}
           {CA_CRM_REDESIGN && role?.company && (
-            <label htmlFor="ca-crm-logo-input" title="Click to change your company logo"
+            <label title="Click to change your company logo"
               style={{ position:'relative', flexShrink:0, cursor:'pointer', display:'block' }}>
               <img src={resolvedLogo} alt={role?.company || 'Company logo'}
-                onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                onError={e => { (e.target as HTMLImageElement).style.visibility = 'hidden' }}
                 style={{ width:'40px', height:'40px', borderRadius:'8px', border:'1.5px solid #C9A227', background:'#0f1117', objectFit:'cover', display:'block' }} />
               <span style={{ position:'absolute', bottom:'-4px', right:'-4px', background:'#C9A227', color:'#0f1117', fontSize:'9px', fontWeight:'bold', borderRadius:'8px', padding:'1px 5px', fontFamily:'Arial', border:'1.5px solid #161b26' }}>Edit</span>
-              <input id="ca-crm-logo-input" type="file" accept="image/*"
+              <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
                 style={{ display:'none' }}
-                onChange={async e => {
+                onChange={e => {
                   const f = e.target.files?.[0]
-                  if (!f) return
-                  await uploadLogo(f, `companies/${String(role.company).toLowerCase().replace(/\s+/g,'-')}-logo`, `ca_company_logo`, (url: string) => saveCompanyLogo(url))
+                  if (f) uploadLogo(f, `companies/${String(role.company).toLowerCase().replace(/\s+/g,'-')}-logo`, `ca_company_logo`, (url: string) => saveCompanyLogo(url))
                   e.target.value = ''
                 }} />
             </label>
