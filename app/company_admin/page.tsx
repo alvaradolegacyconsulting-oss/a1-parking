@@ -1445,25 +1445,19 @@ export default function CompanyAdminPortal() {
   }
 
   async function uploadLogo(file: File, pathPrefix: string, slot: string, onSuccess: (url: string) => void) {
-    console.log('[LOGO-DEBUG] uploadLogo() entered; file=', file.name, 'size=', file.size, 'slot=', slot)
     if (file.size > 2 * 1024 * 1024) {
-      console.warn('[LOGO-DEBUG] uploadLogo → file exceeds 2MB limit')
       setLogoUploadMsg(m => ({ ...m, [slot]: 'File exceeds 2MB limit' }))
       return
     }
     setLogoUploadMsg(m => ({ ...m, [slot]: 'Uploading...' }))
     const ext = file.name.split('.').pop() || 'png'
     const filePath = `${pathPrefix}-${Date.now()}.${ext}`
-    console.log('[LOGO-DEBUG] uploadLogo → storage.upload to path:', filePath)
     const { error } = await supabase.storage.from('logos').upload(filePath, file, { upsert: true })
     if (error) {
-      console.error('[LOGO-DEBUG] uploadLogo → storage.upload FAILED:', error.message, error)
       setLogoUploadMsg(m => ({ ...m, [slot]: 'Upload failed: ' + error.message }))
       return
     }
-    console.log('[LOGO-DEBUG] uploadLogo → storage.upload OK; getting public URL')
     const { data: urlData } = supabase.storage.from('logos').getPublicUrl(filePath)
-    console.log('[LOGO-DEBUG] uploadLogo → calling onSuccess with url:', urlData.publicUrl)
     onSuccess(urlData.publicUrl)
     setLogoUploadMsg(m => ({ ...m, [slot]: 'Logo uploaded!' }))
     setTimeout(() => setLogoUploadMsg(m => ({ ...m, [slot]: '' })), 3000)
@@ -2042,26 +2036,36 @@ export default function CompanyAdminPortal() {
   // EDIT_COMPANY_LOGO (SCREAMING_SNAKE) with old/new URL diff.
   const COMPANY_LOGO_EDITABLE_FIELDS = ['logo_url'] as const
   async function saveCompanyLogo(newLogoUrl: string) {
-    console.log('[LOGO-DEBUG] saveCompanyLogo() entered; newLogoUrl=', newLogoUrl, 'company=', role?.company)
-    if (!role?.company) { console.warn('[LOGO-DEBUG] saveCompanyLogo → no role.company; abort'); return }
+    if (!role?.company) return
     const patch: Record<string, any> = {}
     for (const [k, v] of Object.entries({ logo_url: newLogoUrl })) {
       if ((COMPANY_LOGO_EDITABLE_FIELDS as readonly string[]).includes(k)) patch[k] = v
     }
-    if (Object.keys(patch).length === 0) { console.warn('[LOGO-DEBUG] saveCompanyLogo → patch empty; abort'); return }
-    console.log('[LOGO-DEBUG] saveCompanyLogo → SELECT current logo_url')
+    if (Object.keys(patch).length === 0) return
     const { data: current, error: readErr } = await supabase.from('companies')
       .select('logo_url').ilike('name', role.company).maybeSingle()
-    if (readErr) { console.error('[LOGO-DEBUG] saveCompanyLogo → SELECT failed:', readErr); alert(`Logo update failed: ${readErr.message}`); return }
+    if (readErr) { alert(`Logo update failed: ${readErr.message}`); return }
     const oldUrl = (current as any)?.logo_url ?? null
-    console.log('[LOGO-DEBUG] saveCompanyLogo → oldUrl=', oldUrl)
-    if (JSON.stringify(oldUrl) === JSON.stringify(newLogoUrl)) { console.warn('[LOGO-DEBUG] saveCompanyLogo → no-op (oldUrl === newUrl)'); return }
-    console.log('[LOGO-DEBUG] saveCompanyLogo → UPDATE companies SET logo_url=', newLogoUrl)
+    if (JSON.stringify(oldUrl) === JSON.stringify(newLogoUrl)) return
     const { error: updErr } = await supabase.from('companies').update(patch).ilike('name', role.company)
-    if (updErr) { console.error('[LOGO-DEBUG] saveCompanyLogo → UPDATE failed:', updErr); alert(`Logo update failed: ${updErr.message}`); return }
-    console.log('[LOGO-DEBUG] saveCompanyLogo → UPDATE OK; auditLog + setCompanyLogoUrl')
+    if (updErr) { alert(`Logo update failed: ${updErr.message}`); return }
     await auditLog('EDIT_COMPANY_LOGO', 'companies', role.company, { old_values: { logo_url: oldUrl }, new_values: { logo_url: newLogoUrl } })
     setCompanyLogoUrl(newLogoUrl)
+    // 2026-07-09 fix — refresh the localStorage `company_logo` cache
+    // in the SAME success path. Two-birds:
+    //   1. The compact-bar thumbnail's useResolvedLogo(...) at :158
+    //      snapshots localStorage at render time. Without this cache
+    //      update, setCompanyLogoUrl triggers a re-render but the
+    //      hook sees the SAME localStorage snapshot → useEffect
+    //      dep unchanged → thumbnail stays stale until next login.
+    //   2. driver/page.tsx:1036 reads localStorage.company_logo at
+    //      tow-ticket generate time. Without this update, A1's tow
+    //      ticket renders the OLD logo until the CA logs out + back
+    //      in (bootstrap re-fetches from companies.logo_url).
+    // Both gaps close with the same one-line write.
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem('company_logo', newLogoUrl) } catch { /* quota / private mode — non-fatal */ }
+    }
   }
 
   // Slice 0 (2026-07-05): CA edit + activate/deactivate handlers.
@@ -3348,7 +3352,6 @@ export default function CompanyAdminPortal() {
               localStorage.getItem('company_logo') on ticket render. */}
           {CA_CRM_REDESIGN && role?.company && (
             <label title="Click to change your company logo"
-              onClick={() => console.log('[LOGO-DEBUG] thumbnail/label clicked')}
               style={{ position:'relative', flexShrink:0, cursor:'pointer', display:'block' }}>
               <img src={resolvedLogo} alt={role?.company || 'Company logo'}
                 onError={e => { (e.target as HTMLImageElement).style.visibility = 'hidden' }}
@@ -3357,18 +3360,8 @@ export default function CompanyAdminPortal() {
               <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
                 style={{ display:'none' }}
                 onChange={e => {
-                  console.log('[LOGO-DEBUG] onChange fired; file =', e.target.files?.[0]?.name, 'size =', e.target.files?.[0]?.size)
                   const f = e.target.files?.[0]
-                  if (!f) { console.warn('[LOGO-DEBUG] no file in e.target.files'); return }
-                  console.log('[LOGO-DEBUG] calling uploadLogo → saveCompanyLogo')
-                  try {
-                    uploadLogo(f, `companies/${String(role.company).toLowerCase().replace(/\s+/g,'-')}-logo`, `ca_company_logo`, (url: string) => {
-                      console.log('[LOGO-DEBUG] uploadLogo returned url; calling saveCompanyLogo')
-                      saveCompanyLogo(url)
-                    })
-                  } catch (err) {
-                    console.error('[LOGO-DEBUG] synchronous throw:', err)
-                  }
+                  if (f) uploadLogo(f, `companies/${String(role.company).toLowerCase().replace(/\s+/g,'-')}-logo`, `ca_company_logo`, (url: string) => saveCompanyLogo(url))
                   e.target.value = ''
                 }} />
             </label>
