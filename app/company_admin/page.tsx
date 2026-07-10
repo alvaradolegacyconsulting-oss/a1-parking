@@ -1621,7 +1621,21 @@ export default function CompanyAdminPortal() {
           body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
         }).catch(() => {})
         if (residentInserted) {
-          await supabase.from('residents').delete().ilike('email', targetEmail)
+          // 2026-07-10 fix — swap direct .delete().ilike() for DEFINER RPC.
+          // Prior shape had no DELETE policy for company_admin on residents,
+          // so every rollback silently 0-rowed and left orphan residents
+          // rows. RPC v2 scopes DELETE to caller's company (get_my_company())
+          // + the property just pinned by the add-user form + a defensive
+          // NOT EXISTS auth.users guard. Property-precise like the manager
+          // rollback; also closes the pre-existing cross-tenant hole where
+          // an email-alone filter could have hit rows at other companies.
+          const { error: rollbackErr } = await supabase.rpc('delete_orphaned_pending_resident', {
+            p_email: targetEmail,
+            p_property: propertyArray[0] ?? null,
+          })
+          if (rollbackErr) {
+            console.error('[orphan-rollback-CA]', { email: targetEmail, error: rollbackErr.message })
+          }
           // B150 — vehicle-lifecycle cascade on rollback delete. Gate-check
           // counts active residents remaining at the tuple; cascade only
           // fires when 0 (roommate-safe). For CA-created residents, unit

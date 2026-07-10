@@ -445,21 +445,37 @@ export default function ResidentPortal() {
   }
 
   async function saveResident() {
-    const { error } = await supabase
-      .from('residents')
-      .update({
-        name: editForm.name,
-        phone: editForm.phone,
-        email: editForm.email,
-      })
-      .eq('id', resident.id)
+    // 2026-07-10 fix — swap direct .update() for DEFINER RPC
+    // update_my_resident_profile (migration 20260710_..._rpc). Prior
+    // shape checked only { error } and had no residents_self_update
+    // policy → every save silently 0-rowed while the UI alerted
+    // "Profile updated!" Same class as the logo bug.
+    //
+    // Email intentionally excluded: residents.email + user_roles.email
+    // + auth.users.email are three separate identity stores. Flipping
+    // only residents.email breaks the JWT-email scope on every RPC and
+    // locks the resident out on next login. Email change is a
+    // separate identity story; UI now shows email as a read-only
+    // field with a "contact your PM" hint.
+    const trimmedName  = (editForm.name  ?? '').toString().trim()
+    const trimmedPhone = (editForm.phone ?? '').toString().trim()
+    const { error } = await supabase.rpc('update_my_resident_profile', {
+      p_name:  trimmedName  || null,
+      p_phone: trimmedPhone || null,
+    })
     if (error) {
-      alert('Error saving: ' + error.message)
-    } else {
-      setResident(editForm)
-      setEditing(false)
-      alert('Profile updated!')
+      if (error.message.includes('account_deactivated')) {
+        alert('Your access has been deactivated. Contact your property manager.')
+      } else if (error.message.includes('resident_row_not_found')) {
+        alert('We could not find your resident record. Contact your property manager.')
+      } else {
+        alert('Error saving: ' + error.message)
+      }
+      return
     }
+    setResident({ ...resident, name: trimmedName, phone: trimmedPhone })
+    setEditing(false)
+    alert('Profile updated!')
   }
 
   async function saveVehicle() {
@@ -970,8 +986,12 @@ export default function ResidentPortal() {
                 <input value={editForm.phone || ''} onChange={e => setEditForm({...editForm, phone: e.target.value})}
                   style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'12px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }} />
                 <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Email</label>
-                <input value={editForm.email || ''} onChange={e => setEditForm({...editForm, email: e.target.value})}
-                  style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'14px', padding:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'13px', boxSizing:'border-box' }} />
+                <div style={{ display:'block', width:'100%', marginTop:'6px', marginBottom:'4px', padding:'10px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'6px', color:'#aaa', fontSize:'13px', boxSizing:'border-box' }}>
+                  {resident.email}
+                </div>
+                <p style={{ color:'#888', fontSize:'11px', margin:'0 0 14px', lineHeight:1.5 }}>
+                  Contact your property manager to change your account email.
+                </p>
                 <button onClick={saveResident}
                   style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>
                   Save Changes

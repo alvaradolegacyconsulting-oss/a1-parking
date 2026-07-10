@@ -2049,10 +2049,19 @@ export default function ManagerPortal() {
         body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
       }).catch(() => { /* best-effort */ })
       if (residentInserted) {
-        // Best-effort. Supabase queries return { error } rather than
-        // throwing, so an explicit catch isn't needed; we just don't
-        // surface the result.
-        await supabase.from('residents').delete().ilike('email', targetEmail).ilike('property', manager.name)
+        // 2026-07-10 fix — swap direct .delete().ilike() for DEFINER RPC.
+        // Prior shape had no DELETE policy for manager on residents; every
+        // rollback silently 0-rowed and left orphan rows. RPC enforces
+        // manager-property scope server-side (p_property required for
+        // manager callers). Best-effort surfacing preserved: on failure,
+        // log and continue with the cascade + user-facing alert.
+        const { error: rollbackErr } = await supabase.rpc('delete_orphaned_pending_resident', {
+          p_email: targetEmail,
+          p_property: manager.name,
+        })
+        if (rollbackErr) {
+          console.error('[orphan-rollback-manager]', { email: targetEmail, property: manager.name, error: rollbackErr.message })
+        }
         // B150 — same lifecycle cascade as deactivateResident. Gate-check
         // ensures we only archive vehicles if NO other active resident
         // remains at the tuple (handles roommate case).
