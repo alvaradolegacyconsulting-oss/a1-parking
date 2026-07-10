@@ -56,6 +56,11 @@ export default function ResidentPortal() {
   // review" pill on the vehicle card + suppress the "Request Plate Change"
   // affordance (one-in-flight rule).
   const [pendingPlateChangesByVehicle, setPendingPlateChangesByVehicle] = useState<Record<number, { id: number; old_plate: string; new_plate: string; submitted_at: string }>>({})
+  // RT-3 (2026-07-09) — unread plate-change DECISIONS (approved or
+  // declined) that the resident hasn't yet acknowledged. Rendered as
+  // dismissible cards at the top of My Vehicles; dismissal calls the
+  // mark_my_plate_change_decision_read RPC + local-patches the list.
+  const [unreadPlateChangeDecisions, setUnreadPlateChangeDecisions] = useState<Array<{ id: number; vehicle_id: number; old_plate: string; new_plate: string; submitted_at: string; decided_at: string | null; status: 'approved' | 'declined'; decline_reason: string | null; resident_read: boolean | null }>>([])
   const [showRequestForm, setShowRequestForm] = useState(false)
   const [newVehicle, setNewVehicle] = useState({ plate:'', state:'TX', make:'', model:'', year:'', color:'', space:'' })
   const [requestMsg, setRequestMsg] = useState('')
@@ -262,9 +267,44 @@ export default function ResidentPortal() {
       const map: Record<number, { id: number; old_plate: string; new_plate: string; submitted_at: string }> = {}
       for (const pc of pcs ?? []) map[pc.vehicle_id] = { id: pc.id, old_plate: pc.old_plate, new_plate: pc.new_plate, submitted_at: pc.submitted_at }
       setPendingPlateChangesByVehicle(map)
+
+      // RT-3 (2026-07-09) — unread plate-change DECISIONS. Same
+      // resident_read_own_plate_changes RLS applies; scoped by
+      // vehicle_id to the resident's own fleet. Fetched separately
+      // from pending so the pending-map keying stays clean.
+      // Ordered newest-first so simultaneous decisions render in
+      // decision order. `?? false` on resident_read handles the
+      // deploy-vs-apply gap window.
+      const { data: decisionRows } = await supabase
+        .from('vehicle_plate_changes')
+        .select('id, vehicle_id, old_plate, new_plate, submitted_at, decided_at, status, decline_reason, resident_read')
+        .in('vehicle_id', vehIds)
+        .in('status', ['approved', 'declined'])
+        .order('decided_at', { ascending: false })
+      const unread = (decisionRows ?? []).filter((d: any) => !(d.resident_read ?? false))
+      setUnreadPlateChangeDecisions(unread as any)
     } else {
       setPendingPlateChangesByVehicle({})
+      setUnreadPlateChangeDecisions([])
     }
+  }
+
+  // RT-3 (2026-07-09) — mark a plate-change decision as read. Same
+  // shape as markGuestAuthDeclinedRead — RPC + local-patch, no full
+  // refetch. Removes the row from the acknowledgement banners at the
+  // top of My Vehicles.
+  async function markPlateChangeDecisionRead(id: number) {
+    const { data, error } = await supabase.rpc('mark_my_plate_change_decision_read', { p_id: id })
+    if (error) {
+      alert('Could not mark as read: ' + error.message)
+      return
+    }
+    const result = data as { ok?: boolean; error?: string; hint?: string } | null
+    if (result?.error) {
+      alert(result.hint || result.error)
+      return
+    }
+    setUnreadPlateChangeDecisions(prev => prev.filter(d => d.id !== id))
   }
 
   async function requestPlateChange(vehicle: any) {
@@ -870,10 +910,17 @@ export default function ResidentPortal() {
             Vehicles{(() => {
               const hasUnreadDeclined = vehicles.some(v => v.status === 'declined' && !v.resident_read)
               const hasPending = vehicles.some(v => v.status === 'pending')
-              if (!hasUnreadDeclined && !hasPending) return null
+              // RT-3 (2026-07-09) — unread plate-change decisions
+              // (approved + declined) also badge the My Vehicles tab so
+              // the resident sees them on next visit even before
+              // opening the tab.
+              const hasUnreadPlateChangeDecisions = unreadPlateChangeDecisions.length > 0
+              if (!hasUnreadDeclined && !hasPending && !hasUnreadPlateChangeDecisions) return null
               const count = hasUnreadDeclined
-                ? vehicles.filter(v => v.status === 'declined' && !v.resident_read).length
-                : vehicles.filter(v => v.status === 'pending').length
+                ? vehicles.filter(v => v.status === 'declined' && !v.resident_read).length + unreadPlateChangeDecisions.length
+                : hasPending
+                  ? vehicles.filter(v => v.status === 'pending').length + unreadPlateChangeDecisions.length
+                  : unreadPlateChangeDecisions.length
               return <span style={{ background: hasUnreadDeclined ? '#B71C1C' : '#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{count}</span>
             })()}
           </button>
@@ -1073,6 +1120,59 @@ export default function ResidentPortal() {
                       <p style={{ color:'#4caf50', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>{requestMsg}</p>
                     </div>
                   )}
+
+                  {/* RT-3 (2026-07-09) — plate-change decision
+                      acknowledgement cards. Approved + declined
+                      outcomes surface here until the resident marks
+                      them as read. Approved is a one-time green card
+                      confirming the new plate is active; declined is
+                      a red card with the optional decline reason. */}
+                  {unreadPlateChangeDecisions.map(d => (
+                    <div key={d.id}
+                      style={{
+                        background: d.status === 'approved' ? '#0a2e0a' : '#3a1a1a',
+                        border: `1px solid ${d.status === 'approved' ? '#2e7d32' : '#b71c1c'}`,
+                        borderRadius:'10px', padding:'14px 16px', marginBottom:'12px',
+                      }}>
+                      <p style={{
+                        color: d.status === 'approved' ? '#a5d6a7' : '#f44336',
+                        fontWeight:'bold', fontSize:'13px', margin:'0 0 8px',
+                      }}>
+                        {d.status === 'approved' ? '✓ Plate Change Approved' : 'Plate Change Declined'}
+                      </p>
+                      <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'8px' }}>
+                        <span style={{ fontFamily:'Courier New', color:'#aaa', textDecoration:'line-through', fontSize:'13px' }}>{d.old_plate}</span>
+                        <span style={{ color: d.status === 'approved' ? '#a5d6a7' : '#aaa' }}>→</span>
+                        <span style={{ fontFamily:'Courier New', color: d.status === 'approved' ? '#C9A227' : '#aaa', fontWeight:'bold', fontSize:'13px' }}>{d.new_plate}</span>
+                      </div>
+                      {d.status === 'approved' && (
+                        <p style={{ color:'#e8f5e9', fontSize:'12px', margin:'0 0 10px', lineHeight:'1.5' }}>
+                          Your vehicle is now authorized under the new plate.
+                        </p>
+                      )}
+                      {d.status === 'declined' && d.decline_reason && (
+                        <div style={{ background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
+                          <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 3px' }}>Manager Note</p>
+                          <p style={{ color:'#aaa', fontSize:'12px', margin:'0' }}>{d.decline_reason}</p>
+                        </div>
+                      )}
+                      {d.status === 'declined' && (
+                        <p style={{ color:'#f8bbb7', fontSize:'12px', margin:'0 0 10px', lineHeight:'1.5' }}>
+                          Your current plate ({d.old_plate}) is still authorized. Contact your property manager to discuss.
+                        </p>
+                      )}
+                      <button onClick={() => markPlateChangeDecisionRead(d.id)}
+                        style={{
+                          width:'100%', padding:'7px',
+                          background: d.status === 'approved' ? '#0a1a0a' : '#3a1a1a',
+                          color: d.status === 'approved' ? '#a5d6a7' : '#f44336',
+                          border: `1px solid ${d.status === 'approved' ? '#2e7d32' : '#b71c1c'}`,
+                          borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial',
+                        }}>
+                        Mark as Read
+                      </button>
+                    </div>
+                  ))}
 
                   {vehicles.length === 0 && !requestMsg && (
                     <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}>
