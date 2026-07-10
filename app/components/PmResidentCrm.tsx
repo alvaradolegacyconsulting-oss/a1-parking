@@ -175,7 +175,8 @@ export default function PmResidentCrm({
         display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', marginBottom: '14px',
       }}>
         <InsightCard n={insights.needApproval} label="Need approval" color={C.gold} />
-        <InsightCard n={insights.spaceRequests} label="Space requests" color={C.text} />
+        <InsightCard n={insights.spaceRequests} label="Space requests" color={C.text}
+          subtitle="Each request needs a space assigned — reviewed one at a time." />
         <InsightCard n={insights.platesUnderReview} label="Plates under review" color={C.amber} />
         <InsightCard n={insights.activeResidents} label="Active residents" color={C.green} />
         <InsightCard
@@ -226,21 +227,30 @@ export default function PmResidentCrm({
               Gated on canApproveVehicles (per Jose slice-2 rule: the bulk lane
               is the easiest gate to forget). Delegates to onApproveAllPending
               — parent's approveAllPendingCrm handles meter-once accounting
-              (RPC direct loop + ONE sync). */}
+              (RPC direct loop + ONE sync).
+              Copy sweep 2026-07-09 — the button labels the two categories the
+              handler actually touches (residents + vehicles); plates, guest
+              passes, and space requests are handled row-by-row and NOT part
+              of the bulk lane. Preserves the "meter-once" semantics + avoids
+              the overpromise Jose flagged. */}
           {filter === 'needs' && insights.needApproval > 0 && !isReadOnly && canApproveVehicles && (
             <div style={{
               margin: '11px 14px 0', padding: '10px 12px',
               border: `1px solid ${C.goldLine}`, background: C.goldSoft, borderRadius: '9px',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap',
             }}>
-              <div style={{ fontSize: '12.5px', color: C.gold }}>
-                <b>{insights.needApproval}</b> residents with pending items
+              <div style={{ fontSize: '12.5px', color: C.gold, flex: 1, minWidth: '200px' }}>
+                <div><b>{insights.needApproval}</b> residents with pending items</div>
+                <div style={{ fontSize: '11px', color: C.muted, marginTop: '4px', lineHeight: '1.4' }}>
+                  Bulk approves pending <b>residents &amp; vehicles</b>. Plate changes, guest passes, and space requests are approved individually per row.
+                </div>
               </div>
               <button onClick={() => onApproveAllPending(needsApprovalResidents)} style={{
                 padding: '6px 12px', background: C.gold, color: '#0f1117', border: 'none',
                 borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: 700, fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
               }}>
-                Approve all pending
+                Approve all pending residents &amp; vehicles
               </button>
             </div>
           )}
@@ -348,13 +358,14 @@ export default function PmResidentCrm({
 // Subcomponents
 // ─────────────────────────────────────────────────────────────────────
 
-function InsightCard({ n, label, color }: { n: number; label: React.ReactNode; color: string }) {
+function InsightCard({ n, label, color, subtitle }: { n: number; label: React.ReactNode; color: string; subtitle?: React.ReactNode }) {
   return (
     <div style={{
       background: C.panel, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '12px 14px',
     }}>
       <div style={{ fontSize: '22px', fontWeight: 800, lineHeight: 1, color }}>{n}</div>
       <div style={{ color: C.muted, fontSize: '11.5px', marginTop: '5px' }}>{label}</div>
+      {subtitle && <div style={{ color: C.faint, fontSize: '10px', marginTop: '4px', lineHeight: '1.3' }}>{subtitle}</div>}
     </div>
   )
 }
