@@ -2048,36 +2048,42 @@ export default function CompanyAdminPortal() {
   const COMPANY_LOGO_EDITABLE_FIELDS = ['logo_url'] as const
   async function saveCompanyLogo(newLogoUrl: string) {
     if (!role?.company) return
-    // 2026-07-09 fix — key on companies.id (stable), NOT ILIKE(name)
-    // (denormalized string, drift-prone). Prior shape audited 7+ writes
-    // "OK" but companies.logo_url on the actual row (id=56 A1 Test
-    // Run 2) stayed NULL — the ILIKE match dropped rows silently.
-    // Verify-after-write becomes the assertion that we hit ONE row.
+    // 2026-07-09 fix — swap the direct .update() for the DEFINER RPC
+    // set_company_logo (migration 20260709_set_company_logo_rpc).
+    // pg_policies enumeration confirmed there is NO UPDATE policy for
+    // company_admin on companies — every prior client-side write was
+    // silently RLS-denied (0 rows affected, no error, false-success
+    // audit rows). The RPC bypasses RLS via SECURITY DEFINER, keeps
+    // the narrow {logo_url}-only allowlist server-side, and resolves
+    // scope via session-derived get_my_company() (not spoofable).
+    // Pattern mirrors update_my_company_tdlr + set_manager_approve_permission +
+    // set_driver_regenerate_permission — the established scoped-
+    // mutation shape the rest of the CA-side writes already use.
+    //
+    // Client-side SELECT for the no-op short-circuit is kept because
+    // it's cheap and avoids a needless RPC call when the user picks
+    // the same file twice. RPC returns { ok, company_id, logo_url }
+    // or { error, hint? }; explicit error map for each failure mode.
     const companyId = getCachedCompanyId()
     if (companyId == null) { alert('Logo update failed: session missing company_id. Please refresh and try again.'); return }
-    const patch: Record<string, any> = {}
-    for (const [k, v] of Object.entries({ logo_url: newLogoUrl })) {
-      if ((COMPANY_LOGO_EDITABLE_FIELDS as readonly string[]).includes(k)) patch[k] = v
-    }
-    if (Object.keys(patch).length === 0) return
     const { data: current, error: readErr } = await supabase.from('companies')
       .select('logo_url').eq('id', companyId).maybeSingle()
     if (readErr) { alert(`Logo update failed: ${readErr.message}`); return }
     const oldUrl = (current as any)?.logo_url ?? null
     if (JSON.stringify(oldUrl) === JSON.stringify(newLogoUrl)) return
-    const { data: updRows, error: updErr } = await supabase.from('companies').update(patch).eq('id', companyId).select('id, logo_url')
-    if (updErr) { alert(`Logo update failed: ${updErr.message}`); return }
-    // Verify-after-write — the ILIKE-keyed prior version silently
-    // dropped rows; assert we actually mutated one and its logo_url
-    // matches. If the RLS admits the SELECT but not the UPDATE, the
-    // returned rows array will be empty here — surface the failure
-    // instead of silently succeeding.
-    if (!updRows || updRows.length === 0) {
-      alert('Logo update failed: no row matched or update blocked by permissions. Refresh and try again.')
-      return
-    }
-    if ((updRows[0] as any).logo_url !== newLogoUrl) {
-      alert(`Logo update failed: verify-after-write mismatch. Expected ${newLogoUrl}, got ${(updRows[0] as any).logo_url}`)
+    const { data, error } = await supabase.rpc('set_company_logo', { p_logo_url: newLogoUrl })
+    if (error) { alert(`Logo update failed: ${error.message}`); return }
+    const result = data as { ok?: boolean; company_id?: number; logo_url?: string | null; error?: string; hint?: string } | null
+    if (result?.error) {
+      const messages: Record<string, string> = {
+        unauthenticated:       'Your session has expired. Please log in again.',
+        no_role_assigned:      'Your account has no role assigned. Contact your admin.',
+        no_company_assigned:   'Your account has no company assigned. Contact your admin.',
+        role_not_authorized:   'Only admin or company admin can update the company logo.',
+        no_company_scope:      'Your session is missing a company scope. Refresh and try again.',
+        company_not_found:     result.hint || 'Company not found. Contact support.',
+      }
+      alert(messages[result.error] || `Logo update failed: ${result.error}`)
       return
     }
     await auditLog('EDIT_COMPANY_LOGO', 'companies', String(companyId), { old_values: { logo_url: oldUrl }, new_values: { logo_url: newLogoUrl } })
