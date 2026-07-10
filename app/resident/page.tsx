@@ -588,6 +588,24 @@ export default function ResidentPortal() {
     setMyGuestAuths(data ?? [])
   }
 
+  // RT-4 (2026-07-09) — mark a declined guest auth as read. Calls the
+  // mark_my_guest_auth_declined_read RPC (resident-only, own-email-
+  // scoped SECURITY DEFINER). Local-patch on success matches the
+  // markDeclinedRead vehicle pattern — no full refetch needed.
+  async function markGuestAuthDeclinedRead(id: number) {
+    const { data, error } = await supabase.rpc('mark_my_guest_auth_declined_read', { p_id: id })
+    if (error) {
+      alert('Could not mark as read: ' + error.message)
+      return
+    }
+    const result = data as { ok?: boolean; error?: string; hint?: string } | null
+    if (result?.error) {
+      alert(result.hint || result.error)
+      return
+    }
+    setMyGuestAuths(prev => prev.map(g => g.id === id ? { ...g, resident_read: true } : g))
+  }
+
   const GUEST_ERROR_COPY: Record<string, string> = {
     pending_cap_reached: 'You have 3 pending guest requests already. Please wait for your property manager to approve or decline one before submitting another.',
     plate_required: 'Plate is required.',
@@ -866,7 +884,15 @@ export default function ResidentPortal() {
           <button style={tabStyle('guests')} onClick={() => setActiveTab('guests')}>
             Guests{(() => {
               const pendingCount = myGuestAuths.filter(g => g.status === 'pending').length
-              const unreadDeclined = myGuestAuths.filter(g => g.status === 'declined').length
+              // RT-4 (2026-07-09) — badge now respects the mark-as-read
+              // rail. Pre-fix, every declined counted forever → badge
+              // stayed red. Post-fix: only declined + !resident_read.
+              // The `?? false` handles the tiny window during deploy
+              // when the column may not yet exist (fresh DB / new row);
+              // undefined is treated as "unread" which matches prior
+              // behavior — no regression during the deploy-vs-apply
+              // gap.
+              const unreadDeclined = myGuestAuths.filter(g => g.status === 'declined' && !(g.resident_read ?? false)).length
               const badgeCount = pendingCount || unreadDeclined
               if (badgeCount === 0) return null
               return <span style={{ background: unreadDeclined > 0 ? '#B71C1C' : '#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{badgeCount}</span>
@@ -1509,6 +1535,16 @@ export default function ResidentPortal() {
                         <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 3px' }}>Manager Note</p>
                         <p style={{ color:'#aaa', fontSize:'12px', margin:'0' }}>{g.declined_reason}</p>
                       </div>
+                    )}
+                    {/* RT-4 (2026-07-09) — Mark-as-Read on declined guest
+                        auths. Matches the vehicle + space-request pattern.
+                        Removes the row from the badge count so the Guests
+                        tab pill no longer stays red once acknowledged. */}
+                    {g.status === 'declined' && !(g.resident_read ?? false) && (
+                      <button onClick={() => markGuestAuthDeclinedRead(g.id)}
+                        style={{ width:'100%', padding:'7px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial', marginTop:'10px' }}>
+                        Mark as Read
+                      </button>
                     )}
                   </div>
                 )
