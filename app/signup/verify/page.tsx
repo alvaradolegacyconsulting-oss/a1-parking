@@ -48,7 +48,8 @@ import { TIER_PRICING } from '../../lib/tier-config'
 import { ENFORCEMENT_TIERS, PROPERTY_MANAGEMENT_TIERS } from '../../lib/tier-display'
 import { isOtpExpiredOrUsed } from '../../lib/otp-errors'
 import { SAAS_VERSION, SAAS_DISPLAY_DATE } from '../../lib/legal-versions'
-import SaasReadthroughGate from '../../components/SaasReadthroughGate'
+import LegalReadthroughGate from '../../components/LegalReadthroughGate'
+import SaasAgreementBody from '../../components/SaasAgreementBody'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -456,11 +457,12 @@ function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: In
         </div>
       </div>
 
-      <SaasReadthroughGate
+      <LegalReadthroughGate
         version={SAAS_VERSION}
         displayDate={SAAS_DISPLAY_DATE}
         disabled={saasSubmitting || saasSigned}
         onSigned={handleSaasSigned}
+        body={<SaasAgreementBody />}
       />
 
       {saasError && (

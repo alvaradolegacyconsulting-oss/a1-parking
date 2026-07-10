@@ -1,10 +1,16 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import SaasAgreementBody from './SaasAgreementBody'
 
-// B118 Layer 2 Commit 3 — <SaasReadthroughGate>.
+// B118 Layer 2 Commit 3 — <LegalReadthroughGate>.
 //
-// Renders the SaaS Subscription Agreement in an inline scrollable pane
+// Previously the SaaS-only readthrough gate: hardcoded body import and
+// hardcoded button/helper copy. Generalized in the acceptance-surface
+// pass so the same read-through mechanic can gate any legal document
+// (SaaS, Terms, Privacy, DPA, ...). The body is now passed in via the
+// `body` prop; button label, helper text, and heading are all overridable
+// with defaults that preserve the original SaaS-only behavior.
+//
+// Renders the passed-in legal document body in an inline scrollable pane
 // and gates the sign button until the document has been presented in
 // full. Triple-OR unlock is a11y-safe (works for mouse-scroll,
 // keyboard-Tab, and screen-reader focus):
@@ -30,27 +36,44 @@ import SaasAgreementBody from './SaasAgreementBody'
 // reviewed_at CAPTURE — stamped once at the moment canSign first
 // transitions false → true (any of the three signals firing).
 // Stored in state (savedReviewedAt) and never re-set. Passed on sign
-// click alongside the SAAS_VERSION. This is intentional: reviewed_at
-// = when they finished reviewing (T1), accepted_at = when they
-// clicked sign (T2), and T1 < T2 is the evidence gap.
+// click alongside the caller-supplied version. This is intentional:
+// reviewed_at = when they finished reviewing (T1), accepted_at = when
+// they clicked sign (T2), and T1 < T2 is the evidence gap.
 
-export type SaasReadthroughGateProps = {
-  version: string                                        // SAAS_VERSION from legal-versions.ts
-  displayDate: string                                    // SAAS_DISPLAY_DATE
+export type LegalReadthroughGateProps = {
+  version: string                                        // SAAS_VERSION (or equivalent) from legal-versions.ts
+  displayDate: string                                    // SAAS_DISPLAY_DATE (or equivalent)
   disabled?: boolean                                     // parent gate (e.g., other checkboxes unchecked)
   paneHeight?: number                                    // px; default 560 (bumped 2026-07-09 per attorney readability note)
   onSigned: (info: { version: string, reviewedAt: string }) => void
+  // — generalization props (defaults preserve original SaaS-only behavior) —
+  title?: string
+  body: React.ReactNode
+  signButtonLabel?: string
+  signedLabel?: string
+  scrollHintCopy?: string
+  signReadyCopy?: string
+  parentDisabledCopy?: string
+  acceptedCopy?: string
 }
 
 const GOLD = '#C9A227'
 
-export default function SaasReadthroughGate({
+export default function LegalReadthroughGate({
   version,
   displayDate,
   disabled = false,
   paneHeight = 560,
   onSigned,
-}: SaasReadthroughGateProps) {
+  title = 'SaaS Subscription Agreement',
+  body,
+  signButtonLabel = 'Sign & Accept SaaS Agreement',
+  signedLabel = '✓ Signed',
+  scrollHintCopy = 'Scroll to the end of the document to enable the Sign button.',
+  signReadyCopy = 'You may now sign to accept.',
+  parentDisabledCopy = 'Complete the checkboxes above first, then sign.',
+  acceptedCopy = 'Acceptance captured. Continue below.',
+}: LegalReadthroughGateProps) {
   const paneRef     = useRef<HTMLDivElement | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
@@ -109,7 +132,7 @@ export default function SaasReadthroughGate({
       style={{ background:'#161b26', border:`1px solid ${GOLD}`, borderRadius:'10px', padding:'16px', marginTop:'14px' }}>
 
       <h2 id="saas-gate-heading" style={{ color: GOLD, fontSize:'14px', fontWeight:'bold', margin:'0 0 4px' }}>
-        SaaS Subscription Agreement
+        {title}
       </h2>
       <p style={{ color:'#888', fontSize:'11px', margin:'0 0 6px' }}>
         Version {version} · {displayDate}
@@ -143,7 +166,7 @@ export default function SaasReadthroughGate({
           fontSize:'14.5px',
           lineHeight:'1.75',
         }}>
-        <SaasAgreementBody />
+        {body}
         <div
           ref={sentinelRef}
           tabIndex={0}
@@ -179,16 +202,16 @@ export default function SaasReadthroughGate({
             fontSize:'13px',
             fontWeight:700,
           }}>
-          {signed ? '✓ Signed' : 'Sign & Accept SaaS Agreement'}
+          {signed ? signedLabel : signButtonLabel}
         </button>
         <p style={{ color:'#888', fontSize:'11.5px', margin:0 }}>
           {signed
-            ? 'Acceptance captured. Continue below.'
+            ? acceptedCopy
             : canSign
               ? (disabled
-                  ? 'Complete the checkboxes above first, then sign.'
-                  : 'You may now sign to accept.')
-              : 'Scroll to the end of the document to enable the Sign button.'}
+                  ? parentDisabledCopy
+                  : signReadyCopy)
+              : scrollHintCopy}
         </p>
       </div>
     </section>

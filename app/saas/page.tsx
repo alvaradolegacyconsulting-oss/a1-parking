@@ -7,7 +7,7 @@ import SaasAgreementBody from '../components/SaasAgreementBody'
 //
 // Renders the SaaS Subscription Agreement placeholder text for public
 // viewing (mirrors /terms + /privacy structure). Same body component
-// the <SaasReadthroughGate> uses so text stays in one place — a
+// the <LegalReadthroughGate> uses so text stays in one place — a
 // version bump swap becomes a one-liner (edit SaasAgreementBody +
 // bump SAAS_VERSION in legal-versions.ts).
 

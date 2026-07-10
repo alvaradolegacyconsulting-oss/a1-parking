@@ -2,7 +2,7 @@
 //
 // PLACEHOLDER TEXT — NOT FOR EXECUTION. Attorney finals swap in via a
 // text edit here + a SAAS_VERSION bump in app/lib/legal-versions.ts.
-// Both the /saas static route and the <SaasReadthroughGate> component
+// Both the /saas static route and the <LegalReadthroughGate> component
 // render this — one source of truth so a version-bump swap stays a
 // one-liner.
 //

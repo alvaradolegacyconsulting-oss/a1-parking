@@ -14,7 +14,8 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../../supabase'
 import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE, TEXAS_ATTESTATION_VERSION, TEXAS_ATTESTATION_TEXT, SAAS_VERSION, SAAS_DISPLAY_DATE } from '../../../lib/legal-versions'
-import SaasReadthroughGate from '../../../components/SaasReadthroughGate'
+import LegalReadthroughGate from '../../../components/LegalReadthroughGate'
+import SaasAgreementBody from '../../../components/SaasAgreementBody'
 // B76: post-activation bootstrap. Without this, /company_admin renders
 // with null localStorage and falls back to the 'Legacy Enforcement'
 // default until the user signs out and back in. See project_b76.
@@ -316,7 +317,7 @@ export default function VerifyLanding() {
       // B118 Layer 2 Commit 3 — SaaS acceptance capture. Version is
       // the SERVER-owned static import (never trusted from client
       // storage), reviewed_at is client-stamped at the gate's unlock
-      // moment (T1 — see SaasReadthroughGate; guaranteed < T2 =
+      // moment (T1 — see LegalReadthroughGate; guaranteed < T2 =
       // accepted_at because the sign click can't fire before unlock).
       // Both required by the RPC's SaaS INSERT guard; formError()
       // above prevents activate() from firing without them.
@@ -614,7 +615,7 @@ export default function VerifyLanding() {
                   enforces. onSigned captures reviewedAt (stamped at
                   the gate's unlock moment, T1) into state; the
                   activate() call passes it to p_saas_reviewed_at.  */}
-              <SaasReadthroughGate
+              <LegalReadthroughGate
                 version={SAAS_VERSION}
                 displayDate={SAAS_DISPLAY_DATE}
                 disabled={!tosChecked || !privacyChecked || !attestChecked}
@@ -622,6 +623,7 @@ export default function VerifyLanding() {
                   setSaasReviewedAt(reviewedAt)
                   setSaasSigned(true)
                 }}
+                body={<SaasAgreementBody />}
               />
 
               {submission.kind === 'error' && (
