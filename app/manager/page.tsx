@@ -178,7 +178,7 @@ export default function ManagerPortal() {
   const [, setRefreshTicker] = useState(0)
   // Per-modal target + form state — one slot per RPC, matches B214 pattern
   const [targetAdd, setTargetAdd] = useState(false)
-  const [addForm, setAddForm] = useState<{ type: SpaceType }>({ type: 'carport' })
+  const [addForm, setAddForm] = useState<{ type: SpaceType; quantity: number }>({ type: 'carport', quantity: 1 })
   const [targetAssign, setTargetAssign] = useState<Space | null>(null)
   // v1.1: assignFormEmail is set by SearchableResidentPicker's onSelect
   // callback (picker writes the picked resident's email; submit reads it).
@@ -815,19 +815,26 @@ export default function ManagerPortal() {
 
   async function submitAddSingleSpace() {
     setSpacesError('')
-    // Named params per Jose lock — single ad-hoc add, count pinned at 1.
-    // Auto-name from type prefix. NOT a bulk path (that lives in CA commit 4).
+    // 2026-07-11 — quantity added. Non-approve managers are UI-capped at
+    // quantity=1 (input hidden via canApproveVehicles below); server
+    // enforces regardless (generate_spaces_from_pool: bulk >1 requires
+    // can_approve_vehicles; cap 100 for manager callers). Client clamps
+    // to [1,100] as belt-and-suspenders — server is the real boundary.
+    const rawQty = Number(addForm.quantity) || 1
+    const qty = Math.max(1, Math.min(100, Math.floor(rawQty)))
     const { error } = await supabase.rpc('generate_spaces_from_pool', {
       p_property: manager.name,
       p_type: addForm.type,
-      p_count: 1,
+      p_count: qty,
       p_label_prefix: null,        // null → RPC auto-derives from type
     })
     if (error) { setSpacesError(error.message); return }
+    const typeLabel = TYPE_LABELS[addForm.type]
     setTargetAdd(false)
-    setAddForm({ type: 'carport' })
+    setAddForm({ type: 'carport', quantity: 1 })
     await refetchSpacesDashboard()
     await refetchSpacesList()
+    if (qty > 1) alert(`Added ${qty} ${typeLabel} spaces`)
   }
 
   // v1.1 multi-resident: submitAssignSpace adds one resident to the
@@ -3289,11 +3296,28 @@ export default function ManagerPortal() {
                 <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
                   <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px', fontWeight:'bold' }}>Add new space</p>
                   <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Type *</label>
-                  <select value={addForm.type} onChange={e => setAddForm({ type: e.target.value as SpaceType })} style={inputStyle}>
+                  <select value={addForm.type} onChange={e => setAddForm({ ...addForm, type: e.target.value as SpaceType })} style={inputStyle}>
                     {SPACE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
                   </select>
+                  {canApproveVehicles && (
+                    <>
+                      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', marginTop:'8px', display:'block' }}>Quantity *</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        step={1}
+                        value={addForm.quantity}
+                        onChange={e => {
+                          const n = Number(e.target.value)
+                          setAddForm({ ...addForm, quantity: Number.isFinite(n) && n > 0 ? Math.min(100, Math.floor(n)) : 1 })
+                        }}
+                        style={inputStyle}
+                      />
+                    </>
+                  )}
                   <p style={{ color:'#666', fontSize:'11px', margin:'0 0 14px', lineHeight:'1.4' }}>
-                    Label will auto-generate as the next sequential number for this type. You can rename via the Edit modal after.
+                    Labels auto-generate as the next sequential numbers for this type. You can rename via the Edit modal after.{canApproveVehicles ? ' Bulk add is capped at 100.' : ''}
                   </p>
                   {spacesError && <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}><p style={{ color:'#f44336', fontSize:'12px', margin:'0' }}>{spacesError}</p></div>}
                   <div style={{ display:'flex', gap:'8px' }}>
