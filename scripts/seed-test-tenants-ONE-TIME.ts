@@ -42,11 +42,10 @@ const AEGIS_UUID = 'a767da27-b452-475a-adda-1b75ae393c59'
 // 18 seeded users — matches the RPC's user_roles inserts 1:1.
 type SeedUser = { email: string; role: string; company: string }
 const SEED_USERS: SeedUser[] = [
-  // Test-PM (5)
+  // Test-PM (4 — pm_only has MAX_DRIVERS=0 by design, no driver)
   { email: 'pm-ca@test.shieldmylot.com',       role: 'company_admin', company: 'Test-PM' },
   { email: 'pm-manager@test.shieldmylot.com',  role: 'manager',       company: 'Test-PM' },
   { email: 'pm-leasing@test.shieldmylot.com',  role: 'leasing_agent', company: 'Test-PM' },
-  { email: 'pm-driver@test.shieldmylot.com',   role: 'driver',        company: 'Test-PM' },
   { email: 'pm-resident@test.shieldmylot.com', role: 'resident',      company: 'Test-PM' },
   // Test-ENF (3)
   { email: 'enf-ca@test.shieldmylot.com',      role: 'company_admin', company: 'Test-ENF' },
@@ -169,9 +168,9 @@ async function main() {
   console.log(`  seeded properties: ${propCount ?? 0}`)
   if (propCount !== 4) { console.error(`❌ expected 4 seeded properties, got ${propCount}`); process.exit(3) }
 
-  const { count: driverCount } = await admin.from('drivers').select('*', { count: 'exact', head: true }).in('company', ['Test-PM', 'Test-ENF', 'Test-LEGACY', 'Demo Company'])
+  const { count: driverCount } = await admin.from('drivers').select('*', { count: 'exact', head: true }).in('company', ['Test-ENF', 'Test-LEGACY', 'Demo Company'])
   console.log(`  seeded drivers: ${driverCount ?? 0}`)
-  if (driverCount !== 4) { console.error(`❌ expected 4 seeded drivers, got ${driverCount}`); process.exit(3) }
+  if (driverCount !== 3) { console.error(`❌ expected 3 seeded drivers (no Test-PM — pm_only MAX_DRIVERS=0), got ${driverCount}`); process.exit(3) }
 
   const { count: residentCount } = await admin.from('residents').select('*', { count: 'exact', head: true }).in('company', ['Test-PM', 'Test-LEGACY', 'Demo Company'])
   console.log(`  seeded residents: ${residentCount ?? 0}`)
@@ -191,9 +190,9 @@ async function main() {
   console.log(`  🟢 Seed complete.`)
   console.log(`  auth.users: created=${created} skipped=${skipped}`)
   console.log(`  companies: 3 test + 1 demo (${prodCount ?? 0} production untouched)`)
-  console.log(`  user_roles: 18 @test.shieldmylot.com`)
+  console.log(`  user_roles: 17 @test.shieldmylot.com`)
   console.log(`  properties: 4 seeded`)
-  console.log(`  drivers: 4 seeded`)
+  console.log(`  drivers: 3 seeded (no Test-PM driver — pm_only MAX_DRIVERS=0)`)
   console.log(`  residents: 3 seeded (no Test-ENF resident)`)
   console.log('══════════════════════════════════════════════════════════════════')
 }

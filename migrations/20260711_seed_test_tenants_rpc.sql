@@ -239,7 +239,11 @@ BEGIN
   -- can_approve_vehicles = TRUE on ALL seeded managers so the bulk-add
   -- + plate-approve paths are exercisable from any manager account.
 
-  -- ── Test-PM (5 rows: CA, manager, leasing, driver, resident)
+  -- ── Test-PM (4 rows: CA, manager, leasing, resident — NO driver)
+  -- 2026-07-11: pm-driver@ removed. PM-Only tier has MAX_DRIVERS=0 (PM
+  -- track is management-only per product design; enforce_driver_limit
+  -- trigger correctly refused the INSERT). Test-PM is a driver-less
+  -- account by design; do not re-add.
   INSERT INTO public.user_roles (email, role, company, property, can_approve_vehicles)
   VALUES ('pm-ca@test.shieldmylot.com',       'company_admin', 'Test-PM', '{}'::text[],              FALSE)
   ON CONFLICT (lower(email)) DO NOTHING;
@@ -252,11 +256,6 @@ BEGIN
 
   INSERT INTO public.user_roles (email, role, company, property, can_approve_vehicles)
   VALUES ('pm-leasing@test.shieldmylot.com',  'leasing_agent', 'Test-PM', ARRAY[c_pm_prop]::text[],  FALSE)
-  ON CONFLICT (lower(email)) DO NOTHING;
-  v_user_roles_created := v_user_roles_created + (CASE WHEN FOUND THEN 1 ELSE 0 END);
-
-  INSERT INTO public.user_roles (email, role, company, property, can_approve_vehicles)
-  VALUES ('pm-driver@test.shieldmylot.com',   'driver',        'Test-PM', '{}'::text[],              FALSE)
   ON CONFLICT (lower(email)) DO NOTHING;
   v_user_roles_created := v_user_roles_created + (CASE WHEN FOUND THEN 1 ELSE 0 END);
 
@@ -340,15 +339,7 @@ BEGIN
   -- Portal renders off these rows directly — no auth.users FK.
   -- ══════════════════════════════════════════════════════════════════
 
-  -- Test-PM driver
-  SELECT count(*) INTO v_exists FROM public.drivers
-   WHERE lower(email) = 'pm-driver@test.shieldmylot.com' AND company = 'Test-PM';
-  IF v_exists = 0 THEN
-    INSERT INTO public.drivers (email, name, company, assigned_properties, is_active)
-    VALUES ('pm-driver@test.shieldmylot.com', 'PM Test Driver', 'Test-PM',
-            ARRAY[c_pm_prop]::text[], TRUE);
-    v_drivers_created := v_drivers_created + 1;
-  END IF;
+  -- (No Test-PM driver — pm_only tier has MAX_DRIVERS=0, product design.)
 
   -- Test-ENF driver
   SELECT count(*) INTO v_exists FROM public.drivers
@@ -478,10 +469,12 @@ COMMIT;
 --   SELECT seed_test_tenants();
 --   -- Expected shape:
 --   -- { "companies_created": 4, "properties_created": 4,
---   --   "user_roles_created": 18, "drivers_created": 4,
+--   --   "user_roles_created": 17, "drivers_created": 3,
 --   --   "residents_created": 3, "skipped_existing": 0,
 --   --   "company_ids": { "test_pm": N, "test_enf": N,
 --   --                    "test_legacy": N, "demo": N } }
+--   -- 17 user_roles (not 18) — no pm-driver (pm_only MAX_DRIVERS=0).
+--   -- 3 drivers (not 4) — no pm-driver.
 --
 -- VQ.C — Second invocation (idempotent):
 --   SELECT seed_test_tenants();
@@ -490,8 +483,8 @@ COMMIT;
 --   --           residents_created=0, skipped_existing=4.
 --
 -- VQ.C-add — Drivers + residents landed
---   SELECT count(*) FROM drivers WHERE company IN ('Test-PM','Test-ENF','Test-LEGACY','Demo Company');
---   -- Expected: 4.
+--   SELECT count(*) FROM drivers WHERE company IN ('Test-ENF','Test-LEGACY','Demo Company');
+--   -- Expected: 3 (no Test-PM driver — pm_only MAX_DRIVERS=0).
 --   SELECT count(*) FROM residents WHERE company IN ('Test-PM','Test-LEGACY','Demo Company');
 --   -- Expected: 3. No Test-ENF resident (Enforcement-only track).
 --
@@ -500,7 +493,7 @@ COMMIT;
 --   -- Expected: test=3, demo=1 (+ any production rows untouched).
 --
 --   SELECT count(*) FROM user_roles WHERE email LIKE '%@test.shieldmylot.com';
---   -- Expected: 18.
+--   -- Expected: 17.
 --
 --   SELECT count(*) FROM properties WHERE company IN
 --     ('Test-PM','Test-ENF','Test-LEGACY','Demo Company');
