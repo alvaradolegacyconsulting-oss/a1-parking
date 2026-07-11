@@ -436,14 +436,41 @@ export default function ManagerPortal() {
     } else if (roleData.role === 'manager' || roleData.role === 'leasing_agent') {
       if (roleData.role === 'leasing_agent') setIsReadOnly(true)
       setManagerCompany(roleData.company || '')
+
+      // Multi-property support. user_roles.property is text[]; the client
+      // must fetch by array (server RPCs already use ANY(user_roles.property[])).
+      // Reference impl: login/page.tsx:275. Reuses the existing
+      // allProperties + switchProperty plumbing that the admin branch uses,
+      // so the switcher UI at :2629 renders automatically when N > 1.
+      const propNames: string[] = Array.isArray(roleData.property)
+        ? roleData.property
+        : (roleData.property ? [roleData.property] : [])
+
+      if (propNames.length === 0) {
+        setLoading(false)
+        setError('No property assigned to your role. Contact your administrator.')
+        return
+      }
+
       const { data, error } = await supabase
         .from('properties')
         .select('*')
-        .ilike('name', roleData.property)
+        .in('name', propNames)
+        .order('name')
       setLoading(false)
       if (error || !data || data.length === 0) {
-        setError(`No property found matching "${roleData.property}". Check your user_roles table.`)
+        setError(`No property found matching "${propNames.join(', ')}". Check your user_roles table.`)
       } else {
+        // Drift guard: .in() is exact-match to mirror the server's
+        // = ANY(user_roles.property[]) invariant. If a case/whitespace
+        // mismatch drops one, log it (invisible-in-dropdown is worse
+        // than diagnosable). Free-text vector: admin/page.tsx:566 +
+        // bulk-upload.
+        if (data.length !== propNames.length) {
+          const missing = propNames.filter(n => !data.some((p: any) => p.name === n))
+          console.error('[manager] assigned properties not found:', missing)
+        }
+        setAllProperties(data)
         setManager(data[0])
         fetchAll(data[0].name)
       }
@@ -2626,7 +2653,7 @@ export default function ManagerPortal() {
           <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Property Manager Portal</p>
         </div>
 
-        {isAdmin && allProperties.length > 1 && (
+        {allProperties.length > 1 && (
           <div style={{ marginBottom:'12px' }}>
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Viewing Property</label>
             <select onChange={e => switchProperty(e.target.value)} style={{ ...inputStyle, marginTop:'6px', fontSize:'13px' }}>

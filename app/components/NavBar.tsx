@@ -85,11 +85,19 @@ export default function NavBar() {
       setRole(userRole)
       setEmail(user.email!)
       if ((userRole === 'manager' || userRole === 'leasing_agent') && data?.property) {
+        // user_roles.property is text[]. Aggregate pending count ACROSS
+        // all assigned properties (not just the active one) so the badge
+        // fires whenever work is waiting anywhere the manager is scoped.
+        // Mirrors login/page.tsx:275 array-normalization.
+        const propNames: string[] = Array.isArray(data.property)
+          ? data.property
+          : (data.property ? [data.property] : [])
+        if (propNames.length === 0) { setPendingCount(0); setLoaded(true); return }
         // B210 (2026-06-24): dispute_requests pending-count query removed.
         // Single-table query now; Promise.all collapsed to the bare vehicles count.
         const { count: vCount } = await supabase
           .from('vehicles').select('id', { count: 'exact', head: true })
-          .ilike('property', data.property).eq('status', 'pending')
+          .in('property', propNames).eq('status', 'pending')
         setPendingCount(vCount ?? 0)
       }
       setLoaded(true)
