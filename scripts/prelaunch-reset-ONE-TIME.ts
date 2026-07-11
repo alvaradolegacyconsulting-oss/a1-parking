@@ -63,7 +63,13 @@ const TENANT_TABLES = [
   // Phase 3b
   'proposal_codes',
   // Phase 3c — history
-  'audit_logs', 'tos_acceptances', 'stripe_events',
+  // audit_logs deliberately excluded: the wipe migration writes ONE
+  // marker row (PRELAUNCH_WIPE_APPLIED) as its final act. The dedicated
+  // check below (~line 320) asserts audit_logs == 1. Including it in
+  // the generic zero-loop produced the 2026-07-11 false-positive
+  // "❌ audit_logs = 1 (expected 0)" that aborted the run before the
+  // auth.users delete.
+  'tos_acceptances', 'stripe_events',
   // Phase 3d — tenant leaves
   'vehicle_plate_changes', 'dispute_requests',
   'violation_photos', 'violation_videos', 'violations',
