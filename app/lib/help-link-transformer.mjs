@@ -28,8 +28,14 @@ const CATEGORY_PREFIX_RE = new RegExp(`^(?:${CATEGORY_PREFIXES.join('|')})/`)
 // "understanding-your-tier". Same rule the route handler uses via
 // app/lib/help-docs.ts:slugFromFilename — kept here so both the renderer
 // and validator share the canonical mapping.
+//
+// 2026-07-11 — regex extended to also strip an optional single letter
+// suffix after the digits ("^\d+[a-z]?-"), so filenames like
+// "00a-getting-started-company-admin.md" resolve to the clean slug
+// "getting-started-company-admin". Needed to slot the 4 Getting-Started
+// flyers ahead of the existing 01/02/03 without renumbering them.
 export function slugFromFilename(filename) {
-  return filename.replace(/^\d+-/, '').replace(/\.md$/, '')
+  return filename.replace(/^\d+[a-z]?-/, '').replace(/\.md$/, '')
 }
 
 // Transform a markdown link href to its production-route shape.

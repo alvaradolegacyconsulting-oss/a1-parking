@@ -160,6 +160,48 @@ export default async function HelpDocPage({ params }: { params: Promise<Params> 
     .map((slug) => getDocBySlug(slug))
     .filter((d): d is NonNullable<typeof d> => d !== null)
 
+  // ── Flyer variant ────────────────────────────────────────────────
+  // Getting-Started front doors (flyer field in frontmatter): render
+  // sidebar + a compact top strip (breadcrumb + Download PDF) + a
+  // viewport-filling iframe of the pre-rendered flyer HTML. The flyer's
+  // own CSS is fully scoped inside the iframe so it can't leak into
+  // the surrounding /help chrome. MD body still participates in
+  // flexsearch via getAllDocs()' body field — the MD wrapper doubles
+  // as the search index entry.
+  if (fm.flyer) {
+    return (
+      <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'system-ui, Arial, sans-serif' }}>
+        <ArticleJsonLd
+          title={fm.title}
+          description={`ShieldMyLot help: ${fm.title}`}
+          slug={doc.slug}
+          lastUpdated={fm.last_updated}
+          category={fm.category}
+        />
+        <div style={{ display: 'flex', maxWidth: 1400, margin: '0 auto' }}>
+          <HelpSidebar currentSlug={doc.slug} />
+          <article style={{ flex: 1, padding: '20px 24px 40px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+              <Breadcrumb category={fm.category} title={fm.title} />
+              <a
+                href={`/help-pdfs/${fm.flyer}.pdf`}
+                download
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(201,162,39,0.12)', border: `1px solid rgba(201,162,39,0.5)`, color: GOLD, fontSize: 13, fontWeight: 600, padding: '6px 12px', borderRadius: 6, textDecoration: 'none' }}
+              >
+                ⬇ Download PDF
+              </a>
+            </div>
+            <iframe
+              src={`/help-flyers/${fm.flyer}.html`}
+              title={fm.title}
+              style={{ width: '100%', minHeight: 'calc(100vh - 140px)', border: 0, borderRadius: 12, background: '#0a1524', display: 'block' }}
+            />
+          </article>
+        </div>
+      </main>
+    )
+  }
+
   // Strip the H1 from the rendered body — we render title separately above.
   // marked emits the first heading as h1 with the title; remove it once so
   // the page title isn't duplicated under the breadcrumb.

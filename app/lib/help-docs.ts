@@ -28,6 +28,14 @@ export type HelpDocFrontmatter = {
   // for future docs that need to be hidden from indexing without the
   // attorney NOTICE block.
   noindex?: boolean
+  // Getting-Started front-door flyers (2026-07-11): when set, the slug
+  // page swaps its MD-body render for a full-viewport iframe of
+  // /help-flyers/<flyer>.html with a top strip (breadcrumb + Download
+  // PDF). Value is the shared basename for both the .html at
+  // public/help-flyers/<flyer>.html and the .pdf at
+  // public/help-pdfs/<flyer>.pdf. Body text of the MD wrapper still
+  // participates in flexsearch so users find the flyer via search.
+  flyer?: string
 }
 
 export type HelpDoc = {
