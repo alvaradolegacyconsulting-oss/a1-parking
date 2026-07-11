@@ -239,11 +239,8 @@ BEGIN
   -- can_approve_vehicles = TRUE on ALL seeded managers so the bulk-add
   -- + plate-approve paths are exercisable from any manager account.
 
-  -- ── Test-PM (4 rows: CA, manager, leasing, resident — NO driver)
-  -- 2026-07-11: pm-driver@ removed. PM-Only tier has MAX_DRIVERS=0 (PM
-  -- track is management-only per product design; enforce_driver_limit
-  -- trigger correctly refused the INSERT). Test-PM is a driver-less
-  -- account by design; do not re-add.
+  -- ── Test-PM (4 rows: CA, manager, leasing, resident — driver-less
+  -- by design; pm_only tier has MAX_DRIVERS=0 per product spec).
   INSERT INTO public.user_roles (email, role, company, property, can_approve_vehicles)
   VALUES ('pm-ca@test.shieldmylot.com',       'company_admin', 'Test-PM', '{}'::text[],              FALSE)
   ON CONFLICT (lower(email)) DO NOTHING;
