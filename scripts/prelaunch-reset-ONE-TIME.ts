@@ -115,12 +115,37 @@ async function main() {
     process.exit(2)
   }
   const snapshotAgeMin = Math.floor(snapshotAge / 60000)
-  if (APPLY && snapshotAgeMin > 60) {
-    console.error(`❌ Snapshot is ${snapshotAgeMin} min old — must be ≤ 60 for --apply. Take a fresh one.`)
+  // Staleness threshold: 1440 min (24 hours). Widened from 60 min on
+  // 2026-07-11 because:
+  //   • Supabase Pro provides no on-demand snapshot capability in the
+  //     dashboard; only scheduled daily physical backups (restorable
+  //     via the Backups → Restore button) exist.
+  //   • PITR is a paid add-on ($100/mo) declined for launch.
+  //   • pg_dump against Supabase requires either DB password (rotation
+  //     unnecessary risk pre-launch) or Supabase CLI + Docker (not
+  //     installed on the operator's box).
+  //   • The daily scheduled backup IS the restore point. On 2026-07-11
+  //     the most recent scheduled backup was 04:18 UTC; the DB delta
+  //     since then is (a) test spaces about to be wiped anyway, and
+  //     (b) platform_settings.stripe_billing_enabled=true — one 30-sec
+  //     UPDATE to re-run. Code + Stripe live outside the DB.
+  //   • Guard's PURPOSE is "your restore point is recent enough to be
+  //     useful." Jose has verified his is materially adequate. The
+  //     60-min threshold assumed on-demand snapshot capability that
+  //     Supabase Pro doesn't provide.
+  //
+  // Everything ELSE in the guard is unchanged: ID + timestamp existence,
+  // ISO 8601 parse, type-back prompt, WIPE PROD confirmation, refuse-
+  // if-live, aegis check, Phase C independent verification.
+  const STALENESS_LIMIT_MIN = 24 * 60
+  if (APPLY && snapshotAgeMin > STALENESS_LIMIT_MIN) {
+    console.error(`❌ Snapshot is ${snapshotAgeMin} min old — must be ≤ ${STALENESS_LIMIT_MIN} for --apply. Take a fresh one.`)
     process.exit(2)
   }
+  const staleH = Math.floor(snapshotAgeMin / 60)
+  const staleM = snapshotAgeMin % 60
   console.log(`  Snapshot ID:   ${PRELAUNCH_SNAPSHOT_ID}`)
-  console.log(`  Snapshot age:  ${snapshotAgeMin} min ${APPLY ? '(staleness limit: 60 min)' : '(dry-run: staleness not enforced)'}`)
+  console.log(`  Snapshot age:  ${snapshotAgeMin} min (${staleH}h ${staleM}m) ${APPLY ? `(staleness limit: ${STALENESS_LIMIT_MIN} min = 24h)` : '(dry-run: staleness not enforced)'}`)
   console.log(`  Supabase URL:  ${URL}`)
   console.log(`  NEW super-admin UUID: ${NEW_SUPERADMIN_ID}`)
   console.log(`  Migration file: ${MIGRATION_PATH}`)
