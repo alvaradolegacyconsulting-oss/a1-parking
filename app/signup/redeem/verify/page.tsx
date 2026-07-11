@@ -14,8 +14,10 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../../supabase'
 import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE, TEXAS_ATTESTATION_VERSION, TEXAS_ATTESTATION_TEXT, SAAS_VERSION, SAAS_DISPLAY_DATE } from '../../../lib/legal-versions'
-import LegalReadthroughGate from '../../../components/LegalReadthroughGate'
+import LegalGateAccordion, { type GateSpec } from '../../../components/LegalGateAccordion'
 import SaasAgreementBody from '../../../components/SaasAgreementBody'
+import TermsBody from '../../../components/TermsBody'
+import PrivacyBody from '../../../components/PrivacyBody'
 // B76: post-activation bootstrap. Without this, /company_admin renders
 // with null localStorage and falls back to the 'Legacy Enforcement'
 // default until the user signs out and back in. See project_b76.
@@ -104,21 +106,16 @@ export default function VerifyLanding() {
   const [contactName, setContactName] = useState('')
   const [contactPhone, setContactPhone] = useState('')
   const [address, setAddress] = useState('')
-  // B118 Layer 2 Commit 2 (2026-07-07): split the single combined
-  // "I agree to ToS and Privacy" checkbox into two independent required
-  // checkboxes. Matches the two-row shape self-serve /signup + the
-  // first-login modal already use; RPC now writes two sibling rows
-  // (document_type='tos' + 'privacy') via
-  // 20260707_b118_layer2_redeem_two_click_and_stamp.sql. Legal effect
-  // unchanged (clickwrap + affirmative per-document action).
-  const [tosChecked, setTosChecked] = useState(false)
-  const [privacyChecked, setPrivacyChecked] = useState(false)
-  // B118 Layer 2 Commit 3 — SaaS scroll-to-sign gate state.
-  // saasReviewedAt is set BY THE GATE at unlock moment (canSign
-  // false→true, whichever OR-signal fires first). saasSigned flips
-  // true when the user clicks the gate's "Sign & Accept" button.
-  // Both flow into activate() → redeem_proposal_code RPC's new
-  // p_saas_version + p_saas_reviewed_at params.
+  // B118 Layer 2 Commit 3 acceptance-surface pass (2026-07-10): all three
+  // legal docs (ToS + Privacy + SaaS) are now scroll-to-sign gates inside
+  // one <LegalGateAccordion>. Two prior Commit-2 checkbox booleans
+  // (tosChecked, privacyChecked) become reviewed_at stamps (T1 stamped
+  // at each gate's unlock moment). SaaS state shape unchanged — kept
+  // separate because the standalone gate used to render below.
+  // reviewed_at values pass to redeem_proposal_code as p_tos_reviewed_at
+  // + p_privacy_reviewed_at (new 14th + 15th args on the 15-arg RPC).
+  const [tosReviewedAt, setTosReviewedAt] = useState<string | null>(null)
+  const [privacyReviewedAt, setPrivacyReviewedAt] = useState<string | null>(null)
   const [saasReviewedAt, setSaasReviewedAt] = useState<string | null>(null)
   const [saasSigned,     setSaasSigned]     = useState(false)
   // 2026-06-30 — Texas operator attestation on the redeem path
@@ -287,8 +284,8 @@ export default function VerifyLanding() {
     if (!contactName.trim()) return 'Primary contact name is required.'
     if (!contactPhone.trim()) return 'Primary contact phone is required.'
     if (!address.trim()) return 'Billing address is required.'
-    if (!tosChecked) return 'You must agree to the Terms of Service.'
-    if (!privacyChecked) return 'You must agree to the Privacy Policy.'
+    if (!tosReviewedAt) return 'You must sign the Terms of Use.'
+    if (!privacyReviewedAt) return 'You must sign the Privacy Policy.'
     if (!attestChecked) return 'You must attest to the Texas operations terms.'
     if (!saasSigned || !saasReviewedAt) return 'You must sign the SaaS Subscription Agreement.'
     return null
@@ -323,6 +320,12 @@ export default function VerifyLanding() {
       // above prevents activate() from firing without them.
       p_saas_version: SAAS_VERSION,
       p_saas_reviewed_at: saasReviewedAt,
+      // B118 Layer 2 Commit 3 acceptance-surface pass — ToS + Privacy
+      // reviewed_at stamps captured by the <LegalGateAccordion> gates
+      // (see state comment above formError()). Pass to the 15-arg
+      // redeem_proposal_code RPC (new 14th + 15th args, DEFAULT NULL).
+      p_tos_reviewed_at: tosReviewedAt,
+      p_privacy_reviewed_at: privacyReviewedAt,
       p_address: address.trim(),
       // p_ip_address omitted — browser can't reliably know its own IP
       // (Finding 7). Server-side proxy is a future commit if legal asks.
@@ -586,45 +589,60 @@ export default function VerifyLanding() {
                 </span>
               </label>
 
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 14, cursor: 'pointer' }}>
-                <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
-                  style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer', flexShrink: 0 }} />
-                <span style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>
-                  I have read and agree to the{' '}
-                  <a href="/terms" target="_blank" rel="noopener" style={{ color: GOLD, textDecoration: 'none' }}>Terms of Service</a>
-                  {' '}({TOS_DISPLAY_DATE}).
-                </span>
-              </label>
-
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 10, cursor: 'pointer' }}>
-                <input type="checkbox" checked={privacyChecked} onChange={e => setPrivacyChecked(e.target.checked)}
-                  style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer', flexShrink: 0 }} />
-                <span style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6 }}>
-                  I have read and agree to the{' '}
-                  <a href="/privacy" target="_blank" rel="noopener" style={{ color: GOLD, textDecoration: 'none' }}>Privacy Policy</a>
-                  {' '}({PRIVACY_DISPLAY_DATE}).
-                </span>
-              </label>
-
-              {/* B118 Layer 2 Commit 3 — SaaS scroll-to-sign gate.
-                  Rendered after the three checkboxes (Texas, ToS,
-                  Privacy) but before the Activate button — it's the
-                  final approval step. `disabled` prop grays the sign
-                  button until the other three consents are granted,
-                  matching the same-order gating that formError()
-                  enforces. onSigned captures reviewedAt (stamped at
-                  the gate's unlock moment, T1) into state; the
-                  activate() call passes it to p_saas_reviewed_at.  */}
-              <LegalReadthroughGate
-                version={SAAS_VERSION}
-                displayDate={SAAS_DISPLAY_DATE}
-                disabled={!tosChecked || !privacyChecked || !attestChecked}
-                onSigned={({ reviewedAt }) => {
-                  setSaasReviewedAt(reviewedAt)
-                  setSaasSigned(true)
-                }}
-                body={<SaasAgreementBody />}
-              />
+              {/* B118 Layer 2 Commit 3 acceptance-surface pass — all three
+                  legal docs (ToS, Privacy, SaaS) rendered as scroll-to-
+                  sign gates inside one <LegalGateAccordion>. The Texas
+                  attestation checkbox above stays a checkbox (no doc
+                  body); it also gates the accordion via `disabled` so
+                  the Sign buttons stay inactive until the attestation
+                  is checked.
+                  onGateSigned dispatches by key — each doc's reviewed_at
+                  latches into its own state (tos/privacy/saas), and
+                  those feed the 15-arg redeem_proposal_code call. */}
+              <div style={{ marginTop: 14 }}>
+                <LegalGateAccordion
+                  disabled={!attestChecked}
+                  signedKeys={[
+                    ...(tosReviewedAt ? ['tos'] : []),
+                    ...(privacyReviewedAt ? ['privacy'] : []),
+                    ...(saasSigned ? ['saas'] : []),
+                  ]}
+                  onGateSigned={(key, { reviewedAt }) => {
+                    if (key === 'tos') setTosReviewedAt(reviewedAt)
+                    else if (key === 'privacy') setPrivacyReviewedAt(reviewedAt)
+                    else if (key === 'saas') {
+                      setSaasReviewedAt(reviewedAt)
+                      setSaasSigned(true)
+                    }
+                  }}
+                  gates={[
+                    {
+                      key: 'tos',
+                      title: 'Terms of Use',
+                      version: TOS_VERSION,
+                      displayDate: TOS_DISPLAY_DATE,
+                      body: <TermsBody />,
+                      signButtonLabel: 'Sign & Accept Terms of Use',
+                    },
+                    {
+                      key: 'privacy',
+                      title: 'Privacy Policy',
+                      version: PRIVACY_VERSION,
+                      displayDate: PRIVACY_DISPLAY_DATE,
+                      body: <PrivacyBody />,
+                      signButtonLabel: 'Sign & Accept Privacy Policy',
+                    },
+                    {
+                      key: 'saas',
+                      title: 'SaaS Subscription Agreement',
+                      version: SAAS_VERSION,
+                      displayDate: SAAS_DISPLAY_DATE,
+                      body: <SaasAgreementBody />,
+                      signButtonLabel: 'Sign & Accept SaaS Agreement',
+                    },
+                  ] satisfies GateSpec[]}
+                />
+              </div>
 
               {submission.kind === 'error' && (
                 <div style={{ background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, padding: '10px 12px', marginTop: 14 }}>

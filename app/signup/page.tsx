@@ -20,10 +20,15 @@ import {
   TEXAS_ATTESTATION_VERSION,
   TEXAS_ATTESTATION_TEXT,
   TOS_VERSION,
+  TOS_DISPLAY_DATE,
   PRIVACY_VERSION,
+  PRIVACY_DISPLAY_DATE,
 } from '../lib/legal-versions'
 import { validatePassword } from '../lib/password-rules'
 import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
+import LegalGateAccordion, { type GateSpec } from '../components/LegalGateAccordion'
+import TermsBody from '../components/TermsBody'
+import PrivacyBody from '../components/PrivacyBody'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -78,8 +83,13 @@ export default function SignupTierPicker() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [attestChecked, setAttestChecked] = useState(false)
-  const [tosChecked, setTosChecked] = useState(false)
-  const [privacyChecked, setPrivacyChecked] = useState(false)
+  // B118 Layer 2 Commit 3 — replace ToS + Privacy checkboxes with the
+  // <LegalGateAccordion> (scroll-to-sign gate per document). reviewed_at
+  // stamps flow into user_metadata at auth.signUp, then get consumed by
+  // /api/signup/attest → accept_signup_consents(p_tos_reviewed_at,
+  // p_privacy_reviewed_at) after email verification.
+  const [tosReviewedAt, setTosReviewedAt] = useState<string | null>(null)
+  const [privacyReviewedAt, setPrivacyReviewedAt] = useState<string | null>(null)
   const [submission, setSubmission] = useState<Submission>({ kind: 'editing' })
 
   // CAPTCHA (Cloudflare Turnstile, Managed mode). Token set by widget callback;
@@ -128,8 +138,9 @@ export default function SignupTierPicker() {
   const driverCountOk = track === 'pm' || (dCount >= 1 && !driverLimitReached)
   const companyNameOk = companyName.trim().length > 0
   // captchaToken added to allOk so Submit disables until the widget callback fires.
+  // ToS + Privacy are now gate-signed (accordion) — signed = non-null reviewed_at.
   const allOk = companyNameOk && emailOk && !passwordErr && propertyCountOk && driverCountOk
-    && attestChecked && tosChecked && privacyChecked && !!captchaToken
+    && attestChecked && !!tosReviewedAt && !!privacyReviewedAt && !!captchaToken
 
   // ── Submit ────────────────────────────────────────────────────────
   async function submit() {
@@ -182,6 +193,12 @@ export default function SignupTierPicker() {
           attestation_version: TEXAS_ATTESTATION_VERSION,
           tos_version: TOS_VERSION,
           privacy_version: PRIVACY_VERSION,
+          // B118 Layer 2 Commit 3 — reviewed_at stamps captured by the
+          // <LegalGateAccordion> gates on this page. Read by
+          // /api/signup/attest post-verify and passed to the 7-arg
+          // accept_signup_consents RPC.
+          tos_reviewed_at: tosReviewedAt,
+          privacy_reviewed_at: privacyReviewedAt,
           acquisition_channel: 'self_serve',
         },
       },
@@ -349,35 +366,49 @@ export default function SignupTierPicker() {
           {password && passwordErr && <p style={{ color: '#f44336', fontSize: 11, margin: '4px 0 0' }}>{passwordErr}</p>}
         </div>
 
-        {/* LEGAL ACCEPTANCE — Texas attestation + ToS + Privacy in one section
-            per B118 counter-proposal A.3. All 3 required to enable submit.
-            Links open new tab (target="_blank" rel="noopener noreferrer") so
-            the user can review without losing form state. */}
+        {/* LEGAL ACCEPTANCE — Texas attestation stays a checkbox (informational
+            wording without a document body). ToS + Privacy each get a
+            <LegalReadthroughGate> inside the accordion — scroll-through
+            required to enable Sign, reviewed_at captured at unlock (T1) and
+            passed to accept_signup_consents via user_metadata. */}
         <div style={{ background: 'rgba(201,162,39,0.06)', border: `1px solid rgba(201,162,39,0.35)`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
           <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>6. Legal acceptance</p>
           <div style={{ background: '#0a0d14', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 14, marginBottom: 14, fontSize: 13, color: '#94a3b8', whiteSpace: 'pre-line', lineHeight: 1.6 }}>
             {TEXAS_ATTESTATION_TEXT}
           </div>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: 14 }}>
             <input type="checkbox" checked={attestChecked} onChange={e => setAttestChecked(e.target.checked)} style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer' }} />
             <span style={{ color: TEXT, fontSize: 13, lineHeight: 1.5 }}>I attest to the Texas operations terms above (required).</span>
           </label>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
-            <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)} style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer' }} />
-            <span style={{ color: TEXT, fontSize: 13, lineHeight: 1.5 }}>
-              I have read and agree to the{' '}
-              <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: GOLD, textDecoration: 'underline' }}>Terms of Service</a>
-              {' '}(required).
-            </span>
-          </label>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
-            <input type="checkbox" checked={privacyChecked} onChange={e => setPrivacyChecked(e.target.checked)} style={{ marginTop: 3, accentColor: GOLD, cursor: 'pointer' }} />
-            <span style={{ color: TEXT, fontSize: 13, lineHeight: 1.5 }}>
-              I have read and agree to the{' '}
-              <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: GOLD, textDecoration: 'underline' }}>Privacy Policy</a>
-              {' '}(required).
-            </span>
-          </label>
+          <LegalGateAccordion
+            disabled={!attestChecked}
+            signedKeys={[
+              ...(tosReviewedAt ? ['tos'] : []),
+              ...(privacyReviewedAt ? ['privacy'] : []),
+            ]}
+            onGateSigned={(key, { reviewedAt }) => {
+              if (key === 'tos') setTosReviewedAt(reviewedAt)
+              else if (key === 'privacy') setPrivacyReviewedAt(reviewedAt)
+            }}
+            gates={[
+              {
+                key: 'tos',
+                title: 'Terms of Use',
+                version: TOS_VERSION,
+                displayDate: TOS_DISPLAY_DATE,
+                body: <TermsBody />,
+                signButtonLabel: 'Sign & Accept Terms of Use',
+              },
+              {
+                key: 'privacy',
+                title: 'Privacy Policy',
+                version: PRIVACY_VERSION,
+                displayDate: PRIVACY_DISPLAY_DATE,
+                body: <PrivacyBody />,
+                signButtonLabel: 'Sign & Accept Privacy Policy',
+              },
+            ] satisfies GateSpec[]}
+          />
         </div>
 
         {/* COST PREVIEW */}

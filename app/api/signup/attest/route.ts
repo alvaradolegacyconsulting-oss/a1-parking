@@ -64,12 +64,35 @@ export async function POST(req: NextRequest) {
   // them at signup to record consent against an old/fake version).
   // The form ships these from legal-versions.ts; the route validates
   // by using the same import.
+  //
+  // B118 Layer 2 Commit 3 — reviewed_at (T1 stamps captured by the
+  // <LegalGateAccordion> gates on /signup) rides in user_metadata for
+  // this leg (user isn't authenticated yet at gate-sign moment, so we
+  // can't call the RPC directly). Read here off the confirmed JWT user
+  // and passed to the 7-arg accept_signup_consents RPC.
+  //
+  // Legacy-caller compatibility: if user_metadata was set before the
+  // Commit 3 form deploy, the two new fields will be absent — pass NULL
+  // and the RPC still succeeds (attorney-agreed DEFAULT NULL discipline).
+  // Also defensively coerce non-string values to NULL rather than trust
+  // whatever's in the JWT — PostgreSQL string→TIMESTAMPTZ cast is only
+  // safe for valid ISO 8601 strings.
+  const meta = (user.user_metadata || {}) as Record<string, unknown>
+  const rawTosReviewedAt = meta.tos_reviewed_at
+  const rawPrivacyReviewedAt = meta.privacy_reviewed_at
+  const tosReviewedAt = typeof rawTosReviewedAt === 'string' && rawTosReviewedAt.length > 0
+    ? rawTosReviewedAt : null
+  const privacyReviewedAt = typeof rawPrivacyReviewedAt === 'string' && rawPrivacyReviewedAt.length > 0
+    ? rawPrivacyReviewedAt : null
+
   const { error: rpcErr } = await supabase.rpc('accept_signup_consents', {
     p_attestation_version: TEXAS_ATTESTATION_VERSION,
     p_tos_version: TOS_VERSION,
     p_privacy_version: PRIVACY_VERSION,
     p_ip_address: ipAddress,
     p_user_agent: userAgent,
+    p_tos_reviewed_at: tosReviewedAt,
+    p_privacy_reviewed_at: privacyReviewedAt,
   })
 
   if (rpcErr) {

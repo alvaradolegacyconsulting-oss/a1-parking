@@ -5,6 +5,17 @@ import { supabase } from '../supabase'
 import { useResolvedLogo } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
 import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
+// B118 Layer 2 Commit 3 acceptance-surface pass — scroll-to-sign accordion +
+// per-doc bodies for the resident register form.
+import LegalGateAccordion, { type GateSpec } from '../components/LegalGateAccordion'
+import TermsBody from '../components/TermsBody'
+import PrivacyBody from '../components/PrivacyBody'
+import {
+  TOS_VERSION,
+  TOS_DISPLAY_DATE,
+  PRIVACY_VERSION,
+  PRIVACY_DISPLAY_DATE,
+} from '../lib/legal-versions'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY']
 
@@ -30,7 +41,12 @@ function RegisterForm() {
   const [logoFailed, setLogoFailed] = useState(false)
   const resolvedLogo = useResolvedLogo(companyLogo)
 
-  const [tosChecked, setTosChecked] = useState(false)
+  // B118 Layer 2 Commit 3 acceptance-surface pass — the single "I agree
+  // to ToS and Privacy" checkbox becomes two scroll-to-sign gates via
+  // <LegalGateAccordion>. reviewed_at (T1) latches per doc; both pass
+  // to record_resident_tos_acceptance alongside the audit_log write.
+  const [tosReviewedAt, setTosReviewedAt] = useState<string | null>(null)
+  const [privacyReviewedAt, setPrivacyReviewedAt] = useState<string | null>(null)
   const [account, setAccount] = useState({ email: '', password: '', confirm: '', name: '', phone: '', unit: '' })
   const [vehicles, setVehicles] = useState<any[]>([])
 
@@ -262,10 +278,37 @@ function RegisterForm() {
           user_email: account.email.trim().toLowerCase(),
           action: 'REGISTRATION_TOS_ACCEPTED',
           table_name: 'residents',
-          new_values: { email: account.email.trim(), property: property || null },
+          new_values: {
+            email: account.email.trim(),
+            property: property || null,
+            // B118 Layer 2 Commit 3 acceptance-surface pass — carry
+            // the version + T1 stamps into the audit_log too so the
+            // evidence isn't only in tos_acceptances (defense-in-depth
+            // for backfill audits).
+            tos_version: TOS_VERSION,
+            privacy_version: PRIVACY_VERSION,
+            tos_reviewed_at: tosReviewedAt,
+            privacy_reviewed_at: privacyReviewedAt,
+          },
         },
       ])
       if (auditErr) console.error('[B155.2 F4] REGISTRATION_TOS_ACCEPTED audit insert failed:', auditErr.message)
+
+      // B118 Layer 2 Commit 3 acceptance-surface pass — closes the
+      // "residents never populated tos_acceptances rows" gap. The audit
+      // log above kept evidence in audit_logs; this call writes the
+      // canonical tos_acceptances rows via the DEFINER RPC (idempotent
+      // per (user_id, doc_type, version), server-side company_id join
+      // by email → residents.company → companies.name). Same
+      // non-fatal discipline: surface via console.error, do not fail
+      // the registration on it (the audit_log row is fallback evidence).
+      const { error: rpcErr } = await supabase.rpc('record_resident_tos_acceptance', {
+        p_tos_version: TOS_VERSION,
+        p_privacy_version: PRIVACY_VERSION,
+        p_tos_reviewed_at: tosReviewedAt,
+        p_privacy_reviewed_at: privacyReviewedAt,
+      })
+      if (rpcErr) console.error('[resident-register] record_resident_tos_acceptance failed:', rpcErr.message)
       // Sign out — registration complete, account is in pending state.
       // Leaving the session active would auto-redirect to /resident on
       // the next nav and surface a "pending" landing page; signing out
@@ -480,16 +523,40 @@ function RegisterForm() {
                 <p style={{ color:'#C9A227', fontSize:'13px', textAlign:'center', margin:'0' }}>🤠 ShieldMyLot currently operates in Texas only.</p>
               </div>
 
-              <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', marginBottom:'14px', cursor:'pointer' }}>
-                <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
-                  style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer' }} />
-                <span style={{ color:'#aaa', fontSize:'12px', lineHeight:'1.6' }}>
-                  I agree to the{' '}
-                  <a href="/terms" target="_blank" style={{ color:'#C9A227', textDecoration:'none' }}>Terms of Service</a>
-                  {' '}and{' '}
-                  <a href="/privacy" target="_blank" style={{ color:'#C9A227', textDecoration:'none' }}>Privacy Policy</a>
-                </span>
-              </label>
+              {/* B118 Layer 2 Commit 3 acceptance-surface pass — replaced
+                  the single combined ToS+Privacy checkbox with a two-gate
+                  <LegalGateAccordion>. reviewed_at stamps latch per doc
+                  and pass to record_resident_tos_acceptance below. */}
+              <div style={{ marginBottom:'14px' }}>
+                <LegalGateAccordion
+                  signedKeys={[
+                    ...(tosReviewedAt ? ['tos'] : []),
+                    ...(privacyReviewedAt ? ['privacy'] : []),
+                  ]}
+                  onGateSigned={(key, { reviewedAt }) => {
+                    if (key === 'tos') setTosReviewedAt(reviewedAt)
+                    else if (key === 'privacy') setPrivacyReviewedAt(reviewedAt)
+                  }}
+                  gates={[
+                    {
+                      key: 'tos',
+                      title: 'Terms of Use',
+                      version: TOS_VERSION,
+                      displayDate: TOS_DISPLAY_DATE,
+                      body: <TermsBody />,
+                      signButtonLabel: 'Sign & Accept Terms of Use',
+                    },
+                    {
+                      key: 'privacy',
+                      title: 'Privacy Policy',
+                      version: PRIVACY_VERSION,
+                      displayDate: PRIVACY_DISPLAY_DATE,
+                      body: <PrivacyBody />,
+                      signButtonLabel: 'Sign & Accept Privacy Policy',
+                    },
+                  ] satisfies GateSpec[]}
+                />
+              </div>
 
               {/* CAPTCHA — Cloudflare Turnstile (Managed). Gates submit; the
                   /api/register/captcha-verify wrapper validates the token
@@ -506,8 +573,8 @@ function RegisterForm() {
               </div>
 
               {(() => {
-                const allChecked = tosChecked
-                const disabled = submitting || !allChecked || !captchaToken
+                const allSigned = !!tosReviewedAt && !!privacyReviewedAt
+                const disabled = submitting || !allSigned || !captchaToken
                 return (
                   <div style={{ display:'flex', gap:'8px' }}>
                     <button onClick={() => { setError(''); setStep(2) }}

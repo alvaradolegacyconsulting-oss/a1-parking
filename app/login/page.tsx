@@ -14,7 +14,10 @@ import { gateAccountState, AccountState } from '../lib/account-state'
 // null localStorage + 'Legacy Enforcement' fallback rendering.
 import { bootstrapCompanyContext, CompanyBootstrapRow } from '../lib/company-bootstrap'
 // B118: version-aware modal predicate + accept_tos(versions) call.
-import { TOS_VERSION, PRIVACY_VERSION } from '../lib/legal-versions'
+import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE } from '../lib/legal-versions'
+import LegalGateAccordion, { type GateSpec } from '../components/LegalGateAccordion'
+import TermsBody from '../components/TermsBody'
+import PrivacyBody from '../components/PrivacyBody'
 // B147 3a: hardened company-by-name resolution replacing naked
 // .ilike().single() pattern that silently degrades on 0/2+-rows (B76 class).
 import { resolveCompanyByName } from '../lib/company-resolve'
@@ -29,8 +32,18 @@ export default function Login() {
   const [companyName, setCompanyName] = useState<string | null>(null)
   const resolvedLogo = useResolvedLogo(companyLogo)
   const [showTosModal, setShowTosModal] = useState(false)
-  const [tosChecked, setTosChecked] = useState(false)
-  const [privacyChecked, setPrivacyChecked] = useState(false)
+  // B118 Layer 2 Commit 3 acceptance-surface pass — the re-consent modal
+  // now uses <LegalGateAccordion> (scroll-through gates), replacing the
+  // two prior checkbox booleans. State semantics: null = not yet signed;
+  // ISO string = T1 (finished reading) stamp captured by the gate.
+  //
+  // AMBIGUITY / FOLLOW-UP: the acceptTos() handler still calls the 2-arg
+  // accept_tos RPC (not accept_signup_consents), which does NOT accept
+  // p_tos_reviewed_at / p_privacy_reviewed_at yet. The T1 stamps are
+  // captured in state here but not persisted — see the comment above
+  // the RPC call. Extending accept_tos is a separate migration.
+  const [tosReviewedAt, setTosReviewedAt] = useState<string | null>(null)
+  const [privacyReviewedAt, setPrivacyReviewedAt] = useState<string | null>(null)
   const [tosLoading, setTosLoading] = useState(false)
   const [pendingRole, setPendingRole] = useState('')
   const [pendingEmail, setPendingEmail] = useState('')
@@ -75,15 +88,36 @@ export default function Login() {
     // SECURITY DEFINER + GRANT TO authenticated only. Graceful degrade
     // preserved: if RPC fails, log and continue — user re-sees modal
     // next login, which is not catastrophic.
+    //
+    // B118 Layer 2 Commit 3 acceptance-surface pass — accept_tos was
+    // extended from 2-arg to 4-arg (migration 20260710_..._accept_tos_
+    // extension). p_tos_reviewed_at + p_privacy_reviewed_at DEFAULT
+    // NULL; T1 gate-unlock stamps captured by the accordion above are
+    // persisted directly on the tos_acceptances row, matching the
+    // signup + redeem paths.
     const { error: tosErr } = await supabase.rpc('accept_tos', {
       p_tos_version: TOS_VERSION,
       p_privacy_version: PRIVACY_VERSION,
+      p_tos_reviewed_at: tosReviewedAt,
+      p_privacy_reviewed_at: privacyReviewedAt,
     })
     if (tosErr) console.error('accept_tos RPC failed:', tosErr)
     await supabase.from('audit_logs').insert([{
       action: 'TOS_ACCEPTED',
       table_name: 'user_roles',
-      new_values: { email: pendingEmail, accepted_at: now, tos_version: TOS_VERSION, privacy_version: PRIVACY_VERSION },
+      new_values: {
+        email: pendingEmail,
+        accepted_at: now,
+        tos_version: TOS_VERSION,
+        privacy_version: PRIVACY_VERSION,
+        // B118 Layer 2 Commit 3 acceptance-surface pass — until
+        // accept_tos gets extended (comment above), stash the T1
+        // stamps in the audit_log so the evidence exists somewhere.
+        // Backfillable into tos_acceptances.reviewed_at once the
+        // RPC is extended.
+        tos_reviewed_at: tosReviewedAt,
+        privacy_reviewed_at: privacyReviewedAt,
+      },
     }])
     redirectByRole(pendingRole, pendingForcePwReset)
   }
@@ -465,37 +499,46 @@ export default function Login() {
 
       {showTosModal && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-          <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'16px', padding:'28px', maxWidth:'480px', width:'100%', display:'flex', flexDirection:'column' }}>
-            <h2 style={{ color:'#C9A227', fontSize:'20px', fontWeight:'bold', margin:'0 0 12px', textAlign:'center' }}>Terms of Service &amp; Privacy Policy</h2>
-            {/* B118: replaced the inline scroll-to-bottom ToS prose with a
-                link-out pattern matching /signup commit 2. The user reviews
-                each document in a new tab (full text lives at /terms and
-                /privacy — single source of truth) and checks both boxes
-                to acknowledge. Same legal effect (clickwrap with
-                affirmative action); cleaner maintenance when wording bumps. */}
+          {/* B118 Layer 2 Commit 3 acceptance-surface pass — modal body
+              swapped from checkboxes to <LegalGateAccordion>. Modal shell
+              gets an overflow-y:auto + max-height:90vh cap so the accordion
+              (which can grow to 70vh per gate pane) fits within the
+              viewport on small screens without off-screen clipping. */}
+          <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'16px', padding:'28px', maxWidth:'560px', width:'100%', maxHeight:'90vh', overflowY:'auto', display:'flex', flexDirection:'column' }}>
+            <h2 style={{ color:'#C9A227', fontSize:'20px', fontWeight:'bold', margin:'0 0 12px', textAlign:'center' }}>Terms of Use &amp; Privacy Policy</h2>
             <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 18px', textAlign:'center' }}>
-              Please review and agree to both documents to continue.
+              Please read through and sign both documents to continue.
             </p>
-            <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', cursor:'pointer', marginBottom:'10px' }}>
-              <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
-                style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer' }} />
-              <span style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.5' }}>
-                I have read and agree to the{' '}
-                <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color:'#C9A227', textDecoration:'underline' }}>Terms of Service</a>
-                .
-              </span>
-            </label>
-            <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', cursor:'pointer', marginBottom:'16px' }}>
-              <input type="checkbox" checked={privacyChecked} onChange={e => setPrivacyChecked(e.target.checked)}
-                style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer' }} />
-              <span style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.5' }}>
-                I have read and agree to the{' '}
-                <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color:'#C9A227', textDecoration:'underline' }}>Privacy Policy</a>
-                .
-              </span>
-            </label>
-            <button onClick={acceptTos} disabled={!tosChecked || !privacyChecked || tosLoading}
-              style={{ width:'100%', padding:'13px', background: (!tosChecked || !privacyChecked) ? '#555' : '#C9A227', color: (!tosChecked || !privacyChecked) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!tosChecked || !privacyChecked) ? 'not-allowed' : 'pointer' }}>
+            <LegalGateAccordion
+              signedKeys={[
+                ...(tosReviewedAt ? ['tos'] : []),
+                ...(privacyReviewedAt ? ['privacy'] : []),
+              ]}
+              onGateSigned={(key, { reviewedAt }) => {
+                if (key === 'tos') setTosReviewedAt(reviewedAt)
+                else if (key === 'privacy') setPrivacyReviewedAt(reviewedAt)
+              }}
+              gates={[
+                {
+                  key: 'tos',
+                  title: 'Terms of Use',
+                  version: TOS_VERSION,
+                  displayDate: TOS_DISPLAY_DATE,
+                  body: <TermsBody />,
+                  signButtonLabel: 'Sign & Accept Terms of Use',
+                },
+                {
+                  key: 'privacy',
+                  title: 'Privacy Policy',
+                  version: PRIVACY_VERSION,
+                  displayDate: PRIVACY_DISPLAY_DATE,
+                  body: <PrivacyBody />,
+                  signButtonLabel: 'Sign & Accept Privacy Policy',
+                },
+              ] satisfies GateSpec[]}
+            />
+            <button onClick={acceptTos} disabled={!tosReviewedAt || !privacyReviewedAt || tosLoading}
+              style={{ width:'100%', padding:'13px', marginTop:'16px', background: (!tosReviewedAt || !privacyReviewedAt) ? '#555' : '#C9A227', color: (!tosReviewedAt || !privacyReviewedAt) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!tosReviewedAt || !privacyReviewedAt) ? 'not-allowed' : 'pointer' }}>
               {tosLoading ? 'Please wait...' : 'Continue'}
             </button>
           </div>
