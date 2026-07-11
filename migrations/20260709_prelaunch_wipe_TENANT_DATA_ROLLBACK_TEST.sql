@@ -1,7 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════
 -- PRE-LAUNCH SCORCHED WIPE — ROLLBACK TEST
--- (visible-output rewrite — reports via temp table + final SELECT
--- instead of RAISE NOTICE, since Supabase SQL Editor swallows NOTICEs)
+-- (visible-output v2 — reports via RAISE EXCEPTION on a TEXT
+-- accumulator, since Supabase's SQL Editor swallows RAISE NOTICE and
+-- also drops SELECT results before a ROLLBACK, and drops the temp
+-- table AFTER a ROLLBACK. An error message is the one channel that
+-- survives — Postgres sends it to the client as the txn aborts.)
 -- 2026-07-11 (was 2026-07-09; body byte-identical, reporting changed)
 --
 -- PURPOSE
@@ -9,284 +12,290 @@
 --     20260709_prelaunch_wipe_TENANT_DATA.sql
 --   against live prod BEFORE it commits. Every DELETE runs (proving
 --   FK order + the in-txn asserts fire correctly against real data),
---   then ROLLBACK discards everything. Zero persistent change.
+--   then the RAISE EXCEPTION aborts the transaction → automatic
+--   rollback discards everything. Zero persistent change.
 --
---   Each step INSERTs into a _wipe_report TEMP TABLE. The final
---   statement before ROLLBACK is a plain SELECT of that table so
---   Supabase's Results pane shows the before→after counts + a ✅/❌
---   marker per step. A VERDICT row aggregates every ok flag.
+--   Each step appends a line to v_report (TEXT). Manual asserts
+--   (aegis, refuse-if-live guard, user_roles=1) SOFT-TRACK into v_ok
+--   rather than hard-raising — so the operator sees the full report
+--   even if one assert fails. Postgres-native errors (23503 FK
+--   violations from a DELETE) still hard-abort, which is the primary
+--   thing this rehearsal validates.
 --
---   RAISE EXCEPTIONs on hard-fail conditions (aegis missing, guard
---   >0, user_roles ≠ 1) are PRESERVED — those should still abort
---   loudly, matching the real wipe's behavior. This edit is about
---   INFORMATIONAL reporting; asserts unchanged.
---
---   Body — DELETE order, FK sequence, in-txn asserts — is otherwise
+--   Body — DELETE order, predicates, FK sequence — is otherwise
 --   byte-identical to the sibling COMMIT file so the rehearsal
 --   validates the real thing.
+--
+--   Bonus safety: terminal state is a RAISE, not a ROLLBACK. Cannot
+--   accidentally commit even if someone fat-fingers.
 --
 -- USAGE
 --   Paste ENTIRE file into Supabase SQL Editor as ONE block. Run.
 --
 -- INTERPRETATION
---   Results pane shows a report table. Every row's result column is
---   ✅ + the VERDICT row is ✅ → apply the sibling COMMIT file.
+--   Error pane (RED — expected, that's the delivery mechanism)
+--   contains the report. Read the VERDICT line at the bottom:
 --
---   Any ❌ row → sibling file's asserts / order need fixing.
---   Any RAISE EXCEPTION (23503 FK or a hard-guard raise) → same;
---   caught safely by the ROLLBACK.
+--     "=== VERDICT: ALL ASSERTS PASSED ==="        → apply sibling
+--     "=== VERDICT: *** FAIL — DO NOT WIPE *** ===" → stop
+--
+--   Any Postgres-native error (23503, permission_denied) instead of
+--   the report → also stop; fix the sibling COMMIT file.
+--
+--   The RED framing is cosmetic. The exception IS the delivery,
+--   not a failure signal. Read the VERDICT line, not the error style.
 --
 -- WHAT THIS DOES NOT TEST
 --   • auth.users deletion (JS Phase C — API-side, ~240 deleteUser
 --     calls, not in this SQL).
---   • Actual persistence (ROLLBACK is the whole point).
+--   • Actual persistence (RAISE + rollback is the whole point).
 -- ════════════════════════════════════════════════════════════════════
-
-BEGIN;
-
-CREATE TEMP TABLE _wipe_report (
-  seq       SERIAL PRIMARY KEY,
-  step      TEXT   NOT NULL,     -- 'aegis_check' | 'null_out' | 'guard' | 'delete' | 'VERDICT'
-  detail    TEXT   NOT NULL,     -- human-readable specifier (table name / assertion name)
-  before_n  BIGINT,              -- rows before the operation (NULL for aegis/guard)
-  after_n   BIGINT,              -- rows after the operation
-  ok        BOOLEAN NOT NULL     -- assertion passed?
-);
 
 DO $wipe_test$
 DECLARE
   v_aegis_id     UUID    := 'a767da27-b452-475a-adda-1b75ae393c59';
   v_aegis_email  TEXT;
   v_aegis_role   TEXT;
-  v_stripe_count INT;
-  v_ur_count     INT;
-  v_pre          INT;
-  v_post         INT;
+  v_before       BIGINT;
+  v_after        BIGINT;
+  v_n            BIGINT;
+  v_ok           BOOLEAN := TRUE;
+  v_step_ok      BOOLEAN;
+  v_report       TEXT := E'\n═══ PRE-LAUNCH WIPE — ROLLBACK REHEARSAL ═══\n';
 BEGIN
   -- ── SAFETY: aegis exists in auth.users + carries super-admin role
+  --
+  -- Soft-track: if aegis is missing, v_aegis_email = NULL and the
+  -- downstream user_roles preserve predicate (email <> lower(NULL))
+  -- evaluates NULL, so no rows are preserved. That failure surfaces
+  -- as v_ok=FALSE on the user_roles assert too, giving the operator
+  -- the full picture of what would happen.
   SELECT email INTO v_aegis_email
     FROM auth.users WHERE id = v_aegis_id LIMIT 1;
-  IF v_aegis_email IS NULL THEN
-    RAISE EXCEPTION 'PRELAUNCH_WIPE_TEST: aegis (%) not in auth.users — refuse', v_aegis_id;
+  IF v_aegis_email IS NOT NULL THEN
+    SELECT role INTO v_aegis_role
+      FROM public.user_roles
+     WHERE lower(email) = lower(v_aegis_email) LIMIT 1;
   END IF;
-
-  SELECT role INTO v_aegis_role
-    FROM public.user_roles
-   WHERE lower(email) = lower(v_aegis_email) LIMIT 1;
-  IF v_aegis_role IS NULL OR v_aegis_role <> 'admin' THEN
-    RAISE EXCEPTION 'PRELAUNCH_WIPE_TEST: aegis user_roles.role=% (expected admin) — refuse', v_aegis_role;
-  END IF;
-
-  INSERT INTO _wipe_report (step, detail, ok)
-  VALUES ('aegis_check', v_aegis_email || ' role=admin', TRUE);
+  v_step_ok := (v_aegis_email IS NOT NULL AND v_aegis_role = 'admin');
+  v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] aegis_check          : email=%s role=%s (expect admin)\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END,
+                                 COALESCE(v_aegis_email, '<not found>'),
+                                 COALESCE(v_aegis_role, '<null>'));
 
   -- ── STEP 1: Pre-wipe null-out on 5 leftover Stripe-ID stale-pointer rows
-  SELECT count(*) INTO v_pre FROM public.companies WHERE id IN (52, 53, 56, 58, 80);
   UPDATE public.companies
      SET stripe_customer_id = NULL, stripe_subscription_id = NULL
    WHERE id IN (52, 53, 56, 58, 80);
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('null_out', 'stripe IDs on ids (52,53,56,58,80) — expect 5 matched', v_pre, v_pre, v_pre = 5);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_step_ok := (v_n = 5);
+  v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] null_out             : matched %s (expect 5)\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_n);
 
-  -- ── STEP 2: Refuse-if-live GUARD
-  SELECT count(*) INTO v_stripe_count
+  -- ── STEP 2: Refuse-if-live GUARD (soft-tracked)
+  SELECT count(*) INTO v_n
     FROM public.companies
    WHERE stripe_customer_id IS NOT NULL
       OR stripe_subscription_id IS NOT NULL;
-  IF v_stripe_count > 0 THEN
-    RAISE EXCEPTION 'PRELAUNCH_WIPE_TEST: refuse-if-live GUARD failed — % companies still carry Stripe IDs post-null-out.', v_stripe_count;
-  END IF;
-  INSERT INTO _wipe_report (step, detail, after_n, ok)
-  VALUES ('guard', 'refuse-if-live: any Stripe-ID rows post-null-out (expect 0)', v_stripe_count, v_stripe_count = 0);
+  v_step_ok := (v_n = 0);
+  v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] guard_refuse_if_live : %s rows carry Stripe IDs post-null-out (expect 0)\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_n);
 
   -- ══════════════════════════════════════════════════════════════════
-  -- STEP 3: DELETE cascade — reverse-topological
+  -- STEP 3: DELETE cascade — reverse-topological. FK order is the
+  -- primary thing this rehearsal validates: a real 23503 error from
+  -- any DELETE will HARD-ABORT the block (that IS the fail signal).
   -- ══════════════════════════════════════════════════════════════════
 
   -- Phase 3a — custom stripe_prices before proposal_codes (FK RESTRICT)
-  SELECT count(*) INTO v_pre  FROM public.stripe_prices WHERE proposal_code_id IS NOT NULL;
+  SELECT count(*) INTO v_before FROM public.stripe_prices WHERE proposal_code_id IS NOT NULL;
   DELETE FROM public.stripe_prices WHERE proposal_code_id IS NOT NULL;
-  SELECT count(*) INTO v_post FROM public.stripe_prices WHERE proposal_code_id IS NOT NULL;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'stripe_prices (custom, proposal_code_id IS NOT NULL)', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.stripe_prices WHERE proposal_code_id IS NOT NULL;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete stripe_prices (custom) : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
   -- Phase 3b — proposal_codes
-  SELECT count(*) INTO v_pre  FROM public.proposal_codes;
+  SELECT count(*) INTO v_before FROM public.proposal_codes;
   DELETE FROM public.proposal_codes;
-  SELECT count(*) INTO v_post FROM public.proposal_codes;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'proposal_codes', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.proposal_codes;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete proposal_codes         : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
   -- Phase 3c — history
-  SELECT count(*) INTO v_pre  FROM public.audit_logs;
+  SELECT count(*) INTO v_before FROM public.audit_logs;
   DELETE FROM public.audit_logs;
-  SELECT count(*) INTO v_post FROM public.audit_logs;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'audit_logs', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.audit_logs;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete audit_logs             : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.tos_acceptances;
+  SELECT count(*) INTO v_before FROM public.tos_acceptances;
   DELETE FROM public.tos_acceptances;
-  SELECT count(*) INTO v_post FROM public.tos_acceptances;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'tos_acceptances', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.tos_acceptances;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete tos_acceptances        : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.stripe_events;
+  SELECT count(*) INTO v_before FROM public.stripe_events;
   DELETE FROM public.stripe_events;
-  SELECT count(*) INTO v_post FROM public.stripe_events;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'stripe_events', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.stripe_events;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete stripe_events          : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
   -- Phase 3d — tenant leaves (children first)
-  SELECT count(*) INTO v_pre  FROM public.vehicle_plate_changes;
+  SELECT count(*) INTO v_before FROM public.vehicle_plate_changes;
   DELETE FROM public.vehicle_plate_changes;
-  SELECT count(*) INTO v_post FROM public.vehicle_plate_changes;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'vehicle_plate_changes', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.vehicle_plate_changes;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete vehicle_plate_changes  : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.dispute_requests;
+  SELECT count(*) INTO v_before FROM public.dispute_requests;
   DELETE FROM public.dispute_requests;                          -- MUST precede violations (NO ACTION FK)
-  SELECT count(*) INTO v_post FROM public.dispute_requests;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'dispute_requests (before violations, NO ACTION FK)', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.dispute_requests;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete dispute_requests       : %s -> %s  (before violations, NO ACTION FK)\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.violation_photos;
+  SELECT count(*) INTO v_before FROM public.violation_photos;
   DELETE FROM public.violation_photos;
-  SELECT count(*) INTO v_post FROM public.violation_photos;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'violation_photos', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.violation_photos;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete violation_photos       : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.violation_videos;
+  SELECT count(*) INTO v_before FROM public.violation_videos;
   DELETE FROM public.violation_videos;
-  SELECT count(*) INTO v_post FROM public.violation_videos;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'violation_videos', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.violation_videos;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete violation_videos       : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.violations;
+  SELECT count(*) INTO v_before FROM public.violations;
   DELETE FROM public.violations;
-  SELECT count(*) INTO v_post FROM public.violations;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'violations', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.violations;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete violations             : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.space_residents;
+  SELECT count(*) INTO v_before FROM public.space_residents;
   DELETE FROM public.space_residents;
-  SELECT count(*) INTO v_post FROM public.space_residents;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'space_residents', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.space_residents;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete space_residents        : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.space_requests;
+  SELECT count(*) INTO v_before FROM public.space_requests;
   DELETE FROM public.space_requests;
-  SELECT count(*) INTO v_post FROM public.space_requests;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'space_requests', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.space_requests;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete space_requests         : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.space_assignment_history;
+  SELECT count(*) INTO v_before FROM public.space_assignment_history;
   DELETE FROM public.space_assignment_history;
-  SELECT count(*) INTO v_post FROM public.space_assignment_history;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'space_assignment_history', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.space_assignment_history;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete space_assignment_hist  : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.spaces;
+  SELECT count(*) INTO v_before FROM public.spaces;
   DELETE FROM public.spaces;
-  SELECT count(*) INTO v_post FROM public.spaces;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'spaces', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.spaces;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete spaces                 : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.guest_authorizations;
+  SELECT count(*) INTO v_before FROM public.guest_authorizations;
   DELETE FROM public.guest_authorizations;
-  SELECT count(*) INTO v_post FROM public.guest_authorizations;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'guest_authorizations', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.guest_authorizations;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete guest_authorizations   : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.visitor_passes;
+  SELECT count(*) INTO v_before FROM public.visitor_passes;
   DELETE FROM public.visitor_passes;
-  SELECT count(*) INTO v_post FROM public.visitor_passes;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'visitor_passes', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.visitor_passes;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete visitor_passes         : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.vehicles;
+  SELECT count(*) INTO v_before FROM public.vehicles;
   DELETE FROM public.vehicles;
-  SELECT count(*) INTO v_post FROM public.vehicles;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'vehicles', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.vehicles;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete vehicles               : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
   -- Phase 3e — intermediate tenant tables
-  SELECT count(*) INTO v_pre  FROM public.flag_acknowledgments;
+  SELECT count(*) INTO v_before FROM public.flag_acknowledgments;
   DELETE FROM public.flag_acknowledgments;
-  SELECT count(*) INTO v_post FROM public.flag_acknowledgments;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'flag_acknowledgments', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.flag_acknowledgments;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete flag_acknowledgments   : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.storage_facilities;
+  SELECT count(*) INTO v_before FROM public.storage_facilities;
   DELETE FROM public.storage_facilities;
-  SELECT count(*) INTO v_post FROM public.storage_facilities;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'storage_facilities', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.storage_facilities;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete storage_facilities     : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.residents;
+  SELECT count(*) INTO v_before FROM public.residents;
   DELETE FROM public.residents;
-  SELECT count(*) INTO v_post FROM public.residents;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'residents', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.residents;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete residents              : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.drivers;
+  SELECT count(*) INTO v_before FROM public.drivers;
   DELETE FROM public.drivers;
-  SELECT count(*) INTO v_post FROM public.drivers;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'drivers', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.drivers;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete drivers                : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
   -- Phase 3f — properties + user_roles preserve + companies
-  SELECT count(*) INTO v_pre  FROM public.properties;
+  SELECT count(*) INTO v_before FROM public.properties;
   DELETE FROM public.properties;
-  SELECT count(*) INTO v_post FROM public.properties;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'properties', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.properties;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete properties             : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.user_roles;
+  SELECT count(*) INTO v_before FROM public.user_roles;
   DELETE FROM public.user_roles WHERE lower(email) <> lower(v_aegis_email);
-  SELECT count(*) INTO v_ur_count FROM public.user_roles;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'user_roles (preserve aegis — expect 1)', v_pre, v_ur_count, v_ur_count = 1);
-  IF v_ur_count <> 1 THEN
-    RAISE EXCEPTION 'PRELAUNCH_WIPE_TEST: post-delete user_roles count=% (expected 1).', v_ur_count;
-  END IF;
+  SELECT count(*) INTO v_after  FROM public.user_roles;
+  v_step_ok := (v_after = 1); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete user_roles            : %s -> %s  (expect 1 = aegis preserved)\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
-  SELECT count(*) INTO v_pre  FROM public.companies;
+  SELECT count(*) INTO v_before FROM public.companies;
   DELETE FROM public.companies;
-  SELECT count(*) INTO v_post FROM public.companies;
-  INSERT INTO _wipe_report (step, detail, before_n, after_n, ok)
-  VALUES ('delete', 'companies', v_pre, v_post, v_post = 0);
+  SELECT count(*) INTO v_after  FROM public.companies;
+  v_step_ok := (v_after = 0); v_ok := v_ok AND v_step_ok;
+  v_report := v_report || format(E'[%s] delete companies              : %s -> %s\n',
+                                 CASE WHEN v_step_ok THEN 'OK' ELSE 'FAIL' END, v_before, v_after);
 
+  -- ── VERDICT + raise (aborts + rolls back EVERYTHING) ────────────
+  v_report := v_report || E'\n═══ VERDICT: ' ||
+              CASE WHEN v_ok THEN 'ALL ASSERTS PASSED' ELSE '*** FAIL — DO NOT WIPE ***' END ||
+              E' ═══\n(transaction rolled back — nothing persisted)\n';
+
+  RAISE EXCEPTION E'%', v_report;
 END
 $wipe_test$;
 
--- VERDICT row — aggregate every ok flag so operator has one line to check first.
--- This INSERT reads _wipe_report as it stands (all prior rows), computes
--- bool_and, then adds one new row; the SELECT can't see itself.
-INSERT INTO _wipe_report (step, detail, ok)
-SELECT 'VERDICT', 'all asserts passed', bool_and(ok) FROM _wipe_report;
-
--- ────────────────────────────────────────────────────────────────────
--- FINAL DISPLAY — this is what Supabase's Results pane shows the
--- operator. VERDICT floats to top; then step-by-step in insertion
--- order. All-✅ = green light to apply the sibling COMMIT file.
--- ────────────────────────────────────────────────────────────────────
-SELECT
-  seq,
-  step,
-  detail,
-  before_n,
-  after_n,
-  CASE WHEN ok THEN '✅' ELSE '❌ FAIL' END AS result
-FROM _wipe_report
-ORDER BY
-  CASE step WHEN 'VERDICT' THEN 0 ELSE 1 END,   -- VERDICT floats to top
-  seq;
-
-ROLLBACK;
-
 -- ════════════════════════════════════════════════════════════════════
--- POST-RUN CHECK (paste separately after the ROLLBACK returns):
+-- POST-RUN CHECK (paste separately after the raise fires):
 --   SELECT count(*) FROM public.companies;
---   -- Expected: unchanged from pre-run (e.g. 16). Confirms ROLLBACK
---   -- discarded every DELETE — zero persistent change.
+--   -- Expected: unchanged from pre-run (e.g. 16). Confirms the RAISE
+--   -- rolled back every DELETE — zero persistent change.
 -- ════════════════════════════════════════════════════════════════════
