@@ -134,14 +134,9 @@ export default function LegalReadthroughGate({
       <h2 id="saas-gate-heading" style={{ color: GOLD, fontSize:'14px', fontWeight:'bold', margin:'0 0 4px' }}>
         {title}
       </h2>
-      <p style={{ color:'#888', fontSize:'11px', margin:'0 0 6px' }}>
+      <p style={{ color:'#888', fontSize:'11px', margin:'0 0 10px' }}>
         Version {version} · {displayDate}
       </p>
-      <div style={{ background:'#2a1f0a', border:'1px solid #a16207', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
-        <p style={{ color:'#fbbf24', fontSize:'11px', margin:0, lineHeight:1.5 }}>
-          Draft placeholder — not for execution. Read through, then sign to accept.
-        </p>
-      </div>
 
       <div
         ref={paneRef}
