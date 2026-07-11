@@ -169,6 +169,14 @@ async function main() {
   console.log(`  seeded properties: ${propCount ?? 0}`)
   if (propCount !== 4) { console.error(`❌ expected 4 seeded properties, got ${propCount}`); process.exit(3) }
 
+  const { count: driverCount } = await admin.from('drivers').select('*', { count: 'exact', head: true }).in('company', ['Test-PM', 'Test-ENF', 'Test-LEGACY', 'Demo Company'])
+  console.log(`  seeded drivers: ${driverCount ?? 0}`)
+  if (driverCount !== 4) { console.error(`❌ expected 4 seeded drivers, got ${driverCount}`); process.exit(3) }
+
+  const { count: residentCount } = await admin.from('residents').select('*', { count: 'exact', head: true }).in('company', ['Test-PM', 'Test-LEGACY', 'Demo Company'])
+  console.log(`  seeded residents: ${residentCount ?? 0}`)
+  if (residentCount !== 3) { console.error(`❌ expected 3 seeded residents (no Test-ENF), got ${residentCount}`); process.exit(3) }
+
   // Critical: no Stripe artifacts on seeded companies.
   const { data: stripeLeaks } = await admin.from('companies').select('name, stripe_customer_id, stripe_subscription_id').in('company_env', ['test', 'demo'])
   const leaks = (stripeLeaks ?? []).filter((r: any) => r.stripe_customer_id != null || r.stripe_subscription_id != null)
@@ -185,6 +193,8 @@ async function main() {
   console.log(`  companies: 3 test + 1 demo (${prodCount ?? 0} production untouched)`)
   console.log(`  user_roles: 18 @test.shieldmylot.com`)
   console.log(`  properties: 4 seeded`)
+  console.log(`  drivers: 4 seeded`)
+  console.log(`  residents: 3 seeded (no Test-ENF resident)`)
   console.log('══════════════════════════════════════════════════════════════════')
 }
 

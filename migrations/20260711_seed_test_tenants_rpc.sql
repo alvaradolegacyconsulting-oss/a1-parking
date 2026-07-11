@@ -80,7 +80,10 @@ DECLARE
   v_companies_created  INT := 0;
   v_properties_created INT := 0;
   v_user_roles_created INT := 0;
+  v_drivers_created    INT := 0;
+  v_residents_created  INT := 0;
   v_skipped            INT := 0;
+  v_exists             INT;
 
   -- Property names (used for both properties.name and user_roles.property array).
   c_pm_prop     CONSTANT TEXT := 'Test PM Property';
@@ -330,10 +333,96 @@ BEGIN
   ON CONFLICT (lower(email)) DO NOTHING;
   v_user_roles_created := v_user_roles_created + (CASE WHEN FOUND THEN 1 ELSE 0 END);
 
+  -- ══════════════════════════════════════════════════════════════════
+  -- DRIVERS — 4 rows (one per seeded driver user_roles row). Neither
+  -- drivers nor residents has a UNIQUE(email) constraint, so
+  -- idempotency is manual SELECT-then-INSERT keyed on (email, company).
+  -- Portal renders off these rows directly — no auth.users FK.
+  -- ══════════════════════════════════════════════════════════════════
+
+  -- Test-PM driver
+  SELECT count(*) INTO v_exists FROM public.drivers
+   WHERE lower(email) = 'pm-driver@test.shieldmylot.com' AND company = 'Test-PM';
+  IF v_exists = 0 THEN
+    INSERT INTO public.drivers (email, name, company, assigned_properties, is_active)
+    VALUES ('pm-driver@test.shieldmylot.com', 'PM Test Driver', 'Test-PM',
+            ARRAY[c_pm_prop]::text[], TRUE);
+    v_drivers_created := v_drivers_created + 1;
+  END IF;
+
+  -- Test-ENF driver
+  SELECT count(*) INTO v_exists FROM public.drivers
+   WHERE lower(email) = 'enf-driver@test.shieldmylot.com' AND company = 'Test-ENF';
+  IF v_exists = 0 THEN
+    INSERT INTO public.drivers (email, name, company, assigned_properties, is_active)
+    VALUES ('enf-driver@test.shieldmylot.com', 'ENF Test Driver', 'Test-ENF',
+            ARRAY[c_enf_prop]::text[], TRUE);
+    v_drivers_created := v_drivers_created + 1;
+  END IF;
+
+  -- Test-LEGACY driver
+  SELECT count(*) INTO v_exists FROM public.drivers
+   WHERE lower(email) = 'legacy-driver@test.shieldmylot.com' AND company = 'Test-LEGACY';
+  IF v_exists = 0 THEN
+    INSERT INTO public.drivers (email, name, company, assigned_properties, is_active)
+    VALUES ('legacy-driver@test.shieldmylot.com', 'Legacy Test Driver', 'Test-LEGACY',
+            ARRAY[c_legacy_prop]::text[], TRUE);
+    v_drivers_created := v_drivers_created + 1;
+  END IF;
+
+  -- Demo Company driver
+  SELECT count(*) INTO v_exists FROM public.drivers
+   WHERE lower(email) = 'demo-driver@test.shieldmylot.com' AND company = 'Demo Company';
+  IF v_exists = 0 THEN
+    INSERT INTO public.drivers (email, name, company, assigned_properties, is_active)
+    VALUES ('demo-driver@test.shieldmylot.com', 'Demo Driver', 'Demo Company',
+            ARRAY[c_demo_prop]::text[], TRUE);
+    v_drivers_created := v_drivers_created + 1;
+  END IF;
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- RESIDENTS — 3 rows (one per seeded resident user_roles row). No
+  -- Test-ENF resident (Enforcement-only track). DO NOT populate
+  -- residents.space (deprecated per v1.1 — space_residents is
+  -- authoritative). Unit numbers are plausible apartment-style.
+  -- ══════════════════════════════════════════════════════════════════
+
+  -- Test-PM resident
+  SELECT count(*) INTO v_exists FROM public.residents
+   WHERE lower(email) = 'pm-resident@test.shieldmylot.com' AND company = 'Test-PM';
+  IF v_exists = 0 THEN
+    INSERT INTO public.residents (email, name, unit, property, company, is_active, status)
+    VALUES ('pm-resident@test.shieldmylot.com', 'PM Test Resident', '101',
+            c_pm_prop, 'Test-PM', TRUE, 'active');
+    v_residents_created := v_residents_created + 1;
+  END IF;
+
+  -- Test-LEGACY resident
+  SELECT count(*) INTO v_exists FROM public.residents
+   WHERE lower(email) = 'legacy-resident@test.shieldmylot.com' AND company = 'Test-LEGACY';
+  IF v_exists = 0 THEN
+    INSERT INTO public.residents (email, name, unit, property, company, is_active, status)
+    VALUES ('legacy-resident@test.shieldmylot.com', 'Legacy Test Resident', '205',
+            c_legacy_prop, 'Test-LEGACY', TRUE, 'active');
+    v_residents_created := v_residents_created + 1;
+  END IF;
+
+  -- Demo Company resident
+  SELECT count(*) INTO v_exists FROM public.residents
+   WHERE lower(email) = 'demo-resident@test.shieldmylot.com' AND company = 'Demo Company';
+  IF v_exists = 0 THEN
+    INSERT INTO public.residents (email, name, unit, property, company, is_active, status)
+    VALUES ('demo-resident@test.shieldmylot.com', 'Demo Resident', '308',
+            c_demo_prop, 'Demo Company', TRUE, 'active');
+    v_residents_created := v_residents_created + 1;
+  END IF;
+
   RETURN jsonb_build_object(
     'companies_created',  v_companies_created,
     'properties_created', v_properties_created,
     'user_roles_created', v_user_roles_created,
+    'drivers_created',    v_drivers_created,
+    'residents_created',  v_residents_created,
     'skipped_existing',   v_skipped,
     'company_ids', jsonb_build_object(
       'test_pm',     v_pm_id,
@@ -361,7 +450,7 @@ VALUES (
   jsonb_build_object(
     'migration', '20260711_seed_test_tenants_rpc',
     'rpc',       'seed_test_tenants',
-    'change',    'New SD RPC — seeds 3 test companies (Test-PM, Test-ENF, Test-LEGACY) + 1 demo (Demo Company) with company_env stamped, tier direct in DB (no Stripe artifacts), 1 property per company, and 18 user_roles across all seeded roles. Idempotent via SELECT-then-INSERT on companies/properties + ON CONFLICT (lower(email)) DO NOTHING on user_roles. Guarded against production name collisions.',
+    'change',    'New SD RPC — seeds 3 test companies (Test-PM, Test-ENF, Test-LEGACY) + 1 demo (Demo Company) with company_env stamped, tier direct in DB (no Stripe artifacts), 1 property per company, 18 user_roles across all seeded roles, 4 drivers rows (one per seeded driver user_roles), and 3 residents rows (Test-PM, Test-LEGACY, Demo — no Test-ENF resident by design). Idempotent via SELECT-then-INSERT on companies/properties/drivers/residents + ON CONFLICT (lower(email)) DO NOTHING on user_roles. Guarded against production name collisions.',
     'rationale', 'Seed/wipe Layer 2. Reproducible test + demo tenants that look like real customers (features via TIER_CONFIG) but are structurally invisible to billing/dunning/webhooks (all guarded on company_env=production).'
   ),
   now()
@@ -389,14 +478,22 @@ COMMIT;
 --   SELECT seed_test_tenants();
 --   -- Expected shape:
 --   -- { "companies_created": 4, "properties_created": 4,
---   --   "user_roles_created": 18, "skipped_existing": 0,
+--   --   "user_roles_created": 18, "drivers_created": 4,
+--   --   "residents_created": 3, "skipped_existing": 0,
 --   --   "company_ids": { "test_pm": N, "test_enf": N,
 --   --                    "test_legacy": N, "demo": N } }
 --
 -- VQ.C — Second invocation (idempotent):
 --   SELECT seed_test_tenants();
 --   -- Expected: companies_created=0, user_roles_created=0,
---   --           properties_created=0, skipped_existing=4.
+--   --           properties_created=0, drivers_created=0,
+--   --           residents_created=0, skipped_existing=4.
+--
+-- VQ.C-add — Drivers + residents landed
+--   SELECT count(*) FROM drivers WHERE company IN ('Test-PM','Test-ENF','Test-LEGACY','Demo Company');
+--   -- Expected: 4.
+--   SELECT count(*) FROM residents WHERE company IN ('Test-PM','Test-LEGACY','Demo Company');
+--   -- Expected: 3. No Test-ENF resident (Enforcement-only track).
 --
 -- VQ.D — Post-state
 --   SELECT company_env, count(*) FROM companies GROUP BY 1;
