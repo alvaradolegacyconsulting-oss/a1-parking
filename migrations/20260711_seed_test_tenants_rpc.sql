@@ -115,11 +115,11 @@ BEGIN
     INSERT INTO public.companies (
       name, tier, tier_type,
       primary_contact_name, phone,
-      acquisition_channel, is_active, account_state, company_env
+      is_active, account_state, company_env
     ) VALUES (
       'Test-PM', 'pm_only', 'property_management',
       'Test PM Admin', NULL,
-      'seed_test_tenants', TRUE, 'active', 'test'
+      TRUE, 'active', 'test'
     ) RETURNING id INTO v_pm_id;
     v_companies_created := v_companies_created + 1;
   ELSE
@@ -133,11 +133,11 @@ BEGIN
     INSERT INTO public.companies (
       name, tier, tier_type,
       primary_contact_name, phone,
-      acquisition_channel, is_active, account_state, company_env
+      is_active, account_state, company_env
     ) VALUES (
       'Test-ENF', 'enforcement_only', 'enforcement',
       'Test ENF Admin', NULL,
-      'seed_test_tenants', TRUE, 'active', 'test'
+      TRUE, 'active', 'test'
     ) RETURNING id INTO v_enf_id;
     v_companies_created := v_companies_created + 1;
   ELSE
@@ -151,11 +151,11 @@ BEGIN
     INSERT INTO public.companies (
       name, tier, tier_type,
       primary_contact_name, phone,
-      acquisition_channel, is_active, account_state, company_env
+      is_active, account_state, company_env
     ) VALUES (
       'Test-LEGACY', 'legacy', 'enforcement',
       'Test Legacy Admin', NULL,
-      'seed_test_tenants', TRUE, 'active', 'test'
+      TRUE, 'active', 'test'
     ) RETURNING id INTO v_legacy_id;
     v_companies_created := v_companies_created + 1;
   ELSE
@@ -169,11 +169,11 @@ BEGIN
     INSERT INTO public.companies (
       name, tier, tier_type,
       primary_contact_name, phone,
-      acquisition_channel, is_active, account_state, company_env
+      is_active, account_state, company_env
     ) VALUES (
       'Demo Company', 'legacy', 'enforcement',
       'Demo Admin', NULL,
-      'seed_test_tenants', TRUE, 'active', 'demo'
+      TRUE, 'active', 'demo'
     ) RETURNING id INTO v_demo_id;
     v_companies_created := v_companies_created + 1;
   ELSE
