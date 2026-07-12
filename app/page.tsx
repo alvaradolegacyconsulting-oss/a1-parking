@@ -21,7 +21,7 @@ export default function Landing() {
   function sendContact() {
     const subject = encodeURIComponent(`[${contact.type}] from ${contact.name}`)
     const body = encodeURIComponent(`Name: ${contact.name}\nEmail: ${contact.email}\nType: ${contact.type}\n\n${contact.message}`)
-    window.location.href = `mailto:support@shieldmylot.com?subject=${subject}&body=${body}`
+    window.location.href = `mailto:hello@shieldmylot.com?subject=${subject}&body=${body}`
   }
 
   const inputStyle: React.CSSProperties = {
@@ -475,7 +475,7 @@ export default function Landing() {
               Request Access
             </button>
             <p style={{ color: MUTED, fontSize: 13, textAlign: 'center', margin: '16px 0 0' }}>
-              Prefer to email directly? Reach us at <a href="mailto:support@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none', fontWeight: 600 }}>support@shieldmylot.com</a>
+              Prefer to email directly? Reach us at <a href="mailto:hello@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none', fontWeight: 600 }}>hello@shieldmylot.com</a>
             </p>
           </div>
         </div>
