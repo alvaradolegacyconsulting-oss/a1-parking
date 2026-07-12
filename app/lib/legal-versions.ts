@@ -18,11 +18,16 @@
 // privacy_accepted_version columns; login-modal predicate at
 // app/login/page.tsx:301-303 re-fires the consent modal on any user whose
 // stored version != the string here.
-export const TOS_VERSION = '2026-07-08-v1'
-export const TOS_DISPLAY_DATE = 'July 8, 2026'
+//
+// 2026-07-12 — contact-alias migration. ToS §27 support@ → legal@;
+// Privacy §18 support@ → privacy@. Contract text changed → both
+// versions bump. SAAS_VERSION deliberately unchanged (SaaS body kept
+// support@ per the locked alias map).
+export const TOS_VERSION = '2026-07-12-v2'
+export const TOS_DISPLAY_DATE = 'July 12, 2026'
 
-export const PRIVACY_VERSION = '2026-07-08-v1'
-export const PRIVACY_DISPLAY_DATE = 'July 8, 2026'
+export const PRIVACY_VERSION = '2026-07-12-v2'
+export const PRIVACY_DISPLAY_DATE = 'July 12, 2026'
 
 // B66.3 + B95 — Texas operations attestation. Pinned to a 'v0' suffix
 // to signal pre-attorney-review draft wording. When attorney returns

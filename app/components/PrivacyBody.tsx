@@ -1,4 +1,5 @@
-// Attorney finals — swapped 2026-07-09 keyed to '2026-07-08-v1'.
+// Attorney finals — swapped 2026-07-09 keyed to '2026-07-12-v2'
+// (contact-alias migration 2026-07-12: §18 support@ → privacy@).
 // Structure: 3 intro paragraphs → 17 numbered sections → Contact block
 // (Section 18 IS the Contact block per the docx). Address stays
 // verbatim: 9711 Mason Road, STE 125 #270 · Richmond, TX 77407.
@@ -164,7 +165,7 @@ export default function PrivacyBody() {
         <p style={{ color:'#e0e0e0', fontSize:'13px', lineHeight:'1.8', margin:'0 0 4px', fontWeight:'bold' }}>Alvarado Legacy Consulting, LLC d/b/a ShieldMyLot</p>
         <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>9711 Mason Road, STE 125 #270</p>
         <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>Richmond, TX 77407</p>
-        <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>Email: <a href="mailto:support@shieldmylot.com" style={{ color:'#C9A227', textDecoration:'none', fontWeight:'bold' }}>support@shieldmylot.com</a></p>
+        <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>Email: <a href="mailto:privacy@shieldmylot.com" style={{ color:'#C9A227', textDecoration:'none', fontWeight:'bold' }}>privacy@shieldmylot.com</a></p>
       </div>
     </>
   )

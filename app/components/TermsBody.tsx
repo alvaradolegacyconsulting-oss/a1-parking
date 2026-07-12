@@ -1,4 +1,5 @@
-// Attorney finals — swapped 2026-07-09 keyed to '2026-07-08-v1'.
+// Attorney finals — swapped 2026-07-09 keyed to '2026-07-12-v2'
+// (contact-alias migration 2026-07-12: §27 support@ → legal@).
 // Structure: intro (4 paragraphs; the 4th is bold body per attorney's
 // heading-format fix — do NOT re-tag as a heading) → 27 numbered
 // sections → Contact block with the STE 125 #270 PMB. Address stays
@@ -258,7 +259,7 @@ export default function TermsBody() {
         <p style={{ color:'#e0e0e0', fontSize:'13px', lineHeight:'1.8', margin:'0 0 4px', fontWeight:'bold' }}>Alvarado Legacy Consulting, LLC d/b/a ShieldMyLot</p>
         <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>9711 Mason Road, STE 125 #270</p>
         <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>Richmond, TX 77407</p>
-        <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>Email: <a href="mailto:support@shieldmylot.com" style={{ color:'#C9A227', textDecoration:'none', fontWeight:'bold' }}>support@shieldmylot.com</a></p>
+        <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.8', margin:'0' }}>Email: <a href="mailto:legal@shieldmylot.com" style={{ color:'#C9A227', textDecoration:'none', fontWeight:'bold' }}>legal@shieldmylot.com</a></p>
       </div>
     </>
   )
