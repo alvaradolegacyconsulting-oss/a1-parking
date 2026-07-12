@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { getAllDocs, getCategories } from '../lib/help-docs'
 import HelpSearchInput from './HelpSearchInput'
 import HelpDocGrid, { type GridDoc } from './HelpDocGrid'
+import HelpSupportAffordance from '../components/HelpSupportAffordance'
 
 // B85: help center index. Server component; statically generated.
 // Category filter via ?category= query param (locked: filter, not
@@ -129,7 +130,11 @@ export default async function HelpIndexPage({ searchParams }: { searchParams: Pr
 
         <footer style={{ marginTop: 48, paddingTop: 24, borderTop: `1px solid ${BORDER}`, color: MUTED, fontSize: 12, textAlign: 'center' }}>
           Can&apos;t find what you&apos;re looking for?{' '}
-          <a href="mailto:support@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none' }}>Contact support</a>.
+          <HelpSupportAffordance
+            linkText="Contact support"
+            fallbackText="Contact your company administrator"
+            style={{ color: GOLD, textDecoration: 'none' }}
+          />
         </footer>
 
       </div>

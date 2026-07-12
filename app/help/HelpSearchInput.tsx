@@ -11,6 +11,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import Link from 'next/link'
+import HelpSupportAffordance from '../components/HelpSupportAffordance'
 
 const GOLD = '#C9A227'
 const CARD_BG = 'rgba(255,255,255,0.02)'
@@ -204,7 +205,11 @@ export default function HelpSearchInput() {
           color: MUTED, fontSize: 13,
         }}>
           No results for &ldquo;{query}&rdquo;. Try different keywords or{' '}
-          <a href="mailto:support@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none' }}>contact support</a>.
+          <HelpSupportAffordance
+            linkText="contact support"
+            fallbackText="contact your company administrator"
+            style={{ color: GOLD, textDecoration: 'none' }}
+          />
         </div>
       )}
     </div>
