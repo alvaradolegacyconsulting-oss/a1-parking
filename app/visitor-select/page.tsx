@@ -14,11 +14,23 @@ function VisitorSelectForm() {
 
   useEffect(() => {
     let cancelled = false
+    // 2026-07-14: /visitor-select requires ?company= (multi-property
+    // flow). Post-2026-07-14 migration, the RPC signature dropped its
+    // DEFAULT NULL and predicate collapsed to exact match, so an
+    // empty/omitted arg returns zero rows (or errors, depending on
+    // PostgREST behavior with NULL args). Redirect to marketing
+    // landing instead of showing an empty picker. Belt-and-suspenders
+    // with the DB fix — DB is the authoritative fix, this guard just
+    // spares the user a confusing empty state.
+    if (!company) {
+      window.location.replace('/')
+      return
+    }
     async function load() {
-      // B155.3 — anon RPC handles both shapes: optional company filter
-      // + active-only + ordered by name (mirrors the prior .ilike +
-      // .eq('is_active', true) + .order('name') chain).
-      const { data } = await supabase.rpc('get_properties_for_visitor_select', { p_company: company || null })
+      // Post-2026-07-14: RPC predicate is exact match on lower(trim(...)).
+      // p_company is required (DEFAULT NULL removed) — anon HTTP callers
+      // omitting the arg get an error; wildcards return zero rows.
+      const { data } = await supabase.rpc('get_properties_for_visitor_select', { p_company: company })
       if (cancelled) return
       setProperties(data || [])
       if (data && data.length > 0) setSelected(data[0].name)
