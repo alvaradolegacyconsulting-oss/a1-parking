@@ -419,12 +419,6 @@ export default function Login() {
 
         </div>
 
-        <div style={{ marginTop:'16px', textAlign:'center' }}>
-          <a href="/visitor-select" style={{ color:'#C9A227', fontSize:'12px', textDecoration:'none' }}>
-            Visitor? Get a parking pass here →
-          </a>
-        </div>
-
         <p style={{ color:'#333', fontSize:'11px', textAlign:'center', marginTop:'12px' }}>Powered by ShieldMyLot</p>
       </div>
 
