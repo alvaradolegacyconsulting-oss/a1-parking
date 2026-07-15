@@ -1867,14 +1867,84 @@ export default function CompanyAdminPortal() {
   async function updateDriver() {
     if (!editingDriver) return
     setDriverMsg('Saving...')
-    const { error } = await supabase.from('drivers').update({
+
+    const email = String(editingDriver.email || '').trim().toLowerCase()
+    if (!email) { setDriverMsg('Missing driver email; cannot save.'); return }
+
+    const patch = {
       name: editingDriver.name,
       phone: editingDriver.phone || null,
       operator_license: editingDriver.operator_license || null,
       assigned_properties: editingDriver.assigned_properties || [],
-    }).eq('id', editingDriver.id)
-    if (error) { setDriverMsg('Error: ' + error.message); return }
-    await auditLog('update_driver', 'drivers', editingDriver.id, { name: editingDriver.name, company: role?.company })
+    }
+
+    // 2026-07-14 (Option A1): UPSERT semantics. The prior client-side
+    // .update().eq('id', editingDriver.id) silently 0-rowed when
+    // editingDriver.id came from a companyUsers (user_roles) row rather
+    // than a companyDrivers (drivers) row, or when the drivers row was
+    // absent entirely (partial-createDriver — invite-user :218-227
+    // downgrades a drivers.insert failure to {ok:true, warning}, leaving
+    // user_roles landed but no drivers row). The scan reads
+    // drivers.assigned_properties (loadDriver at app/driver/page.tsx:120
+    // spreads driverData); so we MUST land the write there. Lookup by
+    // email (natural key) → UPDATE if drivers row exists, else INSERT
+    // one with tenancy derived from the driver's own user_roles.company
+    // (RLS-scoped to the CA's own tenancy so cross-tenant inserts are
+    // refused at the read stage).
+    const { data: existing, error: existingErr } = await supabase
+      .from('drivers')
+      .select('id, company')
+      .ilike('email', email)
+      .maybeSingle()
+    if (existingErr) { setDriverMsg('Lookup failed: ' + existingErr.message); return }
+
+    if (existing) {
+      // UPDATE path — keyed on drivers.id (PK, unambiguous).
+      const { data, error } = await supabase.from('drivers')
+        .update(patch).eq('id', existing.id).select()
+      if (error) { setDriverMsg('Update failed: ' + error.message); return }
+      if (!data || data.length === 0) {
+        // 2026-07-14 rows-affected guard — the silent-write lesson from
+        // 9956caf (resident writes). Zero rows returned = RLS filter or
+        // stale row; do NOT toast success.
+        console.error('[updateDriver] UPDATE returned 0 rows', { id: existing.id, email })
+        setDriverMsg('Update did not persist (RLS or session issue). Refresh and try again; contact support if it persists.')
+        return
+      }
+      await auditLog('update_driver', 'drivers', existing.id, { name: editingDriver.name, company: existing.company })
+    } else {
+      // INSERT path — no drivers row for this email. Derive company from
+      // the driver's user_roles row; RLS on that SELECT is scoped to the
+      // CA's own tenancy, so a cross-tenant email returns nothing and we
+      // refuse rather than inserting a mis-tenanted drivers row.
+      const { data: driverRole, error: roleErr } = await supabase
+        .from('user_roles')
+        .select('company')
+        .ilike('email', email)
+        .eq('role', 'driver')
+        .maybeSingle()
+      if (roleErr || !driverRole?.company) {
+        setDriverMsg('Cannot create drivers row: no user_roles record for this driver in your company.')
+        return
+      }
+      const { data, error } = await supabase.from('drivers').insert({
+        email,
+        name: editingDriver.name || email,
+        company: driverRole.company,
+        assigned_properties: patch.assigned_properties,
+        phone: patch.phone,
+        operator_license: patch.operator_license,
+        is_active: true,
+      }).select()
+      if (error) { setDriverMsg('Create failed: ' + error.message); return }
+      if (!data || data.length === 0) {
+        console.error('[updateDriver] INSERT returned 0 rows', { email, company: driverRole.company })
+        setDriverMsg('Create did not persist (RLS or session issue).')
+        return
+      }
+      await auditLog('update_driver', 'drivers', String(data[0].id), { name: editingDriver.name, company: driverRole.company, was_insert: true })
+    }
+
     setDriverMsg('Driver updated!')
     setEditingDriver(null)
     fetchCompanyDrivers()
@@ -2231,11 +2301,19 @@ export default function CompanyAdminPortal() {
     // email_uidx (2026-07-04) already guarantees email uniqueness at the
     // DB layer, but keying the mutation on id is belt-and-suspenders:
     // the write can't touch a sibling row even under future constraint
-    // drift. Mirrors updateDriver()'s .eq('id', editingDriver.id) at
-    // :1871 — sibling paths, same discipline.
-    const { error: updErr } = await supabase.from('user_roles').update(clean).eq('id', current.id)
+    // drift. Mirrors updateDriver()'s Option A1 pattern — sibling paths,
+    // same discipline.
+    const { data: updData, error: updErr } = await supabase.from('user_roles').update(clean).eq('id', current.id).select()
     if (updErr) {
       alert(`Edit failed: ${updErr.message}`)
+      return
+    }
+    // 2026-07-14 rows-affected guard — silent-write lesson from 9956caf
+    // + Option A1 pattern in updateDriver above. Zero rows returned = RLS
+    // filter / stale row; do NOT toast success.
+    if (!updData || updData.length === 0) {
+      console.error('[saveUserName] UPDATE returned 0 rows', { emailLc, id: current.id })
+      alert('Edit failed: no rows changed. This is usually an RLS/permission issue — refresh and try again.')
       return
     }
     await auditLog('EDIT_USER', 'user_roles', emailLc, { old_values: oldVals, new_values: newVals })
