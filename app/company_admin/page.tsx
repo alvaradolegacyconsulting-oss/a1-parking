@@ -261,6 +261,10 @@ export default function CompanyAdminPortal() {
   // (unchanged). Field allowlists locked at handler top per architect spec.
   const [editingUserEmail, setEditingUserEmail] = useState<string | null>(null)
   const [editingUserName, setEditingUserName] = useState<string>('')
+  // 2026-07-14 — mgr/LA inline edit widened to include property. Seeds
+  // from the row on Edit click; committed through saveUserName's
+  // widened patch.
+  const [editingUserProperty, setEditingUserProperty] = useState<string[]>([])
   // CA CRM — active-only carry-over (pre-flag-flip parity with legacy pills).
   // Per-section state — matches today's per-tab behavior so toggling
   // "show inactive" in Properties does NOT also flip People. Default = true
@@ -2184,7 +2188,13 @@ export default function CompanyAdminPortal() {
   //   ⛔ property (own affordance elsewhere)
   //   ⛔ is_active (own Deactivate/Activate path)
   //   ⛔ can_approve_vehicles (own toggle)
-  const USER_NAME_EDIT_FIELDS = ['name'] as const
+  // 2026-07-14: widened from ['name'] to ['name', 'property'] as part of
+  // restoring mgr/LA property editing (regression from CA CRM Round 2
+  // Item A which collapsed mgr/LA edit into a name-only inline widget).
+  // Callers still identify the target user by email; the handler reads
+  // the row, computes the diff, and — critically — keys the UPDATE on
+  // the primary key (id) rather than email. See :2223 for why.
+  const USER_NAME_EDIT_FIELDS = ['name', 'property'] as const
   type UserNameEditField = typeof USER_NAME_EDIT_FIELDS[number]
 
   async function saveUserName(email: string, patch: Partial<Record<UserNameEditField, any>>) {
@@ -2194,11 +2204,12 @@ export default function CompanyAdminPortal() {
     }
     if (Object.keys(clean).length === 0) return
     const emailLc = email.toLowerCase()
-    // Handler-shape SELECT — reads the EXACT allowlist (name only). Any
-    // phantom column in the allowlist would fail here with 42703 before
-    // any write — same defence as the resident-edit hotfix.
+    // Handler-shape SELECT — reads the EXACT allowlist (+ id for the PK-
+    // keyed UPDATE below). Any phantom column in the allowlist would
+    // fail here with 42703 before any write — same defence as the
+    // resident-edit hotfix.
     const { data: current, error: readErr } = await supabase.from('user_roles')
-      .select('email, name')
+      .select('id, email, name, property')
       .ilike('email', emailLc)
       .maybeSingle()
     if (readErr || !current) {
@@ -2216,7 +2227,13 @@ export default function CompanyAdminPortal() {
       }
     }
     if (Object.keys(newVals).length === 0) return  // empty diff → no-op
-    const { error: updErr } = await supabase.from('user_roles').update(clean).ilike('email', emailLc)
+    // 2026-07-14: key UPDATE on primary key, not email. user_roles_lower_
+    // email_uidx (2026-07-04) already guarantees email uniqueness at the
+    // DB layer, but keying the mutation on id is belt-and-suspenders:
+    // the write can't touch a sibling row even under future constraint
+    // drift. Mirrors updateDriver()'s .eq('id', editingDriver.id) at
+    // :1871 — sibling paths, same discipline.
+    const { error: updErr } = await supabase.from('user_roles').update(clean).eq('id', current.id)
     if (updErr) {
       alert(`Edit failed: ${updErr.message}`)
       return
@@ -5812,16 +5829,44 @@ export default function CompanyAdminPortal() {
                     <div style={{ display:'flex', justifyContent:'space-between', gap:'10px', flexWrap:'wrap', alignItems:'flex-start' }}>
                       <div style={{ flex:1, minWidth:0 }}>
                         {isEditingName ? (
-                          <div style={{ display:'flex', gap:'6px', alignItems:'center', marginBottom:'4px' }}>
-                            <input value={editingUserName} onChange={e => setEditingUserName(e.target.value)}
-                              style={{ flex:1, background:'#1e2535', border:'1px solid #3a4055', borderRadius:'5px', padding:'5px 8px', color:'white', fontSize:'12.5px', fontFamily:'Arial' }} />
-                            <button onClick={async () => {
-                              await saveUserName(u.email, { name: editingUserName.trim() })
-                              setEditingUserEmail(null); setEditingUserName('')
-                            }}
-                              style={{ padding:'5px 10px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Save</button>
-                            <button onClick={() => { setEditingUserEmail(null); setEditingUserName('') }}
-                              style={{ padding:'5px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', fontSize:'11px', cursor:'pointer' }}>Cancel</button>
+                          <div style={{ marginBottom:'8px' }}>
+                            <div style={{ display:'flex', gap:'6px', alignItems:'center', marginBottom:'6px' }}>
+                              <input value={editingUserName} onChange={e => setEditingUserName(e.target.value)}
+                                style={{ flex:1, background:'#1e2535', border:'1px solid #3a4055', borderRadius:'5px', padding:'5px 8px', color:'white', fontSize:'12.5px', fontFamily:'Arial' }} />
+                            </div>
+                            <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:'4px' }}>Assigned Properties</label>
+                            <div style={{ background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'6px 8px', marginBottom:'6px' }}>
+                              <label style={{ display:'flex', alignItems:'center', gap:'6px', padding:'2px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'2px' }}>
+                                <input type="checkbox"
+                                  checked={editingUserProperty.length === properties.length && properties.length > 0}
+                                  onChange={e => setEditingUserProperty(e.target.checked ? properties.map(p => p.name) : [])}
+                                  style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                                />
+                                <span style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold' }}>Select All</span>
+                              </label>
+                              {properties.map((p, i) => (
+                                <label key={i} style={{ display:'flex', alignItems:'center', gap:'6px', padding:'2px 0', cursor:'pointer' }}>
+                                  <input type="checkbox"
+                                    checked={editingUserProperty.includes(p.name)}
+                                    onChange={e => {
+                                      if (e.target.checked) setEditingUserProperty([...editingUserProperty, p.name])
+                                      else setEditingUserProperty(editingUserProperty.filter(n => n !== p.name))
+                                    }}
+                                    style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                                  />
+                                  <span style={{ color:'#aaa', fontSize:'11px' }}>{p.name}</span>
+                                </label>
+                              ))}
+                            </div>
+                            <div style={{ display:'flex', gap:'6px' }}>
+                              <button onClick={async () => {
+                                await saveUserName(u.email, { name: editingUserName.trim(), property: editingUserProperty })
+                                setEditingUserEmail(null); setEditingUserName(''); setEditingUserProperty([])
+                              }}
+                                style={{ padding:'5px 10px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Save</button>
+                              <button onClick={() => { setEditingUserEmail(null); setEditingUserName(''); setEditingUserProperty([]) }}
+                                style={{ padding:'5px 10px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', fontSize:'11px', cursor:'pointer' }}>Cancel</button>
+                            </div>
                           </div>
                         ) : (
                           <p style={{ color:'white', fontSize:'13px', fontWeight:'bold', margin:'0' }}>{u.name || '(unnamed)'}</p>
@@ -5844,11 +5889,21 @@ export default function CompanyAdminPortal() {
                           Drivers: existing setEditingDriver / updateDriver widget.
                           Managers/LAs: narrow name-only inline edit (this file). */}
                       {isDriver ? (
-                        <button onClick={() => { setEditingDriver({ ...u }); scrollAndFocusEditPanel('ca-edit-driver') }}
+                        <button onClick={() => {
+                          // 2026-07-14: defensive array-coerce on assigned_properties
+                          // so the checkbox list on Edit Block A renders correctly
+                          // even if a row landed with a non-array shape.
+                          setEditingDriver({ ...u, assigned_properties: Array.isArray(u.assigned_properties) ? u.assigned_properties : [] })
+                          scrollAndFocusEditPanel('ca-edit-driver')
+                        }}
                           style={{ padding:'4px 10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Edit</button>
                       ) : (
-                        <button onClick={() => { setEditingUserEmail(u.email); setEditingUserName(u.name || '') }}
-                          style={{ padding:'4px 10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Edit name</button>
+                        <button onClick={() => {
+                          setEditingUserEmail(u.email)
+                          setEditingUserName(u.name || '')
+                          setEditingUserProperty(Array.isArray(u.property) ? u.property : [])
+                        }}
+                          style={{ padding:'4px 10px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Edit</button>
                       )}
                       {!isDriver && (
                         <button onClick={() => { setResetPwTarget(resetPwTarget === u.email ? null : u.email); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }}
@@ -6046,6 +6101,31 @@ export default function CompanyAdminPortal() {
                       <input value={editingDriver.phone || ''} onChange={e => setEditingDriver({ ...editingDriver, phone: e.target.value })} style={inp} />
                       <label style={lbl}>Operator License</label>
                       <input value={editingDriver.operator_license || ''} onChange={e => setEditingDriver({ ...editingDriver, operator_license: e.target.value })} style={inp} />
+                      <label style={lbl}>Assigned Properties</label>
+                      <div style={{ marginTop:'6px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px' }}>
+                        <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
+                          <input type="checkbox"
+                            checked={(editingDriver.assigned_properties || []).length === properties.length && properties.length > 0}
+                            onChange={e => setEditingDriver({ ...editingDriver, assigned_properties: e.target.checked ? properties.map(p => p.name) : [] })}
+                            style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                          />
+                          <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
+                        </label>
+                        {properties.map((p, i) => (
+                          <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
+                            <input type="checkbox"
+                              checked={(editingDriver.assigned_properties || []).includes(p.name)}
+                              onChange={e => {
+                                const cur: string[] = editingDriver.assigned_properties || []
+                                if (e.target.checked) setEditingDriver({ ...editingDriver, assigned_properties: [...cur, p.name] })
+                                else setEditingDriver({ ...editingDriver, assigned_properties: cur.filter((n: string) => n !== p.name) })
+                              }}
+                              style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                            />
+                            <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
+                          </label>
+                        ))}
+                      </div>
                       <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
                         <button onClick={updateDriver} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Save Changes</button>
                         <button onClick={() => setEditingDriver(null)} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
