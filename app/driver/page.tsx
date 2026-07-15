@@ -370,6 +370,30 @@ export default function DriverPortal() {
     setTicketTarget(null)
     const clean = val.toUpperCase().replace(/\s/g, '').trim()
 
+    // Fix 2 (2026-07-15) — property-pattern normalization for the 5
+    // enforcement predicates below. .ilike() is case-insensitive but
+    // whitespace-strict AND wildcard-interpreting (% / _ are treated as
+    // patterns). Two failure modes closed here:
+    //
+    //   1. Whitespace: a stray trailing space in selectedProperty (poisoned
+    //      pre-Fix-1) vs a clean stored value would fall through to notfound
+    //      on a legitimately-authorized vehicle — wrongful-enforcement risk.
+    //      Fix 1 triggers keep stored values clean; this trim closes the
+    //      pattern side. Live incident 2026-07-14: A1 T9380L Miramar.
+    //
+    //   2. Wildcard: a property literally containing % or _ (or, more
+    //      importantly, a hypothetical future injection surface) would be
+    //      interpreted as a pattern. Same class as 20260714_anon_rpc_ilike_
+    //      wildcard_close (yesterday's P0 on the visitor-side RPCs). Escape
+    //      %, _, and backslash so .ilike behaves as literal-equal.
+    //
+    // 🔴 Property SCOPE stays intact. This ONLY affects the string-comparison
+    // tolerance WITHIN the selected property. Do NOT re-widen to cross-
+    // property; see feedback_driver_plate_lookup_enforcement_boundary and
+    // the bce95b1 revert of 7f46252.
+    const targetProp        = (selectedProperty ?? '').trim()
+    const escapedTargetProp = targetProp.replace(/[%_\\]/g, '\\$&')
+
     // Spaces v1.1 Q4 fix + Q5 narrow:
     // - vehicles cascade .select() narrowed from '*' to explicit safe-column
     //   list (drops unit + owner_email from the network payload). Keeps
@@ -396,7 +420,7 @@ export default function DriverPortal() {
     // is fine since SAFE_VEHICLE_COLS already includes every field we
     // read below.
     const activeVehRes: any = await supabase
-      .from('vehicles').select(SAFE_VEHICLE_COLS + ', id, status').ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', true).single()
+      .from('vehicles').select(SAFE_VEHICLE_COLS + ', id, status').ilike('plate', clean).ilike('property', escapedTargetProp).eq('is_active', true).single()
     const activeVeh: any = activeVehRes.data
     if (activeVeh) {
       const { data: assignedSpacesRaw } = await supabase.rpc('derive_space_allowed_plates', {
@@ -432,7 +456,7 @@ export default function DriverPortal() {
     // status would be an enforcement hole (same class as the slice-4
     // collision guard).
     const { data: expiredVeh } = await supabase
-      .from('vehicles').select(SAFE_VEHICLE_COLS).ilike('plate', clean).ilike('property', selectedProperty).eq('is_active', false).neq('status', 'deactivated').single()
+      .from('vehicles').select(SAFE_VEHICLE_COLS).ilike('plate', clean).ilike('property', escapedTargetProp).eq('is_active', false).neq('status', 'deactivated').single()
     if (expiredVeh) {
       // Expired/pending/declined: same RPC call (the resident's space ties
       // are reference data regardless of vehicle is_active state — the
@@ -469,7 +493,7 @@ export default function DriverPortal() {
       .from('vehicle_plate_changes')
       .select('id, vehicle_id, old_plate, new_plate, submitted_at, property')
       .ilike('new_plate', clean)
-      .ilike('property', selectedProperty)
+      .ilike('property', escapedTargetProp)
       .eq('status', 'pending')
       .order('submitted_at', { ascending: false })
       .limit(1)
@@ -511,7 +535,7 @@ export default function DriverPortal() {
     const todayIso = new Date().toISOString().split('T')[0]
     const { data: guestAuth } = await supabase
       .from('guest_authorizations').select(SAFE_GUEST_AUTH_COLS)
-      .ilike('plate', clean).ilike('property', selectedProperty)
+      .ilike('plate', clean).ilike('property', escapedTargetProp)
       .eq('is_active', true).eq('status', 'active')
       .lte('start_date', todayIso).gte('end_date', todayIso)
       .order('end_date', { ascending: false })
@@ -521,7 +545,7 @@ export default function DriverPortal() {
     }
 
     const { data: pass } = await supabase.from('visitor_passes').select(SAFE_VISITOR_PASS_COLS)
-      .ilike('plate', clean).ilike('property', selectedProperty)
+      .ilike('plate', clean).ilike('property', escapedTargetProp)
       .eq('is_active', true).gte('expires_at', new Date().toISOString())
       .single()
     setSearching(false)
