@@ -297,7 +297,9 @@ export default function CompanyAdminPortal() {
   // D1 Commit 2: password field removed — non-resident roles invite via
   // email (no temp password to capture), residents auto-generate via
   // generateTempPassword() inside createUser's resident branch.
-  const [newUser, setNewUser] = useState({ name: '', email: '', role: 'manager', property: '' })
+  const [newUser, setNewUser] = useState<{ name: string; email: string; role: string; properties: string[] }>({
+    name: '', email: '', role: 'manager', properties: []
+  })
   const [userMsg, setUserMsg] = useState('')
   const [togglingUser, setTogglingUser] = useState<string | null>(null)
   // Permit-Door Piece 1 §4 — manager-creation REQUIRED yes/no for
@@ -1555,9 +1557,12 @@ export default function CompanyAdminPortal() {
     try {
 
     const targetEmail = newUser.email.trim().toLowerCase()
-    const propertyArray = newUser.property
-      ? newUser.property.split('|').map(p => p.trim()).filter(Boolean)
-      : []
+    // 2026-07-14: newUser.properties is string[] (post CA CRM Round 2 Item A
+    // single-select regression fix). The old .split('|') came from a pre-
+    // array state shape that let CAs cram multiple property names into a
+    // single pipe-delimited string — no UI ever offered that, so the split
+    // was effectively dead code and blocked multi-property assignment.
+    const propertyArray = newUser.properties
 
     if (isResident) {
       // Resident path — UNCHANGED from D2. CA hands the temp password
@@ -1681,7 +1686,7 @@ export default function CompanyAdminPortal() {
         email: targetEmail, created_by_role: 'company_admin', created_by_email: user?.email, company: role?.company,
       })
       setUserMsg('Resident created successfully!')
-      setNewUser({ name: '', email: '', role: 'manager', property: '' })
+      setNewUser({ name: '', email: '', role: 'manager', properties: [] })
       setShowAddUser(false)
       fetchCompanyUsers()
       setCredentials({ email: targetEmail, password: passwordToUse })
@@ -1741,7 +1746,7 @@ export default function CompanyAdminPortal() {
       return
     }
 
-    setNewUser({ name: '', email: '', role: 'manager', property: '' })
+    setNewUser({ name: '', email: '', role: 'manager', properties: [] })
     setShowAddUser(false)
     fetchCompanyUsers()
     } finally {
@@ -5917,7 +5922,7 @@ export default function CompanyAdminPortal() {
                       Submit branches on role:
                         Driver → createDriver({name/email from newUser,
                                  phone/license from newDriver, assigned
-                                 from newUser.property}). Uses the override
+                                 from newUser.properties}). Uses the override
                                  arg so the fresh payload never depends on
                                  unmirrored state.
                         Manager/LA/Resident → createUser() as before. */}
@@ -5964,11 +5969,46 @@ export default function CompanyAdminPortal() {
                           <input value={newDriver.operator_license || ''} onChange={e => setNewDriver({ ...newDriver, operator_license: e.target.value })} placeholder="TX-DR-12345" style={inp} />
                         </>
                       )}
-                      <label style={lbl}>Property</label>
-                      <select value={newUser.property} onChange={e => setNewUser({ ...newUser, property: e.target.value })} style={inp}>
-                        <option value="">No specific property</option>
-                        {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
-                      </select>
+                      {newUser.role === 'resident' ? (
+                        <>
+                          <label style={lbl}>Property</label>
+                          <select
+                            value={newUser.properties[0] ?? ''}
+                            onChange={e => setNewUser({ ...newUser, properties: e.target.value ? [e.target.value] : [] })}
+                            style={inp}
+                          >
+                            <option value="">No specific property</option>
+                            {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
+                          </select>
+                        </>
+                      ) : (
+                        <>
+                          <label style={lbl}>Assigned Properties</label>
+                          <div style={{ marginTop:'6px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px' }}>
+                            <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
+                              <input type="checkbox"
+                                checked={newUser.properties.length === properties.length && properties.length > 0}
+                                onChange={e => setNewUser({ ...newUser, properties: e.target.checked ? properties.map(p => p.name) : [] })}
+                                style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                              />
+                              <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
+                            </label>
+                            {properties.map((p, i) => (
+                              <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
+                                <input type="checkbox"
+                                  checked={newUser.properties.includes(p.name)}
+                                  onChange={e => {
+                                    if (e.target.checked) setNewUser({ ...newUser, properties: [...newUser.properties, p.name] })
+                                    else setNewUser({ ...newUser, properties: newUser.properties.filter(n => n !== p.name) })
+                                  }}
+                                  style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                                />
+                                <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </>
+                      )}
                       <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
                         <button
                           onClick={async () => {
@@ -5978,10 +6018,10 @@ export default function CompanyAdminPortal() {
                                 email: newUser.email,
                                 phone: newDriver.phone,
                                 operator_license: newDriver.operator_license,
-                                assigned_properties: newUser.property ? [newUser.property] : [],
+                                assigned_properties: newUser.properties,
                               })
                               if (ok) {
-                                setNewUser({ name: '', email: '', role: 'manager', property: '' })
+                                setNewUser({ name: '', email: '', role: 'manager', properties: [] })
                                 setShowAddUser(false)
                               }
                             } else {
@@ -6173,11 +6213,46 @@ export default function CompanyAdminPortal() {
                         </p>
                       </>
                     )}
-                    <label style={lbl}>Property</label>
-                    <select value={newUser.property} onChange={e => setNewUser({ ...newUser, property: e.target.value })} style={inp}>
-                      <option value="">No specific property</option>
-                      {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
-                    </select>
+                    {newUser.role === 'resident' ? (
+                      <>
+                        <label style={lbl}>Property</label>
+                        <select
+                          value={newUser.properties[0] ?? ''}
+                          onChange={e => setNewUser({ ...newUser, properties: e.target.value ? [e.target.value] : [] })}
+                          style={inp}
+                        >
+                          <option value="">No specific property</option>
+                          {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
+                        </select>
+                      </>
+                    ) : (
+                      <>
+                        <label style={lbl}>Assigned Properties</label>
+                        <div style={{ marginTop:'6px', marginBottom:'10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', padding:'8px 10px' }}>
+                          <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
+                            <input type="checkbox"
+                              checked={newUser.properties.length === properties.length && properties.length > 0}
+                              onChange={e => setNewUser({ ...newUser, properties: e.target.checked ? properties.map(p => p.name) : [] })}
+                              style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                            />
+                            <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
+                          </label>
+                          {properties.map((p, i) => (
+                            <label key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
+                              <input type="checkbox"
+                                checked={newUser.properties.includes(p.name)}
+                                onChange={e => {
+                                  if (e.target.checked) setNewUser({ ...newUser, properties: [...newUser.properties, p.name] })
+                                  else setNewUser({ ...newUser, properties: newUser.properties.filter(n => n !== p.name) })
+                                }}
+                                style={{ accentColor:'#C9A227', cursor:'pointer' }}
+                              />
+                              <span style={{ color:'#aaa', fontSize:'12px' }}>{p.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </>
+                    )}
                     <div style={{ display:'flex', gap:'8px' }}>
                       <button onClick={createUser} disabled={createUserSubmitting} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: createUserSubmitting ? 'not-allowed' : 'pointer', opacity: createUserSubmitting ? 0.6 : 1, fontFamily:'Arial' }}>{createUserSubmitting ? 'Creating…' : 'Create User'}</button>
                       <button onClick={() => { setShowAddUser(false); setUserMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
