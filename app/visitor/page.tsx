@@ -90,6 +90,31 @@ function VisitorForm() {
     setLoading(true)
     setPlateError('')
 
+    // Bug 1 Option B (2026-07-14) — refresh CAPTCHA token immediately
+    // before submit. Turnstile tokens are single-use and time-bounded
+    // (~5min effective /siteverify accept window); a visitor who solved
+    // the challenge on page-load and then dwelt on the form for 6+ min
+    // hits invalid-input-response at /siteverify and gets stranded.
+    // Refreshing at submit shrinks the token→submit gap to <1s.
+    // In Managed mode this is transparent (~500ms checkbox re-issue).
+    // Failure surface: refresh() rejects on 15s timeout or error-callback
+    // — we surface a friendly error and let the widget re-challenge.
+    let freshToken: string
+    try {
+      const t = await turnstileRef.current?.refresh()
+      if (!t) throw new Error('refresh returned no token')
+      freshToken = t
+    } catch (refreshErr) {
+      setLoading(false)
+      setCaptchaToken(null)
+      turnstileRef.current?.reset()
+      setPlateError(
+        `CAPTCHA challenge failed to refresh (${(refreshErr as Error).message}). ` +
+        `Please solve the CAPTCHA below and try again.`,
+      )
+      return
+    }
+
     const plate = normalizePlate(form.plate)
 
     // B74: anon precheck swapped from direct vehicles SELECT to the
@@ -122,7 +147,10 @@ function VisitorForm() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          captchaToken,
+          // Bug 1 Option B — freshToken (from refresh() above), not the
+          // React-state captchaToken (which reflects an older solve and
+          // may be stale by the time /siteverify sees it).
+          captchaToken: freshToken,
           plate,
           visitor_name: form.name,
           visiting_unit: form.unit,
