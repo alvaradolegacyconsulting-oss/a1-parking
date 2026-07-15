@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef, Suspense } from 'react'
+import { Component, useState, useEffect, useRef, Suspense, type ErrorInfo, type ReactNode } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { useResolvedLogo } from '../lib/logo'
@@ -21,6 +21,64 @@ const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','
 
 const inp: React.CSSProperties = { display:'block', width:'100%', marginTop:'5px', marginBottom:'12px', padding:'10px 12px', fontSize:'13px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none', boxSizing:'border-box', fontFamily:'Arial' }
 const lbl: React.CSSProperties = { color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }
+
+// P0 diagnostic (2026-07-15) — /register step 3 Turnstile widget fails
+// to render on real user browsers (widget shell DOM exists but no iframe;
+// button stays disabled; two minified React errors in console). Wiring
+// is byte-identical to /visitor (which works). This boundary catches any
+// throw inside step 3 and renders the error message + stack + component
+// stack to a visible <pre> so we can read the actual (unminified in the
+// error object even if the console print is minified) message. Ship
+// this to production; Jose loads /register, reads the error off the
+// page, pastes it back; then we fix the real cause.
+//
+// Removal: once the underlying bug is identified and fixed, revert this
+// class + the wrap at step 3. This is a diagnostic, not a permanent
+// affordance — it degrades the UX of any legitimate step-3 crash by
+// dumping a stack trace to the resident's screen.
+class RegisterStep3ErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null; info: ErrorInfo | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { error: null, info: null }
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error, info: null }
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    this.setState({ error, info })
+    // Print unminified error object to the console too — some hosts strip
+    // the stack when passing through console.error via the minified path.
+    console.error('[RegisterStep3ErrorBoundary]', error?.message, error?.stack, info?.componentStack)
+  }
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div style={{ padding: 16, background: '#3a1a1a', border: '1px solid #b71c1c', borderRadius: 8, color: '#fca5a5', fontSize: 12, lineHeight: 1.5 }}>
+        <p style={{ fontWeight: 'bold', marginTop: 0, marginBottom: 8, fontSize: 13 }}>
+          Registration step 3 crashed — screenshot this and send to support:
+        </p>
+        <p style={{ margin: '0 0 8px' }}>
+          <strong>Message:</strong> {this.state.error.message || '(no message)'}
+        </p>
+        <p style={{ margin: '0 0 4px', fontSize: 11, color: '#fbbf24' }}><strong>Error stack:</strong></p>
+        <pre style={{ fontSize: 10, whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: '#0f1117', padding: 8, borderRadius: 4, margin: '0 0 8px', maxHeight: 240, overflow: 'auto' }}>
+          {this.state.error.stack || '(no stack)'}
+        </pre>
+        {this.state.info?.componentStack && (
+          <>
+            <p style={{ margin: '0 0 4px', fontSize: 11, color: '#fbbf24' }}><strong>Component stack:</strong></p>
+            <pre style={{ fontSize: 10, whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: '#0f1117', padding: 8, borderRadius: 4, margin: 0, maxHeight: 240, overflow: 'auto' }}>
+              {this.state.info.componentStack}
+            </pre>
+          </>
+        )}
+      </div>
+    )
+  }
+}
 
 function RegisterForm() {
   const searchParams = useSearchParams()
@@ -492,6 +550,7 @@ function RegisterForm() {
 
           {/* ── STEP 3: Review & Submit ── */}
           {step === 3 && (
+            <RegisterStep3ErrorBoundary>
             <div>
               <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'14px', margin:'0 0 16px' }}>Step 3 of 3 — Review & Submit</p>
 
@@ -589,6 +648,7 @@ function RegisterForm() {
                 )
               })()}
             </div>
+            </RegisterStep3ErrorBoundary>
           )}
         </div>
 

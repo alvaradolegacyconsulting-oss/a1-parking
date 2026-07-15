@@ -95,14 +95,17 @@ END $vqb$;
 
 -- ══════════════════════════════════════════════════════════════════
 -- VQ.C — spaces.property trigger strips trailing space on direct SQL
+-- 2026-07-15 correction — the `spaces` column is `type`, not
+-- `space_type`; also added the `company` field so the INSERT doesn't
+-- violate NOT NULL / RLS. Trigger firing semantics are unchanged.
 -- ══════════════════════════════════════════════════════════════════
 DO $vqc$
 DECLARE
   v_id BIGINT;
   v_stored TEXT;
 BEGIN
-  INSERT INTO public.spaces (property, space_type, label, is_active)
-  VALUES ('VQ Test Property  ', 'reserved', 'VQ-SMOKE-1', FALSE)
+  INSERT INTO public.spaces (property, type, label, is_active, company)
+  VALUES ('VQ Test Property  ', 'reserved', 'VQ-SMOKE-1', FALSE, 'VQ-DISPOSABLE-COMPANY-DO-NOT-USE')
   RETURNING id INTO v_id;
 
   SELECT property INTO v_stored FROM public.spaces WHERE id = v_id;
