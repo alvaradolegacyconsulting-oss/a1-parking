@@ -1282,7 +1282,14 @@ export default function CompanyAdminPortal() {
   }
 
   async function saveProperty() {
-    if (!newProperty.name) { setPropMsg('Property name is required'); return }
+    // Fix 1 (2026-07-15) — trim property name at source. Belt-and-suspenders
+    // with DB trigger trg_properties_name_trim (which is the durable guard);
+    // client trim gives immediate UX feedback and matches what will actually
+    // land in the DB. Trim once, then use trimmedName everywhere below so
+    // display collateral (confirm dialog, audit, spaces pool) matches the
+    // stored value.
+    const trimmedName = (newProperty.name || '').trim()
+    if (!trimmedName) { setPropMsg('Property name is required'); return }
     const ctx = getCompanyContext()
     const activeCount = properties.filter(p => p.is_active).length
     if (!isUnderLimit(FEATURE_FLAGS.MAX_PROPERTIES, activeCount, ctx)) {
@@ -1306,13 +1313,15 @@ export default function CompanyAdminPortal() {
       ctx.tier === 'pm_only'            ? '$20/mo per property (PM-Only base)'
       : ctx.tier === 'enforcement_only' ? '$15/mo per property (Enforcement-Only base)'
       : /* legacy */                     'the custom per-property rate on your negotiated contract'
-    if (!window.confirm(`Adding "${newProperty.name}" will change your bill: ${perPropCopy}.\n\nContinue?`)) {
+    if (!window.confirm(`Adding "${trimmedName}" will change your bill: ${perPropCopy}.\n\nContinue?`)) {
       setPropMsg('')
       return
     }
     setPropMsg('')
     const { data, error: insErr } = await supabase.from('properties').insert([{
-      name: newProperty.name, address: newProperty.address || null,
+      // Fix 1 (2026-07-15) — trimmedName used at write. DB trigger
+      // trg_properties_name_trim is the guard; this is defense-in-depth.
+      name: trimmedName, address: newProperty.address || null,
       city: newProperty.city || null, state: newProperty.state || null,
       zip: newProperty.zip || null,
       visitor_capacity: newProperty.visitor_capacity ? parseInt(newProperty.visitor_capacity) : null,
@@ -1323,7 +1332,7 @@ export default function CompanyAdminPortal() {
       authorization_notes: newProperty.authorization_notes || null,
     }]).select().single()
     if (insErr) { setPropMsg('Error: ' + insErr.message); return }
-    await auditLog('create_property', 'properties', data.id, { name: newProperty.name, company: role?.company })
+    await auditLog('create_property', 'properties', data.id, { name: trimmedName, company: role?.company })
 
     // B147 3b — sync to Stripe AFTER DB write succeeds. Non-throwing per
     // helper contract; UX path is uninterrupted regardless of outcome.
@@ -1348,7 +1357,9 @@ export default function CompanyAdminPortal() {
     // pool generation is the secondary phase (non-fatal if any type fails).
     const anyPoolCount = SPACE_TYPES.some(t => parseInt(spacePoolCounts[t] || '0', 10) > 0)
     if (anyPoolCount) {
-      await runSpacePoolGenerate(newProperty.name)
+      // Fix 1 (2026-07-15) — trimmedName so spaces.property inherits clean.
+      // DB trigger trg_spaces_property_trim is the guard; still trim at call.
+      await runSpacePoolGenerate(trimmedName)
       setSpacePoolCounts({ regular: '', carport: '', garage: '', covered: '', handicap: '', employee: '' })
     }
   }
@@ -1359,8 +1370,12 @@ export default function CompanyAdminPortal() {
     const { id, company, created_at, ...fields } = editingProperty
     // B51a: normalize empty strings to null for the auth fields so DATE
     // doesn't choke on '' and notes don't store empty strings as data.
+    // Fix 1 (2026-07-15): trim name at source too — DB trigger
+    // trg_properties_name_trim will also strip it, but trimming here
+    // keeps the returned/audited value consistent with what will land.
     const normalizedFields = {
       ...fields,
+      name: typeof fields.name === 'string' ? fields.name.trim() : fields.name,
       visitor_capacity: fields.visitor_capacity ? parseInt(fields.visitor_capacity) : null,
       authorization_expiration_date: fields.authorization_expiration_date || null,
       authorization_notes: fields.authorization_notes || null,
@@ -1398,7 +1413,8 @@ export default function CompanyAdminPortal() {
     }
 
     setPropMsg('Property updated!')
-    const editedPropertyName = editingProperty.name  // capture for pool gen below
+    // Fix 1 (2026-07-15) — capture the TRIMMED name so pool gen sees clean.
+    const editedPropertyName = (editingProperty.name || '').trim()
     setEditingProperty(null)
     await reloadProperties()
 
@@ -1566,7 +1582,11 @@ export default function CompanyAdminPortal() {
     // array state shape that let CAs cram multiple property names into a
     // single pipe-delimited string — no UI ever offered that, so the split
     // was effectively dead code and blocked multi-property assignment.
-    const propertyArray = newUser.properties
+    // Fix 1 (2026-07-15) — element-wise trim. drivers.assigned_properties
+    // has the DB trigger trg_drivers_assigned_properties_trim as the guard;
+    // this is defense-in-depth so downstream reads (user_roles.property,
+    // audit logs, etc.) get clean values on the same write.
+    const propertyArray = newUser.properties.map(p => (p || '').trim()).filter(p => p.length > 0)
 
     if (isResident) {
       // Resident path — UNCHANGED from D2. CA hands the temp password
@@ -1875,7 +1895,10 @@ export default function CompanyAdminPortal() {
       name: editingDriver.name,
       phone: editingDriver.phone || null,
       operator_license: editingDriver.operator_license || null,
-      assigned_properties: editingDriver.assigned_properties || [],
+      // Fix 1 (2026-07-15) — element-wise trim. DB trigger
+      // trg_drivers_assigned_properties_trim is the guard; client trim keeps
+      // audit logs consistent with what will actually land.
+      assigned_properties: (editingDriver.assigned_properties || []).map((p: string) => (p || '').trim()).filter((p: string) => p.length > 0),
     }
 
     // 2026-07-14 (Option A1): UPSERT semantics. The prior client-side
@@ -5938,7 +5961,11 @@ export default function CompanyAdminPortal() {
                             </div>
                             <div style={{ display:'flex', gap:'6px' }}>
                               <button onClick={async () => {
-                                await saveUserName(u.email, { name: editingUserName.trim(), property: editingUserProperty })
+                                // Fix 1 (2026-07-15) — element-wise trim property array.
+                                // DB trigger on drivers is the guard; client trim keeps
+                                // user_roles.property + audit logs clean on the same write.
+                                const trimmedProps = editingUserProperty.map(p => (p || '').trim()).filter(p => p.length > 0)
+                                await saveUserName(u.email, { name: editingUserName.trim(), property: trimmedProps })
                                 setEditingUserEmail(null); setEditingUserName(''); setEditingUserProperty([])
                               }}
                                 style={{ padding:'5px 10px', background:'#C9A227', color:'#0f1117', border:'none', borderRadius:'5px', fontSize:'11px', fontWeight:'bold', cursor:'pointer' }}>Save</button>
@@ -6151,7 +6178,10 @@ export default function CompanyAdminPortal() {
                                 email: newUser.email,
                                 phone: newDriver.phone,
                                 operator_license: newDriver.operator_license,
-                                assigned_properties: newUser.properties,
+                                // Fix 1 (2026-07-15) — element-wise trim.
+                                // DB trigger is the guard; client trim keeps
+                                // logs/audit clean on the same write.
+                                assigned_properties: newUser.properties.map(p => (p || '').trim()).filter(p => p.length > 0),
                               })
                               if (ok) {
                                 setNewUser({ name: '', email: '', role: 'manager', properties: [] })
