@@ -506,12 +506,7 @@ export default function DriverPortal() {
     // approved_by_email (guest_auth) + visitor_name/phone, visiting_unit,
     // vehicle_*, notes (visitor_passes).
     const SAFE_GUEST_AUTH_COLS   = 'plate, start_date, end_date, non_resident_reason'
-    // Commit A (2026-07-14): `property` added so driver plate lookup can
-    // surface a "Valid at: X" label when the visitor pass was issued for
-    // a different property than the driver's current dropdown selection.
-    // See same-block comment: 4-Miramar/1-Green-Acers dupes for T9380L
-    // validated cross-property need live 2026-07-13.
-    const SAFE_VISITOR_PASS_COLS = 'plate, expires_at, property'
+    const SAFE_VISITOR_PASS_COLS = 'plate, expires_at'
 
     const todayIso = new Date().toISOString().split('T')[0]
     const { data: guestAuth } = await supabase
@@ -525,20 +520,10 @@ export default function DriverPortal() {
       setSearching(false); setResult({ status: 'guest_authorized', data: guestAuth }); return
     }
 
-    // Commit A (2026-07-14): visitor-pass lookup is now cross-property.
-    // Previously .ilike('property', selectedProperty) scoped the SELECT to
-    // the driver's currently-selected property dropdown value — so a real
-    // active pass issued for property X was invisible to a driver scanning
-    // on property Y (the T9380L incident on A1). The pass render surfaces
-    // the pass's own property via "Valid at: X" so the driver still knows
-    // which lot it applies to. Order by expires_at DESC + limit(1) +
-    // maybeSingle handles the same-plate/same-property duplicate case
-    // (create_visitor_pass dedup is a follow-up; today's dupes are all
-    // 24h-window valid, so surfacing the longest-remaining is safe).
     const { data: pass } = await supabase.from('visitor_passes').select(SAFE_VISITOR_PASS_COLS)
-      .ilike('plate', clean)
+      .ilike('plate', clean).ilike('property', selectedProperty)
       .eq('is_active', true).gte('expires_at', new Date().toISOString())
-      .order('expires_at', { ascending: false }).limit(1).maybeSingle()
+      .single()
     setSearching(false)
     if (pass) setResult({ status: 'visitor', data: pass })
     else setResult({ status: 'notfound' })
@@ -1742,17 +1727,6 @@ export default function DriverPortal() {
                           reads "active visitor pass" without leaking the
                           visiting unit. */}
                       <p style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>✓ VISITOR PASS ACTIVE</p>
-                      {/* Commit A (2026-07-14): "Valid at" label surfaces the
-                          pass's own property. Cross-property lookup (searchPlate
-                          drops .ilike('property', selectedProperty)) means the
-                          returned pass may be issued for a property other than
-                          the driver's currently-selected dropdown value; this
-                          row keeps that context visible so the driver knows
-                          which lot the pass applies to. */}
-                      <div style={{ marginBottom: '8px' }}>
-                        <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Valid at</span><br />
-                        <span style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '13px' }}>{result.data.property}</span>
-                      </div>
                       <div style={{ marginBottom: '14px' }}>
                         <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Expires</span><br />
                         <span style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '13px' }}>{new Date(result.data.expires_at).toLocaleString()}</span>
