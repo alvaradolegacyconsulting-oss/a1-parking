@@ -544,10 +544,38 @@ export default function DriverPortal() {
       setSearching(false); setResult({ status: 'guest_authorized', data: guestAuth }); return
     }
 
+    // B224 read-side (2026-07-16) — swap .single() for .order+limit+
+    // maybeSingle to tolerate 2+ active passes on the SAME (plate,
+    // property). The prior .single() threw on multiples → the
+    // destructured data went null → fell through to notfound → driver
+    // towed a car with 2+ VALID passes. Wrongful-tow class, triggered
+    // by normal user behavior (visitor re-registers "to be safe" after
+    // leaving; system doesn't know they left). Live precedent 2026-07-14:
+    // T9380L Miramar had 3 active passes for the same visitor from Bug 1
+    // CAPTCHA-staleness retries.
+    //
+    // Property scope PRESERVED (.ilike('property', escapedTargetProp)
+    // stays). This is NOT the reverted 7f46252 change — that widened
+    // property scope AND changed single-vs-multi in one edit, reverted
+    // as bce95b1 for the enforcement-boundary flaw. THIS fix ONLY does
+    // the single-vs-multi change, within the correct property.
+    // See feedback_driver_plate_lookup_enforcement_boundary + B224 memo.
+    //
+    // Ordering: expires_at DESC returns the longest-remaining pass.
+    // With same-day dupes (typical: re-submit within minutes), all passes
+    // have the same 24h TTL from creation, so expires_at DESC ==
+    // created_at DESC in practice. Chose expires_at for semantic clarity
+    // (longest-remaining validity wins) + parity with the guest_auth
+    // block above (also .order('end_date', desc).limit(1).maybeSingle).
+    //
+    // Write-side dedup (create_visitor_pass refuses (plate, property,
+    // active-window) duplicates at INSERT time) is the hygiene fast-
+    // follow. Read-side is the SAFETY fix — makes the scan robust
+    // regardless of how many passes exist.
     const { data: pass } = await supabase.from('visitor_passes').select(SAFE_VISITOR_PASS_COLS)
       .ilike('plate', clean).ilike('property', escapedTargetProp)
       .eq('is_active', true).gte('expires_at', new Date().toISOString())
-      .single()
+      .order('expires_at', { ascending: false }).limit(1).maybeSingle()
     setSearching(false)
     if (pass) setResult({ status: 'visitor', data: pass })
     else setResult({ status: 'notfound' })
