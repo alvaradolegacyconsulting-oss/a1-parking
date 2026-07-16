@@ -254,6 +254,13 @@ export default function CompanyAdminPortal() {
   const [manageLoaded, setManageLoaded] = useState(false)
 
   const [editingProperty, setEditingProperty] = useState<any>(null)
+  // Rename-lock (2026-07-16, count-based) — number of user assignments
+  // (user_roles + drivers + residents) referencing the CURRENTLY-EDITING
+  // property. NULL = still fetching or no property selected. 0 = rename
+  // allowed (fresh-typo case); >0 = rename locked to admin only. DB
+  // trigger trg_properties_name_block_rename is the ground truth; this
+  // client count powers the discovery-affordance chip on the name field.
+  const [editingPropertyRefCount, setEditingPropertyRefCount] = useState<number | null>(null)
   // CA CRM Slice 2: two-panel Properties CRM selected-row state (behind CA_CRM_REDESIGN).
   const [selectedPropertyId, setSelectedPropertyId] = useState<number | null>(null)
   const [crmPropertySearch, setCrmPropertySearch] = useState('')
@@ -1375,12 +1382,26 @@ export default function CompanyAdminPortal() {
     // Fix 1 (2026-07-15): trim name at source too — DB trigger
     // trg_properties_name_trim will also strip it, but trimming here
     // keeps the returned/audited value consistent with what will land.
-    const normalizedFields = {
+    const normalizedFields: Record<string, any> = {
       ...fields,
       name: typeof fields.name === 'string' ? fields.name.trim() : fields.name,
       visitor_capacity: fields.visitor_capacity ? parseInt(fields.visitor_capacity) : null,
       authorization_expiration_date: fields.authorization_expiration_date || null,
       authorization_notes: fields.authorization_notes || null,
+    }
+
+    // Rename-lock (2026-07-16, count-based) — for non-admin: if there
+    // are ANY user assignments referencing this property (count>0),
+    // drop `name` from the update payload. At count=0 (fresh-typo case)
+    // OR count still-fetching (null), let name flow — the DB trigger
+    // trg_properties_name_block_rename is the ground-truth guard and
+    // will re-run the count server-side. Belt-and-suspenders shape.
+    // See migrations/20260715_property_name_block_rename.sql header.
+    const isAdmin = role?.role === 'admin'
+    const refCount = editingPropertyRefCount
+    const clientNameLocked = !isAdmin && refCount !== null && refCount > 0
+    if (clientNameLocked) {
+      delete normalizedFields.name
     }
     const { error: updErr } = await supabase.from('properties').update(normalizedFields).eq('id', id)
     if (updErr) { setPropMsg('Error: ' + updErr.message); return }
@@ -5454,7 +5475,30 @@ export default function CompanyAdminPortal() {
                               </p>
                             </div>
                             <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
-                              <button onClick={() => { setEditingProperty({ ...selected }); scrollAndFocusEditPanel('ca-edit-property') }}
+                              <button onClick={async () => {
+                                setEditingProperty({ ...selected })
+                                scrollAndFocusEditPanel('ca-edit-property')
+                                // Rename-lock count fetch (2026-07-16): parallel
+                                // count over 3 assignment carriers scoped by
+                                // company. Non-blocking — the UI mounts the
+                                // form immediately, then the chip / lock
+                                // updates when the count resolves.
+                                setEditingPropertyRefCount(null)
+                                const co = role?.company || ''
+                                const [urRes, drRes, reRes] = await Promise.all([
+                                  supabase.from('user_roles').select('id', { count: 'exact', head: true })
+                                    .contains('property', [selected.name])
+                                    .ilike('company', escapeIlikeValue(co)),
+                                  supabase.from('drivers').select('id', { count: 'exact', head: true })
+                                    .contains('assigned_properties', [selected.name])
+                                    .ilike('company', escapeIlikeValue(co)),
+                                  supabase.from('residents').select('id', { count: 'exact', head: true })
+                                    .eq('property', selected.name)
+                                    .ilike('company', escapeIlikeValue(co)),
+                                ])
+                                const total = (urRes.count ?? 0) + (drRes.count ?? 0) + (reRes.count ?? 0)
+                                setEditingPropertyRefCount(total)
+                              }}
                                 style={{ padding:'8px 14px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', fontSize:'12px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Edit</button>
                               {selected.is_active
                                 ? <button onClick={() => togglePropertyActive(selected)}
@@ -5575,12 +5619,45 @@ export default function CompanyAdminPortal() {
                                 { key:'pm_name', label:'PM Name' },
                                 { key:'pm_phone', label:'PM Phone' },
                                 { key:'pm_email', label:'PM Email' },
-                              ].map(f => (
-                                <div key={f.key}>
-                                  <label style={lbl}>{f.label}</label>
-                                  <input value={(editingProperty as any)[f.key] || ''} onChange={e => setEditingProperty({ ...editingProperty, [f.key]: e.target.value })} style={inp} />
-                                </div>
-                              ))}
+                              ].map(f => {
+                                // Rename-lock (2026-07-16, count-based) — property
+                                // name is renamable at 0 assignments (fresh-typo
+                                // case) OR when role='admin'. Locked at ≥1
+                                // assignment for non-admin.
+                                // DB trigger trg_properties_name_block_rename is
+                                // the ground-truth guard; this UI lock is the
+                                // discovery affordance so a CA doesn't type a
+                                // new name and hit a server error on Save.
+                                // See migrations/20260715_property_name_block_rename.sql
+                                const isAdmin = role?.role === 'admin'
+                                const refCount = editingPropertyRefCount
+                                const nameLocked =
+                                  f.key === 'name'
+                                  && !isAdmin
+                                  && refCount !== null // still fetching → don't lock preemptively
+                                  && refCount > 0
+                                const chipCopy = f.key === 'name' && !isAdmin && refCount !== null && refCount > 0
+                                  ? `· locked · ${refCount} user${refCount === 1 ? '' : 's'} assigned · contact support`
+                                  : null
+                                return (
+                                  <div key={f.key}>
+                                    <label style={lbl}>
+                                      {f.label}
+                                      {chipCopy && (
+                                        <span style={{ color:'#94a3b8', fontSize:'10px', marginLeft:'8px', textTransform:'none', letterSpacing:'0.02em' }}>
+                                          {chipCopy}
+                                        </span>
+                                      )}
+                                    </label>
+                                    <input
+                                      value={(editingProperty as any)[f.key] || ''}
+                                      onChange={e => setEditingProperty({ ...editingProperty, [f.key]: e.target.value })}
+                                      readOnly={nameLocked}
+                                      style={{ ...inp, ...(nameLocked ? { opacity: 0.55, cursor: 'not-allowed', background: '#0f1117' } : {}) }}
+                                    />
+                                  </div>
+                                )
+                              })}
                               {/* Auth-doc status + upload/replace/remove — reuses handlers already at file scope. */}
                               <div style={{ marginTop:'8px', padding:'10px 12px', background:'#161b26', border:'1px solid #3a4055', borderRadius:'8px' }}>
                                 <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 8px' }}>Authorization document</p>
