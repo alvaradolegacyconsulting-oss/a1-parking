@@ -13,11 +13,17 @@ import { gateAccountState, AccountState } from '../lib/account-state'
 // after activation so the post-activation dashboard isn't stuck with
 // null localStorage + 'Legacy Enforcement' fallback rendering.
 import { bootstrapCompanyContext, CompanyBootstrapRow } from '../lib/company-bootstrap'
-// B118: version-aware modal predicate + accept_tos(versions) call.
-import { TOS_VERSION, TOS_DISPLAY_DATE, PRIVACY_VERSION, PRIVACY_DISPLAY_DATE } from '../lib/legal-versions'
-import LegalGateAccordion, { type GateSpec } from '../components/LegalGateAccordion'
-import TermsBody from '../components/TermsBody'
-import PrivacyBody from '../components/PrivacyBody'
+// P1 CONSENT HARD-GATE Commit 4 (2026-07-16) — login-modal consent path
+// retired. TOS_VERSION / PRIVACY_VERSION / LegalGateAccordion / TermsBody /
+// PrivacyBody imports removed — nothing on /login renders or checks legal
+// docs anymore. Enforcement lives in the portal-layout gates (Commits
+// 3a/3b: 613b045, 1ca8940) + /consent route (Commit 2: da981d5), backed
+// by the atomic role-conditional accept_all_pending_consents RPC
+// (Commit 1: 255313f). Single enforcement path — no soft-modal that can
+// disagree with the server gate.
+//
+// The force-password-change path is INDEPENDENT of consent and is
+// preserved intact — see handleLogin below and the redirectByRole helper.
 // B147 3a: hardened company-by-name resolution replacing naked
 // .ilike().single() pattern that silently degrades on 0/2+-rows (B76 class).
 import { resolveCompanyByName } from '../lib/company-resolve'
@@ -31,23 +37,14 @@ export default function Login() {
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
   const resolvedLogo = useResolvedLogo(companyLogo)
-  const [showTosModal, setShowTosModal] = useState(false)
-  // B118 Layer 2 Commit 3 acceptance-surface pass — the re-consent modal
-  // now uses <LegalGateAccordion> (scroll-through gates), replacing the
-  // two prior checkbox booleans. State semantics: null = not yet signed;
-  // ISO string = T1 (finished reading) stamp captured by the gate.
-  //
-  // AMBIGUITY / FOLLOW-UP: the acceptTos() handler still calls the 2-arg
-  // accept_tos RPC (not accept_signup_consents), which does NOT accept
-  // p_tos_reviewed_at / p_privacy_reviewed_at yet. The T1 stamps are
-  // captured in state here but not persisted — see the comment above
-  // the RPC call. Extending accept_tos is a separate migration.
-  const [tosReviewedAt, setTosReviewedAt] = useState<string | null>(null)
-  const [privacyReviewedAt, setPrivacyReviewedAt] = useState<string | null>(null)
-  const [tosLoading, setTosLoading] = useState(false)
-  const [pendingRole, setPendingRole] = useState('')
-  const [pendingEmail, setPendingEmail] = useState('')
-  const [pendingForcePwReset, setPendingForcePwReset] = useState(false)
+  // Commit 4 (2026-07-16) — removed with the login-modal retirement:
+  //   showTosModal, tosReviewedAt, privacyReviewedAt, tosLoading,
+  //   pendingRole, pendingEmail, pendingForcePwReset.
+  // pendingForcePwReset existed ONLY to survive the modal show-then-
+  // continue round-trip; forcePwReset now lives as a local const inside
+  // handleLogin, passed directly to redirectByRole with no round-trip.
+  // Force-password-change survival is unchanged — see handleLogin's
+  // final redirectByRole(roleData.role, forcePwReset) call.
   const [suspendedCompany, setSuspendedCompany] = useState<{ display_name: string; support_phone: string | null; support_email: string | null; support_website: string | null; message?: string } | null>(null)
   // B147 3a — resolve-failure state. Captures the company name for
   // display in the error card. Single-string body copy regardless of
@@ -75,52 +72,10 @@ export default function Login() {
     else window.location.href = '/'
   }
 
-  async function acceptTos() {
-    setTosLoading(true)
-    const now = new Date().toISOString()
-    // B118: version-aware accept_tos call. RPC atomically writes
-    // tos_acceptances rows (tos + privacy) + stamps user_roles
-    // tos_accepted_at + tos_accepted_version + privacy_accepted_version
-    // — so the modal correctly suppresses on subsequent logins until
-    // either TOS_VERSION or PRIVACY_VERSION bumps (at which point it
-    // re-fires per the predicate at line ~205).
-    //
-    // SECURITY DEFINER + GRANT TO authenticated only. Graceful degrade
-    // preserved: if RPC fails, log and continue — user re-sees modal
-    // next login, which is not catastrophic.
-    //
-    // B118 Layer 2 Commit 3 acceptance-surface pass — accept_tos was
-    // extended from 2-arg to 4-arg (migration 20260710_..._accept_tos_
-    // extension). p_tos_reviewed_at + p_privacy_reviewed_at DEFAULT
-    // NULL; T1 gate-unlock stamps captured by the accordion above are
-    // persisted directly on the tos_acceptances row, matching the
-    // signup + redeem paths.
-    const { error: tosErr } = await supabase.rpc('accept_tos', {
-      p_tos_version: TOS_VERSION,
-      p_privacy_version: PRIVACY_VERSION,
-      p_tos_reviewed_at: tosReviewedAt,
-      p_privacy_reviewed_at: privacyReviewedAt,
-    })
-    if (tosErr) console.error('accept_tos RPC failed:', tosErr)
-    await supabase.from('audit_logs').insert([{
-      action: 'TOS_ACCEPTED',
-      table_name: 'user_roles',
-      new_values: {
-        email: pendingEmail,
-        accepted_at: now,
-        tos_version: TOS_VERSION,
-        privacy_version: PRIVACY_VERSION,
-        // B118 Layer 2 Commit 3 acceptance-surface pass — until
-        // accept_tos gets extended (comment above), stash the T1
-        // stamps in the audit_log so the evidence exists somewhere.
-        // Backfillable into tos_acceptances.reviewed_at once the
-        // RPC is extended.
-        tos_reviewed_at: tosReviewedAt,
-        privacy_reviewed_at: privacyReviewedAt,
-      },
-    }])
-    redirectByRole(pendingRole, pendingForcePwReset)
-  }
+  // Commit 4 (2026-07-16) — acceptTos() removed with the login-modal
+  // retirement. Consent writes now go through accept_all_pending_consents
+  // (RPC shipped 255313f) via /consent (route shipped da981d5) after the
+  // portal-layout gate (Commits 3a/3b) redirects unconsented users there.
 
   async function handleLogin() {
     setLoading(true)
@@ -325,24 +280,20 @@ export default function Login() {
     // (line 47) still fires for them via dbForce.
     const forcePwReset = roleData.must_change_password === true
 
-    // B118: version-aware modal predicate. Modal fires when:
-    //   • User has never consented (legacy blanket-existence check), OR
-    //   • Stored tos_accepted_version is missing/stale vs current TOS_VERSION, OR
-    //   • Stored privacy_accepted_version is missing/stale vs current PRIVACY_VERSION
-    // This correctly re-fires on doc version bumps + fires for B113
-    // bulk-uploaded users + suppresses for B118-signed-up users whose
-    // accept_signup_consents() RPC populated all three columns at signup.
-    const needsConsent = !roleData.tos_accepted_at
-      || roleData.tos_accepted_version !== TOS_VERSION
-      || roleData.privacy_accepted_version !== PRIVACY_VERSION
-    if (needsConsent) {
-      setPendingRole(roleData.role)
-      setPendingEmail(email.trim())
-      setPendingForcePwReset(forcePwReset)
-      setShowTosModal(true)
-      return
-    }
-
+    // Commit 4 (2026-07-16) — version-aware modal predicate + soft-gate
+    // branch retired. Consent is enforced HARD by the portal-layout gate
+    // + /consent route: redirectByRole below sends the user to their
+    // portal, whose layout.tsx server-checks hasCurrentConsents() and
+    // redirects to /consent if anything is missing at current version.
+    // Single enforcement path — no chance of the login predicate and the
+    // portal predicate disagreeing.
+    //
+    // Force-password-change path preserved: redirectByRole short-circuits
+    // to /change-password when forcePwReset is true, BEFORE any portal
+    // is reached. The consent gate only fires on portal routes, so a
+    // user routed to /change-password bypasses the consent check until
+    // they've completed password change (then they hit their portal,
+    // and the gate correctly fires there if they're unconsented).
     redirectByRole(roleData.role, forcePwReset)
   }
 
@@ -491,53 +442,9 @@ export default function Login() {
         </div>
       )}
 
-      {showTosModal && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-          {/* B118 Layer 2 Commit 3 acceptance-surface pass — modal body
-              swapped from checkboxes to <LegalGateAccordion>. Modal shell
-              gets an overflow-y:auto + max-height:90vh cap so the accordion
-              (which can grow to 70vh per gate pane) fits within the
-              viewport on small screens without off-screen clipping. */}
-          <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'16px', padding:'28px', maxWidth:'560px', width:'100%', maxHeight:'90vh', overflowY:'auto', display:'flex', flexDirection:'column' }}>
-            <h2 style={{ color:'#C9A227', fontSize:'20px', fontWeight:'bold', margin:'0 0 12px', textAlign:'center' }}>Terms of Use &amp; Privacy Policy</h2>
-            <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 18px', textAlign:'center' }}>
-              Please read through and sign both documents to continue.
-            </p>
-            <LegalGateAccordion
-              signedKeys={[
-                ...(tosReviewedAt ? ['tos'] : []),
-                ...(privacyReviewedAt ? ['privacy'] : []),
-              ]}
-              onGateSigned={(key, { reviewedAt }) => {
-                if (key === 'tos') setTosReviewedAt(reviewedAt)
-                else if (key === 'privacy') setPrivacyReviewedAt(reviewedAt)
-              }}
-              gates={[
-                {
-                  key: 'tos',
-                  title: 'Terms of Use',
-                  version: TOS_VERSION,
-                  displayDate: TOS_DISPLAY_DATE,
-                  body: <TermsBody />,
-                  signButtonLabel: 'Sign & Accept Terms of Use',
-                },
-                {
-                  key: 'privacy',
-                  title: 'Privacy Policy',
-                  version: PRIVACY_VERSION,
-                  displayDate: PRIVACY_DISPLAY_DATE,
-                  body: <PrivacyBody />,
-                  signButtonLabel: 'Sign & Accept Privacy Policy',
-                },
-              ] satisfies GateSpec[]}
-            />
-            <button onClick={acceptTos} disabled={!tosReviewedAt || !privacyReviewedAt || tosLoading}
-              style={{ width:'100%', padding:'13px', marginTop:'16px', background: (!tosReviewedAt || !privacyReviewedAt) ? '#555' : '#C9A227', color: (!tosReviewedAt || !privacyReviewedAt) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!tosReviewedAt || !privacyReviewedAt) ? 'not-allowed' : 'pointer' }}>
-              {tosLoading ? 'Please wait...' : 'Continue'}
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Commit 4 (2026-07-16) — login-modal consent block removed.
+          Enforcement is now the portal-layout gate + /consent route
+          (Commits 3a/3b + Commit 2). Single enforcement path. */}
     </main>
   )
 }
