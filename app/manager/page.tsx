@@ -1,6 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
+import { QRLinkAffordance } from '../components/QRLinkAffordance'
+import { printQRSign } from '../lib/qr-print'
 import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import { displayTowReason } from '../lib/tow-reasons'
@@ -4026,14 +4028,21 @@ export default function ManagerPortal() {
                       <div id="qr-registration" style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
                         <QRCodeCanvas value={regUrl} size={160} level="H" />
                       </div>
-                      <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New', textAlign:'center' }}>{regUrl}</p>
-                      <button onClick={() => {
-                        const canvas = document.querySelector('#qr-registration canvas') as HTMLCanvasElement
-                        if (!canvas) return
-                        const tw = window.open('', '_blank')!
-                        tw.document.write(`<html><head><title>Registration QR - ${manager.name}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#fff;font-family:Arial,sans-serif;padding:40px}img{width:220px;height:220px}h2{color:#1A1F2E;font-size:22px;margin:16px 0 8px}p{color:#555;font-size:13px;text-align:center;max-width:320px;margin:4px 0}a{color:#C9A227;font-size:11px;word-break:break-all}</style></head><body><img src="${canvas.toDataURL()}" /><h2>${manager.name}</h2><p>Scan to register as a new resident</p><p>Your account requires manager approval before login</p><a>${regUrl}</a><script>window.print();window.close();</script></body></html>`)
-                        tw.document.close()
-                      }} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                      <QRLinkAffordance url={regUrl} />
+                      {/* 2026-07-16 QR consolidation — was an inline
+                          tw.document.write template. Now shares printQRSign
+                          with the CA portal via app/lib/qr-print.ts. Manager
+                          gets identical branded resident-signup sign
+                          (Resident Registration header, no tow-warning,
+                          fallback URL). */}
+                      <button onClick={() => printQRSign({
+                        canvasId: 'qr-registration',
+                        title: manager.name,
+                        subtitle: 'New resident self-registration',
+                        kind: 'resident',
+                        url: regUrl,
+                        company: managerCompany || undefined,
+                      })} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Print QR Code
                       </button>
                     </>
@@ -4059,14 +4068,19 @@ export default function ManagerPortal() {
                       <div id="qr-visitor-pass" style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
                         <QRCodeCanvas value={visitorUrl} size={160} level="H" />
                       </div>
-                      <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New', textAlign:'center' }}>{visitorUrl}</p>
-                      <button onClick={() => {
-                        const canvas = document.querySelector('#qr-visitor-pass canvas') as HTMLCanvasElement
-                        if (!canvas) return
-                        const tw = window.open('', '_blank')!
-                        tw.document.write(`<html><head><title>Visitor Pass QR - ${manager.name}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#fff;font-family:Arial,sans-serif;padding:40px}img{width:220px;height:220px}h2{color:#1A1F2E;font-size:22px;margin:16px 0 8px}p{color:#555;font-size:13px;text-align:center;max-width:320px;margin:4px 0}a{color:#C9A227;font-size:11px;word-break:break-all}</style></head><body><img src="${canvas.toDataURL()}" /><h2>${manager.name}</h2><p>Scan to issue a visitor pass at this property</p><a>${visitorUrl}</a><script>window.print();window.close();</script></body></html>`)
-                        tw.document.close()
-                      }} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                      <QRLinkAffordance url={visitorUrl} />
+                      {/* 2026-07-16 QR consolidation — shared printQRSign.
+                          Same branded visitor sign the CA portal prints
+                          (Visitor Parking header + "Valid up to 24 hours"
+                          note + tow-warning + fallback URL). */}
+                      <button onClick={() => printQRSign({
+                        canvasId: 'qr-visitor-pass',
+                        title: manager.name,
+                        subtitle: 'Print this and post on-site',
+                        kind: 'visitor',
+                        url: visitorUrl,
+                        company: managerCompany || undefined,
+                      })} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Print QR Code
                       </button>
                     </>
