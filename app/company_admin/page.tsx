@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
+import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
@@ -3343,13 +3344,43 @@ export default function CompanyAdminPortal() {
     )
   }
 
-  function printQRSign(canvasId: string, title: string, subtitle: string) {
+  // QR-print sign template. `kind` swaps the header/subhead/note/tow-warning
+  // between visitor and resident flavors so a resident-signup print doesn't
+  // borrow visitor copy (Bug 1 / Bug 5, 2026-07-15). Optional `url` renders
+  // a human-readable fallback URL under the QR image for the camera-can't-
+  // -focus case (Bug 3). Consolidates the previous inline resident template
+  // that used to live at the "Resident Registration QR Codes" print button.
+  function printQRSign(
+    canvasId: string,
+    title: string,
+    subtitle: string,
+    kind: 'visitor' | 'resident' = 'visitor',
+    url?: string,
+  ) {
     const container = document.getElementById(canvasId)
     const canvas = container?.querySelector('canvas') as HTMLCanvasElement | null
     const dataUrl = canvas?.toDataURL('image/png') || ''
     const tw = window.open('', '_blank')
     if (!tw) return
-    tw.document.write(`<!DOCTYPE html><html><head><title>Visitor Parking Sign</title><style>
+
+    const isResident = kind === 'resident'
+    const pageTitle  = isResident ? 'Resident Registration Sign' : 'Visitor Parking Sign'
+    const heading    = isResident ? 'Resident Registration'      : 'Visitor Parking'
+    const subhead    = isResident ? 'Scan to register your unit' : 'Scan to get your parking pass'
+    const noteHtml   = isResident
+      ? '<div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">One-time setup</p><p style="color:#856404;font-size:11px">Manager approval required before access</p></div>'
+      : '<div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">Required before parking</p><p style="color:#856404;font-size:11px">Valid up to 24 hours · No app download needed</p></div>'
+    // Tow warning is visitor-only. Residents are being onboarded — a "your
+    // car will be towed" banner on their signup sign is jarring and
+    // semantically wrong (they haven't registered yet).
+    const warnHtml = isResident
+      ? ''
+      : '<div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner\'s expense</p></div>'
+    const urlFallback = url
+      ? `<p style="font-size:10px;color:#666;margin-top:14px;word-break:break-all;font-family:'Courier New',monospace">${url}</p>`
+      : ''
+
+    tw.document.write(`<!DOCTYPE html><html><head><title>${pageTitle}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}
       body{font-family:Arial,sans-serif;background:white;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
       .card{max-width:380px;width:100%;text-align:center;border:3px solid #C9A227;border-radius:16px;padding:32px;margin:0 auto}
@@ -3360,15 +3391,16 @@ export default function CompanyAdminPortal() {
     </style></head><body>
       <div class="card">
         <div class="hdr">
-          <p style="color:#C9A227;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:.1em">${role?.company || 'Visitor Parking'}</p>
+          <p style="color:#C9A227;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:.1em">${role?.company || heading}</p>
         </div>
-        <p style="font-size:22px;font-weight:bold;color:#111;margin-bottom:4px">Visitor Parking</p>
-        <p style="font-size:14px;color:#333;margin-bottom:20px">Scan to get your parking pass</p>
+        <p style="font-size:22px;font-weight:bold;color:#111;margin-bottom:4px">${heading}</p>
+        <p style="font-size:14px;color:#333;margin-bottom:20px">${subhead}</p>
         <img src="${dataUrl}" style="width:200px;height:200px;display:block;margin:0 auto 16px" />
         <p style="font-size:15px;font-weight:bold;color:#111;margin-bottom:4px">${title}</p>
         <p style="font-size:11px;color:#555;margin-bottom:0">${subtitle}</p>
-        <div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">Required before parking</p><p style="color:#856404;font-size:11px">Valid up to 24 hours · No app download needed</p></div>
-        <div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner's expense</p></div>
+        ${noteHtml}
+        ${warnHtml}
+        ${urlFallback}
       </div>
       <script>window.onload=function(){window.print()}</script>
     </body></html>`)
@@ -3385,6 +3417,11 @@ export default function CompanyAdminPortal() {
     // main render (id="qr-bulk-<propId>"). Prior code read `qr-<propId>`,
     // which never existed AND only mounted under the QR Codes tab —
     // double bug. Hidden mount keeps DOM stable regardless of activeTab.
+    //
+    // 2026-07-15 QR cluster — parity with printQRSign single-sign path
+    // (Bug 3 fallback URL added). Bulk-print is visitor-only today; if
+    // resident bulk-print gets added, parameterize the same way as
+    // printQRSign (kind='resident' swaps header/subhead/note/no-warn).
     const cards: string[] = []
     for (const prop of properties || []) {
       const canvasId = `qr-bulk-${prop.id}`
@@ -3392,6 +3429,9 @@ export default function CompanyAdminPortal() {
       const canvas = container?.querySelector('canvas') as HTMLCanvasElement | null
       if (!canvas) continue
       const dataUrl = canvas.toDataURL('image/png')
+      // Reconstruct the URL so the fallback text matches what's encoded
+      // in the QR. Mirrors the single-sign path (visitor QR URL shape).
+      const url = `${BASE_URL}/visitor?property=${encodeURIComponent(prop.name)}`
       cards.push(`
         <div class="card">
           <div class="hdr">
@@ -3404,6 +3444,7 @@ export default function CompanyAdminPortal() {
           <p style="font-size:11px;color:#555;margin-bottom:0">${prop.address || ''}</p>
           <div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">Required before parking</p><p style="color:#856404;font-size:11px">Valid up to 24 hours · No app download needed</p></div>
           <div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner's expense</p></div>
+          <p style="font-size:10px;color:#666;margin-top:14px;word-break:break-all;font-family:'Courier New',monospace">${url}</p>
         </div>
       `)
     }
@@ -5203,8 +5244,8 @@ export default function CompanyAdminPortal() {
                   <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
                     <QRCodeCanvas value={url} size={160} level="H" includeMargin={true} />
                   </div>
-                  <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New' }}>{url}</p>
-                  <button onClick={() => printQRSign(canvasId, prop.name, prop.address || '')}
+                  <QRLinkAffordance url={url} />
+                  <button onClick={() => printQRSign(canvasId, prop.name, prop.address || '', 'visitor', url)}
                     style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>
                     Print This Sign
                   </button>
@@ -5230,8 +5271,8 @@ export default function CompanyAdminPortal() {
                   <div id="qr-company" style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
                     <QRCodeCanvas value={companyUrl} size={160} level="H" includeMargin={true} />
                   </div>
-                  <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New' }}>{companyUrl}</p>
-                  <button onClick={() => printQRSign('qr-company', role?.company || '', 'Select your property after scanning')}
+                  <QRLinkAffordance url={companyUrl} />
+                  <button onClick={() => printQRSign('qr-company', role?.company || '', 'Select your property after scanning', 'visitor', companyUrl)}
                     style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>
                     Print This Sign
                   </button>
@@ -5253,14 +5294,13 @@ export default function CompanyAdminPortal() {
                   <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
                     <QRCodeCanvas value={regUrl} size={160} level="H" includeMargin={true} />
                   </div>
-                  <p style={{ color:'#444', fontSize:'10px', margin:'0 0 14px', wordBreak:'break-all', fontFamily:'Courier New' }}>{regUrl}</p>
-                  <button onClick={() => {
-                    const canvas = document.querySelector(`#${canvasId} canvas`) as HTMLCanvasElement
-                    if (!canvas) return
-                    const tw = window.open('', '_blank')!
-                    tw.document.write(`<html><head><title>Registration QR - ${prop.name}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#fff;font-family:Arial,sans-serif;padding:40px}img{width:220px;height:220px}h2{color:#1A1F2E;font-size:22px;margin:16px 0 8px}p{color:#555;font-size:13px;text-align:center;max-width:320px;margin:4px 0}a{color:#C9A227;font-size:11px;word-break:break-all}</style></head><body><img src="${canvas.toDataURL()}" /><h2>${prop.name}</h2><p>Scan to register as a new resident</p><p>Your account requires manager approval before login</p><a>${regUrl}</a><script>window.print();window.close();</script></body></html>`)
-                    tw.document.close()
-                  }} style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>
+                  <QRLinkAffordance url={regUrl} />
+                  {/* 2026-07-15 QR cluster — was an inline tw.document.write
+                      template with its own copy (kind='resident' shape). Now
+                      folded into printQRSign so all six call sites share one
+                      parameterized template + the fallback URL affordance. */}
+                  <button onClick={() => printQRSign(canvasId, prop.name, 'New resident self-registration', 'resident', regUrl)}
+                    style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>
                     Print This Sign
                   </button>
                 </div>
@@ -5547,7 +5587,8 @@ export default function CompanyAdminPortal() {
                                     <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'10px' }}>
                                       <QRCodeCanvas value={visitorUrl} size={140} level="H" includeMargin={true} />
                                     </div>
-                                    <button onClick={() => printQRSign(canvasId, selected.name, selected.address || '')}
+                                    <QRLinkAffordance url={visitorUrl} />
+                                    <button onClick={() => printQRSign(canvasId, selected.name, selected.address || '', 'visitor', visitorUrl)}
                                       style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', fontSize:'11px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Print sign</button>
                                   </div>
                                 )
@@ -5567,7 +5608,8 @@ export default function CompanyAdminPortal() {
                                     <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'10px' }}>
                                       <QRCodeCanvas value={regUrl} size={140} level="H" includeMargin={true} />
                                     </div>
-                                    <button onClick={() => printQRSign(canvasId, `${selected.name} — Resident Signup`, 'Scan to self-register · requires manager approval')}
+                                    <QRLinkAffordance url={regUrl} />
+                                    <button onClick={() => printQRSign(canvasId, selected.name, 'New resident self-registration', 'resident', regUrl)}
                                       style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', fontSize:'11px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Print sign</button>
                                   </div>
                                 )
@@ -7498,7 +7540,13 @@ export default function CompanyAdminPortal() {
                       scans it and picks the lot they're visiting.
                       Reads from the always-mounted hidden #qr-company at
                       the end of main render, so it prints from any tab. */}
-                  <button onClick={() => printQRSign('qr-company', role?.company || '', 'Select your property after scanning')}
+                  <button onClick={() => printQRSign(
+                    'qr-company',
+                    role?.company || '',
+                    'Select your property after scanning',
+                    'visitor',
+                    `${BASE_URL}/visitor-select?company=${encodeURIComponent(role?.company || '')}`,
+                  )}
                     style={{ padding:'8px 12px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'Arial' }}
                     title="Prints ONE sign — visitor scans and picks which property. Cheaper for tow-op signage.">
                     Multi-property QR ↓
