@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx'
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useResolvedLogo } from '../lib/logo'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
+import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
 import CredentialsModal from '../components/CredentialsModal'
 import { generateTempPassword } from '../lib/temp-password'
 
@@ -431,6 +432,20 @@ export default function AdminPortal() {
       .in('role', ['manager', 'leasing_agent'])
 
     if (!active) {
+      // Deactivate-guard Option A (2026-07-16) — force-confirm dialog
+      // BEFORE the cascade fires. Shows affected-account counts +
+      // honest asymmetry note when residents are present (space
+      // assignments and pending requests don't auto-restore on
+      // reactivate). Shared helper hooks BOTH this admin path AND the
+      // CA path (togglePropertyActive) to close the divergent-paths
+      // bypass. Cancel here aborts the deactivation entirely.
+      const confirmed = await promptDeactivatePropertyConfirm({
+        supabase,
+        propertyName,
+        company: (p as any).company || '',
+      })
+      if (!confirmed) return
+
       // DEACTIVATING — only ban users with no other active properties
       if (propertyUsers && propertyUsers.length > 0) {
         const toDeactivate = propertyUsers.filter((u: any) =>

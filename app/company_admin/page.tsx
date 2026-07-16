@@ -6,6 +6,7 @@ import { QRCodeCanvas } from 'qrcode.react'
 import SupportContact from '../components/SupportContact'
 import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { printQRSign } from '../lib/qr-print'
+import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
@@ -1522,6 +1523,19 @@ export default function CompanyAdminPortal() {
 
   async function togglePropertyActive(prop: any) {
     const wasActive = prop.is_active
+
+    // Deactivate-guard Option A (2026-07-16) — force-confirm on the CA
+    // path. Same shared helper as admin/toggleProperty; closes the
+    // divergent-paths bypass. Only fires on the active→inactive
+    // transition; reactivation goes through the tier-gate below.
+    if (wasActive) {
+      const confirmed = await promptDeactivatePropertyConfirm({
+        supabase,
+        propertyName: prop.name,
+        company: prop.company || role?.company || '',
+      })
+      if (!confirmed) return
+    }
 
     // B147 3b — tier-gate reactivation symmetrically with saveProperty.
     // Without this gate, a customer at cap could reactivate a
