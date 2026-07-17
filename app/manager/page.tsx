@@ -3756,6 +3756,41 @@ export default function ManagerPortal() {
               </div>
             )}
             {editingResident && (
+              /* Bible-view mobile scroll-lock fix — Fix A / Option A2
+                 (2026-07-17). Wraps the resident-detail panel in the
+                 drawer shape proven at app/admin_console/page.tsx:822
+                 so the panel has its OWN viewport-bounded scroll
+                 context. Without this, the panel is inline in document
+                 flow and depends on page scroll — which is broken on
+                 mobile (Jose's real-phone repro: portrait shows only
+                 the list, landscape shows ~25% of detail, rest is
+                 cut off and unreachable). The drawer shape works
+                 regardless of page-scroll behavior.
+
+                 The load-bearing rules: outer position:fixed inset:0
+                 (viewport-bounded flex container) + inner maxHeight:
+                 100vh (bounds the inner region to viewport height) +
+                 inner overflowY:auto (scrolls the panel content inside
+                 that bound). Backdrop onClick closes; inner
+                 stopPropagation keeps the panel open on internal clicks.
+
+                 Panel content wrapped verbatim per Mateo directive —
+                 no field/grid/logic changes. The gridTemplateColumns:
+                 '1fr 1fr' inside stays cramped in a 380px drawer;
+                 that's Fix B (responsive pass), a separate later
+                 commit. "Usable but ugly" is the intended end state
+                 of A2.
+
+                 The underlying root-layout page-scroll issue (html
+                 .h-full likely blocking page scroll on mobile) is
+                 filed as Fix A1 in docs/backlog/ — same commit set
+                 as this one. That's the structural close; this is
+                 the scoped safety fix for the highest-visibility
+                 instance. */
+              <div onClick={() => setEditingResident(null)}
+                   style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:2000, display:'flex', justifyContent:'flex-end' }}>
+                <div onClick={e => e.stopPropagation()}
+                     style={{ background:'#161b26', borderLeft:'1px solid #C9A227', width:380, maxWidth:'90vw', maxHeight:'100vh', padding:18, overflowY:'auto' }}>
               <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
                 <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Editing — {editingResident.unit}</p>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
@@ -3838,6 +3873,10 @@ export default function ManagerPortal() {
                     ))
                   }
                 </div>
+              </div>
+                {/* Bible-view A2 — drawer inner close (overflowY:auto + maxHeight:100vh) */}
+                </div>
+                {/* Bible-view A2 — drawer outer/backdrop close (position:fixed inset:0) */}
               </div>
             )}
             {filteredResidents().map((r,i) => (
