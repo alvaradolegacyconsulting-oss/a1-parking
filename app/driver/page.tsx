@@ -1751,7 +1751,19 @@ export default function DriverPortal() {
                           trigger clears ties on resident deactivation; here we just
                           render whatever the RPC returned). */}
                       <div style={{ marginBottom: '14px', padding: '10px', background: '#1a0a00', border: '1px solid #3a1e0a', borderRadius: '8px' }}>
-                        <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Space</span>
+                        {/* 2026-07-18 — SPACE attribution warm-up. On the
+                            pending-approval card, the space is the RESIDENT's
+                            assigned space (from resident↔space link), NOT the
+                            pending vehicle's. Driver misreads without the
+                            qualifier ("this pending vehicle has space 523"
+                            vs. "the resident on this plate holds space 523").
+                            Conditional on 'pending' status only per Jose
+                            scope directive; declined + expired share the
+                            same render block but same-class label ambiguity
+                            filed as backlog (do NOT fix here). */}
+                        <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>
+                          {result.status === 'pending' ? "Resident's Space" : 'Space'}
+                        </span>
                         {(!result.data._assigned_spaces || result.data._assigned_spaces.length === 0) ? (
                           <div style={{ color: '#aaa', fontSize: '13px', marginTop: '3px' }}>—</div>
                         ) : (
