@@ -84,3 +84,46 @@ body {
   margin: 0 auto;
   box-sizing: border-box;
 }
+
+/* ────────────────────────────────────────────────────────────────────
+   Fix B (2026-07-20) — PM resident-detail drawer responsive pass
+   ────────────────────────────────────────────────────────────────────
+   The Bible-view A2 drawer (app/manager/page.tsx ~3790, shipped 471efec)
+   is fixed at width:380 maxWidth:'90vw' — a phone-sized viewport gets
+   ~301px content area (after 18px padding both sides), a desktop viewport
+   gets ~344px. Multi-column grids inside were unreadable at phone widths.
+   Fix A / A2 bought reachability (drawer scrolls); Fix B buys usability
+   (fields legible one-per-row on phone, still multi-column on desktop).
+
+   Utility approach — auto-fill with minmax(160px, 1fr):
+     • Desktop drawer (~344px content): fits 2 columns
+       (2*160 + 8 gap = 328 < 344).
+     • Phone drawer (~301px content or less): collapses to 1 column
+       (2*160 + 8 = 328 > 301).
+   Width-driven — no viewport media query needed for the collapse itself;
+   the drawer's internal container size determines the layout, not the
+   viewport, and that flips at the right threshold automatically. This
+   preserves the desktop 2-column read (verify point 4 from Fix B spec).
+
+   Touch targets ARE viewport-based (max-width:480px), applied only on
+   phone widths so desktop styling stays exactly as A2 shipped. Bumps
+   drawer inputs/selects to min-height:40px. Buttons inline-styled
+   per-instance in manager/page.tsx get their padding bumped there; the
+   utility below covers the shared form-control class only.
+   ──────────────────────────────────────────────────────────────────── */
+.pm-drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+.pm-drawer-grid-full {
+  grid-column: 1 / -1;
+}
+@media (max-width: 480px) {
+  .pm-drawer-grid input,
+  .pm-drawer-grid select {
+    min-height: 40px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+}

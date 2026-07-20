@@ -3793,17 +3793,25 @@ export default function ManagerPortal() {
                      style={{ background:'#161b26', borderLeft:'1px solid #C9A227', width:380, maxWidth:'90vw', maxHeight:'100vh', padding:18, overflowY:'auto' }}>
               <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
                 <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Editing — {editingResident.unit}</p>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
-                  <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Full Name</label><input value={editingResident.name || ''} onChange={e => setEditingResident({...editingResident, name: e.target.value})} style={inputStyle} /></div>
-                  <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Email</label><input value={editingResident.email || ''} onChange={e => setEditingResident({...editingResident, email: e.target.value})} style={inputStyle} /></div>
+                {/* Fix B (2026-07-20) — .pm-drawer-grid collapses to 1-col
+                    on phone (~301px drawer content) and stays 2-col on
+                    desktop (~344px). See globals.css header for math.
+                    .pm-drawer-grid-full replaces inline gridColumn:'span 2'
+                    — spans whatever the current column count is (2 on
+                    desktop, 1 on phone), which is exactly what we want. */}
+                <div className="pm-drawer-grid">
+                  <div className="pm-drawer-grid-full"><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Full Name</label><input value={editingResident.name || ''} onChange={e => setEditingResident({...editingResident, name: e.target.value})} style={inputStyle} /></div>
+                  <div className="pm-drawer-grid-full"><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Email</label><input value={editingResident.email || ''} onChange={e => setEditingResident({...editingResident, email: e.target.value})} style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Phone</label><input value={editingResident.phone || ''} onChange={e => setEditingResident({...editingResident, phone: e.target.value})} style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Unit</label><input value={editingResident.unit || ''} onChange={e => setEditingResident({...editingResident, unit: e.target.value})} style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Space</label><input value={editingResident.space || ''} onChange={e => setEditingResident({...editingResident, space: e.target.value})} style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Lease End</label><input type="date" value={editingResident.lease_end || ''} onChange={e => setEditingResident({...editingResident, lease_end: e.target.value})} style={inputStyle} /></div>
                 </div>
+                {/* Fix B — primary action buttons bumped to padding:12px so tap
+                    target ≥40px on phone touch surfaces. */}
                 <div style={{ display:'flex', gap:'8px', marginTop:'4px', marginBottom:'16px' }}>
-                  <button onClick={saveResident} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Save Changes</button>
-                  <button onClick={() => setEditingResident(null)} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                  <button onClick={saveResident} style={{ flex:1, padding:'12px 14px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer' }}>Save Changes</button>
+                  <button onClick={() => setEditingResident(null)} style={{ padding:'12px 16px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                 </div>
                 <div style={{ borderTop:'1px solid #2a2f3d', paddingTop:'14px' }}>
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
@@ -3812,7 +3820,11 @@ export default function ManagerPortal() {
                   </div>
                   {showAddVehicle && (
                     <div style={{ background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', padding:'12px', marginBottom:'10px' }}>
-                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                      {/* Fix B (2026-07-20) — .pm-drawer-grid collapses to
+                          1-col on phone drawer (~301px content), 2-col on
+                          desktop drawer (~344px). Preserves the desktop
+                          2-col add-vehicle form. */}
+                      <div className="pm-drawer-grid">
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate *</label><input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inputStyle}>{['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}</select></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Make</label><input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} placeholder="Toyota" style={inputStyle} /></div>
@@ -3822,7 +3834,7 @@ export default function ManagerPortal() {
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Space</label><input value={newVehicle.space} onChange={e => setNewVehicle({...newVehicle, space: e.target.value})} placeholder="A-12" style={inputStyle} /></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Permit Expiry</label><input type="date" value={newVehicle.permit_expiry} onChange={e => setNewVehicle({...newVehicle, permit_expiry: e.target.value})} style={inputStyle} /></div>
                         {/* B166 — owner picker. Pre-loaded with editingResident on modal open. */}
-                        <div style={{ gridColumn:'span 2' }}>
+                        <div className="pm-drawer-grid-full">
                           <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Vehicle Owner</label>
                           <select value={vehicleOwnerEmail} onChange={e => setVehicleOwnerEmail(e.target.value)} style={inputStyle}>
                             <option value="">Unit-level / shared (no owner)</option>
@@ -3835,9 +3847,11 @@ export default function ManagerPortal() {
                           )}
                         </div>
                       </div>
+                      {/* Fix B — add-vehicle action buttons bumped from 9px
+                          padding → 11px so tap target ≥40px on phone. */}
                       <div style={{ display:'flex', gap:'8px' }}>
-                        <button onClick={() => addVehicle(editingResident.unit)} disabled={addVehicleSubmitting} style={{ flex:1, padding:'9px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor: addVehicleSubmitting ? 'not-allowed' : 'pointer', opacity: addVehicleSubmitting ? 0.6 : 1 }}>{addVehicleSubmitting ? 'Adding…' : 'Add Vehicle'}</button>
-                        <button onClick={() => setShowAddVehicle(false)} style={{ padding:'9px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                        <button onClick={() => addVehicle(editingResident.unit)} disabled={addVehicleSubmitting} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor: addVehicleSubmitting ? 'not-allowed' : 'pointer', opacity: addVehicleSubmitting ? 0.6 : 1 }}>{addVehicleSubmitting ? 'Adding…' : 'Add Vehicle'}</button>
+                        <button onClick={() => setShowAddVehicle(false)} style={{ padding:'11px 14px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                       </div>
                     </div>
                   )}
@@ -3852,7 +3866,12 @@ export default function ManagerPortal() {
                           </div>
                           <span style={{ background: v.is_active ? '#1a3a1a' : '#3a1a1a', color: v.is_active ? '#4caf50' : '#f44336', padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', alignSelf:'flex-start' }}>{v.is_active ? 'Active' : 'Inactive'}</span>
                         </div>
-                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'6px', fontSize:'11px', marginBottom:'8px' }}>
+                        {/* Fix B — per-vehicle mini-grid (read-only) switched to
+                            .pm-drawer-grid. Was 3-col-everywhere (cramped on
+                            phone at ~95px per column); now 2-col desktop /
+                            1-col phone. Read-only display, no touch-target
+                            concerns; fontSize + marginBottom preserved inline. */}
+                        <div className="pm-drawer-grid" style={{ fontSize:'11px', marginBottom:'8px' }}>
                           <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
                           <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state}</span></div>
                           <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
