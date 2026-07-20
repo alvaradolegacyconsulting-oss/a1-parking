@@ -17,6 +17,7 @@
 //   - Phase 4: error-rate tile (audit_logs) + honest "TBD" elsewhere
 
 import { useState, useEffect } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '../supabase'
 
 type Tab = 'console' | 'onboarding' | 'system'
@@ -36,7 +37,17 @@ interface CompanyAggregate {
   plate_reads_24h:   number
   plate_reads_30d:   number  // B228 Phase 2 — extended
   active_flags:      number  // B228 Phase 2 — extended (placeholder; spike flags live in their own state)
+  // Client-side join from companies.company_env (2026-07-20 — company_env
+  // console-toggle commit). Optional for defensive rendering if the join
+  // ever misses (unknown id in the env map → undefined). Values from the
+  // company_env_enum: 'production' | 'test' | 'demo'.
+  company_env?:      'production' | 'test' | 'demo'
 }
+
+// Filter for the subscribers list — 4-way (matches company_env_enum
+// values + 'all'). Default 'all' — never a silently-filtered subset on
+// load. URL param ?env= preserves state across reloads + browser history.
+type EnvFilter = 'all' | 'production' | 'test' | 'demo'
 
 // B228 Phase 2 — spike flag row from get_console_spike_flags
 interface SpikeFlag {
@@ -102,6 +113,26 @@ export default function AdminConsolePage() {
   const [drawerCompany, setDrawerCompany] = useState<CompanyDetail | null>(null)
   const [drawerLoading, setDrawerLoading] = useState(false)
   const [searchQ, setSearchQ] = useState('')
+  // 2026-07-20 company_env console toggle — 4-way filter, default 'all'.
+  // Initialized from ?env= URL param (via useSearchParams below) so a
+  // reloaded/bookmarked filtered view survives. Every setter also pushes
+  // the router so browser back/forward reflects the state.
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const initialEnv: EnvFilter = ((): EnvFilter => {
+    const p = searchParams?.get('env')
+    return p === 'production' || p === 'test' || p === 'demo' ? p : 'all'
+  })()
+  const [envFilter, setEnvFilterState] = useState<EnvFilter>(initialEnv)
+  function setEnvFilter(next: EnvFilter) {
+    setEnvFilterState(next)
+    // URL sync — replace so filter changes don't spam browser history but
+    // an explicit back button still crosses out of the filter.
+    const url = new URL(window.location.href)
+    if (next === 'all') url.searchParams.delete('env')
+    else                url.searchParams.set('env', next)
+    router.replace(url.pathname + url.search, { scroll: false })
+  }
   // B228 Phase 2 — spike flags, PM per-property drill, cost rates
   const [spikeFlags, setSpikeFlags] = useState<SpikeFlag[]>([])
   const [pmPropertyPermits, setPmPropertyPermits] = useState<PmPropertyPermit[] | null>(null)
@@ -150,7 +181,7 @@ export default function AdminConsolePage() {
       // and the error-rate 24h count. All super-admin-gated; role check
       // above already passed.
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-      const [aggRes, flagsRes, settingsRes, errorRateRes] = await Promise.all([
+      const [aggRes, flagsRes, settingsRes, errorRateRes, envRes] = await Promise.all([
         supabase.rpc('get_console_aggregates'),
         supabase.rpc('get_console_spike_flags'),
         supabase.from('platform_settings').select('*').eq('id', 1).maybeSingle(),
@@ -162,6 +193,13 @@ export default function AdminConsolePage() {
           .select('id', { count: 'exact', head: true })
           .gte('created_at', twentyFourHoursAgo)
           .or('action.ilike.%FAIL%,new_values->>error_class.not.is.null'),
+        // 2026-07-20 company_env console toggle — companion query for the
+        // client-side env join. get_console_aggregates() does not return
+        // company_env (added post-RPC); rather than extend the RPC (a
+        // migration surface for a UI feature), fetch a lightweight id →
+        // env map and join in JS below. Indexed on company_env
+        // (companies_company_env_idx from 20260708 layer1), tiny payload.
+        supabase.from('companies').select('id, company_env'),
       ])
       if (cancelled) return
       if (aggRes.error) {
@@ -169,7 +207,19 @@ export default function AdminConsolePage() {
         setLoading(false)
         return
       }
-      setAggregates((aggRes.data ?? []) as CompanyAggregate[])
+      // Build id → company_env map from the companion query, then join.
+      // Defensive: if envRes errored (non-fatal), the map is empty and
+      // aggregates render with company_env=undefined (Env pill shows '—',
+      // filter shows all rows regardless of envFilter — never hides A1).
+      const envMap = new Map<number, 'production' | 'test' | 'demo'>()
+      for (const r of (envRes.data ?? []) as Array<{ id: number; company_env: 'production' | 'test' | 'demo' }>) {
+        envMap.set(r.id, r.company_env)
+      }
+      const aggWithEnv = ((aggRes.data ?? []) as CompanyAggregate[]).map(a => ({
+        ...a,
+        company_env: envMap.get(a.company_id),
+      }))
+      setAggregates(aggWithEnv)
       // Spike flags + settings + error-rate are non-fatal — console
       // renders without them (with sensible defaults).
       if (!flagsRes.error) setSpikeFlags((flagsRes.data ?? []) as SpikeFlag[])
@@ -418,9 +468,15 @@ export default function AdminConsolePage() {
   const estCost30dUsd     = totalScans30d * (costRates.plate_read_usd ?? 0)
   const activeFlagsCount  = spikeFlags.length
 
-  const filteredAggregates = searchQ.trim().length === 0
-    ? aggregates
-    : aggregates.filter(a => a.company_name.toLowerCase().includes(searchQ.toLowerCase().trim()))
+  // 2026-07-20 — filter chain now compounds env filter + search. Env
+  // filter first (usually the more selective one — only 1 production row
+  // today), then search. Defensive: rows with company_env=undefined (env
+  // map missed) render in ALL filter modes so A1 can never be hidden by
+  // a transient map load failure.
+  const filteredAggregates = aggregates
+    .filter(a => envFilter === 'all' || a.company_env === undefined || a.company_env === envFilter)
+    .filter(a => searchQ.trim().length === 0 || a.company_name.toLowerCase().includes(searchQ.toLowerCase().trim()))
+  const envFilterHiddenCount = aggregates.length - aggregates.filter(a => envFilter === 'all' || a.company_env === undefined || a.company_env === envFilter).length
 
   // B228 Phase 2 — top consumer for the cost section (by 30d count)
   const topConsumer = aggregates.slice().sort((a, b) => b.plate_reads_30d - a.plate_reads_30d).find(a => a.plate_reads_30d > 0)
@@ -540,11 +596,77 @@ export default function AdminConsolePage() {
                   style={{ background: '#0f1117', border: '1px solid #2a2f3d', color: 'white', padding: '6px 10px', borderRadius: 6, fontSize: 12, minWidth: 200, fontFamily: 'Arial' }} />
               </div>
 
+              {/* 2026-07-20 — company_env 4-way filter (All | Production | Test | Demo).
+                  Default 'all'; URL param ?env= preserves. A1 is currently the only
+                  production row — a forgotten "Test only" filter would hide the live
+                  customer entirely. The loud banner below is the load-bearing signal;
+                  don't collapse it into a subtle pill. */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, marginBottom: 10 }}>
+                {(['all', 'production', 'test', 'demo'] as const).map(env => {
+                  const active = envFilter === env
+                  const label  = env === 'all' ? 'All' : env === 'production' ? 'Production' : env === 'test' ? 'Test' : 'Demo'
+                  return (
+                    <button key={env} onClick={() => setEnvFilter(env)}
+                      style={{
+                        padding: '5px 12px',
+                        background: active ? GOLD : '#1e2535',
+                        color: active ? '#0f1117' : '#aaa',
+                        border: `1px solid ${active ? GOLD : '#3a4055'}`,
+                        borderRadius: 14,
+                        fontSize: 11,
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        fontFamily: 'Arial',
+                      }}>
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {envFilter !== 'all' && (
+                <div style={{
+                  background: 'rgba(201,162,39,0.10)',
+                  border: `1px solid ${GOLD}`,
+                  borderRadius: 8,
+                  padding: '8px 12px',
+                  marginBottom: 10,
+                  color: GOLD,
+                  fontSize: 12,
+                  fontWeight: 'bold',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  flexWrap: 'wrap' as const,
+                }}>
+                  <span>⚠ VIEWING: {envFilter.toUpperCase()} ONLY</span>
+                  <span style={{ color: '#aaa', fontWeight: 'normal', fontSize: 11 }}>
+                    · {envFilterHiddenCount} {envFilterHiddenCount === 1 ? 'company' : 'companies'} hidden
+                  </span>
+                  <button onClick={() => setEnvFilter('all')}
+                    style={{
+                      marginLeft: 'auto',
+                      padding: '3px 10px',
+                      background: 'transparent',
+                      color: GOLD,
+                      border: `1px solid ${GOLD}`,
+                      borderRadius: 12,
+                      fontSize: 10,
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      fontFamily: 'Arial',
+                    }}>
+                    Clear filter
+                  </button>
+                </div>
+              )}
+
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr style={{ color: '#666', textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.05em' }}>
                       <Th>Company</Th>
+                      <Th align="center">Env</Th>
                       <Th>Track</Th>
                       <Th>Tier</Th>
                       <Th align="center">State</Th>
@@ -563,6 +685,23 @@ export default function AdminConsolePage() {
                         <Td>
                           <span style={{ color: 'white', fontWeight: 'bold' }}>{a.company_name}</span>
                         </Td>
+                        {/* 2026-07-20 — Env pill. Green production / orange test /
+                            purple demo / '—' when unknown (env-map miss, defensive). */}
+                        <Td align="center">
+                          {a.company_env ? (
+                            <span style={{
+                              background: a.company_env === 'production' ? '#1a3a1a' : a.company_env === 'test' ? '#3a2a1a' : '#1a1a3a',
+                              color:      a.company_env === 'production' ? '#4caf50' : a.company_env === 'test' ? '#f0a020' : '#8090d0',
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              fontSize: 10,
+                              fontWeight: 'bold',
+                              letterSpacing: '0.04em',
+                            }}>
+                              {a.company_env.toUpperCase()}
+                            </span>
+                          ) : <span style={{ color: '#555' }}>—</span>}
+                        </Td>
                         <Td><span style={{ color: '#aaa' }}>{a.company_tier_type ?? '—'}</span></Td>
                         <Td><span style={{ color: '#aaa' }}>{a.company_tier ?? '—'}</span></Td>
                         <Td align="center"><StateBadge state={a.account_state} isActive={a.is_active} /></Td>
@@ -576,7 +715,7 @@ export default function AdminConsolePage() {
                       </tr>
                     ))}
                     {filteredAggregates.length === 0 && (
-                      <tr><td colSpan={9} style={{ padding: 14, color: '#555', textAlign: 'center' }}>No subscribers match.</td></tr>
+                      <tr><td colSpan={10} style={{ padding: 14, color: '#555', textAlign: 'center' }}>No subscribers match.</td></tr>
                     )}
                   </tbody>
                 </table>
