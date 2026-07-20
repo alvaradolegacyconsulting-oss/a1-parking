@@ -293,27 +293,69 @@ const PM_ENTERPRISE: TierConfigShape = {
   [F.DEDICATED_ACCOUNT_MANAGER]: true,
 }
 
-// ENF_ENFORCEMENT_ONLY — INTERIM (2026-07-05): verbatim snapshot of
-// ENF_LEGACY's PRE-all-on shape, spelled out explicitly so this
-// barebones tier does NOT move when ENF_LEGACY grows PM flags above.
-// Every one of the 32 flags + 6 caps captured as literal so any future
-// change to ENF_GROWTH / ENF_STARTER / ENF_LEGACY cannot silently drag
-// enf_only along.
+// ENF_ENFORCEMENT_ONLY — Barebones-PM matrix per locked doc
+// `enf_enforcement_only_LOCKED_matrix_FOR_MATEO.md` (2026-07-05),
+// encoded 2026-07-20 replacing the interim ENF_LEGACY-pre-flip clone.
 //
-// THIS IS NOT THE FINAL barebones matrix. The real
-// ENF_ENFORCEMENT_ONLY (60s video / 10 photos / no resident self-
-// service / premium off) lands as its own Bar-2 slice BEFORE
-// public_signup_open flips (per architect's ENF_ENFORCEMENT_ONLY
-// barebones-PM matrix work, awaiting Jose per-flag calls).
+// Every flag literal-defined (no spread) so future ENF_STARTER /
+// ENF_GROWTH / ENF_LEGACY changes cannot silently drag enf_only along.
+// This is the source of truth for the tier; the locked doc is the
+// architectural spec.
+//
+// ── CAPS (Jose confirmations 2026-07-20) ─────────────────────────
+// VIDEO_MAX_DURATION_SECONDS: 60 — live Growth value; locked doc's
+//   "90 ⚠" was aspirational, kickoff summary correct.
+// MAX_PHOTOS_PER_VIOLATION: 10 — live Growth value (B42); locked
+//   doc's "capped ⚠" was placeholder.
+// MAX_VISITOR_PASS_DURATION_HOURS: 24 — Jose lock 2026-07-05 ("24
+//   across the board, not a tier lever"). Locked doc's 48 was
+//   superseded the same day; every live tier ships 24. Encoding 48
+//   would break the resident/visitor form dropdowns (hardcoded max=24).
+// MAX_VISITOR_PASSES_PER_PROPERTY_MONTH: -1 — matches locked doc.
+// MAX_PROPERTIES / MAX_DRIVERS: -1 — matches locked doc.
+// BULK_UPLOAD row cap (500) is a GLOBAL constant at
+//   app/lib/bulk-upload-helpers.ts MAX_UPLOAD_ROWS, NOT a per-tier
+//   value. Nothing to encode here.
+//
+// ── PM ON (operator-managed) ─────────────────────────────────────
+// PROPERTY_MANAGEMENT, VISITOR_PASS_SELF_SERVICE, MULTIPLE_MANAGERS_
+// PER_PROPERTY all flipped TRUE (were FALSE in the interim clone).
+// These are the operator-managed PM flags — the tier includes both
+// residents and spaces (no split per locked matrix).
+//
+// ── PREMIUM/DEPTH OFF ────────────────────────────────────────────
+// ADVANCED_ANALYTICS, CUSTOM_DATE_RANGE_EXPORTS, ADVANCED_PDF_REPORTS,
+// VIDEO_UPLOADS_FULL, PRIORITY_SUPPORT, DEDICATED_ACCOUNT_MANAGER,
+// API_ACCESS_READ_ONLY — all flipped FALSE (were TRUE from the pre-
+// flip Legacy clone). These are the Legacy-unlock capabilities;
+// enforcement-only doesn't get them.
+//
+// ── RESIDENT SELF-SERVICE OFF ────────────────────────────────────
+// RESIDENT_PORTAL, RESIDENT_SELF_REGISTRATION, VEHICLE_REGISTRY —
+// all FALSE. This is the meter line: turning these ON is the Legacy
+// unlock. Resident-requested guest (RT-4) is an implicit consequence
+// of RESIDENT_PORTAL: false (no flag of its own; no portal → residents
+// can't request guests). Manager-add-vehicle + manager-add-guest-auth
+// baseline work is NOT gated on any of these flags (audited 2026-07-20
+// via hasFeature() call-site enumeration) — the only RESIDENT_PORTAL
+// gate is the CA-portal Resident-Signup QR card display, which
+// correctly hides for enforcement-only.
+//
+// ── VIDEO_UPLOADS_LIMITED ON (new) ───────────────────────────────
+// Was FALSE in the interim clone (inherited from Legacy's "full only,
+// limited off" pattern). Locked doc puts VIDEO_UPLOADS_LIMITED in the
+// enforcement-core ON set — enforcement-only gets limited video (60s
+// cap above) but not FULL uploads.
 const ENF_ENFORCEMENT_ONLY: TierConfigShape = {
-  // Numeric caps (from ENF_LEGACY pre-flip)
+  // ── Numeric caps ────────────────────────────────────────────────
   [F.MAX_PROPERTIES]: -1,
   [F.MAX_DRIVERS]: -1,
-  [F.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH]: 0,      // inherited from ENF_STARTER (never overridden)
-  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 0,            // inherited from ENF_STARTER (never overridden)
-  [F.VIDEO_MAX_DURATION_SECONDS]: 120,
-  [F.MAX_PHOTOS_PER_VIOLATION]: -1,
-  // Enforcement-track core (from ENF_STARTER + ENF_GROWTH AI_PLATE_SCANNING override)
+  [F.MAX_VISITOR_PASSES_PER_PROPERTY_MONTH]: -1,     // was 0 (inherited); locked → no cap
+  [F.MAX_VISITOR_PASS_DURATION_HOURS]: 24,           // was 0 (inherited); Jose lock → 24 uniform
+  [F.VIDEO_MAX_DURATION_SECONDS]: 60,                // was 120; matches live Growth
+  [F.MAX_PHOTOS_PER_VIOLATION]: 10,                  // was -1; matches live Growth (B42)
+
+  // ── ON — enforcement core (12 flags per locked matrix) ─────────
   [F.AI_PLATE_SCANNING]: true,
   [F.VIOLATION_DOCUMENTATION]: true,
   [F.TOW_TICKET_GENERATION]: true,
@@ -323,38 +365,42 @@ const ENF_ENFORCEMENT_ONLY: TierConfigShape = {
   [F.PHOTO_UPLOADS]: true,
   [F.FINDMYTOWEDCAR_LINKS]: true,
   [F.CSV_EXPORT_BASIC]: true,
-  // Cross-track core (from ENF_STARTER)
+  [F.TOWBOOK_CSV_EXPORT]: true,
+  [F.MANAGER_PLATE_LOOKUP]: true,     // B75 — manual plate lookup baseline utility
+  [F.VIDEO_UPLOADS_LIMITED]: true,    // was false; locked doc puts in enforcement-core ON
+
+  // ── ON — operator-managed PM (7 flags per locked matrix) ───────
+  [F.PROPERTY_MANAGEMENT]: true,               // was false — PM ON (residents + spaces, no split)
   [F.RESIDENT_MANAGEMENT]: true,
+  [F.VISITOR_PASS_SELF_SERVICE]: true,         // was false — PM ON
   [F.VISITOR_PASS_MANAGEMENT]: true,
+  [F.BULK_UPLOAD]: true,
+  [F.MULTIPLE_MANAGERS_PER_PROPERTY]: true,    // was false — PM ON
+  [F.LEASING_AGENT_ROLE]: true,
+
+  // ── ON — universal (6 flags per locked matrix) ─────────────────
   [F.MANAGER_PORTAL]: true,
   [F.AUDIT_LOGS]: true,
   [F.CUSTOM_LOGO_BRANDING]: true,
   [F.MOBILE_FRIENDLY_PORTALS]: true,
   [F.BASIC_DASHBOARDS]: true,
   [F.EMAIL_SUPPORT]: true,
-  // PM-track flags — FALSE on enforcement track (barebones — the whole
-  // point). Frozen at the pre-flip shape so the ENF_LEGACY all-on move
-  // above does not touch enf_only.
-  [F.PROPERTY_MANAGEMENT]: false,
-  [F.RESIDENT_SELF_REGISTRATION]: false,
-  [F.VISITOR_PASS_SELF_SERVICE]: false,
+
+  // ── OFF — resident self-service (3 flags — meter line → Legacy unlock)
+  // RT-4 (resident-requested guest) is an implicit consequence of
+  // RESIDENT_PORTAL: false; no separate flag exists.
   [F.RESIDENT_PORTAL]: false,
+  [F.RESIDENT_SELF_REGISTRATION]: false,
   [F.VEHICLE_REGISTRY]: false,
-  [F.MULTIPLE_MANAGERS_PER_PROPERTY]: false,
-  [F.MANAGER_PLATE_LOOKUP]: true,   // B75 — manual plate lookup baseline utility
-  // Tiered cross-track (from ENF_GROWTH + ENF_LEGACY overrides)
-  [F.LEASING_AGENT_ROLE]: true,
-  [F.ADVANCED_ANALYTICS]: true,
-  [F.CUSTOM_DATE_RANGE_EXPORTS]: true,
-  [F.ADVANCED_PDF_REPORTS]: true,
-  [F.PRIORITY_SUPPORT]: true,
-  [F.DEDICATED_ACCOUNT_MANAGER]: true,
-  [F.BULK_UPLOAD]: true,
-  // Tiered enforcement-only (from ENF_GROWTH + ENF_LEGACY overrides)
-  [F.TOWBOOK_CSV_EXPORT]: true,
-  [F.API_ACCESS_READ_ONLY]: true,
-  [F.VIDEO_UPLOADS_LIMITED]: false,   // Legacy override kept: full only
-  [F.VIDEO_UPLOADS_FULL]: true,
+
+  // ── OFF — premium/depth (7 flags → Legacy unlock) ──────────────
+  [F.ADVANCED_ANALYTICS]: false,               // was true (pre-flip clone artifact)
+  [F.CUSTOM_DATE_RANGE_EXPORTS]: false,        // was true
+  [F.ADVANCED_PDF_REPORTS]: false,             // was true
+  [F.VIDEO_UPLOADS_FULL]: false,               // was true
+  [F.PRIORITY_SUPPORT]: false,                 // was true
+  [F.DEDICATED_ACCOUNT_MANAGER]: false,        // was true
+  [F.API_ACCESS_READ_ONLY]: false,             // was true
 }
 
 const PM_PM_ONLY: TierConfigShape = { ...PM_ENTERPRISE }
