@@ -67,6 +67,27 @@ interface PmPropertyPermit {
   approved_permits: number
 }
 
+// 2026-07-20 — subscriber-footprint counts for the drawer. Read-only
+// counts fetched client-side via admin cross-company RLS on
+// user_roles (admin_all_user_roles, migration 20260611), residents
+// (residents_admin_all, migration 20260702), and drivers
+// (admin_all_drivers, TO public + get_my_role()='admin' qual — Jose
+// verified 2026-07-20 via pg_policies query). No RPC surface added.
+//
+// All counts is_active-agnostic — a suspended resident is still on
+// the books per the deactivation model. Login gap =
+// residents_full − resident_role_logins; large gap signals low
+// adoption (people entered but never registered).
+interface FootprintCounts {
+  residents:              number   // full footprint (residents table)
+  resident_role_logins:   number   // user_roles.role='resident' subset — login coverage
+  managers:               number
+  leasing_agents:         number
+  company_admins:         number
+  drivers:                number   // full footprint (drivers table)
+  by_property:            Array<{ property: string; residents: number }>
+}
+
 // B228 Phase 4 — platform_settings row shape (subset the console cares
 // about; there are more fields but we only read/write the ones the
 // migrated sections touch, matching legacy /admin behavior).
@@ -136,6 +157,13 @@ export default function AdminConsolePage() {
   // B228 Phase 2 — spike flags, PM per-property drill, cost rates
   const [spikeFlags, setSpikeFlags] = useState<SpikeFlag[]>([])
   const [pmPropertyPermits, setPmPropertyPermits] = useState<PmPropertyPermit[] | null>(null)
+  // 2026-07-20 — subscriber-footprint counts + collapsed/nested toggle state.
+  // footprint = null → not loaded yet; error via a separate boolean.
+  // Collapsed by default so drawer doesn't grow to a wall of numbers.
+  const [footprint,         setFootprint]         = useState<FootprintCounts | null>(null)
+  const [footprintError,    setFootprintError]    = useState<string | null>(null)
+  const [footprintExpanded, setFootprintExpanded] = useState(false)
+  const [byPropExpanded,    setByPropExpanded]    = useState(false)
   const [costRates, setCostRates] = useState<{ plate_read_usd: number; vin_lookup_usd: number }>({ plate_read_usd: 0.012, vin_lookup_usd: 0.05 })
   const [acking, setAcking] = useState<string | null>(null)
   // B228 Phase 3 — deactivate-subscriber state
@@ -420,6 +448,10 @@ export default function AdminConsolePage() {
     setDrawerLoading(true)
     setDrawerCompany(null)
     setPmPropertyPermits(null)
+    setFootprint(null)
+    setFootprintError(null)
+    setFootprintExpanded(false)
+    setByPropExpanded(false)
     const { data, error } = await supabase
       .from('companies')
       .select('id, name, primary_contact_name, billing_email, phone, address, tier, tier_type, account_state, is_active, created_at, stripe_customer_id, tdlr_license_number')
@@ -442,6 +474,85 @@ export default function AdminConsolePage() {
       const { data: permits, error: permitsErr } = await supabase.rpc('get_console_pm_property_permits', { p_company_id: companyId })
       if (!permitsErr) setPmPropertyPermits((permits ?? []) as PmPropertyPermit[])
       else console.warn('[admin_console] pm property permits load failed:', permitsErr.message)
+    }
+
+    // 2026-07-20 — subscriber footprint counts. Six parallel count-only
+    // queries + one per-property groupBy, all via existing admin_all_*
+    // RLS (no RPC). All is_active-agnostic — "on the books" count.
+    //
+    // .eq('company', name) NOT .ilike — per convention codified in
+    // 743e519 (pm_plate_lookup hardening). Both sides are trim-clean
+    // post the July 15 trim triggers + Jose's July 20 whitespace check
+    // (0 rows). This surface is another one the future company_id
+    // migration retires structurally.
+    //
+    // count-only via head:true + count:'exact' — no row payload over
+    // the wire. Fast even with much larger tenants than today.
+    //
+    // Defensive: if the Promise.all errors, setFootprintError captures
+    // the message and the section renders a subtle unavailable-plus-
+    // retry chip. Drawer contact/billing/state content unaffected.
+    try {
+      const name = detail.name
+      const [resRes, resLoginRes, mgrRes, laRes, caRes, drvRes, byPropRes] = await Promise.all([
+        supabase.from('residents')
+          .select('id', { count: 'exact', head: true })
+          .eq('company', name),
+        supabase.from('user_roles')
+          .select('id', { count: 'exact', head: true })
+          .eq('company', name)
+          .eq('role', 'resident'),
+        supabase.from('user_roles')
+          .select('id', { count: 'exact', head: true })
+          .eq('company', name)
+          .eq('role', 'manager'),
+        supabase.from('user_roles')
+          .select('id', { count: 'exact', head: true })
+          .eq('company', name)
+          .eq('role', 'leasing_agent'),
+        supabase.from('user_roles')
+          .select('id', { count: 'exact', head: true })
+          .eq('company', name)
+          .eq('role', 'company_admin'),
+        supabase.from('drivers')
+          .select('id', { count: 'exact', head: true })
+          .eq('company', name),
+        // Per-property residents — one row per property, count-agg. Small
+        // payload (property name + count; a 30-property subscriber = 30
+        // rows). Client-side groupBy via manual reduce because Supabase
+        // JS doesn't expose GROUP BY; fetch minimal rows and aggregate.
+        supabase.from('residents')
+          .select('property')
+          .eq('company', name),
+      ])
+      // Collect any per-request errors — treat any non-null as failure
+      // (fail-safe: partial counts would mislead more than "unavailable").
+      const err = resRes.error ?? resLoginRes.error ?? mgrRes.error
+                 ?? laRes.error ?? caRes.error ?? drvRes.error ?? byPropRes.error
+      if (err) {
+        setFootprintError(err.message)
+      } else {
+        // Client-side groupBy for by_property (no GROUP BY over PostgREST).
+        const byPropMap = new Map<string, number>()
+        for (const r of (byPropRes.data ?? []) as Array<{ property: string | null }>) {
+          const key = r.property ?? '(no property)'
+          byPropMap.set(key, (byPropMap.get(key) ?? 0) + 1)
+        }
+        const by_property = Array.from(byPropMap.entries())
+          .map(([property, residents]) => ({ property, residents }))
+          .sort((a, b) => b.residents - a.residents)
+        setFootprint({
+          residents:            resRes.count ?? 0,
+          resident_role_logins: resLoginRes.count ?? 0,
+          managers:             mgrRes.count ?? 0,
+          leasing_agents:       laRes.count ?? 0,
+          company_admins:       caRes.count ?? 0,
+          drivers:              drvRes.count ?? 0,
+          by_property,
+        })
+      }
+    } catch (e) {
+      setFootprintError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -984,6 +1095,139 @@ export default function AdminConsolePage() {
               <DetailRow label="Stripe customer" value={drawerCompany.stripe_customer_id} mono />
               <DetailRow label="TDLR license"   value={drawerCompany.tdlr_license_number} />
 
+              {/* 2026-07-20 — Subscriber footprint. Collapsed by default;
+                  expand for top-line role counts + optional login gap;
+                  nested expand for per-property residents breakdown.
+                  Defensive: if the counts fetch failed (footprintError set),
+                  section shows subtle unavailable notice; drawer's contact
+                  + billing + state content unaffected. */}
+              <hr style={{ border: 'none', borderTop: '1px solid #2a2f3d', margin: '14px 0' }} />
+              <div>
+                <button onClick={() => setFootprintExpanded(v => !v)}
+                  style={{
+                    width: '100%',
+                    background: 'transparent',
+                    border: 'none',
+                    padding: 0,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    color: GOLD,
+                    fontSize: 10,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    fontWeight: 'bold',
+                    fontFamily: 'Arial',
+                  }}>
+                  <span>{footprintExpanded ? '▾' : '▸'} Footprint</span>
+                  {footprint !== null && !footprintExpanded && (
+                    <span style={{ color: '#666', fontSize: 10, fontWeight: 'normal', textTransform: 'none' }}>
+                      {footprint.residents} residents · {footprint.managers + footprint.leasing_agents} PM/LA · {footprint.drivers} drivers
+                    </span>
+                  )}
+                  {footprint === null && footprintError === null && !footprintExpanded && (
+                    <span style={{ color: '#555', fontSize: 10, fontStyle: 'italic', textTransform: 'none' }}>Loading…</span>
+                  )}
+                </button>
+
+                {footprintExpanded && (
+                  <div style={{ marginTop: 10 }}>
+                    {footprintError !== null && (
+                      <div style={{
+                        background: '#1e2535',
+                        border: '1px solid #3a4055',
+                        borderRadius: 6,
+                        padding: '8px 10px',
+                        color: '#888',
+                        fontSize: 11,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                      }}>
+                        <span>Footprint counts unavailable.</span>
+                        <button onClick={() => { setFootprintError(null); void openDrawer(drawerCompany.id) }}
+                          style={{ background: 'transparent', color: GOLD, border: `1px solid ${GOLD}`, padding: '2px 8px', borderRadius: 10, fontSize: 10, cursor: 'pointer', fontFamily: 'Arial' }}>
+                          Retry
+                        </button>
+                      </div>
+                    )}
+                    {footprintError === null && footprint === null && (
+                      <div style={{ color: '#555', fontSize: 11, fontStyle: 'italic', padding: '4px 0' }}>Loading counts…</div>
+                    )}
+                    {footprint !== null && (
+                      <>
+                        {/* Top-line role counts */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, marginBottom: 8 }}>
+                          <FootprintCell label="Residents"       value={footprint.residents} />
+                          <FootprintCell label="Managers"        value={footprint.managers} />
+                          <FootprintCell label="Leasing agents"  value={footprint.leasing_agents} />
+                          <FootprintCell label="Company admins"  value={footprint.company_admins} />
+                          <FootprintCell label="Drivers"         value={footprint.drivers} />
+                        </div>
+
+                        {/* Resident login gap indicator — footprint minus role-logins.
+                            "128 residents on the books, only 42 registered" is a real
+                            adoption signal Jose called out. Zero-safe: divisor guarded. */}
+                        {footprint.residents > 0 && (
+                          <div style={{
+                            background: 'rgba(201,162,39,0.06)',
+                            border: '1px solid #3a4055',
+                            borderRadius: 6,
+                            padding: '6px 10px',
+                            fontSize: 11,
+                            color: '#aaa',
+                            marginBottom: 8,
+                          }}>
+                            <span style={{ color: '#888' }}>Resident logins: </span>
+                            <span style={{ color: 'white', fontWeight: 'bold' }}>{footprint.resident_role_logins}</span>
+                            <span style={{ color: '#666' }}> / {footprint.residents}</span>
+                            {(footprint.residents - footprint.resident_role_logins) > 0 && (
+                              <span style={{ color: '#888', marginLeft: 8 }}>
+                                · {footprint.residents - footprint.resident_role_logins} without a login
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Per-property residents nested expand */}
+                        {footprint.by_property.length > 0 && (
+                          <div>
+                            <button onClick={() => setByPropExpanded(v => !v)}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                padding: 0,
+                                cursor: 'pointer',
+                                color: '#aaa',
+                                fontSize: 10,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                                fontWeight: 'bold',
+                                fontFamily: 'Arial',
+                                marginBottom: 6,
+                              }}>
+                              {byPropExpanded ? '▾' : '▸'} Residents by property ({footprint.by_property.length})
+                            </button>
+                            {byPropExpanded && (
+                              <div style={{ paddingLeft: 12, borderLeft: '1px solid #2a2f3d' }}>
+                                {footprint.by_property.map(bp => (
+                                  <div key={bp.property} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 11 }}>
+                                    <span style={{ color: '#aaa', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bp.property}</span>
+                                    <span style={{ color: 'white', fontWeight: 'bold' }}>{bp.residents}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* B228 Phase 2 — per-property approved-permit breakdown.
                   PM-track subscribers only. Section omitted for enforcement
                   (RPC returns empty). Sales/health signal: which property
@@ -1130,6 +1374,18 @@ function DetailRow({ label, value, mono, notSetCopy }: { label: string; value: s
       <span style={{ color: set ? 'white' : '#555', fontSize: 12, textAlign: 'right', maxWidth: 220, wordBreak: 'break-word', fontFamily: mono ? 'monospace' : 'Arial' }}>
         {set ? value : (notSetCopy ?? '—')}
       </span>
+    </div>
+  )
+}
+
+// 2026-07-20 — footprint role-count tile. One cell per role in the
+// Footprint section grid. Zero renders as "0", not blank — per Mateo:
+// a subscriber with zero of a role should read "Drivers: 0".
+function FootprintCell({ label, value }: { label: string; value: number }) {
+  return (
+    <div style={{ background: '#0f1117', border: '1px solid #2a2f3d', borderRadius: 6, padding: '6px 10px' }}>
+      <p style={{ color: '#666', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 2px' }}>{label}</p>
+      <p style={{ color: 'white', fontSize: 15, fontWeight: 'bold', margin: 0 }}>{value}</p>
     </div>
   )
 }
