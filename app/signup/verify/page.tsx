@@ -430,7 +430,15 @@ function ErrorCard({ title, body, primaryLabel, primaryHref }: { title: string; 
 
 function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: IntendedTier; proceeding: boolean; onProceed: () => void }) {
   const trackLabel = tier.track === 'enforcement' ? 'Enforcement' : 'Property Management'
-  const tierTitle = tier.tier.charAt(0).toUpperCase() + tier.tier.slice(1)
+  // B2-5 C2 (2026-07-21) — lookup by slug field, not lowercased name.
+  // The picker at /signup now writes canonical slugs ('pm_only', etc.)
+  // into user_metadata.intended_tier.tier; earlier code compared against
+  // t.name.toLowerCase() which produced hyphens and never matched.
+  // Moved above tierTitle so we can prefer the display name over a
+  // capitalized-underscore rendering of the slug ("PM-Only" beats "Pm_only").
+  const tiers = tier.track === 'enforcement' ? ENFORCEMENT_TIERS : PROPERTY_MANAGEMENT_TIERS
+  const td = tiers.find(t => t.slug === tier.tier)
+  const tierTitle = td?.name ?? (tier.tier.charAt(0).toUpperCase() + tier.tier.slice(1))
 
   // B118 Layer 2 Commit 3 — SaaS acceptance state for self-serve.
   // Fires the accept_saas_agreement RPC via /api/signup/accept-saas
@@ -467,9 +475,8 @@ function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: In
     }
   }
 
-  // Recompute preview from display constants (matches /signup form).
-  const tiers = tier.track === 'enforcement' ? ENFORCEMENT_TIERS : PROPERTY_MANAGEMENT_TIERS
-  const td = tiers.find(t => t.name.toLowerCase() === tier.tier)
+  // Preview from display constants (matches /signup form).
+  // tiers + td already declared above for tierTitle lookup — reuse here.
   const baseMonthly = TIER_PRICING[tier.track]?.[tier.tier] ?? td?.base ?? 0
   const perProp = td?.perProp ?? 0
   const perDriver = td?.perDriver ?? 0

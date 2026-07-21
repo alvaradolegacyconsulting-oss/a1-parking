@@ -46,6 +46,15 @@ export type PermitBand = {
 
 export type TierDisplay = {
   name: string
+  // B2-5 C2 (2026-07-21) — explicit slug field. Was previously derived
+  // from `name.toLowerCase()`, which produced "pm-only" (hyphen) —
+  // mismatching the stripe_prices.tier_name CHECK constraint values
+  // 'pm_only' / 'enforcement_only' / 'legacy' (underscore/lowercase).
+  // Every self-serve checkout would have 503'd on catalog resolution.
+  // Latent because public_signup_open has never been true; still a bug.
+  // Callers MUST use this field, never derive from the display name.
+  // Union kept narrow so a typo like 'pm-only' is caught at compile time.
+  slug: 'pm_only' | 'enforcement_only' | 'legacy'
   // Optional because Legacy hides its price on marketing surfaces
   // (customPrice: true replaces the numeric with "Custom pricing").
   base?: number
@@ -77,6 +86,7 @@ export type TierDisplay = {
 export const OFFERINGS: TierDisplay[] = [
   {
     name: 'PM-Only',
+    slug: 'pm_only',
     base: 179,
     perProp: 20,
     // Graduated per-approved-permit meter. Rate declines as volume
@@ -103,6 +113,7 @@ export const OFFERINGS: TierDisplay[] = [
   },
   {
     name: 'Enforcement-Only',
+    slug: 'enforcement_only',
     base: 199,
     perProp: 15,
     includesEnforcement: true,
@@ -120,6 +131,7 @@ export const OFFERINGS: TierDisplay[] = [
   },
   {
     name: 'Legacy',
+    slug: 'legacy',
     customPrice: true,
     includesEnforcement: true,
     includesPM: true,

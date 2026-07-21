@@ -48,9 +48,11 @@ function selfServeTiers(t: TierTrack): TierDisplay[] {
   return all.filter(tier => !tier.enterprise)  // contact-sales render branch flag
 }
 
-function tierSlug(name: string): string {
-  return name.toLowerCase()
-}
+// B2-5 C2 (2026-07-21) — tierSlug(name.toLowerCase()) removed. Was
+// producing "pm-only" (hyphen); stripe_prices.tier_name CHECK requires
+// 'pm_only' / 'enforcement_only' / 'legacy' (underscore). Consumers now
+// read t.slug directly off the TierDisplay entry — canonical values
+// live in one place, and the union type prevents typos.
 
 type DormancyState = { kind: 'loading' } | { kind: 'closed' } | { kind: 'open' }
 type Submission =
@@ -103,7 +105,7 @@ export default function SignupTierPicker() {
   const tiers = useMemo(() => selfServeTiers(track), [track])
   useEffect(() => {
     // Reset tier when track changes to avoid carrying a stale tier across tracks.
-    setTier(tierSlug(tiers[0]?.name || 'legacy'))
+    setTier(tiers[0]?.slug ?? 'legacy')
     if (track === 'pm') setDriverCount('0')
   }, [track, tiers])
 
@@ -113,7 +115,7 @@ export default function SignupTierPicker() {
   // for the in-form preview only; admin-edited platform_settings might
   // drift slightly from tier-display.ts numbers between launches.
   const tk = trackKey(track)
-  const selectedTier = tiers.find(t => tierSlug(t.name) === tier)
+  const selectedTier = tiers.find(t => t.slug === tier)
   const baseMonthly = TIER_PRICING[tk]?.[tier] ?? selectedTier?.base ?? 0
   const perPropMonthly = selectedTier?.perProp ?? 0
   const perDriverMonthly = selectedTier?.perDriver ?? 0
@@ -289,11 +291,10 @@ export default function SignupTierPicker() {
           <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>2. Choose your tier</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
             {tiers.map((t) => {
-              const slug = tierSlug(t.name)
-              const selected = tier === slug
+              const selected = tier === t.slug
               return (
-                <button key={slug}
-                  onClick={() => setTier(slug)}
+                <button key={t.slug}
+                  onClick={() => setTier(t.slug)}
                   style={{
                     textAlign: 'left', padding: 14, borderRadius: 10,
                     border: selected ? `2px solid ${GOLD}` : `1px solid ${BORDER}`,
