@@ -92,6 +92,28 @@ export async function POST() {
   // compat with clients that still send it; PM guard above enforces
   // ==0 for PM; enforcement no longer enforces a minimum.
 
+  // ── B2-1 Commit 1 — pre-flight company-name uniqueness ─────────────
+  // Fires BEFORE catalog resolution + Stripe session creation so a
+  // duplicate name is caught while the prospect is still on-site and
+  // no money has moved. Uses the company_name_available() DEFINER RPC
+  // which normalizes with lower(trim(...)) — matching the unique index
+  // companies_name_lower_unique. ILIKE would be whitespace-insensitive
+  // wrong; must match the index or the check is theatre. On collision,
+  // 303-redirect to /signup/verify?error=name_taken so the Verify page
+  // renders the support-routing card. RPC call failures fail-open here
+  // (log + let checkout proceed) so a transient DB blip doesn't block a
+  // legitimate customer — the DB unique index remains as the backstop
+  // if the pre-check is bypassed (webhook's 23505 handling in Commit 2
+  // logs to provisioning_failures).
+  const { data: nameAvailable, error: nameErr } = await supabase
+    .rpc('company_name_available', { p_name: intended.company_name })
+  if (nameErr) {
+    console.error('[create-checkout-session] company_name_available RPC error — proceeding to catalog resolution (unique index remains as backstop):', nameErr.message)
+  } else if (nameAvailable === false) {
+    const errOrigin = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
+    return NextResponse.redirect(`${errOrigin}/signup/verify?error=name_taken`, { status: 303 })
+  }
+
   // ── Resolve catalog lines ────────────────────────────────────────
   const mode = getStripeMode()
   let catalog: Awaited<ReturnType<typeof getStandardCatalogLines>>

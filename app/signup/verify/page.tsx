@@ -75,6 +75,7 @@ type Status =
   | { kind: 'attest_error'; message: string }
   | { kind: 'checkout_error'; message: string }
   | { kind: 'already_verified' }   // B162: verifyOtp returned otp_expired (already-used OR truly-expired; indistinguishable client-side)
+  | { kind: 'name_taken' }         // B2-1 C1: create-checkout-session pre-flight found the company name is already registered
 
 export default function SignupVerify() {
   const [status, setStatus] = useState<Status>({ kind: 'loading' })
@@ -141,11 +142,28 @@ export default function SignupVerify() {
     let cancelled = false
 
     // Pre-fill OTP email from URL param if present (new template includes it).
+    // B2-1 C1: also detect ?error=name_taken (303 back from
+    // /api/signup/create-checkout-session when the pre-flight uniqueness
+    // check found a duplicate). Short-circuits the whole PKCE flow — we
+    // already have a verified session at this point (user is here after
+    // clicking through to Verify → Continue), so no need to re-verify.
+    let earlyErrorReturn = false
     try {
       const url = new URL(window.location.href)
       const e = url.searchParams.get('email')
       if (e) setOtpEmail(e.trim().toLowerCase())
+      const errParam = url.searchParams.get('error')
+      if (errParam === 'name_taken') {
+        setStatus({ kind: 'name_taken' })
+        earlyErrorReturn = true
+      }
     } catch { /* SSR safety */ }
+    if (earlyErrorReturn) {
+      // Skip PKCE session detection — user already has a verified session
+      // (they got here after clicking Continue on the ready card) and the
+      // pre-flight caught a duplicate name. Render name_taken card only.
+      return
+    }
 
     async function onSession(session: Session | null) {
       if (resolved || cancelled) return
@@ -298,6 +316,30 @@ export default function SignupVerify() {
 
         {status.kind === 'ready' && (
           <ReadyCard user={status.user} tier={status.tier} proceeding={proceeding} onProceed={proceedToCheckout} />
+        )}
+
+        {/* B2-1 C1 — company name already registered. Message routes to
+            support; no self-serve alternative. Global name uniqueness
+            means a legitimate second "Acme Wrecker" is blocked here, and
+            asking someone to rename their business isn't an option.
+            Support routes it manually. No "Sign in" CTA — this user just
+            created a NEW auth account, so a sign-in yields an
+            authenticated session with no user_roles row (broken state);
+            if the company is really theirs, the correct path is an
+            invite from the existing company_admin, not a sign-in. */}
+        {status.kind === 'name_taken' && (
+          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 28 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#1e1a0a', border: `2px solid ${GOLD}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>⚠️</div>
+            <h2 style={{ color: GOLD, fontSize: 20, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>A company with that name is already registered</h2>
+            <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 22px' }}>
+              Company names on ShieldMyLot must be unique. Please contact support so we can help &mdash;
+              this may be your existing account, or we can help you register with a distinguishing variant.
+              <strong style={{ color: TEXT }}> No payment has been taken.</strong>
+            </p>
+            <a href="mailto:support@shieldmylot.com" style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+              Contact support
+            </a>
+          </div>
         )}
 
       </div>
