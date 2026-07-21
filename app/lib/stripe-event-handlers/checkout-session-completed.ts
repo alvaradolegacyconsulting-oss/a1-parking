@@ -2,6 +2,7 @@ import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
 import { getStripe } from '../stripe'
+import { sendEmail } from '../resend-client'
 import type { HandlerResult } from './types'
 
 interface IntendedTier {
@@ -176,22 +177,19 @@ export async function handleCheckoutSessionCompleted(
   }
   const email = authUser.user.email.toLowerCase()
 
-  // ── Company name uniqueness pre-check + auto-disambiguation ────────
-  // Two users signing up with the same company name = collision. Try
-  // the requested name first; if taken, append " (2)", " (3)", etc.
-  let companyName = intendedTier.company_name.trim()
-  for (let suffix = 2; suffix <= 100; suffix++) {
-    const { data: exists } = await supabase
-      .from('companies')
-      .select('id')
-      .ilike('name', companyName)
-      .maybeSingle()
-    if (!exists) break
-    companyName = `${intendedTier.company_name.trim()} (${suffix})`
-    if (suffix === 100) {
-      return { ok: false, reason: `company name collision unresolvable after 100 attempts: ${intendedTier.company_name}` }
-    }
-  }
+  // ── B2-1 C2: uniqueness pre-check moved pre-payment ──────────────
+  // The old app-layer " (N)" disambiguation loop retired here (2026-
+  // 07-21). Silent post-payment rename was worse than a stack trace —
+  // a customer who signed up as "Acme" would be provisioned as
+  // "Acme (2)" without consent, then land in a dashboard for a
+  // company they didn't name. Pre-flight uniqueness now lives in
+  // /api/signup/create-checkout-session via company_name_available
+  // RPC (B2-1 C1, eea9f61). Any duplicate that reaches THIS INSERT
+  // is either a true race between two simultaneous checkouts or a
+  // pre-flight fail-open (RPC transient error). Both surface via
+  // handleProvisioningFailure() below — logs to provisioning_failures
+  // + emails ops with a runbook.
+  const companyName = intendedTier.company_name.trim()
 
   // ── B152 eager-populate ──────────────────────────────────────────
   // Retrieve sub + customer from Stripe API BEFORE the INSERT so we
@@ -224,7 +222,19 @@ export async function handleCheckoutSessionCompleted(
     .select('id, subscription_status, current_period_end, cancel_at_period_end, address, billing_city, billing_state, billing_postal_code, billing_country')
     .single()
   if (companyErr || !company) {
-    return { ok: false, reason: `companies INSERT failed: ${companyErr?.message ?? 'unknown'}` }
+    // B2-1 C2 — failure mode #1: companies INSERT failed. No row
+    // exists; name is FREE. Email runbook: provision normally.
+    return await handleProvisioningFailure({
+      supabase,
+      stripeSessionId: session.id,
+      stripeCustomerId,
+      stripeSubscriptionId: stripeSubId,
+      requestedCompanyName: companyName,
+      intendedTier,
+      errCode: companyErr?.code ?? null,
+      errMessage: companyErr?.message ?? 'companies INSERT returned no row',
+      failureMode: 'companies_insert',
+    })
   }
   const companyId = company.id as number
 
@@ -255,10 +265,25 @@ export async function handleCheckoutSessionCompleted(
       property: [],
     })
   if (roleErr) {
-    console.error('[stripe-event-handlers] companies row created but user_roles INSERT failed', {
-      companyId, email, error: roleErr.message,
+    // B2-1 C2 — failure mode #2: companies row EXISTS but user_roles
+    // INSERT failed. Orphaned company (row holds the name with no CA).
+    // Second orphan class (see
+    // docs/backlog/orphaned-auth-users-after-name-collision.md for
+    // the first, auth.users-orphan variant). Email runbook says
+    // ADOPT the orphan — do NOT create a new company (would collide
+    // on companies_name_lower_unique).
+    return await handleProvisioningFailure({
+      supabase,
+      stripeSessionId: session.id,
+      stripeCustomerId,
+      stripeSubscriptionId: stripeSubId,
+      requestedCompanyName: companyName,
+      intendedTier,
+      errCode: roleErr.code ?? null,
+      errMessage: roleErr.message,
+      failureMode: 'user_roles_insert',
+      orphanedCompanyId: companyId,
     })
-    return { ok: false, reason: `user_roles INSERT failed (company ${companyId} orphaned): ${roleErr.message}` }
   }
 
   return { ok: true, companyId }
@@ -374,4 +399,338 @@ async function handleProposalCodeCompletion(
     companyId, proposalCodeId, stripeCustomerId, stripeSubId,
   })
   return { ok: true, companyId }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// B2-1 C2 — provisioning failure handling
+// ════════════════════════════════════════════════════════════════════
+// Retires the app-layer " (N)" disambiguation loop that silently
+// appended suffixes to colliding company names POST-PAYMENT. When any
+// self-serve INSERT fails after Stripe has charged the customer, we
+// now log to provisioning_failures + alert ops via email. Two failure
+// modes covered — with materially different recovery runbooks:
+//
+//   companies_insert   — companies INSERT failed. NO company row exists.
+//                        Name is FREE. Runbook: provision normally.
+//
+//   user_roles_insert  — companies row created, user_roles INSERT
+//                        failed. Company row EXISTS holding the name
+//                        with no admin (CA). Runbook: ADOPT the orphan
+//                        (attach CA to existing orphanedCompanyId — do
+//                        NOT create a new company; that would collide
+//                        on companies_name_lower_unique and cause a
+//                        confusing dead end while trying to fix this).
+//
+// Email body branches on failureMode so support follows the correct
+// runbook. orphanedCompanyId is included prominently in the
+// user_roles_insert branch body.
+//
+// ── SECOND ORPHAN CLASS ─────────────────────────────────────────────
+// The user_roles_insert branch creates an orphaned companies row (no
+// CA attached) — a second orphan class alongside the auth.users
+// orphan documented in
+// docs/backlog/orphaned-auth-users-after-name-collision.md.
+// Same operational shape (stranded mid-provisioning, invisible until
+// someone looks); different mechanism. The deferred Commit 3
+// admin_console reconciliation panel should address both classes in
+// one surface.
+//
+// ── PERMANENT vs TRANSIENT (B2-7 forward-compat) ────────────────────
+// Machine-readable classification lives on the provisioning_failures
+// row via error_code (Postgres SQLSTATE) — no ambiguous prose. The
+// helper isPermanentProvisioningFailure() below encodes the semantic
+// mapping ('23505' = permanent unique_violation; else = transient).
+//
+// Today the wrapper (app/api/stripe/webhook/route.ts:202-206) always
+// returns 200 to Stripe (B66.1 fail-closed), so Stripe never retries.
+// The disambig-loop retry storm concern doesn't fire via Stripe.
+//
+// BUT: B2-7 will add an out-of-band webhook processor with real
+// retries. When that lands, the processor MUST NOT retry a
+// permanent failure (23505 will 23505 forever — the colliding row
+// isn't going anywhere). isPermanentProvisioningFailure() is the
+// contract: B2-7 imports it, branches retry logic on the result.
+// Semantics baked in HERE at the point of failure — B2-7 inherits
+// them rather than re-deriving from error strings months later.
+//
+// ── SESSION-GUARD ────────────────────────────────────────────────────
+// Before INSERT + email, check for an existing provisioning_failures
+// row with the same stripe_session_id. If exists, ack-and-drop (no
+// new row, no new email). Belt-and-suspenders today (stripe_events
+// UNIQUE catches most redelivery at the route layer + manual Stripe
+// Dashboard redelivery is rare). Load-bearing when B2-7 async retries
+// land.
+
+/**
+ * Machine-readable classification of a provisioning_failures.error_code.
+ * Consumed by B2-7 (out-of-band webhook processor) to decide retryability.
+ *
+ * - permanent — do not retry, ever. Structural collision that only
+ *               human intervention can resolve. Today only '23505'
+ *               (unique_violation on companies_name_lower_unique).
+ * - transient — retry safe. Connection blip, timeout, or other transient
+ *               DB issue. Any error_code that isn't in the permanent
+ *               set (or NULL) is treated as transient.
+ *
+ * The mapping lives HERE (with the write path that populated error_code)
+ * so a future consumer doesn't re-derive semantics from error strings.
+ */
+export function isPermanentProvisioningFailure(errorCode: string | null | undefined): boolean {
+  return errorCode === '23505'
+}
+
+interface ProvisioningFailureArgs {
+  supabase:               ReturnType<typeof createSupabaseServiceClient>
+  stripeSessionId:        string
+  stripeCustomerId:       string | null
+  stripeSubscriptionId:   string | null
+  requestedCompanyName:   string
+  intendedTier:           IntendedTier
+  errCode:                string | null
+  errMessage:             string
+  failureMode:            'companies_insert' | 'user_roles_insert'
+  orphanedCompanyId?:     number
+}
+
+async function handleProvisioningFailure(args: ProvisioningFailureArgs): Promise<HandlerResult> {
+  const {
+    supabase, stripeSessionId, stripeCustomerId, stripeSubscriptionId,
+    requestedCompanyName, intendedTier, errCode, errMessage,
+    failureMode, orphanedCompanyId,
+  } = args
+
+  const permanent      = isPermanentProvisioningFailure(errCode)
+  const classification = permanent ? 'permanent' : 'transient'
+
+  // ── Session-guard ────────────────────────────────────────────────
+  // Belt-and-suspenders check for double-logging. Route layer's
+  // stripe_events UNIQUE constraint catches most redelivery cases at
+  // the event-id level, but manual Stripe Dashboard redelivery + the
+  // future B2-7 async retry pass could reach here twice for the same
+  // session. If a row already exists for this session, ack-and-drop
+  // (no new row, no new email).
+  const { data: existing } = await supabase
+    .from('provisioning_failures')
+    .select('id')
+    .eq('stripe_session_id', stripeSessionId)
+    .maybeSingle()
+  if (existing) {
+    console.log('[checkout-session-completed] provisioning_failures row already exists for session — no new row, no new alert', {
+      stripeSessionId, existingId: existing.id, failureMode,
+    })
+    return {
+      ok: false,
+      reason: `provisioning_failed_${classification}_${failureMode}_already_logged (row ${existing.id})`,
+    }
+  }
+
+  // ── INSERT the failure record ────────────────────────────────────
+  // 🔴 IMPORTANT: this INSERT is its own Supabase-JS-client round-trip,
+  // NOT part of a transaction with the failed write that triggered
+  // this handler. Do NOT bundle these INSERTs into a single BEGIN/
+  // COMMIT — the classic error-logging bug is "log inside the aborted
+  // transaction → log rolls back with the failure." Supabase JS
+  // client makes each call its own txn, so this is safe TODAY, but
+  // this comment is deliberate: someone will one day try to
+  // "optimize" this into a single txn and silently reintroduce the
+  // bug. (Codified per Mateo 2026-07-21 review.)
+  const { data: failRow, error: failInsertErr } = await supabase
+    .from('provisioning_failures')
+    .insert({
+      stripe_session_id:      stripeSessionId,
+      stripe_customer_id:     stripeCustomerId,
+      stripe_subscription_id: stripeSubscriptionId,
+      requested_company_name: requestedCompanyName,
+      error_code:             errCode,
+      error_message:          errMessage,
+      raw_intended_tier:      intendedTier as unknown as Record<string, unknown>,
+    })
+    .select('id')
+    .single()
+
+  let failRowId: number | null = null
+  if (failInsertErr) {
+    // Log-then-continue: the alert email is the customer's only path
+    // to being noticed. If we can't log to our own table, we still
+    // MUST fire the alert.
+    console.error('[checkout-session-completed] CRITICAL: provisioning_failures INSERT failed — customer paid, no account, no ops row. Alert email is only trail:', {
+      stripeSessionId, failInsertErr: failInsertErr.message,
+    })
+  } else if (failRow) {
+    failRowId = failRow.id as number
+  }
+
+  // ── Send alert email to ops ──────────────────────────────────────
+  const alertTo   = process.env.PROVISIONING_ALERT_EMAIL || 'support@shieldmylot.com'
+  const emailBody = buildProvisioningFailureEmailBody({
+    failRowId, classification, stripeSessionId, stripeCustomerId,
+    stripeSubscriptionId, requestedCompanyName, intendedTier,
+    errCode, errMessage, failureMode, orphanedCompanyId,
+  })
+  const subjectCore = failureMode === 'user_roles_insert'
+    ? 'Provisioning failure — ADOPT ORPHAN'
+    : 'Provisioning failure — customer paid, no account'
+  const sendResult = await sendEmail({
+    to:      alertTo,
+    subject: `[ShieldMyLot] ${subjectCore} (${requestedCompanyName})`,
+    html:    emailBody.html,
+    text:    emailBody.text,
+  })
+
+  // ── Best-effort update of alert send result on the row ────────────
+  if (failRowId !== null) {
+    const { error: updateErr } = await supabase
+      .from('provisioning_failures')
+      .update({
+        alert_email_sent:       sendResult.ok,
+        alert_email_message_id: sendResult.ok ? sendResult.message_id : null,
+        alert_email_error:      sendResult.ok ? null : sendResult.error,
+      })
+      .eq('id', failRowId)
+    if (updateErr) {
+      console.error('[checkout-session-completed] alert_email_sent update failed on provisioning_failures row', {
+        failRowId, err: updateErr.message,
+      })
+    }
+  }
+
+  console.log('[checkout-session-completed] provisioning failure logged', {
+    stripeSessionId, failRowId, errCode, classification, failureMode, alertSent: sendResult.ok,
+  })
+
+  return {
+    ok:     false,
+    reason: `provisioning_failed_${classification}_${failureMode} (row ${failRowId ?? 'unlogged'}, code ${errCode ?? 'null'}): ${errMessage}`,
+  }
+}
+
+interface ProvisioningEmailBodyArgs {
+  failRowId:              number | null
+  classification:         'permanent' | 'transient'
+  stripeSessionId:        string
+  stripeCustomerId:       string | null
+  stripeSubscriptionId:   string | null
+  requestedCompanyName:   string
+  intendedTier:           IntendedTier
+  errCode:                string | null
+  errMessage:             string
+  failureMode:            'companies_insert' | 'user_roles_insert'
+  orphanedCompanyId?:     number
+}
+
+function buildProvisioningFailureEmailBody(args: ProvisioningEmailBodyArgs): { html: string, text: string } {
+  const {
+    failRowId, classification, stripeSessionId, stripeCustomerId, stripeSubscriptionId,
+    requestedCompanyName, intendedTier, errCode, errMessage, failureMode, orphanedCompanyId,
+  } = args
+
+  const isAdopt = failureMode === 'user_roles_insert'
+
+  // Two distinct runbooks — the difference matters. See the
+  // handler's header block for why.
+  const nextSteps = isAdopt
+    ? `NEXT STEPS (adopt orphan — do NOT create a new company):
+
+  1. A companies row with id=${orphanedCompanyId} EXISTS and holds the
+     name "${requestedCompanyName}" with no admin (CA) attached. Do NOT
+     attempt to create a new company for this customer — that will
+     collide on companies_name_lower_unique and fail.
+
+  2. INSERT the CA into user_roles keyed on the customer's email +
+     company="${requestedCompanyName}" + role="company_admin". Match
+     the email against Stripe customer ${stripeCustomerId ?? '(unknown)'}
+     for verification.
+
+  3. The customer's Stripe subscription (${stripeSubscriptionId ?? '(unknown)'})
+     is already attached to companies row ${orphanedCompanyId} via the
+     Stripe fields — no additional linking needed.
+
+  4. Stamp provisioning_failures.resolved=TRUE + resolved_by=<your email>
+     + resolved_notes describing the adoption for the ops record.`
+    : `NEXT STEPS (companies row absent — provision normally):
+
+  1. No companies row was created for this customer. Name
+     "${requestedCompanyName}" is FREE — OR belongs to a different
+     existing customer if this is a true collision. Verify with:
+       SELECT id, name FROM companies WHERE lower(trim(name)) = lower(trim($1));
+
+  2. If the name collides with someone else, contact the customer to
+     confirm a distinguishing variant OR verify this is their existing
+     account (account recovery flow).
+
+  3. If safe to provision: manually INSERT the companies row +
+     user_roles row, then UPDATE with
+     stripe_customer_id=${stripeCustomerId ?? '(unknown)'} +
+     stripe_subscription_id=${stripeSubscriptionId ?? '(unknown)'}.
+
+  4. Alternatively refund the Stripe charge via Dashboard and cancel
+     the subscription if provisioning cannot proceed.
+
+  5. Stamp provisioning_failures.resolved=TRUE + resolved_by=<your email>
+     + resolved_notes describing the resolution.`
+
+  const text = [
+    `Provisioning failure — self-serve checkout webhook`,
+    ``,
+    `Classification: ${classification.toUpperCase()} (error_code=${errCode ?? 'null'})`,
+    `Failure mode:   ${failureMode}`,
+    ``,
+    `Requested company name: ${requestedCompanyName}`,
+    isAdopt ? `Orphaned company id:    ${orphanedCompanyId}` : `(no company row created)`,
+    ``,
+    `Stripe session:      ${stripeSessionId}`,
+    `Stripe customer:     ${stripeCustomerId ?? '(unknown)'}`,
+    `Stripe subscription: ${stripeSubscriptionId ?? '(unknown)'}`,
+    ``,
+    `DB error code:    ${errCode ?? '(none)'}`,
+    `DB error message: ${errMessage}`,
+    ``,
+    `Intended tier (raw):`,
+    `  track:          ${intendedTier.track}`,
+    `  tier:           ${intendedTier.tier}`,
+    `  cycle:          ${intendedTier.cycle}`,
+    `  property_count: ${intendedTier.property_count}`,
+    `  driver_count:   ${intendedTier.driver_count}`,
+    ``,
+    nextSteps,
+    ``,
+    `provisioning_failures.id: ${failRowId ?? '(row insert failed — this email is the only record)'}`,
+  ].join('\n')
+
+  const html = `<!DOCTYPE html>
+<html>
+<body style="font-family: system-ui, -apple-system, Arial, sans-serif; max-width: 640px; margin: 20px auto; padding: 20px; color: #0a0d14;">
+<h2 style="color: #b71c1c; margin-top: 0;">Provisioning failure — self-serve checkout</h2>
+<p style="background: ${isAdopt ? '#fff8e1' : '#f5f5f5'}; padding: 10px 14px; border-left: 4px solid ${isAdopt ? '#f57c00' : '#9e9e9e'}; margin: 12px 0;">
+  <strong>${classification.toUpperCase()}</strong> failure mode <code>${failureMode}</code>${isAdopt ? ' &mdash; <strong>ADOPT ORPHAN</strong>, do not create a new company.' : ''}
+</p>
+<table style="border-collapse: collapse; width: 100%; margin: 12px 0;">
+  <tr><td style="padding: 4px 8px; color: #64748b;">Requested company name</td><td style="padding: 4px 8px;"><strong>${escapeHtml(requestedCompanyName)}</strong></td></tr>
+  ${isAdopt ? `<tr><td style="padding: 4px 8px; color: #64748b;">Orphaned company id</td><td style="padding: 4px 8px; background: #fff8e1;"><strong style="color: #b71c1c;">${orphanedCompanyId}</strong></td></tr>` : ''}
+  <tr><td style="padding: 4px 8px; color: #64748b;">Stripe session</td><td style="padding: 4px 8px; font-family: monospace; font-size: 12px;">${escapeHtml(stripeSessionId)}</td></tr>
+  <tr><td style="padding: 4px 8px; color: #64748b;">Stripe customer</td><td style="padding: 4px 8px; font-family: monospace; font-size: 12px;">${escapeHtml(stripeCustomerId ?? '(unknown)')}</td></tr>
+  <tr><td style="padding: 4px 8px; color: #64748b;">Stripe subscription</td><td style="padding: 4px 8px; font-family: monospace; font-size: 12px;">${escapeHtml(stripeSubscriptionId ?? '(unknown)')}</td></tr>
+  <tr><td style="padding: 4px 8px; color: #64748b;">DB error code</td><td style="padding: 4px 8px; font-family: monospace;">${escapeHtml(errCode ?? '(none)')}</td></tr>
+  <tr><td style="padding: 4px 8px; color: #64748b;">DB error message</td><td style="padding: 4px 8px; font-family: monospace; font-size: 12px;">${escapeHtml(errMessage)}</td></tr>
+</table>
+<h3 style="margin-top: 20px; margin-bottom: 8px;">Intended tier</h3>
+<pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto;">${escapeHtml(JSON.stringify(intendedTier, null, 2))}</pre>
+<h3 style="margin-top: 20px; margin-bottom: 8px;">Next steps</h3>
+<pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto; white-space: pre-wrap;">${escapeHtml(nextSteps)}</pre>
+<p style="color: #64748b; font-size: 12px; margin-top: 20px;">
+  provisioning_failures.id: <strong>${failRowId ?? '(row insert failed &mdash; this email is the only record)'}</strong>
+</p>
+</body>
+</html>`
+
+  return { html, text }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
