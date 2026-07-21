@@ -339,6 +339,20 @@ export default function SignupVerify() {
             <a href="mailto:support@shieldmylot.com" style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
               Contact support
             </a>
+            {/* Trap-closing copy per Mateo 2026-07-21 amendment #2:
+                Supabase auth.signUp anti-enumeration on a duplicate email
+                returns fake-success, which /signup renders as "That email
+                is already registered — reset password or sign in" —
+                advice that's actively wrong for this user (no user_roles
+                row to sign into, password reset just returns to same
+                broken state). This card is the LAST screen they see
+                before hitting that trap; warn explicitly. Also reassure
+                that info is preserved (support can adopt the orphaned
+                auth.users row rather than making them start over —
+                see docs/backlog/orphaned-auth-users-after-name-collision.md). */}
+            <p style={{ color: '#fbbf24', fontSize: 12, textAlign: 'center', margin: '14px 0 0', lineHeight: 1.5 }}>
+              ⓘ Please don&apos;t try signing up again with this email &mdash; we&apos;ll get you set up. Your signup information is safely on file.
+            </p>
           </div>
         )}
 
