@@ -63,14 +63,92 @@ function ok(msg: string)          { console.log(`${GREEN}✓${RESET} ${msg}`) }
 function fail(msg: string)        { console.log(`${RED}✗${RESET} ${msg}`); fails++ }
 function failCritical(msg: string) { console.log(`${RED}✗ 🔴 CRITICAL${RESET} ${msg}`); fails++; criticalFails++ }
 
-const anon = createClient(URL, ANON, {
+const anon  = createClient(URL, ANON, {
   auth: { persistSession: false, autoRefreshToken: false },
 })
+const admin = createClient(URL, SERVICE, {
+  auth: { persistSession: false, autoRefreshToken: false },
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// AUTO-PROBE — resolve missing env vars from real Test-LEGACY data.
+// Added 2026-07-22 after first re-run failed on env-var mismatches
+// (property "Miramar" not in Test-LEGACY, view_token unset, manager
+// email unset). Per Mateo: "re-run with real probe values pulled
+// from the DB." Service-role query grabs actuals; env-var overrides
+// still win if set (operator can force a specific probe).
+// ══════════════════════════════════════════════════════════════════════
+async function resolveProbes() {
+  const TEST_COMPANY = 'Test-LEGACY'  // canonical per project convention (memory + smoke-consent-hard-gate)
+  const probes = {
+    company:      process.env.SMOKE_ANON_PROBE_COMPANY       ?? TEST_COMPANY,
+    property:     process.env.SMOKE_ANON_PROBE_PROPERTY,
+    plate:        process.env.SMOKE_ANON_PROBE_PLATE         ?? `FAKEPRB${Date.now() % 100000}`,
+    viewToken:    process.env.SMOKE_ANON_PROBE_VIEW_TOKEN,
+    proposalCode: process.env.SMOKE_ANON_PROBE_PROPOSAL_CODE,
+    managerEmail: process.env.SMOKE_AUTH_MANAGER_EMAIL,
+  }
+
+  // Property — pick any live property under Test-LEGACY.
+  if (!probes.property) {
+    const { data } = await admin.from('properties').select('name').ilike('company', probes.company).limit(1).maybeSingle()
+    if (data?.name) probes.property = data.name as string
+  }
+  // View token — pick any violation with a view_token set. Tow-link is non-negotiable
+  // per Mateo — if this returns null, the smoke will still hard-fail Stage 1 tow-link.
+  if (!probes.viewToken) {
+    const { data } = await admin
+      .from('violations')
+      .select('view_token')
+      .not('view_token', 'is', null)
+      .limit(1)
+      .maybeSingle()
+    if (data?.view_token) probes.viewToken = data.view_token as string
+  }
+  // Manager email — pick any manager in Test-LEGACY. Auth smokes gate Stage 3/4.
+  if (!probes.managerEmail) {
+    const { data } = await admin
+      .from('user_roles')
+      .select('email')
+      .eq('role', 'manager')
+      .ilike('company', probes.company)
+      .limit(1)
+      .maybeSingle()
+    if (data?.email) probes.managerEmail = data.email as string
+  }
+  // Proposal code — optional; probe any issued/redeemed under Test-LEGACY.
+  if (!probes.proposalCode) {
+    const { data: co } = await admin.from('companies').select('id').ilike('name', probes.company).maybeSingle()
+    if (co?.id) {
+      const { data: pc } = await admin
+        .from('proposal_codes')
+        .select('code')
+        .eq('company_id', co.id)
+        .in('status', ['issued', 'redeemed'])
+        .limit(1)
+        .maybeSingle()
+      if (pc?.code) probes.proposalCode = pc.code as string
+    }
+  }
+
+  return probes
+}
 
 async function main() {
   console.log('══════════════════════════════════════════════════════════════════')
   console.log('  smoke — grant remediation post-REVOKE gating')
   console.log('══════════════════════════════════════════════════════════════════\n')
+
+  // ── Auto-probe missing env vars from Test-LEGACY ──────────────────
+  const p = await resolveProbes()
+  console.log(`${DIM}Probe values (auto-resolved from Test-LEGACY where env unset):${RESET}`)
+  console.log(`${DIM}  company:      ${p.company}${RESET}`)
+  console.log(`${DIM}  property:     ${p.property ?? '(unresolved — Stage 1 property/plate smokes will fail)'}${RESET}`)
+  console.log(`${DIM}  plate:        ${p.plate}${RESET}`)
+  console.log(`${DIM}  viewToken:    ${p.viewToken ? p.viewToken.slice(0, 12) + '...' : '(unresolved — tow-link smoke will fail)'}${RESET}`)
+  console.log(`${DIM}  managerEmail: ${p.managerEmail ?? '(unresolved — Stage 3/4 auth smokes will skip)'}${RESET}`)
+  console.log(`${DIM}  proposalCode: ${p.proposalCode ?? '(unresolved — validate_proposal_code will hit invalid path)'}${RESET}`)
+  console.log('')
 
   // ══════════════════════════════════════════════════════════════════
   // STAGE 1 — FUNCTIONAL anon RPC calls (7 preserved RPCs)
@@ -83,7 +161,7 @@ async function main() {
     else ok(`get_platform_defaults returned ${data ? Object.keys(data).length + ' keys' : 'null'}`)
   }
 
-  const testProperty = process.env.SMOKE_ANON_PROBE_PROPERTY ?? 'Miramar'
+  const testProperty = p.property ?? '__no_property_resolved__'
   {
     const { data, error } = await anon.rpc('get_property_for_visitor', { p_name: testProperty })
     if (error) fail(`get_property_for_visitor: ${error.message}`)
@@ -91,40 +169,37 @@ async function main() {
     else ok(`get_property_for_visitor returned property row for "${testProperty}"`)
   }
 
-  const testCompany = process.env.SMOKE_ANON_PROBE_COMPANY ?? 'A1 Wrecker'
   {
-    const { data, error } = await anon.rpc('get_company_branding', { p_name: testCompany })
+    const { data, error } = await anon.rpc('get_company_branding', { p_name: p.company })
     if (error) fail(`get_company_branding: ${error.message}`)
-    else ok(`get_company_branding returned row for "${testCompany}"`)
+    else ok(`get_company_branding returned row for "${p.company}"`)
   }
 
   {
-    const { data, error } = await anon.rpc('get_properties_for_visitor_select', { p_company: testCompany })
+    const { data, error } = await anon.rpc('get_properties_for_visitor_select', { p_company: p.company })
     if (error) fail(`get_properties_for_visitor_select: ${error.message}`)
-    else if (!data || data.length === 0) fail(`get_properties_for_visitor_select empty for "${testCompany}"`)
+    else if (!data || data.length === 0) fail(`get_properties_for_visitor_select empty for "${p.company}"`)
     else ok(`get_properties_for_visitor_select returned ${data.length} properties`)
   }
 
-  const testPlate = process.env.SMOKE_ANON_PROBE_PLATE ?? 'FAKEPLATE_XYZ'
   {
-    const { data, error } = await anon.rpc('check_resident_plate', { p_plate: testPlate, p_property: testProperty })
+    const { data, error } = await anon.rpc('check_resident_plate', { p_plate: p.plate, p_property: testProperty })
     if (error) fail(`check_resident_plate: ${error.message}`)
     else ok(`check_resident_plate returned ${JSON.stringify(data)}`)
   }
 
   {
-    const { data, error } = await anon.rpc('get_plate_pass_status', { p_plate: testPlate, p_property: testProperty })
+    const { data, error } = await anon.rpc('get_plate_pass_status', { p_plate: p.plate, p_property: testProperty })
     if (error) fail(`get_plate_pass_status: ${error.message}`)
     else ok(`get_plate_pass_status returned status`)
   }
 
   // ── 🔴 TOW LINK — non-negotiable per Mateo ─────────────────────────
   {
-    const testToken = process.env.SMOKE_ANON_PROBE_VIEW_TOKEN
-    if (!testToken) {
-      fail(`SMOKE_ANON_PROBE_VIEW_TOKEN not set — tow-link smoke MANDATORY, must set before re-running`)
+    if (!p.viewToken) {
+      fail(`SMOKE_ANON_PROBE_VIEW_TOKEN unresolvable (no violations with view_token in DB) — tow-link smoke MANDATORY`)
     } else {
-      const { data, error } = await anon.rpc('get_violation_by_view_token', { p_token: testToken })
+      const { data, error } = await anon.rpc('get_violation_by_view_token', { p_token: p.viewToken })
       if (error) fail(`🔴 TOW LINK BROKEN: get_violation_by_view_token: ${error.message}`)
       else if (!data) fail(`🔴 TOW LINK BROKEN: get_violation_by_view_token returned null`)
       else ok(`🔴 tow link resolved: get_violation_by_view_token returned violation`)
@@ -132,7 +207,7 @@ async function main() {
   }
 
   {
-    const testCode = process.env.SMOKE_ANON_PROBE_PROPOSAL_CODE ?? 'A1-INVALID-PROBE'
+    const testCode = p.proposalCode ?? 'A1-INVALID-PROBE'
     const { data, error } = await anon.rpc('validate_proposal_code', { p_code: testCode })
     if (error) fail(`validate_proposal_code: ${error.message}`)
     else ok(`validate_proposal_code returned ${JSON.stringify(data).slice(0, 80)}`)
@@ -167,9 +242,9 @@ async function main() {
   // ══════════════════════════════════════════════════════════════════
   console.log(`\n${DIM}─── Stage 3: authenticated read smoke ───${RESET}\n`)
 
-  const managerEmail = process.env.SMOKE_AUTH_MANAGER_EMAIL
+  const managerEmail = p.managerEmail
   if (!managerEmail) {
-    fail(`SMOKE_AUTH_MANAGER_EMAIL not set — authenticated smokes REQUIRED, cannot proceed`)
+    failCritical(`SMOKE_AUTH_MANAGER_EMAIL unresolvable (no manager in Test-LEGACY user_roles) — auth smokes REQUIRED to prove the RLS-helper tripwire`)
   } else {
     try {
       const session = await sessionAs(managerEmail, { targetEnv: 'test' })
@@ -256,9 +331,7 @@ async function main() {
   console.log(`\n${DIM}─── Stage 5: service_role write smoke ───${RESET}\n`)
 
   {
-    const admin = createClient(URL, SERVICE, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    })
+    // Reuse the top-level admin client from probe resolution.
     const probeSession = `probe_grant_smoke_${Date.now()}`
     const { data: row, error: insErr } = await admin
       .from('provisioning_failures')
