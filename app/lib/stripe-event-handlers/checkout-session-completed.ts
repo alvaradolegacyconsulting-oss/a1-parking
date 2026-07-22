@@ -44,6 +44,12 @@ interface EagerFields {
   billing_state: string | null
   billing_postal_code: string | null
   billing_country: string | null
+  // B2-5 C5 (2026-07-22) — the sub.items.data[] array carried through
+  // for order_forms snapshot construction. { price_id, quantity } per
+  // subscription item. Non-null when the Stripe retrieve succeeded;
+  // empty array on fallback (Stripe API hiccup). Order Form writer
+  // treats [] as "no line items to snapshot" and skips defensively.
+  subscription_items: Array<{ stripe_price_id: string, quantity: number }>
 }
 // B164 — semantic equality for timestamptz round-trip. JS Date → ISO
 // produces '2026-07-07T23:37:08.000Z'; Postgres timestamptz read-back
@@ -70,6 +76,7 @@ const EAGER_NULL: EagerFields = {
   billing_state: null,
   billing_postal_code: null,
   billing_country: null,
+  subscription_items: [],
 }
 
 async function fetchEagerFields(
@@ -93,6 +100,16 @@ async function fetchEagerFields(
     const addr = ('address' in customer && !('deleted' in customer && customer.deleted))
       ? customer.address
       : null
+    // B2-5 C5 — subscription items for Order Form snapshot. Each item
+    // has price.id + quantity; we join through stripe_prices in the
+    // writer to get line_item tag + unit_amount + graduated tiers.
+    const subItems = (sub.items?.data ?? [])
+      .map(i => ({
+        stripe_price_id: typeof i.price === 'object' ? i.price?.id ?? null : null,
+        quantity: typeof i.quantity === 'number' ? i.quantity : 1,
+      }))
+      .filter((i): i is { stripe_price_id: string, quantity: number } => i.stripe_price_id !== null)
+
     return {
       subscription_status: sub.status,
       current_period_end: cpeIso,
@@ -102,6 +119,7 @@ async function fetchEagerFields(
       billing_state: addr?.state ?? null,
       billing_postal_code: addr?.postal_code ?? null,
       billing_country: addr?.country ?? null,
+      subscription_items: subItems,
     }
   } catch (e) {
     // Graceful degradation per Jose's build discipline: don't let a Stripe
@@ -286,6 +304,27 @@ export async function handleCheckoutSessionCompleted(
     })
   }
 
+  // ── B2-5 C5 — Order Form snapshot (self-serve path) ──────────────
+  // Testability caveat: on self-serve, the SaaS tos_acceptances row
+  // is supposed to be written pre-checkout via accept_saas_agreement
+  // — which today RAISEs 42501 because user_roles doesn't exist yet
+  // (the chicken-and-egg documented in
+  // docs/backlog/accept-saas-agreement-selfserve-chicken-and-egg.md).
+  // Until that bug fixes, the SaaS row lookup below finds nothing and
+  // the writer skips + logs. Structural wiring correct; end-to-end
+  // verification waits on that dependency. Proposal-code path is
+  // unaffected — its SaaS row lands inline in redeem_proposal_code.
+  await writeOrderFormSnapshot({
+    supabase,
+    companyId,
+    source: 'self_serve',
+    intendedTier,
+    stripeCustomerId,
+    stripeSubscriptionId: stripeSubId,
+    subscriptionItems: eager.subscription_items,
+    proposalCodeId: null,
+  })
+
   return { ok: true, companyId }
 }
 
@@ -398,6 +437,26 @@ async function handleProposalCodeCompletion(
   console.log('[stripe-event-handlers] proposal-code completion linked', {
     companyId, proposalCodeId, stripeCustomerId, stripeSubId,
   })
+
+  // ── B2-5 C5 — Order Form snapshot (proposal-code path) ───────────
+  // The SaaS tos_acceptances row for this company was written inline
+  // in redeem_proposal_code Step 4d at redemption time. The snapshot
+  // writer looks it up by (company_id, document_type='saas',
+  // most recent). Load-bearing for A1 + every future Legacy customer.
+  // Track/tier/cycle sourced from the proposal_codes row here (not
+  // from intendedTier which is self-serve metadata absent on this
+  // path); writer's proposalCodeId argument triggers that lookup.
+  await writeOrderFormSnapshot({
+    supabase,
+    companyId,
+    source: 'proposal_code',
+    intendedTier: null,
+    stripeCustomerId,
+    stripeSubscriptionId: stripeSubId,
+    subscriptionItems: eager.subscription_items,
+    proposalCodeId,
+  })
+
   return { ok: true, companyId }
 }
 
@@ -733,4 +792,238 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+// ════════════════════════════════════════════════════════════════════
+// B2-5 C5 — Order Form snapshot writer
+// ════════════════════════════════════════════════════════════════════
+// Called from both provisioning branches AFTER the companies + user_roles
+// rows exist (self-serve) or after the UPDATE + verify-after-write
+// succeeds (proposal-code). Writes an immutable order_forms row
+// capturing the exact commercial terms at SaaS acceptance.
+//
+// ── FAILURE PHILOSOPHY ──────────────────────────────────────────────
+// Fail-open, log-loud. If the snapshot can't be written (SaaS row not
+// found, stripe_prices lookup fails, INSERT rejects), the WEBHOOK
+// STILL SUCCEEDS — company is provisioned and Stripe already took the
+// charge; a missing Order Form is a legal-record gap, not a functional
+// break. The customer's account works fine. The gap surfaces via
+// ops query: SELECT companies without a matching order_forms row.
+//
+// This is different from provisioning_failures (B2-1 C2) which
+// represents "customer paid, no working account" — a hard functional
+// failure. Snapshot absence is "account works but paperwork missing"
+// — worth logging, not worth failing.
+//
+// ── SAAS ROW LOOKUP ─────────────────────────────────────────────────
+// Both paths look up the tos_acceptances row by
+// (company_id, document_type='saas') ORDER BY created_at DESC LIMIT 1.
+// The most recent SaaS acceptance for this company is the one being
+// snapshotted.
+//
+// Self-serve: SaaS row won't exist today (chicken-and-egg per
+//             docs/backlog/accept-saas-agreement-selfserve-chicken-and-egg.md).
+//             Lookup returns null → skip + log. Structural wiring
+//             correct; end-to-end verification waits on the fix.
+// Proposal-code: SaaS row landed inline in redeem_proposal_code
+//                Step 4d — always present. Snapshot writes.
+//
+// ── LINE ITEMS ──────────────────────────────────────────────────────
+// eager.subscription_items has { stripe_price_id, quantity } per
+// Stripe subscription item. We JOIN through stripe_prices to get
+// line_item tag ('base' / 'per_property' / 'per_permit') +
+// unit_amount_cents + graduated tiers JSONB. If a price_id is missing
+// from stripe_prices (catalog drift), that line gets recorded with
+// unit_amount_cents=null + tiers=null + a diagnostic log. Better a
+// partial snapshot than no snapshot.
+
+interface WriteOrderFormSnapshotArgs {
+  supabase:              ReturnType<typeof createSupabaseServiceClient>
+  companyId:             number
+  source:                'self_serve' | 'proposal_code'
+  // Present for self-serve (metadata from create-checkout-session);
+  // null for proposal-code (proposalCodeId lookup provides the terms).
+  intendedTier:          IntendedTier | null
+  stripeCustomerId:      string | null
+  stripeSubscriptionId:  string | null
+  subscriptionItems:     Array<{ stripe_price_id: string, quantity: number }>
+  proposalCodeId:        number | null
+}
+
+interface LineItemSnapshot {
+  line_item:         string | null   // 'base' / 'per_property' / 'per_permit' / 'per_driver'
+  stripe_price_id:   string
+  quantity:          number
+  unit_amount_cents: number | null   // null for graduated
+  tiers:             unknown | null  // JSONB from stripe_prices for graduated permit line
+}
+
+async function writeOrderFormSnapshot(args: WriteOrderFormSnapshotArgs): Promise<void> {
+  const {
+    supabase, companyId, source, intendedTier, stripeCustomerId,
+    stripeSubscriptionId, subscriptionItems, proposalCodeId,
+  } = args
+
+  // ── 1. Resolve commercial terms based on source ──────────────────
+  // Self-serve: from intendedTier metadata (already validated by the
+  // create-checkout-session route).
+  // Proposal-code: from proposal_codes row (base_tier, base_tier_type
+  // + collection_method for cycle inference — proposal codes today
+  // encode cycle via collection_method; if that changes, adjust here).
+  let track: string, tier: string, cycle: string, propertyCount: number, driverCount: number
+  if (source === 'self_serve') {
+    if (!intendedTier) {
+      console.error('[order-forms] self-serve path missing intendedTier — skipping snapshot', { companyId })
+      return
+    }
+    track         = intendedTier.track
+    tier          = intendedTier.tier
+    cycle         = intendedTier.cycle
+    propertyCount = intendedTier.property_count
+    driverCount   = intendedTier.driver_count
+  } else {
+    if (proposalCodeId === null) {
+      console.error('[order-forms] proposal-code path missing proposalCodeId — skipping snapshot', { companyId })
+      return
+    }
+    const { data: pc, error: pcErr } = await supabase
+      .from('proposal_codes')
+      .select('base_tier, base_tier_type, included_properties, included_drivers, collection_method')
+      .eq('id', proposalCodeId)
+      .maybeSingle()
+    if (pcErr || !pc) {
+      console.error('[order-forms] proposal_codes lookup failed — skipping snapshot', {
+        companyId, proposalCodeId, err: pcErr?.message ?? 'row not found',
+      })
+      return
+    }
+    track         = pc.base_tier_type as string
+    tier          = pc.base_tier as string
+    // Proposal codes don't have an explicit cycle field today; default
+    // to 'monthly'. Adjust when the proposal-code schema encodes it
+    // explicitly. (This is a legal-record honesty issue: the actual
+    // billing cycle lives on the Stripe subscription's prices — the
+    // snapshot's line_items array captures the truth via stripe_price_id;
+    // this cycle field is a convenience denormalization.)
+    cycle         = 'monthly'
+    propertyCount = (pc.included_properties as number | null) ?? 0
+    driverCount   = (pc.included_drivers as number | null) ?? 0
+  }
+
+  // ── 2. Look up the SaaS tos_acceptances row for FK binding ───────
+  const { data: saasRow, error: saasErr } = await supabase
+    .from('tos_acceptances')
+    .select('id, reviewed_at, accepted_at')
+    .eq('company_id', companyId)
+    .eq('document_type', 'saas')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (saasErr) {
+    console.error('[order-forms] tos_acceptances SaaS lookup failed — skipping snapshot', {
+      companyId, source, err: saasErr.message,
+    })
+    return
+  }
+  if (!saasRow) {
+    // Self-serve today: expected until accept_saas_agreement chicken-and-egg fix.
+    // Proposal-code: should never happen (redeem_proposal_code inserts SaaS row inline).
+    console.warn('[order-forms] no SaaS tos_acceptances row for company — skipping snapshot', {
+      companyId, source,
+      note: source === 'self_serve'
+        ? 'expected under accept_saas_agreement chicken-and-egg (see docs/backlog/)'
+        : 'unexpected — redeem_proposal_code Step 4d should have written this',
+    })
+    return
+  }
+
+  // ── 3. Build line_items JSONB via stripe_prices join ─────────────
+  if (subscriptionItems.length === 0) {
+    console.warn('[order-forms] eager.subscription_items empty (Stripe API hiccup?) — snapshot line_items will be empty', {
+      companyId, source,
+    })
+  }
+  const priceIds = subscriptionItems.map(i => i.stripe_price_id)
+  let priceMap = new Map<string, { line_item: string, unit_amount_cents: number | null, tiers: unknown }>()
+  if (priceIds.length > 0) {
+    const { data: priceRows, error: priceErr } = await supabase
+      .from('stripe_prices')
+      .select('stripe_price_id, line_item, unit_amount_cents, tiers')
+      .in('stripe_price_id', priceIds)
+    if (priceErr) {
+      console.error('[order-forms] stripe_prices lookup failed — snapshot line_items will have nulls', {
+        companyId, source, err: priceErr.message,
+      })
+    } else if (priceRows) {
+      priceMap = new Map(priceRows.map(r => [
+        r.stripe_price_id as string,
+        {
+          line_item:         r.line_item as string,
+          unit_amount_cents: r.unit_amount_cents as number | null,
+          tiers:             (r as { tiers?: unknown }).tiers ?? null,
+        },
+      ]))
+    }
+  }
+  const lineItems: LineItemSnapshot[] = subscriptionItems.map(i => {
+    const meta = priceMap.get(i.stripe_price_id)
+    if (!meta) {
+      console.warn('[order-forms] stripe_price_id not in stripe_prices — recording line with nulls', {
+        companyId, stripe_price_id: i.stripe_price_id,
+      })
+      return {
+        line_item:         null,
+        stripe_price_id:   i.stripe_price_id,
+        quantity:          i.quantity,
+        unit_amount_cents: null,
+        tiers:             null,
+      }
+    }
+    return {
+      line_item:         meta.line_item,
+      stripe_price_id:   i.stripe_price_id,
+      quantity:          i.quantity,
+      unit_amount_cents: meta.unit_amount_cents,
+      tiers:             meta.tiers,
+    }
+  })
+
+  // ── 4. INSERT the snapshot ───────────────────────────────────────
+  // Immutable row; INSERT only. Corrections use append-with-supersedes
+  // via a future admin RPC — never UPDATE.
+  const acceptedAt = (saasRow as { reviewed_at?: string, accepted_at?: string }).reviewed_at
+    ?? (saasRow as { reviewed_at?: string, accepted_at?: string }).accepted_at
+    ?? new Date().toISOString()
+
+  const { data: ofRow, error: ofErr } = await supabase
+    .from('order_forms')
+    .insert({
+      company_id:              companyId,
+      saas_acceptance_id:      saasRow.id,
+      proposal_code_id:        proposalCodeId,
+      source,
+      track,
+      tier,
+      cycle,
+      property_count:          propertyCount,
+      driver_count:            driverCount,
+      stripe_customer_id:      stripeCustomerId,
+      stripe_subscription_id:  stripeSubscriptionId,
+      line_items:              lineItems as unknown as Record<string, unknown>,
+      accepted_at:             acceptedAt,
+    })
+    .select('id')
+    .single()
+
+  if (ofErr) {
+    console.error('[order-forms] INSERT failed — company provisioned, snapshot missing', {
+      companyId, source, err: ofErr.message,
+    })
+    return
+  }
+
+  console.log('[order-forms] snapshot written', {
+    companyId, source, orderFormId: ofRow?.id,
+    lineItemsCount: lineItems.length,
+  })
 }
