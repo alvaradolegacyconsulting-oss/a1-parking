@@ -8,10 +8,22 @@
 -- and would have shipped again on order_forms without VQ.H catching it
 -- pre-apply.
 --
+-- ── APPLY HISTORY ──────────────────────────────────────────────────────
+-- 2026-07-22 first apply attempt: FAILED at Step 2c on
+-- `public.audit_logs_id_seq` — hardcoded sequence name referenced a
+-- non-existent sequence (audit_logs.id is uuid, not bigserial). Atomic
+-- transaction rolled back cleanly, pre-state intact. Root cause: same
+-- naming-convention drift bug the anon EXECUTE enumeration caught for
+-- functions. Fix: swapped Step 2c from hardcoded 22-entry list to
+-- blanket `GRANT USAGE, SELECT ON ALL SEQUENCES` (complete by
+-- construction, matches Cond 1's blanket EXECUTE pattern).
+--
 -- ── SAFETY (Mateo 2026-07-22, per multi-round preflight) ───────────────
 -- 1. WRAPPED IN SINGLE TRANSACTION. Any failure inside — including
 --    a VQ.GRANTS RAISE — rolls back the entire migration. Pre-state
---    intact if anything fails apply-time.
+--    intact if anything fails apply-time. Proven 2026-07-22 by the
+--    audit_logs_id_seq apply failure above — did exactly what it was
+--    designed to do.
 --
 -- 2. EMERGENCY RESTORE (paste-ready) — see companion file
 --    scripts/emergency-restore-grants.sql. Reverts to the over-
@@ -54,10 +66,11 @@
 --   retained SELECT + INSERT + UPDATE on load-bearing tables after
 --   the migration.
 -- • ALTER DEFAULT PRIVILEGES: REVOKE default anon+auth grants on
---   FUTURE TABLES + SEQUENCES (so newly-created tables don't
---   auto-grant back). NOT applied to FUNCTIONS — new functions
---   continue to default-grant to authenticated, matching the
---   blanket re-grant model.
+--   FUTURE TABLES only (so newly-created tables don't auto-grant
+--   back). NOT applied to FUNCTIONS or SEQUENCES — new functions
+--   continue to default-grant EXECUTE to authenticated, new sequences
+--   continue to default-grant USAGE to authenticated. Matches the
+--   blanket re-grant model for both (Step 2c + 2d).
 
 BEGIN;
 
@@ -70,12 +83,13 @@ REVOKE ALL ON ALL TABLES    IN SCHEMA public FROM anon, authenticated;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon, authenticated;
 
--- Also revoke future default privileges so newly-created TABLES + SEQUENCES
--- don't auto-grant back to anon/authenticated. FUNCTIONS default privileges
--- INTENTIONALLY UNCHANGED — future new functions continue to default-grant
--- EXECUTE to authenticated, matching the blanket re-grant pattern below.
-ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES    FROM anon, authenticated;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+-- Also revoke future default privileges so newly-created TABLES
+-- don't auto-grant back to anon/authenticated. FUNCTIONS and SEQUENCES
+-- default privileges INTENTIONALLY UNCHANGED — future new functions
+-- continue to default-grant EXECUTE to authenticated, future new
+-- BIGSERIAL sequences continue to default-grant USAGE to authenticated.
+-- Both match the blanket re-grant pattern below (Steps 2c + 2d).
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
 
 -- ══════════════════════════════════════════════════════════════════════
 -- STEP 2 — Authenticated re-grants
@@ -118,34 +132,26 @@ GRANT INSERT, UPDATE          ON public.violation_videos       TO authenticated;
 GRANT INSERT, UPDATE          ON public.violations             TO authenticated;
 GRANT INSERT, UPDATE          ON public.visitor_passes         TO authenticated;
 
--- ── 2c. Sequence USAGE for the 22 tables with authenticated INSERT ────
--- Postgres SERIAL/BIGSERIAL sequences need explicit USAGE for the role
--- performing the INSERT. Missing USAGE = INSERT fails with permission
--- denied for sequence.
-GRANT USAGE ON SEQUENCE
-  public.audit_logs_id_seq,
-  public.companies_id_seq,
-  public.dispute_requests_id_seq,
-  public.drivers_id_seq,
-  public.flag_acknowledgments_id_seq,
-  public.guest_authorizations_id_seq,
-  public.platform_settings_id_seq,
-  public.properties_id_seq,
-  public.proposal_codes_id_seq,
-  public.residents_id_seq,
-  public.space_assignment_history_id_seq,
-  public.space_requests_id_seq,
-  public.space_residents_id_seq,
-  public.spaces_id_seq,
-  public.storage_facilities_id_seq,
-  public.user_roles_id_seq,
-  public.vehicle_plate_changes_id_seq,
-  public.vehicles_id_seq,
-  public.violation_photos_id_seq,
-  public.violation_videos_id_seq,
-  public.violations_id_seq,
-  public.visitor_passes_id_seq
-  TO authenticated;
+-- ── 2c. BLANKET USAGE + SELECT on all sequences ───────────────────────
+-- REPLACES a hardcoded 22-entry `<table>_id_seq` list that failed apply
+-- on `audit_logs_id_seq` — that sequence doesn't exist (audit_logs.id
+-- is uuid, not bigserial). Same class of drift lesson from the anon
+-- EXECUTE enumeration: hardcoding names by convention breaks when the
+-- convention isn't universal. Blanket by construction — grants only
+-- on sequences that actually exist, can't miss one, can't reference
+-- a non-existent one.
+--
+-- Also matches Confirmation 1's blanket EXECUTE pattern for functions
+-- (Step 2d). Consistent: security boundary is the table + anon layer,
+-- not restricting which sequences authenticated can nextval() on.
+--
+-- USAGE = nextval() for SERIAL/BIGSERIAL DEFAULTs on client INSERTs.
+-- SELECT = currval()/lastval() for RETURNING clauses. Both match the
+-- Supabase default authenticated grants pre-B182/B183.
+--
+-- service_role bypasses this GRANT — its sequence access is
+-- independently maintained (not REVOKE'd in Step 1, not re-touched).
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 
 -- ── 2d. BLANKET EXECUTE on all functions ──────────────────────────────
 -- Per Mateo 2026-07-22 Confirmation 1: blanket re-grant is complete by
@@ -292,7 +298,7 @@ VALUES (
     'migration', '20260722_grant_remediation_deny_by_default',
     'purpose',   'B182/B183 systemic fix — schema-wide deny-by-default for anon+authenticated, narrow explicit re-grants matching actual usage. Closes the class shipped in adfc6e1 (auth writes on PII table for 24h) + would have shipped on order_forms without VQ.H catch.',
     'anon_end_state', 'Zero table grants. EXECUTE on 8 confirmed anon-surface RPCs only (visitor form, plate lookup, tow link, proposal-code redemption). Dead-weight let-stripped: create_visitor_pass, get_platform_flags, set_must_change_password, accept_tos, submit_dispute_request.',
-    'auth_end_state', 'Blanket SELECT on all public tables (RLS scopes rows). Narrow writes on 22 tables. Blanket EXECUTE on all functions (complete by construction — 95-fn list, includes Category A RLS helpers + Category B trigger functions).',
+    'auth_end_state', 'Blanket SELECT on all public tables (RLS scopes rows). Narrow writes on 22 tables. Blanket EXECUTE on all functions (complete by construction — 95-fn list, includes Category A RLS helpers + Category B trigger functions). Blanket USAGE + SELECT on all sequences (post-2026-07-22 fix — hardcoded per-table sequence names broke on audit_logs uuid).',
     'service_role', 'Untouched. Assertion block confirms retention of I/U/D on 14 load-bearing tables.',
     'gates',     'VQ.GRANTS (this migration, 4 blocks) + scripts/smoke-anon-surfaces-post-revoke.ts (functional anon calls incl. tow link) + manual authenticated write smoke (legacy-manager create visitor pass, trigger fires) + manual authenticated read smoke (residents queue loads).',
     'rollback',  'Atomic transaction — any RAISE aborts. Post-COMMIT smoke failure: paste scripts/emergency-restore-grants.sql (over-permissive restore, seconds to recover).',
