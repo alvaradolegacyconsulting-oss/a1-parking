@@ -42,10 +42,12 @@ function trackKey(t: TierTrack): 'enforcement' | 'property_management' {
   return t === 'enforcement' ? 'enforcement' : 'property_management'
 }
 
-// Premium is contact-sales (B89); never appears in the self-serve picker.
+// Premium is contact-sales (B89); Legacy is proposal-code-only (Jose
+// 2026-07-02). Neither belongs in the self-serve picker. Both filters
+// stay together here because the reason is the same: not self-servable.
 function selfServeTiers(t: TierTrack): TierDisplay[] {
   const all = t === 'enforcement' ? ENFORCEMENT_TIERS : PROPERTY_MANAGEMENT_TIERS
-  return all.filter(tier => !tier.enterprise)  // contact-sales render branch flag
+  return all.filter(tier => !tier.enterprise && !tier.hiddenFromSelfServe)
 }
 
 // B2-5 C2 (2026-07-21) — tierSlug(name.toLowerCase()) removed. Was
@@ -77,7 +79,14 @@ export default function SignupTierPicker() {
 
   // ── Form state ───────────────────────────────────────────────────
   const [track, setTrack] = useState<TierTrack>('enforcement')
-  const [tier, setTier] = useState<string>('legacy')
+  // B2-5 C1 (2026-07-21) — initial default matches the initial track
+  // ('enforcement' → 'enforcement_only'). Previously 'legacy' was the
+  // default, which was doubly wrong: Legacy is proposal-code-only
+  // (not self-servable) AND the useEffect below immediately overrides,
+  // so a Legacy default just meant a pre-effect render flicker of an
+  // invalid selection. Set to the actual first-visible tier for the
+  // default track to avoid the flicker AND make the intent readable.
+  const [tier, setTier] = useState<string>('enforcement_only')
   const [cycle, setCycle] = useState<'monthly' | 'annual'>('monthly')
   const [propertyCount, setPropertyCount] = useState<string>('1')
   const [driverCount, setDriverCount] = useState<string>('1')
@@ -105,7 +114,13 @@ export default function SignupTierPicker() {
   const tiers = useMemo(() => selfServeTiers(track), [track])
   useEffect(() => {
     // Reset tier when track changes to avoid carrying a stale tier across tracks.
-    setTier(tiers[0]?.slug ?? 'legacy')
+    // B2-5 C1 (2026-07-21) — fallback was 'legacy'; changed to
+    // 'enforcement_only' matching the initial state default. Legacy is
+    // filtered out by selfServeTiers (hiddenFromSelfServe) so it can
+    // never be `tiers[0]`; the fallback fires only in a defensive
+    // edge case (all tiers hidden) and must not produce an invalid
+    // selection.
+    setTier(tiers[0]?.slug ?? 'enforcement_only')
     if (track === 'pm') setDriverCount('0')
   }, [track, tiers])
 

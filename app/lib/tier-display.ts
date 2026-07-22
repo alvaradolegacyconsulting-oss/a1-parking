@@ -70,6 +70,14 @@ export type TierDisplay = {
   // pre-billing track-tabbed picker.
   includesEnforcement: boolean
   includesPM: boolean
+  // B2-5 C1 (2026-07-21) — hide from /signup self-serve picker while
+  // keeping the entry in OFFERINGS for marketing/landing consumers.
+  // Legacy is the only entry with this set today: it's negotiated per
+  // proposal code by Jose (custom pricing, custom terms), not
+  // self-servable. /signup filters this out via selfServeTiers(); other
+  // consumers of OFFERINGS (landing /page.tsx) show Legacy normally so
+  // prospects know it exists + can Request a Proposal.
+  hiddenFromSelfServe?: boolean
   features: string[]
 
   // ── DEPRECATED (Jose 2026-07-02): kept on the TierDisplay type so
@@ -133,6 +141,12 @@ export const OFFERINGS: TierDisplay[] = [
     name: 'Legacy',
     slug: 'legacy',
     customPrice: true,
+    // B2-5 C1 (2026-07-21) — hidden from /signup self-serve picker.
+    // Legacy is negotiated per proposal code by Jose (custom prices at
+    // issue time, no standard catalog rows); self-serve checkout would
+    // 503 on catalog resolution. Landing page still shows it via
+    // OFFERINGS (marketing needs prospects to know it exists).
+    hiddenFromSelfServe: true,
     includesEnforcement: true,
     includesPM: true,
     features: [
