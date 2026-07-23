@@ -4726,7 +4726,7 @@ export default function CompanyAdminPortal() {
             {/* RENEW MODAL */}
             {renewGuestAuthTarget && (
               <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                <div className="modal-card" style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
                   <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Renew authorization</p>
                   <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}>
                     <strong style={{ fontFamily:'Courier New', color:'#3b82f6' }}>{renewGuestAuthTarget.plate}</strong> — {renewGuestAuthTarget.guest_name}
@@ -4774,7 +4774,7 @@ export default function CompanyAdminPortal() {
             {/* REVOKE MODAL */}
             {revokeGuestAuthTarget && (
               <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                <div style={{ background:'#161b26', border:'1px solid #991b1b', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                <div className="modal-card" style={{ background:'#161b26', border:'1px solid #991b1b', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
                   <p style={{ color:'#f44336', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Revoke authorization</p>
                   <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}>
                     <strong style={{ fontFamily:'Courier New', color:'#f59e0b' }}>{revokeGuestAuthTarget.plate}</strong> — {revokeGuestAuthTarget.guest_name}
@@ -4981,7 +4981,7 @@ export default function CompanyAdminPortal() {
                 {/* 6 modals — same shape as manager Spaces tab, ca-prefixed state */}
                 {caTargetAdd && (
                   <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                    <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                    <div className="modal-card" style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
                       <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px', fontWeight:'bold' }}>Add new space</p>
                       <label style={lbl}>Type *</label>
                       <select value={caAddForm.type} onChange={e => setCaAddForm({ type: e.target.value as SpaceType })} style={inp}>
@@ -5002,7 +5002,7 @@ export default function CompanyAdminPortal() {
                     NOT touch the resident's vehicles or authorization. */}
                 {caTargetAssign && (
                   <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                    <div style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'460px', width:'100%' }}>
+                    <div className="modal-card" style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'460px', width:'100%' }}>
                       <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>{caTargetAssign.residents.length === 0 ? 'Assign space' : '+ Add resident to space'}</p>
                       <p style={{ color:'white', fontSize:'14px', margin:'0 0 12px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetAssign.label}</strong> · {TYPE_LABELS[caTargetAssign.type] ?? caTargetAssign.type}</p>
 
@@ -5060,7 +5060,7 @@ export default function CompanyAdminPortal() {
                     resident's authorization. */}
                 {caTargetFree && (
                   <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                    <div style={{ background:'#161b26', border:'1px solid #f59e0b', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                    <div className="modal-card" style={{ background:'#161b26', border:'1px solid #f59e0b', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
                       <p style={{ color:'#f59e0b', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Free space</p>
                       <p style={{ color:'white', fontSize:'14px', margin:'0 0 12px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetFree.label}</strong></p>
 
@@ -5114,7 +5114,7 @@ export default function CompanyAdminPortal() {
                 )}
                 {caTargetDecommission && (
                   <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                    <div style={{ background:'#161b26', border:'1px solid #991b1b', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
+                    <div className="modal-card" style={{ background:'#161b26', border:'1px solid #991b1b', borderRadius:'14px', padding:'22px', maxWidth:'400px', width:'100%' }}>
                       <p style={{ color:'#f44336', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Decommission space</p>
                       <p style={{ color:'white', fontSize:'14px', margin:'0 0 4px' }}><strong style={{ fontFamily:'Courier New', color:'#C9A227' }}>{caTargetDecommission.label}</strong></p>
                       <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 14px' }}>Mark inactive (history-only). Row + audit trail remain.</p>
@@ -5144,7 +5144,7 @@ export default function CompanyAdminPortal() {
                 )}
                 {caTargetEdit && (
                   <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-                    <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
+                    <div className="modal-card" style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'22px', maxWidth:'440px', width:'100%' }}>
                       <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px', fontWeight:'bold' }}>Edit space metadata</p>
                       <label style={lbl}>Label *</label>
                       <input value={caEditForm.label} onChange={e => setCaEditForm({ ...caEditForm, label: e.target.value })} style={inp} />
@@ -5177,7 +5177,7 @@ export default function CompanyAdminPortal() {
             skip/fail with retry-failed-only action. */}
         {spacePoolResults && (
           <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'14px', padding:'22px', maxWidth:'480px', width:'100%' }}>
+            <div className="modal-card" style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'14px', padding:'22px', maxWidth:'480px', width:'100%' }}>
               <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Space pool results</p>
               <p style={{ color:'white', fontSize:'14px', margin:'0 0 14px' }}>Property: <strong>{spacePoolResults.property}</strong></p>
               <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 14px', marginBottom:'14px' }}>
