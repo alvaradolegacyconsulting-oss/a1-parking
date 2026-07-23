@@ -251,6 +251,27 @@ flagged, no output, no signal. Use per-clause UNION ALL for anything that has bo
 WITH CHECK arm. The negative-control run is what surfaces this before the migration ships,
 not after.
 
+### Delimiter-extracted VQs
+
+Any VQ that extracts a source region by textual delimiters must (a) use **fixed-text delimiters
+with no per-site decoration** — box-drawing characters, rule lines, and alignment padding are
+not whitespace and survive `\s+` normalization; and (b) assert each delimiter occurs **exactly
+once** per target, since `position()` silently takes the first match and a duplicate delimiter
+shifts the extracted region without failing. Also assert **delimiter order** — a close-before-
+open pair makes `substring(... FOR position(close) - position(open))` negative, which raises a
+raw *"negative substring length not allowed"* rather than a named VQ finding.
+
+Design the delimiters identical from the start. VQ.CANONICAL catching decoration drift is the
+system working, but it costs an apply cycle each time.
+
+**Case reference:** DNT B2's first apply landed with `set_violation_status`'s CANONICAL marker
+line carrying 2 fewer trailing `──` chars than stamp/regenerate (shortened for indent alignment
+inside `IF p_new_status='tow_ticket' THEN`). Anchor was the full marker line including the
+trailing box-drawing chars; whitespace-normalize didn't collapse `──`; hash of the outlier
+differed; VQ.CANONICAL fired and named the correct function. Retrofit: anchors moved to the
+core semantic substring (`CANONICAL DNT guard block (Commit B2)` / `END CANONICAL BLOCK`), and
+the trailing decoration was stripped from all 6 marker lines to prevent recurrence.
+
 ## Cross-references
 
 - [scripts/audit-public-grants-2026-07-22.sql](../../scripts/audit-public-grants-2026-07-22.sql) —
