@@ -730,7 +730,7 @@ VALUES (
     'purpose',   'DNT Commit 3 — wires the DNT capability shipped in e17a24f (schema-only): cascade branch 0 in pm_plate_lookup + BEFORE INSERT trigger on violations (authoritative gate) + DNT guards in set_violation_status (tow_ticket only) + stamp_tow_ticket (unconditional) + new check_dnt_plate DEFINER RPC for driver client-side branch 0.',
     'wrap_pattern', 'pm_plate_lookup existing cascade (20260720:143-254) preserved BYTE-IDENTICAL inside `IF v_result_type IS NULL THEN...END IF;` wrap. Diff shows only wrapper + branch 0 + terminal-RETURN reason field as new.',
     'creation_trigger_v1_simplification', 'BEFORE INSERT trigger rejects violation creation for DNT plates entirely — even for non-tow reasons (fire lane, etc). Accepted for v1; future "note without violation" would be a separate feature, not a loosening of this guard.',
-    'check_dnt_plate_scope', 'CALLER-SCOPED per Mateo 2026-07-23 security fix. Role-branched: admin all; manager/leasing_agent via get_my_properties(); driver via drivers.assigned_properties by email; CA via properties.company ~~* get_my_company(); resident denied. Out-of-scope property returns {is_dnt:false, reason:null} — no leak.',
+    'check_dnt_plate_scope', 'CALLER-SCOPED per Mateo 2026-07-23 security fix. Role-branched: admin all; manager/leasing_agent via get_my_properties(); driver via drivers.assigned_properties by email; CA via lower(trim(p.company)) = lower(trim(get_my_company())) [NOT ILIKE — wildcard-safe]; resident denied. Out-of-scope property returns {is_dnt:false, reason:null} — no leak.',
     'guards_backwards_compat', 'DNT table empty at migration land. All guards + branch 0 inert. First activation when DNT Commit 5 (manager UI) lands + a plate is added.'
   ),
   now()
