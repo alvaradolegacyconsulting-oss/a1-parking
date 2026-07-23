@@ -127,3 +127,22 @@ body {
     font-size: 13px;
   }
 }
+
+/* ────────────────────────────────────────────────────────────────────
+   .modal-card — shared max-height + scroll for position:fixed modal
+   inner cards. Retires the class of latent bug documented in
+   docs/backlog/modal-scroll-class.md: PM + CA portals have identical
+   modal-backdrop pattern (position:fixed centered #161b26 card) where
+   the inner card lacks max-height, so any content exceeding the
+   viewport clips below the fold with no way to scroll. Applied via
+   className="modal-card" alongside the existing inline styles.
+   Inner card only — backdrop, onClick close, and stopPropagation are
+   untouched. Short modals are unchanged because max-height only
+   activates when content actually exceeds 90vh.
+   Same pattern as .pm-drawer-grid (Fix B, bdf7d29): shared utility
+   instead of duplicating two rules across 15 sites.
+   ──────────────────────────────────────────────────────────────────── */
+.modal-card {
+  max-height: 90vh;
+  overflow-y: auto;
+}
