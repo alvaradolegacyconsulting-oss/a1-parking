@@ -129,6 +129,43 @@ several commits later. First surfaced during DNT Commit 2 review (2026-07-23).
 - **Never skip the sequence check.** If a SERIAL column exists, the sequence grants need
   the same discipline — an `INSERT` grant without `USAGE` on the sequence is often a bug too.
 
+## Source-inspection VQs: assert on executable syntax, not identifiers
+
+**`pg_get_functiondef()` returns comments verbatim.** A source-inspection VQ that greps for a bare
+identifier or table name will match both code and prose — introducing two failure modes:
+
+**False positive (negative assertion tripped by a comment):** an assertion of the form "source must
+NOT contain `<retired pattern>`" will fire when a comment inside the function body QUOTES the retired
+pattern to explain why it was removed. Learned 2026-07-23: `check_dnt_plate`'s CA-branch fix commit
+had a comment saying *"initial draft used p.company ~~* get_my_company() (ILIKE) which..."* inside
+the function body — the negative assertion `NOT LIKE '%p.company ~~*%'` matched the comment and
+failed even though the deployed code was correct.
+
+**False pass (positive assertion satisfied by a comment):** an assertion of the form "source must
+contain `<table_name>`" will pass when a comment mentions the table even if the guard itself is
+missing or commented out. Worse than a false failure — it's a green check on an absent guard.
+
+**Discipline for both:**
+
+1. **Keep rationale comments OUTSIDE function bodies.** Put "why this pattern was retired" or
+   "why we chose X over Y" in the migration file header (before/after the `CREATE OR REPLACE
+   FUNCTION ... $func$ ... $func$;` block), never inside the function body itself. Function bodies
+   should read as code + minimal inline comments only.
+2. **Positive assertions must target executable syntax.** Not `NOT LIKE '%do_not_tow_plates%'`
+   (matches comments) but `NOT LIKE '%FROM public.do_not_tow_plates dnt%'` (matches only the actual
+   query clause). Aim for expressions that can't plausibly appear in prose — variable declarations
+   (`v_dnt_reason%TEXT`), assignments (`v_result_type := 'do_not_tow'`), IF conditions
+   (`IF p_new_status = 'tow_ticket'`), SELECT INTO patterns
+   (`SELECT dnt.reason INTO v_dnt_reason`).
+3. **Negative assertions of retired patterns are cheap and catch drift** — like VQ.SCOPE catching
+   the CA-branch ILIKE mismatch on its first run. Keep using them, just keep the prose describing
+   the retired pattern out of the inspected surface.
+
+Reference implementation of tightened VQ shape:
+[migrations/20260723_do_not_tow_cascade_and_guards_verification.sql](../../migrations/20260723_do_not_tow_cascade_and_guards_verification.sql)
+VQ.B/C/D (positive assertions on executable expressions) + VQ.SCOPE (negative assertion on retired
+ILIKE pattern).
+
 ## Behavioral probes: read the schema, don't remember it
 
 **Three probe failures in July 2026 traced to the same pattern:** SQL written against a

@@ -29,47 +29,75 @@ BEGIN
 END $vqa$;
 
 -- ── VQ.B — pm_plate_lookup source contains DNT branch 0 ───────────────
+-- Assertions target EXECUTABLE syntax (variable declarations,
+-- assignments, SELECT INTO expressions) — NOT bare table name / result
+-- string that could appear in a comment and false-pass this VQ. Per
+-- Mateo 2026-07-23: pg_get_functiondef returns comments verbatim, so
+-- positive VQs on plain identifiers can't distinguish code from prose.
 DO $vqb$
 DECLARE v_src TEXT;
 BEGIN
   SELECT pg_get_functiondef(p.oid) INTO v_src
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = 'public' AND p.proname = 'pm_plate_lookup';
-  IF v_src NOT LIKE '%do_not_tow_plates%' THEN
-    RAISE EXCEPTION 'VQ.B FAIL: pm_plate_lookup source does not reference do_not_tow_plates';
+
+  -- DECLARE of v_dnt_reason (executable — comments don't reserve variables)
+  IF v_src NOT LIKE '%v_dnt_reason%TEXT%' THEN
+    RAISE EXCEPTION 'VQ.B FAIL: pm_plate_lookup missing DECLARE of v_dnt_reason TEXT';
   END IF;
-  IF v_src NOT LIKE '%do_not_tow%' THEN
-    RAISE EXCEPTION 'VQ.B FAIL: pm_plate_lookup source does not set v_result_type = do_not_tow';
+  -- SELECT INTO v_dnt_reason — the branch-0 lookup expression
+  IF v_src NOT LIKE '%SELECT dnt.reason INTO v_dnt_reason%' THEN
+    RAISE EXCEPTION 'VQ.B FAIL: pm_plate_lookup missing branch-0 SELECT INTO v_dnt_reason';
   END IF;
-  IF v_src NOT LIKE '%v_dnt_reason%' THEN
-    RAISE EXCEPTION 'VQ.B FAIL: pm_plate_lookup source missing v_dnt_reason variable';
+  -- Branch-0 result_type assignment (executable expression)
+  IF v_src NOT LIKE '%v_result_type := ''do_not_tow''%' THEN
+    RAISE EXCEPTION 'VQ.B FAIL: pm_plate_lookup missing branch-0 result_type assignment';
+  END IF;
+  -- Terminal RETURN adds ''reason'' key with v_dnt_reason binding
+  IF v_src NOT LIKE '%''reason'',%v_dnt_reason%' THEN
+    RAISE EXCEPTION 'VQ.B FAIL: pm_plate_lookup terminal RETURN missing reason field bound to v_dnt_reason';
   END IF;
 END $vqb$;
 
 -- ── VQ.C — set_violation_status source contains DNT guard for tow_ticket ─
+-- Assertion targets the exact tow-only guard predicate + error return
+-- (both executable) — not bare table name.
 DO $vqc$
 DECLARE v_src TEXT;
 BEGIN
   SELECT pg_get_functiondef(p.oid) INTO v_src
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = 'public' AND p.proname = 'set_violation_status';
-  IF v_src NOT LIKE '%do_not_tow_plates%' THEN
-    RAISE EXCEPTION 'VQ.C FAIL: set_violation_status source does not reference do_not_tow_plates';
+  -- The tow_ticket-only guard predicate (executable IF condition)
+  IF v_src NOT LIKE '%IF p_new_status = ''tow_ticket''%' THEN
+    RAISE EXCEPTION 'VQ.C FAIL: set_violation_status missing tow_ticket-only guard IF';
   END IF;
+  -- do_not_tow_active error return (unique symbol only used in the guard)
   IF v_src NOT LIKE '%do_not_tow_active%' THEN
-    RAISE EXCEPTION 'VQ.C FAIL: set_violation_status source does not return do_not_tow_active error';
+    RAISE EXCEPTION 'VQ.C FAIL: set_violation_status missing do_not_tow_active error return';
+  END IF;
+  -- EXISTS clause with the DNT table lookup (executable subquery)
+  IF v_src NOT LIKE '%FROM public.do_not_tow_plates dnt%' THEN
+    RAISE EXCEPTION 'VQ.C FAIL: set_violation_status guard missing FROM do_not_tow_plates dnt';
   END IF;
 END $vqc$;
 
 -- ── VQ.D — stamp_tow_ticket source contains DNT guard ────────────────
+-- Same tightening — executable syntax only.
 DO $vqd$
 DECLARE v_src TEXT;
 BEGIN
   SELECT pg_get_functiondef(p.oid) INTO v_src
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = 'public' AND p.proname = 'stamp_tow_ticket';
-  IF v_src NOT LIKE '%do_not_tow_plates%' THEN
-    RAISE EXCEPTION 'VQ.D FAIL: stamp_tow_ticket source does not reference do_not_tow_plates';
+  -- EXISTS clause with the DNT table (executable subquery, not bare
+  -- table name — a comment mentioning the table would false-pass)
+  IF v_src NOT LIKE '%FROM public.do_not_tow_plates dnt%' THEN
+    RAISE EXCEPTION 'VQ.D FAIL: stamp_tow_ticket guard missing FROM do_not_tow_plates dnt';
+  END IF;
+  -- do_not_tow_active error return (unique symbol)
+  IF v_src NOT LIKE '%do_not_tow_active%' THEN
+    RAISE EXCEPTION 'VQ.D FAIL: stamp_tow_ticket missing do_not_tow_active error return';
   END IF;
 END $vqd$;
 

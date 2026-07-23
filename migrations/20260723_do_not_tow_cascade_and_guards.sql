@@ -40,9 +40,28 @@
 --   p_property is accessible to the caller by role (admin all; manager/
 --   leasing_agent via get_my_properties(); driver via
 --   drivers.assigned_properties by email; company_admin via
---   properties.company ~~* get_my_company(); resident denied). If
---   p_property is out of scope, returns {is_dnt:false, reason:null} —
---   does NOT leak whether any DNT plates exist there.
+--   lower(trim()) equality on both company and property name; resident
+--   denied). If p_property is out of scope, returns
+--   {is_dnt:false, reason:null} — does NOT leak whether any DNT plates
+--   exist there.
+--
+--   ── CA-branch scope discipline (moved out of function body) ────────
+--   The CA branch uses `lower(trim(p.company)) = lower(trim(get_my_company()))`
+--   NOT `p.company ~~* get_my_company()` (ILIKE). Reasons the ILIKE was
+--   retired here:
+--     - Whitespace-sensitive on the raw column side — a stray space
+--       silently misses.
+--     - Wildcard-interpretation: `%` or `_` in a company name
+--       over-matches, meaning a CA could read DNT status/reason for
+--       properties in a DIFFERENT company. On an AUTHORIZATION decision
+--       the wildcard risk is severe.
+--   Same convention as pm_plate_lookup (743e519) + footprint counts
+--   (d1303c7). Rationale kept HERE (header) not inside the function
+--   body so source-inspection VQs checking for retired-pattern absence
+--   see only executable syntax — pg_get_functiondef() returns comments
+--   verbatim, and a comment quoting the retired pattern would false-
+--   positive a "source must not contain X" assertion (learned
+--   2026-07-23).
 --
 -- ── Backwards-compat ───────────────────────────────────────────────────
 -- DNT table is empty. Every new gate/guard/branch has zero behavioral
@@ -187,14 +206,13 @@ BEGIN
     );
 
   ELSIF v_role = 'company_admin' THEN
-    -- CAs scope via companies+properties join. lower(trim()) both sides
-    -- for BOTH company + property name per Mateo 2026-07-23 fix — the
-    -- initial draft used p.company ~~* get_my_company() (ILIKE) which
-    -- has both whitespace-sensitivity AND wildcard-interpretation
-    -- failure modes. On an AUTHORIZATION decision the wildcard risk is
-    -- severe (a % in a company name over-matches → CA reads other
-    -- companies' DNT reasons). Same convention as pm_plate_lookup
-    -- (743e519) + footprint counts (d1303c7).
+    -- CAs: scope via companies+properties join. lower(trim()) both sides
+    -- for BOTH company and property name. See header block "CA-branch
+    -- scope discipline" for the rationale (removed from function body
+    -- so source-inspection VQs that check for the retired pattern can
+    -- match executable syntax only — pg_get_functiondef returns
+    -- comments too, and a comment describing the retired pattern
+    -- would false-positive the negative assertion).
     v_authorized := EXISTS (
       SELECT 1 FROM public.properties p
        WHERE lower(trim(p.company)) = lower(trim(get_my_company()))
