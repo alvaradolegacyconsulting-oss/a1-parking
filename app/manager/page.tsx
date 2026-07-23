@@ -4147,13 +4147,20 @@ export default function ManagerPortal() {
               </div>
             )}
 
-            {/* Section C — Exempt Plates */}
+            {/* Section C — Visitor Pass Quota Exemptions
+                Formerly labeled "Exempt Plates" — that name misled property
+                owners into thinking these plates were protected from
+                towing. They are NOT — this feature only skips the annual
+                visitor-pass cap. See "Do Not Tow" (separate feature) for
+                actual tow protection. Column name exempt_plates preserved
+                for backwards-compat; UI reframed 2026-07-23 to remove
+                ambiguity that caused wrongful-tow risk. */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px' }}>
-              <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Exempt Plates</p>
-              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>These plates bypass the annual visitor pass limit entirely.</p>
+              <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Visitor Pass Quota Exemptions</p>
+              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>These plates skip the annual visitor pass cap — a plate on this list can be issued more than the yearly limit. <strong style={{ color:'#f59e0b' }}>This does NOT protect the vehicle from being towed.</strong> Vehicles still need an active visitor pass, resident registration, or guest authorization to avoid enforcement.</p>
 
               {exemptPlates.length === 0 ? (
-                <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px' }}>No exempt plates yet.</p>
+                <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px' }}>No quota exemptions configured yet.</p>
               ) : (
                 <div style={{ marginBottom:'14px' }}>
                   {exemptPlates.map(plate => (
