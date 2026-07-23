@@ -201,6 +201,56 @@ the verification mid-run, and any state the probe INSERTed before the abort must
 rollback cleanly — which requires the DO block's atomicity discipline (all probe writes in one
 DO block, defensive `WHEN OTHERS` cleanup).
 
+## Negative control: prove your VQ can fail before you rely on its silence
+
+Every misleading verification this codebase has produced shared one property: **nobody ever saw
+it fail**. The `tgtype` CASE that returned `'INSERT'` for an INSERT-OR-UPDATE trigger; the
+source-inspection VQ that matched its own explanatory comment; DNT Commit 3's guards that were
+present, wrong, and silent-green. Green meant nothing in each case because red was unreachable.
+
+**Rule:** run every new VQ against the **unfixed** schema BEFORE applying the migration. A VQ
+that has not been observed failing has not been tested — it has only been written. The
+pre-apply failure output (or intentional pass, when the VQ asserts an already-true invariant
+being preserved) becomes documentation in the verification file header alongside the expected
+post-apply state.
+
+**Why the header, not just the ship report:** the header travels with the file. Six months from
+now, someone reviewing an old migration to understand why a VQ exists gets the negative-control
+result without archaeology.
+
+**Cost:** one paste per VQ.
+
+### What the header block looks like
+
+```sql
+-- ── Negative control (pre-apply state) ─────────────────────────────────
+-- Corrected per-clause VQ.1 was executed against the unfixed schema
+-- BEFORE this migration ran, and correctly raised:
+--   {dnt_manager_select.USING, dnt_manager_update.USING,
+--    "dnt_manager_insert.WITH CHECK", "dnt_manager_update.WITH CHECK"}
+-- VQ.6 (roles={authenticated}) passed pre-apply — this migration must
+-- PRESERVE, not establish, that invariant.
+--
+-- Those failures + intentional passes prove these VQs are validated
+-- detectors, not decorative silence. Post-apply, VQ.1 goes silent —
+-- and silence then means the rewrite landed, not that the check is toothless.
+```
+
+### When a VQ is "intentional pass" pre-apply
+
+If the migration is preserving an invariant (e.g., "already `TO authenticated`; don't widen"),
+the pre-apply VQ passes. **Record that too** — it's the assertion that B did not silently
+weaken a control C had established. A passing invariant-preservation VQ is still a validated
+detector: it would fire if the invariant were violated at the same call site.
+
+### Applies especially to per-clause vs per-policy structure
+
+`qual NOT LIKE … AND with_check NOT LIKE …` is one of the most common quiet-failure shapes: an
+UPDATE policy with scoped USING and unscoped WITH CHECK evaluates `FALSE AND TRUE` → nothing
+flagged, no output, no signal. Use per-clause UNION ALL for anything that has both a USING and
+WITH CHECK arm. The negative-control run is what surfaces this before the migration ships,
+not after.
+
 ## Cross-references
 
 - [scripts/audit-public-grants-2026-07-22.sql](../../scripts/audit-public-grants-2026-07-22.sql) —
