@@ -87,6 +87,41 @@ table grant to have anything to gate. The RLS qual restricts to row-level.
 `INSERT` REVOKE and document why in the migration header. The verification block for that verb
 gets commented out with a matching WHY comment.
 
+## Explicit grants for tables that DO allow authenticated writes
+
+For tables with a client-side write path (manager/CA/resident INSERT from their portal, gated
+by RLS), the migration must **explicitly GRANT everything the table needs — including sequence
+USAGE.** Inherited defaults are gone by design post-grant-remediation
+([20260722_grant_remediation_deny_by_default.sql](../../migrations/20260722_grant_remediation_deny_by_default.sql)).
+Not relying on inherited defaults is the discipline that never breaks: even where defaults
+happen to preserve what you need today, one future migration could revoke them, and every
+table would break silently. Grant explicitly.
+
+Every new table with authenticated writes needs BOTH:
+
+```sql
+-- Table-level: whatever verbs the RLS policies allow
+GRANT SELECT, INSERT, UPDATE ON public.<TABLE_NAME> TO authenticated;
+
+-- Sequence-level: USAGE (for nextval() on BIGSERIAL default) + SELECT (for currval/RETURNING)
+GRANT USAGE, SELECT ON SEQUENCE public.<TABLE_NAME>_id_seq TO authenticated;
+```
+
+And matching positive assertions in `VQ.GRANTS` (in addition to the anon negative assertions):
+
+```sql
+IF NOT has_table_privilege('authenticated', 'public.<TABLE_NAME>', 'INSERT') THEN
+  RAISE EXCEPTION 'VQ.GRANTS FAIL: authenticated missing INSERT — client-side write path broken';
+END IF;
+IF NOT has_sequence_privilege('authenticated', 'public.<TABLE_NAME>_id_seq', 'USAGE') THEN
+  RAISE EXCEPTION 'VQ.GRANTS FAIL: authenticated lacks sequence USAGE — INSERT will fail at nextval()';
+END IF;
+```
+
+**The sequence-USAGE assertion is the load-bearing catch.** Without it, "granted the table but
+forgot the sequence" ships and manifests only when a manager tries to use the feature — often
+several commits later. First surfaced during DNT Commit 2 review (2026-07-23).
+
 ## What NOT to skip
 
 - **Never skip anon assertions.** Anon writes on a public schema table are almost never
