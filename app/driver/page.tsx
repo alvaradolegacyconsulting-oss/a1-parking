@@ -414,6 +414,43 @@ export default function DriverPortal() {
     // valid reference-data absence, NOT a deauthorization signal.
     const SAFE_VEHICLE_COLS = 'plate, is_active, status, year, color, make, model, property, space, resident_email'
 
+    // ── Branch 0: Do Not Tow check (DNT Commit 3) ─────────────────────
+    // TOP PRECEDENCE — "never tow" trumps every other cascade branch.
+    // Backed by check_dnt_plate DEFINER RPC (caller-scoped: driver
+    // authenticates + drivers.assigned_properties must include
+    // targetProp — otherwise the RPC returns {is_dnt:false} without
+    // leaking DNT existence).
+    //
+    // FAIL-OPEN on RPC error: continue to the existing cascade. The
+    // server-side guards (BEFORE INSERT trigger on violations +
+    // stamp_tow_ticket DNT guard) are the AUTHORITATIVE gate. Client
+    // failure = suboptimal UX (driver sees existing cascade result +
+    // clicks Issue Violation → server rejects with check_violation),
+    // NOT a wrongful tow. Fail-closed would block legitimate
+    // enforcement on transient RPC errors, worse than the fallback.
+    //
+    // Commit 4 wires the driver UI card for result.type='do_not_tow'.
+    // Until Commit 4 lands, the setResult below with the new type
+    // variant is unhandled by the existing render — no visible impact
+    // in prod because the DNT table is empty until Commit 5.
+    {
+      const { data: dntCheck, error: dntErr } = await supabase
+        .rpc('check_dnt_plate', { p_plate: clean, p_property: targetProp })
+      if (dntErr) {
+        console.error('[searchPlate] check_dnt_plate failed — falling open to existing cascade', dntErr.message)
+      } else if (dntCheck && (dntCheck as { is_dnt: boolean }).is_dnt) {
+        const reason = (dntCheck as { is_dnt: boolean, reason: string }).reason
+        setResult({
+          type: 'do_not_tow',
+          plate: clean,
+          property: targetProp,
+          reason,
+        } as any)
+        setSearching(false)
+        return
+      }
+    }
+
     // Slice 4 — appended `id, status` so we can enrich under-review with
     // the pending plate change when the vehicle exists but is mid-change.
     // Runtime concat defeats the tuple-typed inference; local `any` cast

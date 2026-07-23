@@ -129,6 +129,41 @@ several commits later. First surfaced during DNT Commit 2 review (2026-07-23).
 - **Never skip the sequence check.** If a SERIAL column exists, the sequence grants need
   the same discipline — an `INSERT` grant without `USAGE` on the sequence is often a bug too.
 
+## Behavioral probes: read the schema, don't remember it
+
+**Three probe failures in July 2026 traced to the same pattern:** SQL written against a
+remembered schema instead of a read one.
+
+1. `audit_logs_id_seq` — assumed BIGSERIAL; sequence didn't exist (uuid PK). Migration aborted at apply.
+2. `tos_acceptances.created_at` — assumed the column existed; it didn't. Query aborted.
+3. `violations.driver_email` + `violations.timestamp` — both guessed; real columns are `driver_name`
+   (which is the *offending vehicle's* driver, not an actor column at all — attribution lives in
+   `audit_logs`) and `created_at`. Verification aborted mid-run.
+
+Every failure was loud (Postgres 42703 UNDEFINED_COLUMN / 42P01 UNDEFINED_TABLE), but each cost a
+round trip and Jose's time. The fix is trivial and mechanical.
+
+**Rule for every migration author (human or Claude):** for any table your migration or verification
+touches that you haven't read in-session, query `information_schema.columns` FIRST:
+
+```sql
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = '<the_table>'
+ORDER BY ordinal_position;
+```
+
+Then write the INSERT / UPDATE / SELECT statement against that output. Memory is not a substitute —
+especially for tables whose `CREATE TABLE` predates the migrations directory (`companies`,
+`user_roles`, `properties`, `violations`, `audit_logs`, `platform_settings`, `residents`,
+`vehicles`, `visitor_passes`), where grep can't find the schema and only a live query has ground
+truth.
+
+**Applies especially to behavioral probes in verification files:** an incorrect column name aborts
+the verification mid-run, and any state the probe INSERTed before the abort must survive txn
+rollback cleanly — which requires the DO block's atomicity discipline (all probe writes in one
+DO block, defensive `WHEN OTHERS` cleanup).
+
 ## Cross-references
 
 - [scripts/audit-public-grants-2026-07-22.sql](../../scripts/audit-public-grants-2026-07-22.sql) —
