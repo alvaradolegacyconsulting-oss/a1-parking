@@ -441,11 +441,9 @@ export default function DriverPortal() {
       } else if (dntCheck && (dntCheck as { is_dnt: boolean }).is_dnt) {
         const reason = (dntCheck as { is_dnt: boolean, reason: string }).reason
         setResult({
-          type: 'do_not_tow',
-          plate: clean,
-          property: targetProp,
-          reason,
-        } as any)
+          status: 'do_not_tow',
+          data: { plate: clean, property: targetProp, reason },
+        })
         setSearching(false)
         return
       }
@@ -680,6 +678,66 @@ export default function DriverPortal() {
     }]).select().single()
     if (insErr) {
       setSubmitting(false)
+      // Log EVERY insert failure with the raw shape — a missed DNT
+      // detection is precisely the case that most needs diagnosis
+      // (Mateo 2026-07-23). Was previously nested inside isDntBlock
+      // which meant misses were invisible.
+      console.error('[submitViolation] insert failed', {
+        code: (insErr as unknown as { code?: string }).code,
+        message: insErr.message,
+        details: (insErr as unknown as { details?: string }).details,
+        hint: (insErr as unknown as { hint?: string }).hint,
+      })
+      // ── DNT creation-trigger catch (fail-open recovery — DNT Commit 4) ─
+      // If check_dnt_plate errored during searchPlate() (fail-open path),
+      // driver reaches the notfound card, clicks Issue Violation, and the
+      // BEFORE INSERT trigger dnt_reject_violation_insert refuses with
+      // check_violation. Detect + render as PROTECTION (not ERROR).
+      //
+      // 🔴 Detection is defensive-tolerant: PostgREST/supabase-js error
+      // shape is not empirically verified in this environment. Match on
+      // multiple keys so any surface (raw SQLSTATE, wrapped code,
+      // message-only) is caught. The console.error above captures the
+      // raw shape for ANY insert failure — miss or hit — so the first
+      // real DNT block in prod tightens the check for later.
+      //
+      // Filed with Mateo's caveat: "an assumed error shape fails just
+      // as silently as an assumed column." Diagnostic log + tolerant
+      // catch = graceful fallback; Commit 4.5's smoke will capture the
+      // real error shape via a sessioned trigger rejection and let us
+      // tighten this condition if any of the 5 keys aren't the right
+      // one to key on.
+      const errAny = insErr as unknown as { code?: string, message?: string, details?: string, hint?: string }
+      const isDntBlock =
+        errAny.code === '23514' ||                                    // Postgres check_violation SQLSTATE
+        (errAny.code ?? '').includes('23514') ||                      // wrapped code variant
+        /Do Not Tow/i.test(errAny.message ?? '') ||                   // trigger RAISE text
+        /Do Not Tow/i.test(errAny.details ?? '') ||                   // supabase-js may bury it in details
+        /Do Not Tow/i.test(errAny.hint ?? '')                         // trigger HINT text
+      if (isDntBlock) {
+        // Structured reason via check_dnt_plate (avoids parsing the RAISE
+        // message — reasons are manager-entered free text and may contain
+        // parentheses that would break a regex-based extraction).
+        let reason: string | null = null
+        try {
+          const { data: dntData } = await supabase.rpc('check_dnt_plate', {
+            p_plate: normalizedPlate,
+            p_property: violation.property,
+          })
+          reason = (dntData as { reason?: string } | null)?.reason ?? null
+        } catch (e) {
+          console.error('[submitViolation] check_dnt_plate recovery call failed', e)
+        }
+        alert(
+          `This plate is protected at this property.\n\n` +
+          (reason ? `Reason: ${reason}\n\n` : '') +
+          `Do not tow. Contact the property manager if you believe this vehicle should not be protected.`
+        )
+        // Close the violation modal so driver returns to plate lookup
+        // instead of retrying the submit against a permanent rejection.
+        setShowViolation(false)
+        return
+      }
       alert('Error: ' + insErr.message); return
     }
     let insertedPhotoIds: number[] = []
@@ -1606,8 +1664,13 @@ export default function DriverPortal() {
                   // orange=visitor). LOUD distinction per Jose 2026-06-20 —
                   // guest_authorized is the newest status with no driver muscle
                   // memory; tow-by-default risk is highest here.
-                  background: result.status === 'authorized' ? '#061406' : result.status === 'plate_under_review' ? '#241a08' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
-                  border: `1px solid ${result.status === 'authorized' ? '#2e7d32' : result.status === 'plate_under_review' ? '#a16207' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
+                  // DNT Commit 4: do_not_tow = green bg + GOLD border. Distinct
+                  // from authorized (which is green bg + green border). Gold
+                  // signals "protected" — unmistakable at-a-glance vs any
+                  // other cascade result, per Mateo's "unmistakable authorized
+                  // styling, not red" spec.
+                  background: result.status === 'do_not_tow' ? '#0a1a08' : result.status === 'authorized' ? '#061406' : result.status === 'plate_under_review' ? '#241a08' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
+                  border: `1px solid ${result.status === 'do_not_tow' ? '#C9A227' : result.status === 'authorized' ? '#2e7d32' : result.status === 'plate_under_review' ? '#a16207' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
                 }}>
                   {result.status === 'authorized' && (
                     <>
@@ -1816,6 +1879,41 @@ export default function DriverPortal() {
                         style={{ width: '100%', padding: '11px', background: '#991b1b', color: 'white', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation
                       </button>
+                    </>
+                  )}
+
+                  {result.status === 'do_not_tow' && (
+                    <>
+                      {/* DNT Commit 4 — protected vehicle card. Rendered when
+                          check_dnt_plate returned {is_dnt: true} in the
+                          searchPlate() branch 0 (cascade top precedence).
+                          Styling: green bg + gold border (unmistakable
+                          authorized-family, distinct from resident green).
+                          NO Issue Violation button (absent, not disabled) —
+                          a DNT vehicle is not a violation candidate at all,
+                          and absent-button states that plainly. If a driver
+                          disagrees, the contact-manager line gives them
+                          somewhere to go rather than improvising. */}
+                      <p style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '18px', margin: '0 0 6px' }}>
+                        ✓ DO NOT TOW
+                      </p>
+                      <p style={{ color: '#e2e8f0', fontSize: '13px', margin: '0 0 12px', fontStyle: 'italic' }}>
+                        This vehicle is protected at this property.
+                      </p>
+                      <div style={{ marginBottom: '10px', padding: '10px', background: '#1a1608', border: '1px solid #3a2e0a', borderRadius: '8px' }}>
+                        <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Reason</span>
+                        <div style={{ color: '#fbbf24', fontSize: '14px', marginTop: '4px', fontWeight: 500 }}>
+                          {result.data.reason ?? '(no reason provided)'}
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: '10px', padding: '10px', background: '#0a1408', border: '1px solid #1e3a1e', borderRadius: '8px' }}>
+                        <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Property</span>
+                        <div style={{ color: '#4caf50', fontSize: '13px', marginTop: '3px' }}>{result.data.property}</div>
+                      </div>
+                      <p style={{ color: '#888', fontSize: '11px', margin: '10px 0 0', fontStyle: 'italic' }}>
+                        Contact the property manager if this looks wrong.
+                      </p>
+                      {/* Deliberately no Issue Violation button. Absent, not disabled. */}
                     </>
                   )}
 
