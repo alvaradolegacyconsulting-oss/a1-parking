@@ -186,20 +186,32 @@ BEGIN
 END $vq_3$;
 
 -- ══════════════════════════════════════════════════════════════════════
--- VQ.4 — no DELETE policy AND authenticated lacks DELETE grant
+-- VQ.4 (extended 2026-07-23 per DNT-PARK migration) — soft-delete AND parked
 -- ══════════════════════════════════════════════════════════════════════
--- Soft-delete-only invariant, two audiences:
+-- Original invariant: soft-delete-only, two audiences:
 --   • manager/CA — enforced by their policies being SELECT/INSERT/UPDATE
 --     only (RLS refuses DELETE for zero-applicable-policy).
 --   • admin — enforced ONLY by absence of the DELETE grant, because
 --     dnt_admin_all is FOR ALL. Grant flip = admin hard-delete.
--- Both sides asserted so a future migration cannot silently break
--- either mechanism without failing loud here. See migration header
--- for do-not-clean-up rationale.
+--
+-- Park extension: authenticated must ALSO hold no INSERT and no UPDATE.
+-- do_not_tow_plates is parked; INSERT/UPDATE are the population vectors.
+-- If either is restored, the parked state has been reversed — that is a
+-- decision, not a cleanup. See migrations/20260723_dnt_park_revoke_writes.sql
+-- COMMENT ON TABLE for do-not-reactivate rationale.
+--
+-- ── Substitute negative control (park extension) ──────────────────────
+-- Natural negative control was consumed by manual apply — INSERT/UPDATE
+-- grants were removed before this extension shipped. Substitute check
+-- that has_table_privilege returns TRUE when a grant exists:
+--   SELECT has_table_privilege('authenticated','public.violations','INSERT')
+--     → true (predicate is not structurally inert).
 DO $vq_4$
 DECLARE
   v_del_pol   INTEGER;
   v_del_grant BOOLEAN;
+  v_ins_grant BOOLEAN;
+  v_upd_grant BOOLEAN;
 BEGIN
   SELECT COUNT(*) INTO v_del_pol
   FROM pg_policies
@@ -212,6 +224,18 @@ BEGIN
     INTO v_del_grant;
   IF v_del_grant THEN
     RAISE EXCEPTION 'VQ.4 FAILED — authenticated has DELETE grant on do_not_tow_plates (soft-delete invariant broken)';
+  END IF;
+
+  SELECT has_table_privilege('authenticated', 'public.do_not_tow_plates', 'INSERT')
+    INTO v_ins_grant;
+  IF v_ins_grant THEN
+    RAISE EXCEPTION 'VQ.4 FAILED — authenticated has INSERT grant on do_not_tow_plates (park invariant broken — table has been reactivated)';
+  END IF;
+
+  SELECT has_table_privilege('authenticated', 'public.do_not_tow_plates', 'UPDATE')
+    INTO v_upd_grant;
+  IF v_upd_grant THEN
+    RAISE EXCEPTION 'VQ.4 FAILED — authenticated has UPDATE grant on do_not_tow_plates (park invariant broken — table has been reactivated)';
   END IF;
 END $vq_4$;
 
