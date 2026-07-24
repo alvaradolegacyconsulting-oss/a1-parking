@@ -20,9 +20,9 @@ import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import SupportContact from '../components/SupportContact'
 // AP-MANAGE-CLIENT (2026-07-23): standing authorization per-property manager.
-// Wrapper below resolves property_id from manager.property (name) —
-// manager state stores name only. Multi-property gap inherited from
-// exempt-plates pattern; see docs/backlog/manager-multi-property-settings-selector.md.
+// `manager` state IS a properties row (has .id + .name), so the component
+// receives them directly. Multi-property gap inherited from exempt-plates
+// pattern; see docs/backlog/manager-multi-property-settings-selector.md.
 import AuthorizedPlatesManager from '../components/AuthorizedPlatesManager'
 import {
   type GuestAuth,
@@ -101,61 +101,6 @@ async function callSyncOnAdd(
   } catch (e) {
     return { ok: false, reason: (e as Error).message }
   }
-}
-
-// AP-MANAGE-CLIENT: Authorized Plates section wrapper. Looks up
-// property_id from manager.property (name) since manager state stores
-// name only. Mirrors the multi-property gap of exempt-plates — see
-// docs/backlog/manager-multi-property-settings-selector.md
-//
-// FIX 2026-07-23: original shipped with `if (propertyId === null) return null`
-// which rendered nothing on both the pending-async-gap AND the
-// lookup-returned-zero-rows cases. Silent-absence class — the section
-// vanished with no error, no diagnostic. Now: loading state while
-// resolving; explicit error state if lookup fails; only renders the
-// component on confirmed id resolution. Same discipline as the driver
-// render fallback branch — a section that vanishes is undiagnosable.
-function ManagerAuthorizedPlatesWrapper({ propertyName }: { propertyName: string }) {
-  const [propertyId, setPropertyId] = useState<number | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [lookupError, setLookupError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancel = false
-    setLoading(true); setLookupError(null); setPropertyId(null)
-    // `.eq('name', ...)` is exact match. If Jose's manager.property has
-    // whitespace or case drift from the stored value, this returns
-    // zero rows. Trim the input as a small tolerance — the DB trigger
-    // trg_properties_name_trim keeps stored names trimmed, so equality
-    // after client-side trim should match for any legitimate case.
-    supabase.from('properties').select('id').eq('name', propertyName.trim()).maybeSingle()
-      .then(({ data, error }) => {
-        if (cancel) return
-        setLoading(false)
-        if (error) { setLookupError(`Lookup failed: ${error.message}`); return }
-        if (!data) {
-          setLookupError(`Property "${propertyName}" not found — the manager's assigned property may not exist or you may not have RLS permission to read it.`)
-          return
-        }
-        setPropertyId(data.id as number)
-      })
-    return () => { cancel = true }
-  }, [propertyName])
-
-  if (loading) {
-    return <p style={{ color:'#555', fontSize:'12px', margin:'12px 0' }}>Loading Authorized Plates…</p>
-  }
-  if (lookupError || propertyId === null) {
-    return (
-      <div style={{ background:'#241a08', border:'1px solid #a16207', borderRadius:'8px', padding:'12px', marginTop:'12px' }}>
-        <p style={{ color:'#fbbf24', fontSize:'12px', fontWeight:'bold', margin:'0 0 4px' }}>⚠ Authorized Plates unavailable</p>
-        <p style={{ color:'#fef3c7', fontSize:'11px', margin:'0', lineHeight:'1.5' }}>
-          {lookupError || 'Could not resolve this property.'} Contact support if this persists.
-        </p>
-      </div>
-    )
-  }
-  return <AuthorizedPlatesManager propertyId={propertyId} propertyName={propertyName} />
 }
 
 export default function ManagerPortal() {
@@ -360,7 +305,7 @@ export default function ManagerPortal() {
   // (Part A RPC changes now surface them; previously the manager's whitelist
   // rejected them as "Unexpected response" and users saw "not authorized"
   // instead of the actual under-review state).
-  const [lookupResult, setLookupResult] = useState<{ result_type: 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review'; unit_number: string | null; queriedPlate: string; guest_name?: string | null; valid_through?: string | null } | null>(null)
+  const [lookupResult, setLookupResult] = useState<{ result_type: 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review' | 'authorized_plate'; unit_number: string | null; queriedPlate: string; guest_name?: string | null; valid_through?: string | null; ap_property_name?: string | null; ap_label?: string | null } | null>(null)
   const [lookupError, setLookupError] = useState('')
   const [managerCompany, setManagerCompany] = useState('')
   const [managerEmail, setManagerEmail] = useState('')
@@ -1021,10 +966,12 @@ export default function ManagerPortal() {
       const result = (data || {}) as Record<string, unknown>
       const kind = String(result.result_type || '')
       // B230 Part B (2026-07-09): 'pending' + 'plate_under_review' added
-      // to the whitelist. B220 added 'guest_authorized'. Any new
-      // pm_plate_lookup RPC return type must land here or renders will
-      // silently degrade to "Unexpected response from server."
-      if (kind !== 'resident' && kind !== 'visitor' && kind !== 'unauthorized' && kind !== 'guest_authorized' && kind !== 'pending' && kind !== 'plate_under_review') {
+      // to the whitelist. B220 added 'guest_authorized'. AP-CASCADE
+      // (2026-07-23) added 'authorized_plate' — standing authorization
+      // via branch 1.5. Any new pm_plate_lookup RPC return type must
+      // land here or renders will silently degrade to "Unexpected
+      // response from server."
+      if (kind !== 'resident' && kind !== 'visitor' && kind !== 'unauthorized' && kind !== 'guest_authorized' && kind !== 'pending' && kind !== 'plate_under_review' && kind !== 'authorized_plate') {
         setLookupError('Unexpected response from server.')
         return
       }
@@ -1032,11 +979,13 @@ export default function ManagerPortal() {
       // user sees exactly what got searched + logged in the audit row.
       const normalized = normalizePlate(raw)
       setLookupResult({
-        result_type: kind as 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review',
+        result_type: kind as 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review' | 'authorized_plate',
         unit_number: (result.unit_number as string | null) ?? null,
         queriedPlate: normalized,
         guest_name:  (result.guest_name  as string | null) ?? null,
         valid_through: (result.valid_through as string | null) ?? null,
+        ap_property_name: (result.ap_property_name as string | null) ?? null,
+        ap_label: (result.ap_label as string | null) ?? null,
       })
     } finally {
       setLookupBusy(false)
@@ -4257,10 +4206,17 @@ export default function ManagerPortal() {
             {/* AP-MANAGE-CLIENT (2026-07-23): Authorized Plates section,
                 adjacent to Quota Exemptions per Mateo's adjacency-teaches-
                 the-difference argument. Both headings carry their
-                enforcement boundary in the sub-copy. */}
-            {manager?.property && (
+                enforcement boundary in the sub-copy.
+                FIX 2026-07-23: `manager` state IS a properties-table row
+                (see setManager(props[0]) at line 494 + setManager(data[0])
+                at line 536). Property rows have .id + .name, NOT .property.
+                Original shipped code referenced manager.property which
+                is undefined — conditional never fired, wrapper never
+                mounted. Root cause of Jose's blank-Settings-section report.
+                Drop the async lookup wrapper entirely — id is right there. */}
+            {manager?.id && manager?.name && (
               <div style={{ marginTop:'12px' }}>
-                <ManagerAuthorizedPlatesWrapper propertyName={manager.property} />
+                <AuthorizedPlatesManager propertyId={manager.id} propertyName={manager.name} />
               </div>
             )}
           </div>
@@ -4358,6 +4314,35 @@ export default function ManagerPortal() {
                     <p style={{ color:'#aaa', fontSize:'13px', margin:'2px 0 0' }}>Unit {lookupResult.unit_number || '—'}</p>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* AP-CASCADE branch 1.5 result — standing authorization
+                (staff/vendor). Mirrors resident card shape per Jose's spec
+                ("behaves like a resident"). Label is portal-only (RPC
+                returns ap_label for manager/CA/admin; NULL for driver).
+                Missing this render case leaves forcee@ (multi-property
+                manager) with a blank card when a plate is authorized at
+                one of their assigned properties. */}
+            {lookupResult && lookupResult.result_type === 'authorized_plate' && (
+              <div style={{ background:'#0f2218', border:'1px solid #1f5938', borderRadius:'10px', padding:'18px' }}>
+                <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Result for</p>
+                <p style={{ color:'#86efac', fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0 0 14px' }}>{lookupResult.queriedPlate}</p>
+                <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+                  <div style={{ width:'40px', height:'40px', borderRadius:'50%', background:'#1a3a1a', border:'1px solid #4caf50', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px' }}>✓</div>
+                  <div>
+                    <p style={{ color:'#4caf50', fontSize:'14px', fontWeight:'bold', margin:'0' }}>Authorized</p>
+                    {lookupResult.ap_property_name && (
+                      <p style={{ color:'#aaa', fontSize:'13px', margin:'2px 0 0' }}>{lookupResult.ap_property_name}</p>
+                    )}
+                  </div>
+                </div>
+                {lookupResult.ap_label && (
+                  <div style={{ marginTop:'12px', padding:'10px 12px', background:'#0a1a0a', border:'1px solid #1e3a1e', borderRadius:'8px' }}>
+                    <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 3px' }}>Label (portal-only)</p>
+                    <p style={{ color:'#aaa', fontSize:'13px', fontStyle:'italic', margin:'0', wordBreak:'break-word' }}>{lookupResult.ap_label}</p>
+                  </div>
+                )}
               </div>
             )}
 
