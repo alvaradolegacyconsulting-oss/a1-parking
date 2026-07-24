@@ -11,6 +11,9 @@ import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationR
 import RegenerateTicketModal, { type RegenerateSuccessPayload } from '../components/RegenerateTicketModal'
 import { getCompanyContext, getLimit } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
+// AP-CASCADE (2026-07-23): PLATE_STATUS_META powers the unknown-status
+// fallback via hasOwnProperty check — see fallback branch near line ~1965.
+import { PLATE_STATUS_META } from '../lib/plate-status'
 // B71: decline-and-proceed interstitial for authorized-plate overrides.
 import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS } from '../components/DeclineReasonModal'
 // B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
@@ -482,6 +485,31 @@ export default function DriverPortal() {
         if (pc) underReviewChange = pc
       }
       setSearching(false); setResult({ status: 'authorized', data: { ...activeVeh, _assigned_spaces: assignedSpaces, _pending_plate_change: underReviewChange } }); return
+    }
+
+    // ── Branch 1.5: Authorized plate (AP-CASCADE) ─────────────────────
+    // Standing authorization (staff, vendors, contractors). Behaves like
+    // a resident at the render layer; still enforceable via the same
+    // Issue Violation button. DEFINER RPC bypasses RLS — drivers have no
+    // authorized_plates SELECT policy by design, so a direct client
+    // query would silently return empty. Fail-through on RPC error
+    // matches branch 0's pattern (a failed check must not block the
+    // rest of the cascade). label is NULL for drivers at the RPC per
+    // the role-conditional return; not referenced on this card.
+    {
+      const { data: apCheck, error: apErr } = await supabase
+        .rpc('check_authorized_plate', { p_plate: clean, p_property: targetProp })
+      if (apErr) {
+        console.error('[searchPlate] check_authorized_plate failed — falling through to next branch', apErr.message)
+      } else if (apCheck && (apCheck as { is_authorized: boolean }).is_authorized) {
+        const ap = apCheck as { is_authorized: boolean, property_name: string, label: string | null }
+        setSearching(false)
+        setResult({
+          status: 'authorized_plate',
+          data: { plate: clean, property: ap.property_name },
+        })
+        return
+      }
     }
 
     // Slice 5 — deactivated vehicles are NOT authorized. Exclude them from
@@ -1669,8 +1697,8 @@ export default function DriverPortal() {
                   // signals "protected" — unmistakable at-a-glance vs any
                   // other cascade result, per Mateo's "unmistakable authorized
                   // styling, not red" spec.
-                  background: result.status === 'do_not_tow' ? '#0a1a08' : result.status === 'authorized' ? '#061406' : result.status === 'plate_under_review' ? '#241a08' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
-                  border: `1px solid ${result.status === 'do_not_tow' ? '#C9A227' : result.status === 'authorized' ? '#2e7d32' : result.status === 'plate_under_review' ? '#a16207' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
+                  background: result.status === 'do_not_tow' ? '#0a1a08' : result.status === 'authorized' ? '#061406' : result.status === 'authorized_plate' ? '#061406' : result.status === 'plate_under_review' ? '#241a08' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
+                  border: `1px solid ${result.status === 'do_not_tow' ? '#C9A227' : result.status === 'authorized' ? '#2e7d32' : result.status === 'authorized_plate' ? '#2e7d32' : result.status === 'plate_under_review' ? '#a16207' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
                 }}>
                   {result.status === 'authorized' && (
                     <>
@@ -1740,6 +1768,34 @@ export default function DriverPortal() {
                       {/* B71: authorized vehicles can still be parked illegally
                           (fire lane, handicap, blocked access). Issue Violation
                           opens the decline-reason interstitial first. */}
+                      <button onClick={() => setDeclineModal({ authorizedAs: 'resident', detail: '' })}
+                        style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
+                        Issue Violation (location/manner override)
+                      </button>
+                    </>
+                  )}
+
+                  {/* Branch 1.5 render (AP-CASCADE): standing authorization.
+                      Mirrors resident card per Jose's spec ("behaves like a
+                      resident"). Vehicle grid shows '—' — AP rows carry no
+                      vehicle metadata by design (a resident card with no
+                      metadata also renders '—' at line ~1713, so '—' is the
+                      shared behavior of the slot, not a new visual state
+                      introduced by AP). No space block (AP has no space
+                      tie). Same green + headline + button.
+                      `authorizedAs: 'resident'` on the button is safe —
+                      traced 2026-07-23: declineModal.authorizedAs is modal
+                      display context only; violations row stores
+                      decline_reason + decline_reason_note +
+                      was_authorized_at_time (boolean), never a role string
+                      derived from authorizedAs. */}
+                  {result.status === 'authorized_plate' && (
+                    <>
+                      <p style={{ color: '#4caf50', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>✓ AUTHORIZED</p>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
+                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Property</span><br /><span style={{ color: '#4caf50', fontSize: '13px' }}>{result.data.property}</span></div>
+                        <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>—</span></div>
+                      </div>
                       <button onClick={() => setDeclineModal({ authorizedAs: 'resident', detail: '' })}
                         style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation (location/manner override)
@@ -1955,6 +2011,26 @@ export default function DriverPortal() {
                         style={{ width: '100%', padding: '11px', background: '#991b1b', color: 'white', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation
                       </button>
+                    </>
+                  )}
+
+                  {/* Fallback for unrecognized status. Without this, an
+                      unknown status.value renders blank inside the outer
+                      container — worse than a wrong answer (nothing to
+                      screenshot or report). Added when 'authorized_plate'
+                      landed; also covers any future status added to the
+                      cascade before its render case ships. Derived from
+                      PLATE_STATUS_META keys so adding a status removes it
+                      from the fallback set automatically. hasOwnProperty
+                      is prototype-safe (`in` matches inherited properties);
+                      `as string` sidesteps TS narrowing the branch to
+                      `never` — the value can arrive from an RPC at runtime
+                      regardless of compile-time type, which is why the
+                      fallback exists. */}
+                  {!Object.prototype.hasOwnProperty.call(PLATE_STATUS_META, result.status as string) && (
+                    <>
+                      <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '16px', margin: '0 0 6px' }}>⚠ UNKNOWN RESULT</p>
+                      <p style={{ color: '#aaa', fontSize: '13px', margin: '0' }}>Status: <span style={{ fontFamily: 'Courier New' }}>{result.status}</span>. Screenshot this and report to support.</p>
                     </>
                   )}
                 </div>

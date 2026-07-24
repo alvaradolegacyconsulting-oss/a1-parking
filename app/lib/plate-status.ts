@@ -20,6 +20,7 @@
 
 export type PlateStatus =
   | 'authorized'          // active permit (resident or CA-scope match)
+  | 'authorized_plate'    // AP-CASCADE: standing authorization (staff/vendor); renders identically to authorized, still enforceable
   | 'pending'             // vehicles is_active=FALSE + status='pending' — permit approval pending
   | 'plate_under_review'  // vehicle_plate_changes.status='pending' matching the scanned plate
   | 'declined'            // vehicles is_active=FALSE + status='declined'
@@ -63,14 +64,25 @@ const DENIED_BG      = '#140404'  // red — expired / declined / unauthorized /
 const DENIED_BR      = '#991b1b'
 const DENIED_FG      = '#f44336'
 
+// AP-CASCADE (2026-07-23): authorized_plate MUST render identically to
+// authorized (Jose: "behaves exactly like a resident"). Shared constant
+// is deliberate — divergence is the failure mode when the requirement is
+// identical rendering. Splitting them (giving each its own literal) is
+// exactly how regenerate_tow_ticket diverged from stamp_tow_ticket in
+// the DNT arc; the ⚠ KEEP IN SYNC banner didn't prevent that, and a
+// comment here wouldn't either. Anyone who needs them to differ splits
+// the constant, which is the right direction for the friction.
+const AUTHORIZED_META: PlateStatusMeta = {
+  label: 'AUTHORIZED',
+  bg: AUTHORIZED_BG, border: AUTHORIZED_BR, color: AUTHORIZED_FG,
+  doNotTow: true,
+  driverHeadline: '✓ AUTHORIZED',
+  pmHeadline: '✓ Authorized',
+}
+
 export const PLATE_STATUS_META: Record<PlateStatus, PlateStatusMeta> = {
-  authorized: {
-    label: 'AUTHORIZED',
-    bg: AUTHORIZED_BG, border: AUTHORIZED_BR, color: AUTHORIZED_FG,
-    doNotTow: true,
-    driverHeadline: '✓ AUTHORIZED',
-    pmHeadline: '✓ Authorized',
-  },
+  authorized:       AUTHORIZED_META,
+  authorized_plate: AUTHORIZED_META,
   pending: {
     label: 'REGISTRATION PENDING — DO NOT TOW',
     bg: REVIEW_BG, border: REVIEW_BR, color: REVIEW_FG,

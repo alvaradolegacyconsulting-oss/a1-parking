@@ -2541,6 +2541,41 @@ export default function CompanyAdminPortal() {
       }
     }
 
+    // ── Branch 1.5: Authorized plate (AP-CASCADE) ─────────────────────
+    // Standing authorization (staff, vendors, contractors). Same DEFINER
+    // RPC used by driver + pm_plate_lookup — one implementation across
+    // all three plate-resolution paths. p_property is passed when a
+    // property is selected (avoids vendor-two-buildings older-row-wins
+    // otherproperty misreport where LIMIT 1 picks the wrong tenant);
+    // NULL for genuine cross-company scan.
+    // Property-name comparison uses .trim() both sides — matches B1/B2
+    // normalization convention; a stored trailing-space name won't
+    // produce a false 'otherproperty'.
+    // Reuses existing 'otherproperty' render — verbatim inspection
+    // 2026-07-23 confirms it reads result.data.property only; AP payload
+    // supplies it. Label surfaced on CA (portal-only per RPC role-
+    // conditional return; driver's payload never includes it).
+    {
+      const { data: apCheck, error: apErr } = await supabase
+        .rpc('check_authorized_plate', { p_plate: clean, p_property: selectedProperty?.name ?? null })
+      if (apErr) {
+        console.error('[searchPlate] check_authorized_plate failed — falling through', apErr.message)
+      } else if (apCheck && (apCheck as { is_authorized: boolean }).is_authorized) {
+        const ap = apCheck as { is_authorized: boolean, property_name: string, label: string | null }
+        if (selectedProperty && ap.property_name?.trim().toLowerCase() !== selectedProperty.name?.trim().toLowerCase()) {
+          setSearching(false)
+          setResult({ status: 'otherproperty', data: { property: ap.property_name, label: ap.label } })
+          return
+        }
+        setSearching(false)
+        setResult({
+          status: 'authorized_plate',
+          data: { plate: clean, property: ap.property_name, label: ap.label },
+        })
+        return
+      }
+    }
+
     // B230 Part B — CA cascade previously collapsed ALL is_active=false
     // rows into 'expired' regardless of .status. Now splits on status:
     //   'pending'   → 'pending'   (do-not-tow, permit approval pending)
@@ -3915,6 +3950,35 @@ export default function CompanyAdminPortal() {
                       </button>
                     </>
                   )}
+                  {/* AP-CASCADE branch 1.5 render: standing authorization.
+                      Mirrors CA's resident card shape ("behaves like a
+                      resident"). Vehicle + Space show '—' — AP rows carry
+                      neither. label is PORTAL-ONLY per RPC role-conditional
+                      return; driver never receives it, CA does because
+                      this surface is portal-side. Same green + headline +
+                      button as resident. authorizedAs:'resident' on the
+                      button is safe (modal display context only; not
+                      persisted to violations — traced 2026-07-23).
+                      PLATE_STATUS_META lookup at line ~3892 supplies the
+                      container bg/border via the shared AUTHORIZED_META
+                      constant. */}
+                  {result.status === 'authorized_plate' && (
+                    <>
+                      <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'16px', margin:'0 0 12px' }}>✓ AUTHORIZED</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'14px' }}>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Space</span><br /><span style={{ color:'white', fontSize:'13px' }}>—</span></div>
+                        <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Property</span><br /><span style={{ color:'#4caf50', fontSize:'13px' }}>{result.data.property}</span></div>
+                        <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Vehicle</span><br /><span style={{ color:'white', fontSize:'13px' }}>—</span></div>
+                        {result.data.label && (
+                          <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Label (portal-only)</span><br /><span style={{ color:'#aaa', fontSize:'13px', fontStyle:'italic' }}>{result.data.label}</span></div>
+                        )}
+                      </div>
+                      <button onClick={() => setDeclineModal({ authorizedAs:'resident', detail: '' })}
+                        style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
+                        Issue Violation (location/manner override)
+                      </button>
+                    </>
+                  )}
                   {result.status === 'guest_authorized' && (
                     <>
                       {/* B214: vetted multi-week guest authorization. LOUD
@@ -4048,6 +4112,24 @@ export default function CompanyAdminPortal() {
                         style={{ width:'100%', padding:'11px', background:'#991b1b', color:'white', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Issue Violation
                       </button>
+                    </>
+                  )}
+                  {/* Fallback for unrecognized status. Without this, an
+                      unknown status renders blank inside the container.
+                      PLATE_STATUS_META lookup at line ~3892 returns
+                      undefined for unknown status → bg/border fall back
+                      to red defaults (harmless). Body text needs an
+                      explicit fallback. Derived from PLATE_STATUS_META
+                      keys so adding a status removes it from the fallback
+                      set automatically. hasOwnProperty is prototype-safe
+                      (`in` matches inherited); `as string` sidesteps TS
+                      narrowing the branch to `never` — the value can
+                      arrive from an RPC at runtime regardless of compile-
+                      time type, which is why the fallback exists. */}
+                  {!Object.prototype.hasOwnProperty.call(PLATE_STATUS_META, result.status as string) && (
+                    <>
+                      <p style={{ color:'#fbbf24', fontWeight:'bold', fontSize:'16px', margin:'0 0 6px' }}>⚠ UNKNOWN RESULT</p>
+                      <p style={{ color:'#aaa', fontSize:'13px', margin:'0' }}>Status: <span style={{ fontFamily:'Courier New' }}>{result.status}</span>. Screenshot this and report to support.</p>
                     </>
                   )}
                 </div>
