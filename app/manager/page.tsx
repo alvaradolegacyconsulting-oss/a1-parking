@@ -19,6 +19,11 @@ import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import SupportContact from '../components/SupportContact'
+// AP-MANAGE-CLIENT (2026-07-23): standing authorization per-property manager.
+// Wrapper below resolves property_id from manager.property (name) —
+// manager state stores name only. Multi-property gap inherited from
+// exempt-plates pattern; see docs/backlog/manager-multi-property-settings-selector.md.
+import AuthorizedPlatesManager from '../components/AuthorizedPlatesManager'
 import {
   type GuestAuth,
   GUEST_AUTH_MAX_DAYS,
@@ -96,6 +101,22 @@ async function callSyncOnAdd(
   } catch (e) {
     return { ok: false, reason: (e as Error).message }
   }
+}
+
+// AP-MANAGE-CLIENT: Authorized Plates section wrapper. Looks up
+// property_id from manager.property (name) since manager state stores
+// name only. Mirrors the multi-property gap of exempt-plates — see
+// docs/backlog/manager-multi-property-settings-selector.md
+function ManagerAuthorizedPlatesWrapper({ propertyName }: { propertyName: string }) {
+  const [propertyId, setPropertyId] = useState<number | null>(null)
+  useEffect(() => {
+    let cancel = false
+    supabase.from('properties').select('id').eq('name', propertyName).maybeSingle()
+      .then(({ data }) => { if (!cancel && data) setPropertyId(data.id as number) })
+    return () => { cancel = true }
+  }, [propertyName])
+  if (propertyId === null) return null
+  return <AuthorizedPlatesManager propertyId={propertyId} propertyName={propertyName} />
 }
 
 export default function ManagerPortal() {
@@ -4193,6 +4214,16 @@ export default function ManagerPortal() {
                 </div>
               )}
             </div>
+
+            {/* AP-MANAGE-CLIENT (2026-07-23): Authorized Plates section,
+                adjacent to Quota Exemptions per Mateo's adjacency-teaches-
+                the-difference argument. Both headings carry their
+                enforcement boundary in the sub-copy. */}
+            {manager?.property && (
+              <div style={{ marginTop:'12px' }}>
+                <ManagerAuthorizedPlatesWrapper propertyName={manager.property} />
+              </div>
+            )}
           </div>
         )}
 

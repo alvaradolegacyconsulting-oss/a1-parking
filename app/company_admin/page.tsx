@@ -8,6 +8,11 @@ import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { printQRSign } from '../lib/qr-print'
 import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
+// AP-MANAGE-CLIENT (2026-07-23): standing authorization per-property manager.
+// CA has no Visitor Pass Quota Exemptions section here (that's manager-
+// only) — this component's header + empty-state copy carry the whole
+// boundary distinguishing standing authorization from tow protection.
+import AuthorizedPlatesManager from '../components/AuthorizedPlatesManager'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
@@ -5697,6 +5702,20 @@ export default function CompanyAdminPortal() {
                                 )
                               })()}
                             </div>
+                          </div>
+
+                          {/* AP-MANAGE-CLIENT (2026-07-23): Authorized Plates
+                              section, placed after QR codes block, before
+                              Edit form. Component's header + empty-state
+                              copy carry the boundary distinguishing standing
+                              authorization from tow protection (CA has no
+                              Visitor Pass Quota Exemptions section here to
+                              contrast against — that's manager-only). */}
+                          <div style={{ marginTop:'16px' }}>
+                            <AuthorizedPlatesManager
+                              propertyId={selected.id}
+                              propertyName={selected.name}
+                            />
                           </div>
 
                           {/* CA CRM refactor 2026-07-05 — Edit form fields carried
