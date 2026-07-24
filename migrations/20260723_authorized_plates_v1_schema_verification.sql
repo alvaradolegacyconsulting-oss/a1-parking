@@ -133,7 +133,10 @@ END $ap_rls$;
 -- ══════════════════════════════════════════════════════════════════════
 DO $ap_checks$
 DECLARE
+  -- Extended 2026-07-24 (AP-CATEGORY): +authorized_plates_category_valid.
+  -- 5 constraints, was 4. See migrations/20260724_ap_category.sql.
   v_expected TEXT[] := ARRAY[
+    'authorized_plates_category_valid',
     'authorized_plates_label_length_cap',
     'authorized_plates_plate_non_empty',
     'authorized_plates_plate_normalized',

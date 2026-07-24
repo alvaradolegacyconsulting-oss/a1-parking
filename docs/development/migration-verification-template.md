@@ -345,6 +345,45 @@ form and correctly RAISE when the assignment line is deleted. Reviewed 2026-07-2
 observation that `position() < position()` without a zero guard silently passes on absent
 assignment — the observation applies to any future ordering VQ written without the guard.
 
+## Negative controls run as a diagnostic, not as the verification file
+
+A verification file wrapped in `BEGIN…COMMIT` aborts at the first `RAISE`, so a pre-apply run
+validates **only its first assertion** — every later VQ is masked, every time. Write the
+pre-apply control as a read-only query returning each assertion's condition as a boolean, run it
+before applying, and record the result. Use the verification file for post-apply confirmation,
+where silence is the expected outcome and aborting at the first failure is correct.
+
+**Case reference:** across the DNT + AP arcs (2026-07-22 → 2026-07-24), ~35 verification
+assertions were written and only **3 became validated detectors** (VQ.1, VQ.CANONICAL,
+AP.CATEGORY_COLUMN). Each was the FIRST assertion in its verification file. Every later VQ in
+each file was masked by the first-RAISE abort during the pre-apply run. The ritual of "run pre,
+run post" was correct; the mechanism couldn't deliver more than one validated detector per
+commit.
+
+### Shape
+
+Read-only jsonb readout: each condition the verification file will assert appears as a boolean or
+count. Silent means nothing; a value of `false` or `0` on any field is what makes the
+corresponding VQ a validated detector — you've observed the state it was designed to catch.
+
+```sql
+-- Pre-apply negative control — read-only, no RAISE, nothing aborts
+SELECT jsonb_pretty(jsonb_build_object(
+  'column_exists',   EXISTS (SELECT 1 FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='<t>' AND column_name='<c>'),
+  'check_exists',    EXISTS (SELECT 1 FROM pg_constraint
+     WHERE conrelid='public.<t>'::regclass AND conname='<constraint>'),
+  'rpc_shape_present', (SELECT pg_get_functiondef(oid) LIKE '%<pattern>%'
+     FROM pg_proc WHERE proname='<fn>' AND pronamespace='public'::regnamespace),
+  'audit_row', (SELECT count(*) FROM public.audit_logs WHERE action='<SCHEMA_...>')
+));
+-- Every false / 0 pre-apply is a validated detector, recorded in the ship report.
+```
+
+Verification file structure stays as-is — `BEGIN…COMMIT` with named `RAISE`s on failure. Post-apply
+silence is what you want; abort-on-first-failure IS correct behavior post-apply because a real
+failure means stop.
+
 ## Cross-references
 
 - [scripts/audit-public-grants-2026-07-22.sql](../../scripts/audit-public-grants-2026-07-22.sql) —
