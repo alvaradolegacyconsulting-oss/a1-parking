@@ -50,7 +50,8 @@ now named apart:
 | ✅ | **AP-CLIENT** `b02a2a5` — driver + CA branches, `authorized_plate` render on both, shared `AUTHORIZED_META`, `PLATE_STATUS_META`-derived fallback | `npm run build` clean; Vercel glance pending |
 | ✅ | **AP-MANAGE-TRIGGER** `8b2024c` — `removed_at` server-clock via trigger + INSERT-branch `NULL` guard + `AP.TRIGGER_INSERT_NULL` + wrap-safe audit strings | evidence-verified via direct readout; 3 VQs post-apply-only (negative controls consumed by early first apply) |
 | ✅ | **AP-MANAGE-CLIENT** `ebeab8d` — `AuthorizedPlatesManager` shared component + confirm modal + manager settings integration + CA per-property panel integration | build clean |
-| ✅ | **AP-MANAGE-CLIENT fix** `d991c3c` — `ManagerAuthorizedPlatesWrapper` gained loading + explicit-error states (was silently `return null` on unresolved id — vanished the manager section without diagnostic) | Jose re-checks manager Settings |
+| ✅ | **AP-MANAGE-CLIENT fix** `d991c3c` — `ManagerAuthorizedPlatesWrapper` gained loading + explicit-error states (was silently `return null` on unresolved id) — **superseded by `b724c84` below; wrapper deleted** |
+| ✅ | **AP-MANAGE-CLIENT root-cause fix** `b724c84` — manager Settings section never mounted because `manager.property` referenced a field that doesn't exist (`manager` state IS a properties-table row with `.id` + `.name`, not `.property`). Wrapper deleted entirely; `AuthorizedPlatesManager` receives `manager.id` + `manager.name` directly. **Also added missing `'authorized_plate'` render case to manager Plate Lookup** + extended `lookupResult` type/whitelist. Jose re-checks manager Settings + Plate Lookup. |
 
 **First behavioural evidence 2026-07-23** — smoke steps **2** (driver at 146 → **Authorized**) and **5a** (driver at 138 → **non-resident**) **PASSED**. `check_authorized_plate` property predicate proven working end-to-end. **Still open:** step 3 (manager plate-lookup), step 4 (CA search), label suppression (add plate with label, driver must NOT see it), step 5b (deferred pending second Test-LEGACY driver OR manager-branch substitute).
 
@@ -119,7 +120,8 @@ capability — a decision, not a cleanup.
 | `b02a2a5` | AP-CLIENT — driver + CA branches + `authorized_plate` render + fallback |
 | `8b2024c` | AP-MANAGE-TRIGGER — `removed_at` server-clock + INSERT-branch NULL guard |
 | `ebeab8d` | AP-MANAGE-CLIENT — `AuthorizedPlatesManager` + confirm modal + integrations + multi-property backlog |
-| `d991c3c` | AP-MANAGE-CLIENT fix — `ManagerAuthorizedPlatesWrapper` loading + error states (was silent-null) |
+| `d991c3c` | AP-MANAGE-CLIENT fix — `ManagerAuthorizedPlatesWrapper` loading + error states (superseded) |
+| `b724c84` | AP-MANAGE-CLIENT root-cause fix — wrapper deleted (`manager` IS a properties row); `authorized_plate` render case added to manager Plate Lookup |
 
 **B1 and B2 closed a real cross-tenant defect and survive the re-scope.** A manager at one company
 could read *and write* another company's per-property plate list through PostgREST, and
