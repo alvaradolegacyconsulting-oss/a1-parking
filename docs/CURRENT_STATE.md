@@ -6,7 +6,7 @@ kickoff.** Read it first; it is the source of truth for where things stand.
 **Should live in the repo** (`docs/CURRENT_STATE.md`) so Mateo can read and maintain it. Jose
 uploads the current copy to project knowledge when starting a new chat.
 
-*Last updated: July 24, 2026 (AP-CATEGORY shipped; template gained 8th discipline)*
+*Last updated: July 24, 2026 (AP-CATEGORY + AP-UI-REFINE + pm_plate_lookup viewing-property shipped; template gained 8th + 9th disciplines)*
 
 ---
 
@@ -155,6 +155,8 @@ capability — a decision, not a cleanup.
 | (unshipped) | AP-only client patch (viewing-property warning on `authorized_plate` render) — **HELD 2026-07-23**; correct fix is RPC-layer, silent 5 branches more urgent than visible 1 |
 | `01ab566` | AP-CATEGORY — add `category` column (staff/vendor/other) + `check_authorized_plate` role-conditional return + AP.CHECKS 4→5 retrofit + template addendum on negative-controls-as-diagnostic + delete non-bug backlog |
 | `d0525f3` | AP-UI-REFINE — component gains readOnly/collapsible + category (badge/filter/radio) + search + sort by plate + toolbar + unknown-category fallback + filter reset on propertyId change + console.error on mutation failure; manager tab adjacent to Authorized Guests (Settings integration removed); CA now read-only collapsible |
+| `808114a` | pm_plate_lookup viewing-property SQL — signature gains `p_viewing_property TEXT DEFAULT NULL` + 6 branches gain layered predicate (portfolio scope preserved) + AP branch argument change (NULL → p_viewing_property) + B2 invariants preserved byte-identical + DROP-first + pg_proc COUNT=1 + AP.PM_CALLS updated to positive form + audit rename properties_in_scope + rollback documents client-first + 2-arg DROP |
+| `b03ac58` | pm_plate_lookup viewing-property CLIENT + diagnostic file + 9th discipline — switchProperty clears lookupResult/Error/Plate; Plate Lookup call passes `p_viewing_property: manager.name`; diagnostic file ships with migration (standardize going forward); template addendum: **Diagnostics ship as files** |
 
 **B1 and B2 closed a real cross-tenant defect and survive the re-scope.** A manager at one company
 could read *and write* another company's per-property plate list through PostgREST, and
@@ -212,12 +214,19 @@ live the moment `public_signup_open` flips. Fix shape:
    assertion. Write pre-apply as a read-only jsonb readout returning each condition as a
    boolean/count; every `false`/`0` is a validated detector. Verification file stays as-is for
    post-apply (silence expected; abort-on-failure is correct there).
+9. **Diagnostics ship as files** — the pre-apply negative control is a `_diagnostic.sql`
+   committed with the migration, not a query in a chat message. Two consecutive negative-control
+   captures were lost to chat-based diagnostics (AP-CATEGORY, pm_plate_lookup). Every new
+   migration ships three files: `<date>_<name>.sql`, `<date>_<name>_diagnostic.sql`,
+   `<date>_<name>_verification.sql`. Three identical pastes from VS Code, one source.
 
 **Supabase editor:** paste verification files **whole** — the auto-RLS helper injects
 `ALTER TABLE … ENABLE ROW LEVEL SECURITY` into partial pastes and breaks dollar quoting. This is
 also what makes `DO`-block atomicity hold.
 
 **Validated detectors to date: 3** — VQ.1 (B1), VQ.CANONICAL (B2), and AP.CATEGORY_COLUMN (AP-CATEGORY 2026-07-24). Each was the FIRST assertion in its verification file. **Root cause of the stuck count** (established 2026-07-24): a `BEGIN…COMMIT`-wrapped verification file aborts at the first `RAISE`, so a pre-apply run validates only its first assertion — every later VQ is masked by construction. **Fixed forward via 8th codified discipline:** Negative controls run as a read-only diagnostic (jsonb readout), not as the verification file. Every `false`/`0` in the diagnostic is a validated detector.
+
+**pm_plate_lookup viewing-property (2026-07-24):** four flipping detectors + two preservation invariants specified — diagnostic **not captured** (Jose pasted a markdown chat message into the SQL editor, `syntax error at or near "#"`). Second consecutive miss traced to the same root: diagnostic lived in chat while migration lived in a file. **9th discipline codified this session:** Diagnostics ship as files (`_diagnostic.sql` alongside migration + verification). Post-apply verification silent across three files including B2's preservation checks, but count stays 3 — assertions unvalidated as detectors because they weren't observed against wrong state.
 
 ---
 
