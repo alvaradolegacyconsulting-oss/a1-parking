@@ -105,6 +105,12 @@ async function callSyncOnAdd(
 
 export default function ManagerPortal() {
   const [manager, setManager] = useState<any>(null)
+  // AP-UI-REFINE (2026-07-24): authorized_plates count for the tab badge.
+  // Init fetch on manager.id change fires before user visits the tab; the
+  // AuthorizedPlatesManager component's onCountChange keeps it fresh while
+  // the user is on the tab (add/remove mutations). One state variable, one
+  // owner (Mateo).
+  const [apCount, setApCount] = useState<number>(0)
   // Slice 1 Commit 4b — companyIdForSync resolved from manager.company
   // (the company NAME string on the properties row) → companies.id.
   // Used by the 3 vehicle-approval call sites to fire syncOnAdd('permit')
@@ -491,6 +497,21 @@ export default function ManagerPortal() {
     const prop = allProperties.find(p => p.name === name)
     if (prop) { setManager(prop); fetchAll(prop.name) }
   }
+
+  // AP-UI-REFINE (2026-07-24): initial apCount fetch when property changes.
+  // Fires before user visits the Authorized Plates tab — badge shows the
+  // correct count on tab bar without requiring a tab visit. Component's
+  // onCountChange updates the same state when user is on the tab.
+  useEffect(() => {
+    if (!manager?.id) { setApCount(0); return }
+    let cancelled = false
+    supabase.from('authorized_plates')
+      .select('*', { count: 'exact', head: true })
+      .eq('property_id', manager.id)
+      .is('removed_at', null)
+      .then(({ count }) => { if (!cancelled) setApCount(count ?? 0) })
+    return () => { cancelled = true }
+  }, [manager?.id])
 
   async function fetchAll(property: string) {
     fetchVehicles(property)
@@ -2760,6 +2781,16 @@ export default function ManagerPortal() {
               record type: visitor passes are anon/24h, guest auths are
               manager-vetted/multi-week. */}
           <button style={tabStyle('guest-auth')} onClick={() => setActiveTab('guest-auth')}>Authorized Guests</button>
+          {/* AP-UI-REFINE (2026-07-24): Authorized Plates tab. Adjacent to
+              Authorized Guests — same category (who is allowed on the
+              property beyond registered residents), different record type
+              (guest auths are manager-vetted multi-week; authorized plates
+              are standing staff/vendor/other). Badge shows count from
+              apCount (init-fetched on manager.id change, kept fresh by
+              component's onCountChange). */}
+          <button style={tabStyle('authorized-plates')} onClick={() => setActiveTab('authorized-plates')}>
+            Authorized Plates{apCount > 0 && <span style={{ background:'#4caf50', color:'#0f1117', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{apCount}</span>}
+          </button>
           {/* B75 (was B70 PM_PLATE_LOOKUP): Plate Lookup tab — visible on
               every tier across both tracks (manual lookup is a baseline
               utility). Admin always sees it (parity with other tier-gated
@@ -4203,22 +4234,10 @@ export default function ManagerPortal() {
               )}
             </div>
 
-            {/* AP-MANAGE-CLIENT (2026-07-23): Authorized Plates section,
-                adjacent to Quota Exemptions per Mateo's adjacency-teaches-
-                the-difference argument. Both headings carry their
-                enforcement boundary in the sub-copy.
-                FIX 2026-07-23: `manager` state IS a properties-table row
-                (see setManager(props[0]) at line 494 + setManager(data[0])
-                at line 536). Property rows have .id + .name, NOT .property.
-                Original shipped code referenced manager.property which
-                is undefined — conditional never fired, wrapper never
-                mounted. Root cause of Jose's blank-Settings-section report.
-                Drop the async lookup wrapper entirely — id is right there. */}
-            {manager?.id && manager?.name && (
-              <div style={{ marginTop:'12px' }}>
-                <AuthorizedPlatesManager propertyId={manager.id} propertyName={manager.name} />
-              </div>
-            )}
+            {/* AP-UI-REFINE (2026-07-24): Authorized Plates section
+                REMOVED from Settings tab — moved to its own tab
+                adjacent to Authorized Guests. Two entry points to one
+                list is how they drift (Mateo). */}
           </div>
         )}
 
@@ -4492,6 +4511,20 @@ export default function ManagerPortal() {
           </div>
         )}
 
+
+        {/* AUTHORIZED PLATES (AP-UI-REFINE 2026-07-24) — standing
+            authorization for staff, vendors, and contractors. Tab lives
+            adjacent to Authorized Guests. Component owns search + sort
+            + category filter + add/remove; page provides property scope
+            via manager.id / manager.name from the VIEWING PROPERTY
+            selector. onCountChange keeps the tab badge in sync. */}
+        {activeTab === 'authorized-plates' && manager?.id && manager?.name && (
+          <AuthorizedPlatesManager
+            propertyId={manager.id}
+            propertyName={manager.name}
+            onCountChange={setApCount}
+          />
+        )}
 
         {/* AUTHORIZED GUESTS (B214) — manager-vetted multi-week vehicle authorizations.
             Two visible sub-sections: (1) collapsible "+ New" create form with overlap

@@ -5704,17 +5704,26 @@ export default function CompanyAdminPortal() {
                             </div>
                           </div>
 
-                          {/* AP-MANAGE-CLIENT (2026-07-23): Authorized Plates
-                              section, placed after QR codes block, before
-                              Edit form. Component's header + empty-state
-                              copy carry the boundary distinguishing standing
-                              authorization from tow protection (CA has no
-                              Visitor Pass Quota Exemptions section here to
-                              contrast against — that's manager-only). */}
+                          {/* AP-UI-REFINE (2026-07-24): CA surface is
+                              READ-ONLY by product decision (separation of
+                              powers) — management is the property manager's
+                              call. The ap_ca_insert / ap_ca_update RLS
+                              policies remain, so a CA can still write via
+                              PostgREST. This is a UI decision, NOT access
+                              control. Jose is gathering A1 feedback before
+                              public signup; do not remove the policies or
+                              the component without an explicit decision.
+                              Collapsed by default — reference material on
+                              an already-long per-property panel. Header +
+                              empty-state copy carry the boundary
+                              distinguishing standing authorization from
+                              tow protection. */}
                           <div style={{ marginTop:'16px' }}>
                             <AuthorizedPlatesManager
                               propertyId={selected.id}
                               propertyName={selected.name}
+                              readOnly
+                              collapsible
                             />
                           </div>
 
