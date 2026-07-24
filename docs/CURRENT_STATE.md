@@ -6,7 +6,7 @@ kickoff.** Read it first; it is the source of truth for where things stand.
 **Should live in the repo** (`docs/CURRENT_STATE.md`) so Mateo can read and maintain it. Jose
 uploads the current copy to project knowledge when starting a new chat.
 
-*Last updated: July 23, 2026 (end of session)*
+*Last updated: July 23, 2026 (end of session — AP arc behaviourally verified)*
 
 ---
 
@@ -51,9 +51,39 @@ now named apart:
 | ✅ | **AP-MANAGE-TRIGGER** `8b2024c` — `removed_at` server-clock via trigger + INSERT-branch `NULL` guard + `AP.TRIGGER_INSERT_NULL` + wrap-safe audit strings | evidence-verified via direct readout; 3 VQs post-apply-only (negative controls consumed by early first apply) |
 | ✅ | **AP-MANAGE-CLIENT** `ebeab8d` — `AuthorizedPlatesManager` shared component + confirm modal + manager settings integration + CA per-property panel integration | build clean |
 | ✅ | **AP-MANAGE-CLIENT fix** `d991c3c` — `ManagerAuthorizedPlatesWrapper` gained loading + explicit-error states (was silently `return null` on unresolved id) — **superseded by `b724c84` below; wrapper deleted** |
-| ✅ | **AP-MANAGE-CLIENT root-cause fix** `b724c84` — manager Settings section never mounted because `manager.property` referenced a field that doesn't exist (`manager` state IS a properties-table row with `.id` + `.name`, not `.property`). Wrapper deleted entirely; `AuthorizedPlatesManager` receives `manager.id` + `manager.name` directly. **Also added missing `'authorized_plate'` render case to manager Plate Lookup** + extended `lookupResult` type/whitelist. Jose re-checks manager Settings + Plate Lookup. |
+| ✅ | **AP-MANAGE-CLIENT root-cause fix** `b724c84` — manager Settings section never mounted because `manager.property` referenced a field that doesn't exist (`manager` state IS a properties-table row with `.id` + `.name`, not `.property`). Wrapper deleted entirely; `AuthorizedPlatesManager` receives `manager.id` + `manager.name` directly. **Also added missing `'authorized_plate'` render case to manager Plate Lookup** + extended `lookupResult` type/whitelist. |
 
-**First behavioural evidence 2026-07-23** — smoke steps **2** (driver at 146 → **Authorized**) and **5a** (driver at 138 → **non-resident**) **PASSED**. `check_authorized_plate` property predicate proven working end-to-end. **Still open:** step 3 (manager plate-lookup), step 4 (CA search), label suppression (add plate with label, driver must NOT see it), step 5b (deferred pending second Test-LEGACY driver OR manager-branch substitute).
+### Behavioural smoke — AP arc verified end-to-end (2026-07-23)
+
+| Test | Result |
+|---|---|
+| Driver at 146 scanning plate at 146 (`TESTAP`) | ✅ **Authorized** |
+| Driver at 138 scanning plate at 146 (`TESTAP`) | ✅ **NO PERMIT FOUND** |
+| Driver at 138 scanning plate at 138 (`TESTAP2`) | ✅ **Authorized** |
+| Driver at 146 scanning plate at 138 (`TESTAP2`) | ✅ **NO PERMIT FOUND** |
+| Label suppression: manager sees "Selena's Car" · driver sees no label | ✅ **PASS** |
+| Manager Settings section renders (add form, boundary copy, empty state) | ✅ **PASS** |
+| CA add / list / empty state | ✅ **PASS** |
+
+**Four commits of source-only verification now have behavioural evidence.** `check_authorized_plate` property predicate + role-conditional label suppression + `pm_plate_lookup` branch 1.5 + driver render + manager Settings integration + CA integration all confirmed working against real plates.
+
+### Still open on AP arc
+
+- **Step 3 (manager pm_plate_lookup out-of-scope refusal)** — BLOCKED by the viewing-property defect (see 🔴 below). `legacy-manager@` searching `TESTAP` correctly returns "unauthorized" but the current miss is because the plate is outside `get_my_properties()`, not because of viewing-property scoping.
+- **Step 4 (CA search for `TESTAP` → Authorized)** — not yet run
+- **Step 5b (driver NOT assigned to property)** — needs a second Test-LEGACY driver (probe account provisioning) OR reuse manager-branch substitute. **Worth provisioning** — it's the one branch of `check_authorized_plate` no current test can reach, and it's the branch standing between a staff vehicle and a tow truck.
+
+## 🔴 Tomorrow's first task — `pm_plate_lookup` viewing-property scope
+
+**All 7 branches of `pm_plate_lookup` scope against the manager's ENTIRE assigned-properties portfolio.** Manager viewing property X sees matches from property Y as if they were at X. **Grep-verified AND behaviourally verified 2026-07-23**: resident `LESLY` (Unit 205) shows "Active resident" whether manager is viewing 138 or 146.
+
+**Severity ranking:** silent-and-confidently-wrong (5 branches: resident / pending / plate_change / guest / visitor — no property field returned) beats visibly-inconsistent (1 branch: AP, returns `ap_property_name` alongside green ✓) as a failure mode. **Both should be fixed together** via a viewing-property parameter on `pm_plate_lookup` — one migration, seven predicate changes, all branches at once.
+
+**AP-only client patch HELD.** Would be throwaway work — the correct fix is at the RPC layer, not the client. Silent 5 branches are more urgent than the visible 1. See `docs/backlog/pm-plate-lookup-viewing-property-scope.md` for the full analysis + report-first pre-build checks.
+
+**Zero live-customer impact today.** A1 has zero managers; only Test-LEGACY `+forcee@` reaches the defect.
+
+**Count column deferred** to Bar-2 pricing entry (leak-vector visibility becomes real at `public_signup_open` flip). Multi-property manager Settings-tab gap filed as `docs/backlog/manager-multi-property-settings-selector.md` (inherited from Visitor Pass Quota Exemptions pattern; DIFFERENT from the pm_plate_lookup viewing-property gap — that's a Plate Lookup RPC issue, this is a Settings UI issue).
 
 **Count column deferred** to Bar-2 pricing entry (leak-vector visibility becomes real at `public_signup_open` flip). Multi-property manager gap filed as `docs/backlog/manager-multi-property-settings-selector.md` (inherited from Visitor Pass Quota Exemptions pattern).
 
@@ -122,6 +152,7 @@ capability — a decision, not a cleanup.
 | `ebeab8d` | AP-MANAGE-CLIENT — `AuthorizedPlatesManager` + confirm modal + integrations + multi-property backlog |
 | `d991c3c` | AP-MANAGE-CLIENT fix — `ManagerAuthorizedPlatesWrapper` loading + error states (superseded) |
 | `b724c84` | AP-MANAGE-CLIENT root-cause fix — wrapper deleted (`manager` IS a properties row); `authorized_plate` render case added to manager Plate Lookup |
+| (unshipped) | AP-only client patch (viewing-property warning on `authorized_plate` render) — **HELD 2026-07-23**; correct fix is RPC-layer, silent 5 branches more urgent than visible 1 |
 
 **B1 and B2 closed a real cross-tenant defect and survive the re-scope.** A manager at one company
 could read *and write* another company's per-property plate list through PostgREST, and
