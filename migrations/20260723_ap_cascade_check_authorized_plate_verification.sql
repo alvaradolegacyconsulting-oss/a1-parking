@@ -207,6 +207,13 @@ END $ap_check_grants$;
 -- ══════════════════════════════════════════════════════════════════════
 -- Manager path integration. If missing, pm_plate_lookup silently
 -- diverges from driver + CA on the same plate.
+--
+-- Updated 2026-07-24 (AP-VIEWING migration
+-- 20260724_pm_plate_lookup_viewing_property.sql): argument changed from
+-- NULL to p_viewing_property so the manager's viewing-property scope
+-- flows through check_authorized_plate. Positive-form assertion —
+-- absence of the old NULL string would be satisfied by deleting the
+-- call entirely.
 DO $ap_pm_calls$
 DECLARE
   v_def TEXT;
@@ -215,8 +222,8 @@ BEGIN
   FROM pg_proc
   WHERE pronamespace = 'public'::regnamespace AND proname = 'pm_plate_lookup';
 
-  IF v_def NOT LIKE '%public.check_authorized_plate(v_normalized, NULL)%' THEN
-    RAISE EXCEPTION 'AP.PM_CALLS FAILED — pm_plate_lookup does not call check_authorized_plate(v_normalized, NULL) — manager path diverges from driver + CA';
+  IF v_def NOT LIKE '%public.check_authorized_plate(v_normalized, p_viewing_property)%' THEN
+    RAISE EXCEPTION 'AP.PM_CALLS FAILED — pm_plate_lookup does not pass p_viewing_property to check_authorized_plate';
   END IF;
 END $ap_pm_calls$;
 
