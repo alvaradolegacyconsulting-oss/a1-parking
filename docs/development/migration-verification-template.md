@@ -384,6 +384,36 @@ Verification file structure stays as-is — `BEGIN…COMMIT` with named `RAISE`s
 silence is what you want; abort-on-first-failure IS correct behavior post-apply because a real
 failure means stop.
 
+## Diagnostics ship as files
+
+The pre-apply negative control is a `_diagnostic.sql` committed with the migration, not a query
+in a message. Three files, three identical pastes, one source — same discipline that moved
+migrations to whole-file paste after the `relation "the"` errors.
+
+**Case reference:** two consecutive negative-control captures were lost to chat-based
+diagnostics — AP-CATEGORY (migration applied before the pre-apply pass ran) and
+`pm_plate_lookup` viewing-property (`syntax error at or near "#"` — Jose pasted a markdown
+message, not the query inside it). Both traced to the same root: the diagnostic lived in a chat
+message while the migration lived in a file. Different motions, different sources, one of them
+easy to get wrong under time pressure.
+
+**Every new migration ships three files:**
+
+```
+migrations/<date>_<name>.sql                — the migration
+migrations/<date>_<name>_diagnostic.sql     — pre-apply negative control (read-only jsonb readout)
+migrations/<date>_<name>_verification.sql   — post-apply structural verification
+```
+
+Run motion is identical across all three (paste from VS Code → SQL Editor). No content lives in
+chat that needs to survive a copy-paste.
+
+### Naming pairing
+
+The `_diagnostic.sql` and `_verification.sql` filenames pair with the migration's basename
+verbatim. `pm_plate_lookup_viewing_property` → three files that sort adjacent in the file browser,
+grep together, and rollback as a set.
+
 ## Cross-references
 
 - [scripts/audit-public-grants-2026-07-22.sql](../../scripts/audit-public-grants-2026-07-22.sql) —

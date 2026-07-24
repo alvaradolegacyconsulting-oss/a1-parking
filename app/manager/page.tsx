@@ -495,7 +495,14 @@ export default function ManagerPortal() {
 
   async function switchProperty(name: string) {
     const prop = allProperties.find(p => p.name === name)
-    if (prop) { setManager(prop); fetchAll(prop.name) }
+    if (prop) {
+      setManager(prop); fetchAll(prop.name)
+      // AP-VIEWING (2026-07-24): clear stale plate-lookup state on
+      // property switch. Without this a manager sees a lookup result
+      // computed under the previous viewing property. Same class as the
+      // AP filter reset on propertyId change (AP-UI-REFINE d0525f3).
+      setLookupResult(null); setLookupError(''); setLookupPlate('')
+    }
   }
 
   // AP-UI-REFINE (2026-07-24): initial apCount fetch when property changes.
@@ -979,7 +986,14 @@ export default function ManagerPortal() {
     setLookupError('')
     setLookupResult(null)
     try {
-      const { data, error } = await supabase.rpc('pm_plate_lookup', { p_plate: raw })
+      // AP-VIEWING (2026-07-24): pass viewing property so pm_plate_lookup
+      // scopes to the currently-viewed property. NULL default in the RPC
+      // preserves back-compat for other callers (none today); the manager
+      // client always passes it — see migration header.
+      const { data, error } = await supabase.rpc('pm_plate_lookup', {
+        p_plate: raw,
+        p_viewing_property: manager?.name ?? null,
+      })
       if (error) {
         setLookupError(error.message || 'Lookup failed. Please try again.')
         return
