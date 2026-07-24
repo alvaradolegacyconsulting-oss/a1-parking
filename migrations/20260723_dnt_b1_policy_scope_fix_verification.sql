@@ -162,18 +162,31 @@ DO $vq_3$
 DECLARE
   v_expected TEXT[] := ARRAY[
     'dnt_admin_all',
-    'dnt_ca_insert', 'dnt_ca_select', 'dnt_ca_update',
-    'dnt_manager_insert', 'dnt_manager_select', 'dnt_manager_update'
+    'dnt_ca_select', 'dnt_ca_insert', 'dnt_ca_update',
+    'dnt_manager_select', 'dnt_manager_insert', 'dnt_manager_update'
   ];
-  v_actual TEXT[];
-  v_rls    BOOLEAN;
+  v_actual  TEXT[];
+  v_missing TEXT[];
+  v_extra   TEXT[];
+  v_rls     BOOLEAN;
 BEGIN
-  SELECT COALESCE(array_agg(policyname ORDER BY policyname), '{}') INTO v_actual
+  -- Set comparison (order-independent). Retrofit 2026-07-23: original
+  -- passed by luck of expected being written alphabetically; a future
+  -- edit adding a policy in a natural order (SELECT/INSERT/UPDATE)
+  -- would have hit a false failure. Use `@>` both directions + EXCEPT
+  -- for named difference reporting. See docs/development/
+  -- migration-verification-template.md "Set assertions" section.
+  SELECT COALESCE(array_agg(policyname), '{}') INTO v_actual
   FROM pg_policies
   WHERE schemaname='public' AND tablename='do_not_tow_plates';
 
-  IF v_actual IS DISTINCT FROM v_expected THEN
-    RAISE EXCEPTION 'VQ.3 FAILED — DNT policy set drift. expected=% actual=%', v_expected, v_actual;
+  IF NOT (v_actual @> v_expected AND v_expected @> v_actual) THEN
+    SELECT COALESCE(array_agg(x ORDER BY x), '{}') INTO v_missing
+      FROM (SELECT unnest(v_expected) EXCEPT SELECT unnest(v_actual)) t(x);
+    SELECT COALESCE(array_agg(x ORDER BY x), '{}') INTO v_extra
+      FROM (SELECT unnest(v_actual) EXCEPT SELECT unnest(v_expected)) t(x);
+    RAISE EXCEPTION 'VQ.3 FAILED — DNT policy set drift. missing=% unexpected=%',
+      v_missing, v_extra;
   END IF;
 
   SELECT relrowsecurity INTO v_rls

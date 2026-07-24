@@ -272,6 +272,37 @@ differed; VQ.CANONICAL fired and named the correct function. Retrofit: anchors m
 core semantic substring (`CANONICAL DNT guard block (Commit B2)` / `END CANONICAL BLOCK`), and
 the trailing decoration was stripped from all 6 marker lines to prevent recurrence.
 
+## Set assertions
+
+Comparing name sets with array equality (`=` / `IS DISTINCT FROM`) is **order-sensitive** — two
+identical sets in different order compare unequal. Use `@>` in both directions for exact set
+equality, and report `missing` / `unexpected` via `EXCEPT` rather than dumping both arrays:
+
+```sql
+IF NOT (v_actual @> v_expected AND v_expected @> v_actual) THEN
+  SELECT COALESCE(array_agg(x ORDER BY x), '{}') INTO v_missing
+    FROM (SELECT unnest(v_expected) EXCEPT SELECT unnest(v_actual)) t(x);
+  SELECT COALESCE(array_agg(x ORDER BY x), '{}') INTO v_extra
+    FROM (SELECT unnest(v_actual) EXCEPT SELECT unnest(v_expected)) t(x);
+  RAISE EXCEPTION '<VQ> FAILED — set drift. missing=% unexpected=%', v_missing, v_extra;
+END IF;
+```
+
+An assertion that fires must say *what* differs; a message requiring a manual diff costs more
+than the check saves. Applies uniformly to any name-set assertion — policies, constraints,
+indexes, function names, trigger names.
+
+### Case reference
+
+AP-SCHEMA's AP.RLS fired on first apply with `expected` written in logical command order
+(`select`, `insert`, `update`) and `actual` returned by `array_agg(... ORDER BY policyname)` in
+alphabetical order — same 9 policy names, but `IS DISTINCT FROM` on differently-ordered arrays
+returned true. Schema was correct; assertion mechanics were wrong. Error message dumped two
+9-element arrays and left a human to eye-diff them.
+
+**B1's VQ.3 had the same latent bug** — passed only by luck of expected being written
+alphabetically. Retrofit applied to both when AP.RLS was corrected.
+
 ## Cross-references
 
 - [scripts/audit-public-grants-2026-07-22.sql](../../scripts/audit-public-grants-2026-07-22.sql) —
