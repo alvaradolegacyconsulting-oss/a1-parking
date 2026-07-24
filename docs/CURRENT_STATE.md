@@ -154,6 +154,7 @@ capability — a decision, not a cleanup.
 | `b724c84` | AP-MANAGE-CLIENT root-cause fix — wrapper deleted (`manager` IS a properties row); `authorized_plate` render case added to manager Plate Lookup |
 | (unshipped) | AP-only client patch (viewing-property warning on `authorized_plate` render) — **HELD 2026-07-23**; correct fix is RPC-layer, silent 5 branches more urgent than visible 1 |
 | `01ab566` | AP-CATEGORY — add `category` column (staff/vendor/other) + `check_authorized_plate` role-conditional return + AP.CHECKS 4→5 retrofit + template addendum on negative-controls-as-diagnostic + delete non-bug backlog |
+| `d0525f3` | AP-UI-REFINE — component gains readOnly/collapsible + category (badge/filter/radio) + search + sort by plate + toolbar + unknown-category fallback + filter reset on propertyId change + console.error on mutation failure; manager tab adjacent to Authorized Guests (Settings integration removed); CA now read-only collapsible |
 
 **B1 and B2 closed a real cross-tenant defect and survive the re-scope.** A manager at one company
 could read *and write* another company's per-property plate list through PostgREST, and
