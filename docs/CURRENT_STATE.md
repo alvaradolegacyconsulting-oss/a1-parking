@@ -47,7 +47,7 @@ now named apart:
 |---|---|---|
 | ✅ | **AP-SCHEMA** `51c29f2` — table, trigger, 9 policies, grants, audit | 11 VQs silent |
 | ✅ | **AP-CASCADE-DB** `59a3c4d` — `check_authorized_plate` RPC + `pm_plate_lookup` branch 1.5 | 11 VQs silent (post-apply only) |
-| 🔄 | **AP-CLIENT** — driver branch + render, CA branch + render, fallbacks | diff reported, under review |
+| ✅ | **AP-CLIENT** `b02a2a5` — driver + CA branches, `authorized_plate` render on both, shared `AUTHORIZED_META`, `PLATE_STATUS_META`-derived fallback | `npm run build` clean; Vercel glance pending |
 | ⏳ | **AP-MANAGE** — manager + CA add/remove UI + count column | ← **the switch** |
 
 Every commit before AP-MANAGE is inert because the table stays empty — but note a CA *can* write
@@ -109,6 +109,8 @@ capability — a decision, not a cleanup.
 | `0d0a7fe` | DNT-PARK — revoke writes + extended VQ.4 |
 | `51c29f2` | AP-SCHEMA — `authorized_plates` table |
 | `59a3c4d` | AP-CASCADE-DB — `check_authorized_plate` + `pm_plate_lookup` branch 1.5 |
+| `0e90711` | Add `docs/CURRENT_STATE.md` (rolling state file) |
+| `b02a2a5` | AP-CLIENT — driver + CA branches + `authorized_plate` render + fallback |
 
 **B1 and B2 closed a real cross-tenant defect and survive the re-scope.** A manager at one company
 could read *and write* another company's per-property plate list through PostgREST, and
