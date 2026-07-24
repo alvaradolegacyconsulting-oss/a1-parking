@@ -107,15 +107,54 @@ async function callSyncOnAdd(
 // property_id from manager.property (name) since manager state stores
 // name only. Mirrors the multi-property gap of exempt-plates — see
 // docs/backlog/manager-multi-property-settings-selector.md
+//
+// FIX 2026-07-23: original shipped with `if (propertyId === null) return null`
+// which rendered nothing on both the pending-async-gap AND the
+// lookup-returned-zero-rows cases. Silent-absence class — the section
+// vanished with no error, no diagnostic. Now: loading state while
+// resolving; explicit error state if lookup fails; only renders the
+// component on confirmed id resolution. Same discipline as the driver
+// render fallback branch — a section that vanishes is undiagnosable.
 function ManagerAuthorizedPlatesWrapper({ propertyName }: { propertyName: string }) {
   const [propertyId, setPropertyId] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [lookupError, setLookupError] = useState<string | null>(null)
+
   useEffect(() => {
     let cancel = false
-    supabase.from('properties').select('id').eq('name', propertyName).maybeSingle()
-      .then(({ data }) => { if (!cancel && data) setPropertyId(data.id as number) })
+    setLoading(true); setLookupError(null); setPropertyId(null)
+    // `.eq('name', ...)` is exact match. If Jose's manager.property has
+    // whitespace or case drift from the stored value, this returns
+    // zero rows. Trim the input as a small tolerance — the DB trigger
+    // trg_properties_name_trim keeps stored names trimmed, so equality
+    // after client-side trim should match for any legitimate case.
+    supabase.from('properties').select('id').eq('name', propertyName.trim()).maybeSingle()
+      .then(({ data, error }) => {
+        if (cancel) return
+        setLoading(false)
+        if (error) { setLookupError(`Lookup failed: ${error.message}`); return }
+        if (!data) {
+          setLookupError(`Property "${propertyName}" not found — the manager's assigned property may not exist or you may not have RLS permission to read it.`)
+          return
+        }
+        setPropertyId(data.id as number)
+      })
     return () => { cancel = true }
   }, [propertyName])
-  if (propertyId === null) return null
+
+  if (loading) {
+    return <p style={{ color:'#555', fontSize:'12px', margin:'12px 0' }}>Loading Authorized Plates…</p>
+  }
+  if (lookupError || propertyId === null) {
+    return (
+      <div style={{ background:'#241a08', border:'1px solid #a16207', borderRadius:'8px', padding:'12px', marginTop:'12px' }}>
+        <p style={{ color:'#fbbf24', fontSize:'12px', fontWeight:'bold', margin:'0 0 4px' }}>⚠ Authorized Plates unavailable</p>
+        <p style={{ color:'#fef3c7', fontSize:'11px', margin:'0', lineHeight:'1.5' }}>
+          {lookupError || 'Could not resolve this property.'} Contact support if this persists.
+        </p>
+      </div>
+    )
+  }
   return <AuthorizedPlatesManager propertyId={propertyId} propertyName={propertyName} />
 }
 
