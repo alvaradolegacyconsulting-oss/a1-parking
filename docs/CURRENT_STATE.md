@@ -6,7 +6,7 @@ kickoff.** Read it first; it is the source of truth for where things stand.
 **Should live in the repo** (`docs/CURRENT_STATE.md`) so Mateo can read and maintain it. Jose
 uploads the current copy to project knowledge when starting a new chat.
 
-*Last updated: July 23, 2026 (end of session — AP arc behaviourally verified)*
+*Last updated: July 24, 2026 (AP-CATEGORY shipped; template gained 8th discipline)*
 
 ---
 
@@ -153,6 +153,7 @@ capability — a decision, not a cleanup.
 | `d991c3c` | AP-MANAGE-CLIENT fix — `ManagerAuthorizedPlatesWrapper` loading + error states (superseded) |
 | `b724c84` | AP-MANAGE-CLIENT root-cause fix — wrapper deleted (`manager` IS a properties row); `authorized_plate` render case added to manager Plate Lookup |
 | (unshipped) | AP-only client patch (viewing-property warning on `authorized_plate` render) — **HELD 2026-07-23**; correct fix is RPC-layer, silent 5 branches more urgent than visible 1 |
+| `01ab566` | AP-CATEGORY — add `category` column (staff/vendor/other) + `check_authorized_plate` role-conditional return + AP.CHECKS 4→5 retrofit + template addendum on negative-controls-as-diagnostic + delete non-bug backlog |
 
 **B1 and B2 closed a real cross-tenant defect and survive the re-scope.** A manager at one company
 could read *and write* another company's per-property plate list through PostgREST, and
@@ -205,14 +206,17 @@ live the moment `public_signup_open` flips. Fix shape:
    `missing`/`unexpected` via `EXCEPT`. An assertion that fires must say *what* differs.
 7. **Ordering assertions** — `position()` returns 0 for an absent needle, so
    `position(a) < position(b)` is true when `a` is missing. Guard `= 0` explicitly first.
+8. **Negative controls run as a diagnostic, not as the verification file** — `BEGIN…COMMIT`
+   wrap aborts at first `RAISE`, masking every later VQ; a pre-apply run validates only the first
+   assertion. Write pre-apply as a read-only jsonb readout returning each condition as a
+   boolean/count; every `false`/`0` is a validated detector. Verification file stays as-is for
+   post-apply (silence expected; abort-on-failure is correct there).
 
 **Supabase editor:** paste verification files **whole** — the auto-RLS helper injects
 `ALTER TABLE … ENABLE ROW LEVEL SECURITY` into partial pastes and breaks dollar quoting. This is
 also what makes `DO`-block atomicity hold.
 
-**Validated detectors to date: 2** — VQ.1 (B1) and VQ.CANONICAL (B2). Both fired on real defects
-and named the offending object. AP-SCHEMA's and AP-CASCADE-DB's VQs are silent but structurally
-unvalidated; AP-CASCADE-DB's pre-apply pass was skipped.
+**Validated detectors to date: 3** — VQ.1 (B1), VQ.CANONICAL (B2), and AP.CATEGORY_COLUMN (AP-CATEGORY 2026-07-24). Each was the FIRST assertion in its verification file. **Root cause of the stuck count** (established 2026-07-24): a `BEGIN…COMMIT`-wrapped verification file aborts at the first `RAISE`, so a pre-apply run validates only its first assertion — every later VQ is masked by construction. **Fixed forward via 8th codified discipline:** Negative controls run as a read-only diagnostic (jsonb readout), not as the verification file. Every `false`/`0` in the diagnostic is a validated detector.
 
 ---
 
