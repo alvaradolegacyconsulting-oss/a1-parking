@@ -303,6 +303,48 @@ returned true. Schema was correct; assertion mechanics were wrong. Error message
 **B1's VQ.3 had the same latent bug** — passed only by luck of expected being written
 alphabetically. Retrofit applied to both when AP.RLS was corrected.
 
+## Ordering assertions
+
+`position(needle, haystack)` returns **0** when the needle is absent. So a bare
+`position(a) < position(b)` evaluates `0 < N` → **true** → the assertion is silent on the
+condition it exists to reject — assignment (or use) missing entirely reads as "valid ordering."
+
+**Always guard `position(a) = 0` explicitly before comparing.** Canonical shape (three-clause OR
+covers all failure modes):
+
+```sql
+DECLARE
+  v_asgn INTEGER;
+  v_use  INTEGER;
+BEGIN
+  v_asgn := position('<assignment literal>' in v_def);
+  v_use  := position('<use literal>' in v_def);
+  IF v_asgn = 0 OR v_use = 0 OR v_use <= v_asgn THEN
+    RAISE EXCEPTION '<VQ> FAILED — assignment/use missing or out of order (asgn=% use=%)',
+      v_asgn, v_use;
+  END IF;
+END;
+```
+
+Zero-guarded shorter form (functionally equivalent):
+
+```sql
+IF position('<assignment>' in v_def) = 0
+   OR position('<use>' in v_def) <= position('<assignment>' in v_def) THEN
+  RAISE EXCEPTION '<VQ> FAILED — <assignment> missing, or not assigned before use';
+END IF;
+```
+
+`position(a) <= 0` short-circuits before the comparison; the `v_use = 0` case is caught in the
+short form by `0 <= N` = TRUE (when assignment is present at N > 0). Both shapes are correct;
+prefer the three-clause form when the failure message needs to name which needle is absent.
+
+**Case reference:** B2's `VQ.ISDNT_ORDER` (`v_is_dnt` in `check_dnt_plate`) and AP-CASCADE-DB's
+`AP.CHECK_ORDERING` (`v_is_authorized` in `check_authorized_plate`) both use the three-clause
+form and correctly RAISE when the assignment line is deleted. Reviewed 2026-07-23 following an
+observation that `position() < position()` without a zero guard silently passes on absent
+assignment — the observation applies to any future ordering VQ written without the guard.
+
 ## Cross-references
 
 - [scripts/audit-public-grants-2026-07-22.sql](../../scripts/audit-public-grants-2026-07-22.sql) —
