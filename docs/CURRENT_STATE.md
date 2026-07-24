@@ -49,7 +49,9 @@ now named apart:
 | ✅ | **AP-CASCADE-DB** `59a3c4d` — `check_authorized_plate` RPC + `pm_plate_lookup` branch 1.5 | 11 VQs silent (post-apply only) |
 | ✅ | **AP-CLIENT** `b02a2a5` — driver + CA branches, `authorized_plate` render on both, shared `AUTHORIZED_META`, `PLATE_STATUS_META`-derived fallback | `npm run build` clean; Vercel glance pending |
 | ✅ | **AP-MANAGE-TRIGGER** `8b2024c` — `removed_at` server-clock via trigger + INSERT-branch `NULL` guard + `AP.TRIGGER_INSERT_NULL` + wrap-safe audit strings | evidence-verified via direct readout; 3 VQs post-apply-only (negative controls consumed by early first apply) |
-| ⏳ | **AP-MANAGE-CLIENT** — manager + CA add/remove UI + `head:true` count column | ← **the switch** |
+| ✅ | **AP-MANAGE-CLIENT** `ebeab8d` — `AuthorizedPlatesManager` shared component + confirm modal + manager settings integration + CA per-property panel integration | build clean; **acceptance smoke pending** — first behavioural evidence for the whole arc |
+
+**Count column deferred** to Bar-2 pricing entry (leak-vector visibility becomes real at `public_signup_open` flip). Multi-property manager gap filed as `docs/backlog/manager-multi-property-settings-selector.md` (inherited from Visitor Pass Quota Exemptions pattern).
 
 Every commit before AP-MANAGE is inert because the table stays empty — but note a CA *can* write
 to `authorized_plates` via PostgREST today, so "inert" means no UI path, not unreachable.
@@ -113,6 +115,7 @@ capability — a decision, not a cleanup.
 | `0e90711` | Add `docs/CURRENT_STATE.md` (rolling state file) |
 | `b02a2a5` | AP-CLIENT — driver + CA branches + `authorized_plate` render + fallback |
 | `8b2024c` | AP-MANAGE-TRIGGER — `removed_at` server-clock + INSERT-branch NULL guard |
+| `ebeab8d` | AP-MANAGE-CLIENT — `AuthorizedPlatesManager` + confirm modal + integrations + multi-property backlog |
 
 **B1 and B2 closed a real cross-tenant defect and survive the re-scope.** A manager at one company
 could read *and write* another company's per-property plate list through PostgREST, and
