@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { useResolvedLogo } from '../lib/logo'
 import { normalizePlate } from '../lib/plate'
+import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 // B118 Layer 2 Commit 3 acceptance-surface pass — scroll-to-sign accordion +
 // per-doc bodies for the resident register form.
@@ -93,13 +94,39 @@ function RegisterForm() {
         return
       }
 
+      // 2026-07-25 attach-hardening: Wall A scoped per-property.
+      // Prior check blocked on ANY residents row for this email — refused
+      // existing-elsewhere signups (a Dallas resident signing up at Houston
+      // was blocked with "log in instead" instead of silent-attaching).
+      // New check refuses only when an ACTIVE residency exists AT THIS
+      // property — preserves the "already registered here" UX for repeat
+      // signups at the same property; existing-elsewhere flows through
+      // to /api/register/create-user's silent-attach branch (commit 2).
+      // Deactivated-here flows through too (is_active=true filter), which
+      // is the case-4 headline: deactivate + re-register at same property.
+      // Property match uses ILIKE + escapeIlikeValue to mirror lower(trim())
+      // normalization (client can't invoke SQL lower(trim); property names
+      // have DB-trigger trim on write, ILIKE gives case-insensitivity,
+      // escape guards against %/_ wildcard chars).
+      const emailLower = account.email.trim().toLowerCase()
+      const propertyForCheck = (property ?? '').trim()
+      if (propertyForCheck.length === 0) {
+        setError('Registration link is missing the property. Please use the QR / link your property manager provided.')
+        setSubmitting(false)
+        return
+      }
+      const escapedProperty = escapeIlikeValue(propertyForCheck)
       const { data: existing } = await supabase
         .from('residents')
         .select('id')
-        .ilike('email', account.email.trim())
-        .single()
+        .ilike('email', emailLower)
+        .ilike('property', escapedProperty)
+        .eq('is_active', true)
+        .eq('status', 'active')
+        .limit(1)
+        .maybeSingle()
       if (existing) {
-        setError('An account with this email already exists. Please log in instead.')
+        setError('You are already registered at this property. Please log in instead.')
         setSubmitting(false)
         return
       }

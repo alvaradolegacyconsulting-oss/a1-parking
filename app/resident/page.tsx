@@ -24,8 +24,61 @@ import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBan
 // flag on violations (B219). dispute_requests table intentionally left
 // intact (historical data preservation; future cleanup).
 
+// 2026-07-25 attach-hardening — ResidencySwitcher.
+// A resident can have multiple residents rows (post-attach: concurrent
+// residencies at different properties, or deactivate + re-register at
+// the same property). This switcher toggles which residency is in view.
+// Filters deactivated + declined from the option list — those are dead
+// states, not places a resident should navigate INTO. If the eligible
+// list is <= 1 the switcher renders nothing.
+function ResidencySwitcher({
+  residencies,
+  currentId,
+  onSwitch,
+}: {
+  residencies: any[]
+  currentId: number
+  onSwitch: (r: any) => void
+}) {
+  const eligible = residencies.filter(r =>
+    (r.status === 'active' && r.is_active === true) ||
+    r.status === 'pending'
+  )
+  if (eligible.length <= 1) return null
+  return (
+    <div style={{ background:'#1a2135', border:'1px solid #3a4055', borderRadius:'8px', padding:'12px 16px', marginBottom:'12px', maxWidth:'420px', width:'100%' }}>
+      <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', display:'block', marginBottom:'6px' }}>
+        Viewing property
+      </label>
+      <select
+        value={currentId}
+        onChange={e => {
+          const picked = eligible.find(r => r.id === parseInt(e.target.value, 10))
+          if (picked) onSwitch(picked)
+        }}
+        style={{ width:'100%', padding:'8px 12px', fontSize:'13px', background:'#0f1117', border:'1px solid #3a4055', borderRadius:'6px', color:'white', outline:'none', fontFamily:'Arial' }}
+      >
+        {eligible.map(r => {
+          const tag = r.status === 'active' && r.is_active === true
+            ? ''
+            : ' (pending approval)'
+          return (
+            <option key={r.id} value={r.id}>
+              {r.property} — Unit {r.unit}{tag}
+            </option>
+          )
+        })}
+      </select>
+    </div>
+  )
+}
+
 export default function ResidentPortal() {
   const [resident, setResident] = useState<any>(null)
+  // 2026-07-25 attach-hardening: all residents rows for this email
+  // (post-attach a resident may have multiple; switcher toggles which
+  // is in `resident`).
+  const [residencies, setResidencies] = useState<any[]>([])
   const [vehicles, setVehicles] = useState<any[]>([])
   // 2026-07-02 (per-screen polish #7) — real space assignment from
   // the spaces table (assigned_to_resident_email match), replacing
@@ -131,82 +184,129 @@ export default function ResidentPortal() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { window.location.href = '/login'; return }
 
+    // 2026-07-25 attach-hardening: load ALL residencies for this email
+    // as an array (not .single()) — a resident can have multiple rows
+    // post-attach (deactivate + re-register at same property, or
+    // concurrent residencies at different properties). Order by id DESC
+    // so the newest row is first among ties.
     const { data, error } = await supabase
       .from('residents')
       .select('*')
       .ilike('email', user.email!)
-      .single()
+      .order('id', { ascending: false })
 
-    if (error || !data) {
+    if (error || !data || data.length === 0) {
       setLoading(false)
       setError('Your resident account was not found. Please contact your property manager.')
-    } else {
-      // B66.5 commit 4.3: account-state gate. Resident gets same gating
-      // as other portals per Q6 lock (past_due banner + suspended/
-      // cancelled redirect). data.company sourced from residents row.
-      if (data.company) {
-        // B66.5.1: pass role for role-gated CTA rendering in PastDueBanner.
-        const gateResult = await evaluatePortalGate(data.company, 'resident')
-        if (gateResult.redirected) return
-        if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
-      }
-      setLoading(false)
-      setResident(data)
-      setEditForm(data)
-      fetchVehicles(data.unit, data.property, data.email)
-      fetchPasses(data.unit)
-      fetchSpaceRequest(data.email)
-      fetchGuestAuths(data.email)
-      // Slice 3.5 — multi-space fetch from the SoT (spaces + space_residents).
-      // space_residents ties are AUTHORITATIVE (v1.1 multi-resident source);
-      // spaces.assigned_to_resident_email is the pre-v1.1 fallback for
-      // rows the v1.1 backfill hasn't covered. Union both sets of ids,
-      // fetch full rows once. Same SoT the CRM builds from.
-      //
-      // BUG-1 fix (2026-07-04): dropped the redundant
-      // `.ilike('property', data.property)` filter. RLS
-      // (resident_read_own_spaces) already scopes reads to spaces at the
-      // resident's own property, so the client filter was defense-in-
-      // depth that turned into a data-drift trap — any trailing-whitespace
-      // / punctuation delta between residents.property and spaces.property
-      // silently dropped the space. Same class as the roommate-tie miss.
-      if (data.email) {
-        const emailLower = data.email.toLowerCase()
-        const [tiesRes, legacyRes] = await Promise.all([
-          supabase.from('space_residents').select('space_id').ilike('resident_email', emailLower),
-          supabase.from('spaces').select('id').ilike('assigned_to_resident_email', emailLower),
-        ])
-        if (tiesRes.error) console.error('[BUG-1-resident-ties-fetch-failed]', { email: emailLower, error: tiesRes.error.message })
-        if (legacyRes.error) console.error('[BUG-1-resident-legacy-fetch-failed]', { email: emailLower, error: legacyRes.error.message })
-        const spaceIds = Array.from(new Set([
-          ...(tiesRes.data ?? []).map(t => t.space_id as number),
-          ...(legacyRes.data ?? []).map(r => r.id as number),
-        ]))
-        if (spaceIds.length > 0) {
-          const { data: fullRows, error: rowsErr } = await supabase
-            .from('spaces')
-            .select('id, label, type')
-            .in('id', spaceIds)
-            .eq('is_active', true)
-            .eq('status', 'assigned')
-          if (rowsErr) console.error('[BUG-1-resident-spaces-fetch-failed]', { email: emailLower, error: rowsErr.message })
-          setAssignedSpaces((fullRows ?? []).map(r => ({
-            id: r.id as number,
-            label: (r.label as string) ?? '',
-            type: (r.type as string | null) ?? null,
-          })))
-        }
-      }
-      if (data.property) {
-        const { data: prop } = await supabase
-          .from('properties')
-          .select('pm_name, pm_email')
-          .ilike('name', data.property)
-          .single()
-        if (prop) setPropertyManager({ name: prop.pm_name || null, email: prop.pm_email || null })
-      }
-      setCompanyName(data.company || localStorage.getItem('company_name') || '')
+      return
     }
+
+    setResidencies(data)
+    // 2026-07-25 attach-hardening — default selection cascade:
+    //   1. Prefer any ACTIVE residency (status='active' AND is_active=true).
+    //      Among actives, newest-by-id (this query's sort).
+    //   2. Fall back to any PENDING. Case 4 headline (deactivate +
+    //      re-register at same property): resident has a deactivated
+    //      row + a new pending row; must land on PENDING so the pending
+    //      banner reads correctly, not on the deactivated row that
+    //      would look like "re-registration failed."
+    //   3. Fall back to first-by-id-DESC of any status (deactivated-only
+    //      edge case). Portal falls through to the deactivated banner.
+    const active  = data.find((r: any) => r.status === 'active' && r.is_active === true)
+    const pending = data.find((r: any) => r.status === 'pending')
+    const picked  = active ?? pending ?? data[0]
+
+    await hydrateResidency(picked)
+    setLoading(false)
+  }
+
+  // 2026-07-25 attach-hardening: populate all downstream state for
+  // a given residency. Extracted from the original loadResident so
+  // switchResidency() can re-run the same population when the user
+  // changes which residency is in view. Body preserved from the
+  // pre-refactor loadResident post-load block.
+  async function hydrateResidency(data: any) {
+    // B66.5 commit 4.3: account-state gate. Resident gets same gating
+    // as other portals per Q6 lock (past_due banner + suspended/
+    // cancelled redirect). data.company sourced from residents row.
+    if (data.company) {
+      // B66.5.1: pass role for role-gated CTA rendering in PastDueBanner.
+      const gateResult = await evaluatePortalGate(data.company, 'resident')
+      if (gateResult.redirected) return
+      if (gateResult.pastDueBanner) setPastDueBanner(gateResult.pastDueBanner)
+      else setPastDueBanner(null)   // clear stale banner when switching residencies
+    } else {
+      setPastDueBanner(null)
+    }
+
+    setResident(data)
+    setEditForm(data)
+    fetchVehicles(data.unit, data.property, data.email)
+    fetchPasses(data.unit)
+    fetchSpaceRequest(data.email)
+    fetchGuestAuths(data.email)
+    // Slice 3.5 — multi-space fetch from the SoT (spaces + space_residents).
+    // space_residents ties are AUTHORITATIVE (v1.1 multi-resident source);
+    // spaces.assigned_to_resident_email is the pre-v1.1 fallback for
+    // rows the v1.1 backfill hasn't covered. Union both sets of ids,
+    // fetch full rows once. Same SoT the CRM builds from.
+    //
+    // BUG-1 fix (2026-07-04): dropped the redundant
+    // `.ilike('property', data.property)` filter. RLS
+    // (resident_read_own_spaces) already scopes reads to spaces at the
+    // resident's own property, so the client filter was defense-in-
+    // depth that turned into a data-drift trap — any trailing-whitespace
+    // / punctuation delta between residents.property and spaces.property
+    // silently dropped the space. Same class as the roommate-tie miss.
+    if (data.email) {
+      const emailLower = data.email.toLowerCase()
+      const [tiesRes, legacyRes] = await Promise.all([
+        supabase.from('space_residents').select('space_id').ilike('resident_email', emailLower),
+        supabase.from('spaces').select('id').ilike('assigned_to_resident_email', emailLower),
+      ])
+      if (tiesRes.error) console.error('[BUG-1-resident-ties-fetch-failed]', { email: emailLower, error: tiesRes.error.message })
+      if (legacyRes.error) console.error('[BUG-1-resident-legacy-fetch-failed]', { email: emailLower, error: legacyRes.error.message })
+      const spaceIds = Array.from(new Set([
+        ...(tiesRes.data ?? []).map(t => t.space_id as number),
+        ...(legacyRes.data ?? []).map(r => r.id as number),
+      ]))
+      if (spaceIds.length > 0) {
+        const { data: fullRows, error: rowsErr } = await supabase
+          .from('spaces')
+          .select('id, label, type')
+          .in('id', spaceIds)
+          .eq('is_active', true)
+          .eq('status', 'assigned')
+        if (rowsErr) console.error('[BUG-1-resident-spaces-fetch-failed]', { email: emailLower, error: rowsErr.message })
+        setAssignedSpaces((fullRows ?? []).map(r => ({
+          id: r.id as number,
+          label: (r.label as string) ?? '',
+          type: (r.type as string | null) ?? null,
+        })))
+      } else {
+        setAssignedSpaces([])   // clear when switching to a residency with no spaces
+      }
+    }
+    if (data.property) {
+      const { data: prop } = await supabase
+        .from('properties')
+        .select('pm_name, pm_email')
+        .ilike('name', data.property)
+        .single()
+      if (prop) setPropertyManager({ name: prop.pm_name || null, email: prop.pm_email || null })
+      else setPropertyManager({ name: null, email: null })
+    }
+    setCompanyName(data.company || localStorage.getItem('company_name') || '')
+  }
+
+  // 2026-07-25 attach-hardening: switch the portal's current view to a
+  // different residency of the same user. Re-runs hydrateResidency
+  // with the picked residency's unit/property/email; resets activeTab
+  // to 'info' so the resident doesn't sit on a tab whose data just
+  // changed under them.
+  async function switchResidency(picked: any) {
+    await hydrateResidency(picked)
+    setActiveTab('info')
   }
 
   async function fetchVehicles(unit: string, property: string, email: string) {
@@ -780,7 +880,8 @@ export default function ResidentPortal() {
   )
 
   if (resident.status === 'pending') return (
-    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+      <ResidencySwitcher residencies={residencies} currentId={resident.id} onSwitch={switchResidency} />
       <div style={{ maxWidth:'420px', width:'100%' }}>
         <div style={{ background:'#1a1400', border:'1px solid #a16207', borderRadius:'16px', padding:'32px', textAlign:'center' }}>
           <div style={{ fontSize:'40px', marginBottom:'16px' }}>⏳</div>
@@ -808,7 +909,8 @@ export default function ResidentPortal() {
   )
 
   if (resident.status === 'declined') return (
-    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+      <ResidencySwitcher residencies={residencies} currentId={resident.id} onSwitch={switchResidency} />
       <div style={{ maxWidth:'420px', width:'100%' }}>
         <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'16px', padding:'32px', textAlign:'center' }}>
           <div style={{ fontSize:'40px', marginBottom:'16px' }}>✕</div>
@@ -832,6 +934,34 @@ export default function ResidentPortal() {
     </main>
   )
 
+  // 2026-07-25 attach-hardening — deactivated-only fallback.
+  // A resident whose picked residency is deactivated (is_active=false,
+  // status NOT in pending/declined) falls through here. The switcher
+  // above has zero eligible options in this shape (deactivated is
+  // filtered), so no way to navigate elsewhere — the resident must
+  // contact their PM or re-register via the property's link.
+  if (resident.is_active === false
+      && resident.status !== 'pending'
+      && resident.status !== 'declined') return (
+    <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+      <ResidencySwitcher residencies={residencies} currentId={resident.id} onSwitch={switchResidency} />
+      <div style={{ maxWidth:'420px', width:'100%' }}>
+        <div style={{ background:'#1a1a1a', border:'1px solid #444', borderRadius:'16px', padding:'32px', textAlign:'center' }}>
+          <div style={{ fontSize:'40px', marginBottom:'16px' }}>—</div>
+          <p style={{ color:'#aaa', fontWeight:'bold', fontSize:'18px', margin:'0 0 12px' }}>Registration Deactivated</p>
+          <p style={{ color:'#888', fontSize:'14px', lineHeight:'1.7', margin:'0 0 20px' }}>
+            Your registration at {resident.property} has been deactivated.
+            Contact your property manager to reactivate, or use your property&apos;s registration link to re-register.
+          </p>
+        </div>
+        <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}
+          style={{ width:'100%', marginTop:'16px', padding:'12px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontSize:'13px', fontFamily:'Arial' }}>
+          Sign Out
+        </button>
+      </div>
+    </main>
+  )
+
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
       {/* Desktop responsive Wave 2 (2026-06-26): swap inline
@@ -843,6 +973,11 @@ export default function ResidentPortal() {
           container caps at 640px even on a 4K monitor; the per-resident
           experience stays focused. */}
       <div className="reading-container">
+
+        {/* 2026-07-25 attach-hardening — top-of-portal switcher renders
+            when the resident has 2+ eligible residencies. Hidden for
+            single-residency users (component returns null on ≤1 eligible). */}
+        <ResidencySwitcher residencies={residencies} currentId={resident.id} onSwitch={switchResidency} />
 
         {/* B66.5 commit 4.3: past_due banner */}
         {pastDueBanner && <PastDueBanner {...pastDueBanner} />}
