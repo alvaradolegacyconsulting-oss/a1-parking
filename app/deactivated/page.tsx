@@ -33,29 +33,33 @@ interface EscalationCopy {
 function escalationFor(role: Role): EscalationCopy {
   switch (role) {
     case 'resident':
+      // 2026-07-26 — B2B model: residents don't have a direct support
+      // relationship with ShieldMyLot; escalation goes through their
+      // property manager. Contact line intentionally empty; render
+      // below skips the empty <p>.
       return {
         title: 'Account access paused',
         body: 'Your resident account or your property has been deactivated. Contact your property manager to be reactivated.',
-        contact: 'If you need help reaching your property manager, contact support@shieldmylot.com.',
+        contact: '',
       }
     case 'manager':
     case 'leasing_agent':
       return {
         title: 'Account access paused',
         body: 'Your account, your property assignment, or your company has been deactivated. Contact your company administrator (CA) to be reactivated.',
-        contact: 'If you need help reaching your CA, contact support@shieldmylot.com.',
+        contact: 'If you need help reaching your CA, contact hello@shieldmylot.com.',
       }
     case 'driver':
       return {
         title: 'Account access paused',
         body: 'Your driver account or your company has been deactivated. Contact your company administrator (CA) to be reactivated.',
-        contact: 'If you need help reaching your CA, contact support@shieldmylot.com.',
+        contact: 'If you need help reaching your CA, contact hello@shieldmylot.com.',
       }
     case 'company_admin':
       return {
         title: 'Account access paused',
         body: 'Your company administrator account or your company has been suspended/cancelled. Contact ShieldMyLot support to restore access.',
-        contact: 'Contact support@shieldmylot.com to restore access.',
+        contact: 'Contact hello@shieldmylot.com to restore access.',
       }
     case 'admin':
       // Admin chain-point reaching this page is unusual (admin role
@@ -110,9 +114,11 @@ export default function DeactivatedPage() {
           <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 18px' }}>
             {copy.body}
           </p>
-          <p style={{ color: '#666', fontSize: 12, textAlign: 'center', lineHeight: 1.5, margin: '0 0 22px' }}>
-            {copy.contact}
-          </p>
+          {copy.contact && (
+            <p style={{ color: '#666', fontSize: 12, textAlign: 'center', lineHeight: 1.5, margin: '0 0 22px' }}>
+              {copy.contact}
+            </p>
+          )}
           <button onClick={signOut}
             style={{ width: '100%', padding: 13, background: GOLD, color: '#0f1117', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, cursor: 'pointer' }}>
             Sign out

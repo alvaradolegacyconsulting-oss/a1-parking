@@ -226,10 +226,33 @@ export default function ResidentPortal() {
   // changes which residency is in view. Body preserved from the
   // pre-refactor loadResident post-load block.
   async function hydrateResidency(data: any) {
-    // B66.5 commit 4.3: account-state gate. Resident gets same gating
-    // as other portals per Q6 lock (past_due banner + suspended/
-    // cancelled redirect). data.company sourced from residents row.
-    if (data.company) {
+    // P1 WORKAROUND (2026-07-26): the account-state gate calls
+    // get_my_effective_active, which reads residents.is_active only.
+    // Self-serve /register writes new rows as
+    // (is_active=false, status='pending') — indistinguishable from
+    // deactivated (is_active=false, status='active') at the RPC —
+    // so pending residents were routed to /deactivated instead of
+    // the "Registration Pending" render below. Skip the gate for
+    // status==='pending' as a client-side stand-in.
+    //
+    // Paired with the early-return guard below (`if data.status
+    // === 'pending' return`) so pending residents run ONLY
+    // setResident + setEditForm before the pending-render fires —
+    // the fetch tail (vehicles/passes/spaces/guest-auths/PM) does
+    // NOT run for them. Rationale is documented at the guard.
+    //
+    // Allowlist form (narrow to 'pending' only) so a future status
+    // value fails safe to gate-runs, not gate-skipped.
+    //
+    // Durable fix (helper-determinism epic): make
+    // get_my_effective_active status-aware so it routes pending
+    // residents correctly at the RPC layer, then delete this
+    // allowlist AND the paired guard below.
+    const GATE_EXEMPT_STATUSES = new Set(['pending'])
+    if (data.company && !GATE_EXEMPT_STATUSES.has(data.status)) {
+      // B66.5 commit 4.3: account-state gate. Resident gets same gating
+      // as other portals per Q6 lock (past_due banner + suspended/
+      // cancelled redirect). data.company sourced from residents row.
       // B66.5.1: pass role for role-gated CTA rendering in PastDueBanner.
       const gateResult = await evaluatePortalGate(data.company, 'resident')
       if (gateResult.redirected) return
@@ -241,6 +264,19 @@ export default function ResidentPortal() {
 
     setResident(data)
     setEditForm(data)
+
+    // 2026-07-26 P1 workaround pair: pending residents render the
+    // "Registration Pending" banner below, which needs only the
+    // residency row (name/email/unit/property + residencies for the
+    // switcher). Return before the fetch tail — those queries scope
+    // by unit/property rather than email, and a pending resident is
+    // an unverified claim on a unit typed into a public /register
+    // form. Fetching the claimed unit's vehicles/passes/spaces/
+    // guest-auths/PM into the pending resident's browser is wrong
+    // even if RLS returns nothing (network-tab visibility), and
+    // wasted work either way.
+    if (data.status === 'pending') return
+
     fetchVehicles(data.unit, data.property, data.email)
     fetchPasses(data.unit)
     fetchSpaceRequest(data.email)
