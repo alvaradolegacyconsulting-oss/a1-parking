@@ -35,11 +35,10 @@
 --     display remains stale until re-hydration. A1 comms includes this.
 --
 -- Tables covered:
---   • properties.name — the rename itself (parent row 143)
 --   • 8 scalar 'property' name-keyed tables (denormalized for RLS)
 --   • user_roles.property — TEXT[] array, uses array_replace
---   • drivers.assigned_properties — TEXT[] array (same shape as
---     user_roles.property; consulted by the rename-block trigger below).
+--   • drivers.assigned_properties — TEXT[] array (same shape)
+--   • properties.name — the rename itself (parent row 143), LAST
 --
 -- Tables NOT covered (deliberate):
 --   • authorized_plates — property_id BIGINT FK; automatic through
@@ -52,28 +51,50 @@
 --     keeping printed signage functional. Retire only when signage is
 --     confirmed replaced (unlikely — A1 may never reprint).
 --
--- ── 🔴 RENAME-BLOCK TRIGGER (trg_properties_name_block_rename) ────
--- BEFORE UPDATE OF name on public.properties. Body verified 2026-07-27:
+-- ── 🔴 CHILDREN-FIRST ORDER (the trigger becomes a completeness check) ─
+-- trg_properties_name_block_rename fires BEFORE UPDATE OF name on
+-- public.properties. Body verified 2026-07-27:
 --   • Only fires if NEW.name IS DISTINCT FROM OLD.name
 --   • admin-only bypass via get_my_role() = 'admin'
 --   • Otherwise counts refs across THREE tables scoped by company:
 --       user_roles.property (array), drivers.assigned_properties
 --       (array), residents.property (scalar). If refs > 0, REJECTS
 --       with "N active user assignments — rename blocked".
+--   • v_refs = 0 → allowed for any role ("fresh-creation typo case").
 --
--- Green Acers has 6+ residents and 2 assigned managers → v_refs > 0.
--- Supabase SQL editor sessions have no JWT → get_my_role() returns
--- NULL → admin bypass does NOT fire → rename would abort.
+-- Green Acers has 6+ residents + 2 assigned managers → v_refs > 0
+-- at rest. Supabase SQL editor has no JWT → get_my_role() returns
+-- NULL → admin bypass does NOT fire.
 --
--- Solution (Mateo 2026-07-27): targeted DISABLE/ENABLE of the trigger
--- INSIDE the transaction. If the transaction aborts, the trigger is
--- automatically restored — no window where the lock is off outside
--- this txn. Other triggers (trim, property_limit_check) stay active.
+-- Order below is deliberate: all children UPDATE FIRST (residents,
+-- user_roles, drivers, plus the 7 non-trigger-checked scalar tables),
+-- THEN properties.name LAST. By the time the parent UPDATE runs,
+-- every reference the trigger checks has been moved from OLD.name to
+-- NEW.name → v_refs = 0 → trigger permits the rename REGARDLESS of
+-- caller role. Fresh-creation typo case.
 --
--- 🔴 DO NOT USE `SET session_replication_role = replica` — that
--- disables EVERY trigger on the connection, including trim triggers
--- and FK enforcement. Targeted `ALTER TABLE ... DISABLE TRIGGER` is
--- surgical.
+-- 🔴 Why NOT DISABLE the trigger instead:
+--   With children-first, the trigger becomes a COMPLETENESS CHECK on
+--   our own updates. If we forgot residents, user_roles, or drivers,
+--   v_refs comes back non-zero and the transaction ABORTS — telling
+--   us we missed a carrier before anything commits. Disabling would
+--   throw that away and let a partial rename commit silently. Same
+--   principle as the six-site VQs: let the mechanism that already
+--   knows the invariant enforce it rather than switching it off.
+--
+--   Note: the trigger covers only those 3 carriers (residents,
+--   user_roles, drivers). The other 5 scalar tables (vehicles,
+--   visitor_passes, spaces, space_requests, guest_authorizations,
+--   violations, vehicle_plate_changes) still need the post-verify
+--   in STEP 3.
+--
+-- ── Race note ──────────────────────────────────────────────────────
+-- A resident registration or a visitor-pass creation committing
+-- BETWEEN our child updates and our parent update won't be visible
+-- to our transaction's snapshot, so it can leave a straggler row on
+-- the old name. STEP 3's AFTER-Acers counts catch this — any non-zero
+-- straggler count reads as "expected under concurrent write, fix it
+-- with a single follow-up UPDATE" NOT "the migration failed".
 -- ══════════════════════════════════════════════════════════════════════
 
 
@@ -93,19 +114,12 @@ UNION ALL SELECT 'BEFORE', 'drivers(array)',             count(*)::int FROM publ
 ORDER BY 2;
 
 
--- ── STEP 2 — APPLY. Single transaction, all-or-nothing. ─────────────
--- Trigger DISABLE + ENABLE inside the txn so any abort restores the
--- lock automatically.
+-- ── STEP 2 — APPLY. Single transaction, children first, parent last. ─
 
 BEGIN;
 
--- 2a. Disable the rename-block trigger targeted to this txn.
-ALTER TABLE public.properties DISABLE TRIGGER trg_properties_name_block_rename;
-
--- 2b. Parent row (the rename itself).
-UPDATE public.properties SET name = 'Green Acres' WHERE id = 143;
-
--- 2c. Eight scalar-property child tables.
+-- 2a. Children — 8 scalar-property tables. Order within this block
+--     doesn't matter (no cross-table constraints referenced).
 UPDATE public.residents             SET property = 'Green Acres' WHERE lower(trim(property)) = 'green acers';
 UPDATE public.vehicles              SET property = 'Green Acres' WHERE lower(trim(property)) = 'green acers';
 UPDATE public.visitor_passes        SET property = 'Green Acres' WHERE lower(trim(property)) = 'green acers';
@@ -115,17 +129,21 @@ UPDATE public.guest_authorizations  SET property = 'Green Acres' WHERE lower(tri
 UPDATE public.violations            SET property = 'Green Acres' WHERE lower(trim(property)) = 'green acers';
 UPDATE public.vehicle_plate_changes SET property = 'Green Acres' WHERE lower(trim(property)) = 'green acers';
 
--- 2d. user_roles.property (TEXT[] — array_replace, NOT scalar).
---     Two calls to handle both spaced + trimmed historical variants.
+-- 2b. Children — user_roles.property (TEXT[]). Two array_replace calls
+--     for spaced + trimmed historical variants. Consulted by trigger.
 UPDATE public.user_roles SET property = array_replace(property, 'Green Acers',  'Green Acres') WHERE 'Green Acers'  = ANY(property);
 UPDATE public.user_roles SET property = array_replace(property, 'Green Acers ', 'Green Acres') WHERE 'Green Acers ' = ANY(property);
 
--- 2e. drivers.assigned_properties (TEXT[] — same shape as user_roles).
+-- 2c. Children — drivers.assigned_properties (TEXT[]). Consulted by
+--     trigger. Same shape as user_roles.
 UPDATE public.drivers SET assigned_properties = array_replace(assigned_properties, 'Green Acers',  'Green Acres') WHERE 'Green Acers'  = ANY(assigned_properties);
 UPDATE public.drivers SET assigned_properties = array_replace(assigned_properties, 'Green Acers ', 'Green Acres') WHERE 'Green Acers ' = ANY(assigned_properties);
 
--- 2f. Re-enable the rename-block trigger.
-ALTER TABLE public.properties ENABLE TRIGGER trg_properties_name_block_rename;
+-- 2d. Parent — the rename itself. Trigger fires here; by now v_refs = 0
+--     across residents + user_roles + drivers, so the rename is allowed
+--     for any role. If any child UPDATE above was missed, the trigger
+--     aborts the entire transaction — completeness check by construction.
+UPDATE public.properties SET name = 'Green Acres' WHERE id = 143;
 
 COMMIT;
 
@@ -156,16 +174,3 @@ UNION ALL SELECT 'AFTER-Acres', 'vehicle_plate_changes',      count(*)::int FROM
 UNION ALL SELECT 'AFTER-Acres', 'user_roles(array)',          count(*)::int FROM public.user_roles            WHERE 'Green Acres' = ANY(property)
 UNION ALL SELECT 'AFTER-Acres', 'drivers(array)',             count(*)::int FROM public.drivers               WHERE 'Green Acres' = ANY(assigned_properties)
 ORDER BY 1, 2;
-
-
--- ── STEP 4 — trigger re-enable verify (belt-and-braces). ────────────
--- COMMIT above should have re-enabled the trigger via step 2f. This
--- SELECT confirms it stayed enabled. A failed txn would have rolled
--- back the DISABLE too — this catches the case where step 2f was
--- somehow skipped.
-
-SELECT tgname, tgenabled
-  FROM pg_trigger
- WHERE tgrelid = 'public.properties'::regclass
-   AND tgname = 'trg_properties_name_block_rename';
--- Expect: tgenabled = 'O' (enabled).
