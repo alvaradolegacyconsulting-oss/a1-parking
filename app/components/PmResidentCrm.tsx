@@ -7,8 +7,8 @@
 // from the parent. Zero DB access here; grouping done in app/lib/pm-crm.ts.
 
 import { useMemo, useState } from 'react'
-import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace } from '@/app/lib/pm-crm'
-import { computeInsights, filterCrmRows, initials } from '@/app/lib/pm-crm'
+import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus } from '@/app/lib/pm-crm'
+import { computeInsights, filterCrmRows, initials, residentDisplayStatus } from '@/app/lib/pm-crm'
 
 type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
 
@@ -401,7 +401,7 @@ function ListRow({ resident, selected, onClick }: { resident: CrmResident; selec
         }}>Unit {resident.unit} · {resident.email}</div>
         <div style={{ display: 'flex', gap: '5px', marginTop: '5px', flexWrap: 'wrap' }}>{badges}</div>
       </div>
-      <StatusPill status={resident.status} />
+      <StatusPill status={residentDisplayStatus(resident)} />
     </div>
   )
 }
@@ -415,12 +415,14 @@ function Badge({ color, bg, children }: { color: string; bg: string; children: R
   )
 }
 
-function StatusPill({ status }: { status: CrmResident['status'] }) {
+function StatusPill({ status }: { status: ResidentDisplayStatus }) {
   const cfg = status === 'active'
     ? { color: C.green, bg: C.greenSoft, border: C.greenLine, text: 'Active' }
     : status === 'pending'
       ? { color: C.gold, bg: C.goldSoft, border: C.goldLine, text: 'Pending' }
-      : { color: C.red, bg: C.redSoft, border: C.redLine, text: 'Declined' }
+      : status === 'declined'
+        ? { color: C.red, bg: C.redSoft, border: C.redLine, text: 'Declined' }
+        : { color: C.muted, bg: 'rgba(139,145,158,0.14)', border: 'rgba(139,145,158,0.4)', text: 'Deactivated' }
   return (
     <span style={{
       fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '20px', flex: 'none',
@@ -465,7 +467,7 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
           <div>
             <h2 style={{ margin: 0, fontSize: '19px', color: C.text, display: 'flex', alignItems: 'center', gap: '10px' }}>
               {resident.name}
-              <StatusPill status={resident.status} />
+              <StatusPill status={residentDisplayStatus(resident)} />
             </h2>
             <div style={{ color: C.muted, fontSize: '12.5px', marginTop: '3px' }}>
               Unit {resident.unit} · {resident.email}

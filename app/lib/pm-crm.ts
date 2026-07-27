@@ -270,7 +270,12 @@ export function buildCrmResidents(input: {
     const pgs = pendingGuestsByEmail.get(email) ?? pendingGuestsByUnit.get(unit) ?? []
     const ss = spacesByEmail.get(email) ?? []
     const sr = spaceReqByEmail.get(email) ?? null
-    const status = ((r.status as string) ?? (r.is_active ? 'active' : 'pending')) as CrmResident['status']
+    // 2026-07-26: fallback no longer invents 'pending' from is_active=false.
+    // Downstream residentDisplayStatus() reads is_active separately, so a
+    // (status=null, is_active=false) row now derives 'deactivated' via the
+    // ladder instead of being mis-badged "Needs approval". Census shows zero
+    // null-status rows today; this closes the class before it can hit one.
+    const status = ((r.status as string) ?? 'active') as CrmResident['status']
     const needsApproval =
       status === 'pending' ||
       counts.pending > 0 ||
@@ -402,10 +407,34 @@ export function computeInsights(rows: CrmResident[]): CrmInsights {
     if (r.needsApproval) needApproval++
     if (r.spaceRequest) spaceRequests++
     platesUnderReview += r.vehicleCounts.underReview
-    if (r.status === 'active') activeResidents++
+    if (residentDisplayStatus(r) === 'active') activeResidents++
     approvedPermits += r.vehicleCounts.approved
   }
   return { needApproval, spaceRequests, platesUnderReview, activeResidents, approvedPermits }
+}
+
+// ── Resident display status — precedence ladder ─────────────────────
+//
+// residents.status and residents.is_active co-encode overlapping state,
+// and the deactivate writer normalizes only is_active — so a
+// deactivated row reads as (status='active', is_active=false). Callers
+// deriving "is this display-active" from status alone mis-badge the
+// row as Active. The ladder below is the single source of truth for
+// display state; badges, KPIs, and filters route through it so they
+// can't drift.
+//
+// Precedence: pending > declined > !is_active > active
+//   - 'pending'      → approval state; hides deactivation entirely
+//   - 'declined'     → manager rejected registration; terminal
+//   - 'deactivated'  → is_active=false on a non-pending/-declined row
+//   - 'active'       → status='active' AND is_active=true
+export type ResidentDisplayStatus = 'pending' | 'declined' | 'deactivated' | 'active'
+
+export function residentDisplayStatus(r: Pick<CrmResident, 'status' | 'is_active'>): ResidentDisplayStatus {
+  if (r.status === 'pending') return 'pending'
+  if (r.status === 'declined') return 'declined'
+  if (r.is_active === false) return 'deactivated'
+  return 'active'
 }
 
 // ── List filter + search (client-side)
@@ -415,7 +444,7 @@ export type CrmFilter = 'all' | 'active' | 'needs' | 'review'
 export function filterCrmRows(rows: CrmResident[], filter: CrmFilter, search: string): CrmResident[] {
   const q = search.trim().toLowerCase()
   return rows.filter(r => {
-    if (filter === 'active' && r.status !== 'active') return false
+    if (filter === 'active' && residentDisplayStatus(r) !== 'active') return false
     if (filter === 'needs' && !r.needsApproval) return false
     if (filter === 'review' && r.vehicleCounts.underReview === 0) return false
     if (!q) return true

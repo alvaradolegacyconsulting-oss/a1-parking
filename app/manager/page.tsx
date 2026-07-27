@@ -2317,6 +2317,7 @@ export default function ManagerPortal() {
       setTargetDeactivate(null)
       setDeactivateBusy(false)
       fetchResidents(manager.name)
+      fetchVehicles(manager.name)
       await refetchSpacesDashboard()
       await refetchSpacesList()
     }
@@ -2429,6 +2430,7 @@ export default function ManagerPortal() {
       },
     })
     fetchResidents(manager.name)
+    fetchVehicles(manager.name)
   }
 
   // B166 — owner-trim. Flips vehicles.is_active=false for the departed
