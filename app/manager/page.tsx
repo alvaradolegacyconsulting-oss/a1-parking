@@ -730,7 +730,7 @@ export default function ManagerPortal() {
     if (error) { alert(`Approve failed: ${error.message}`); return }
     const err = (data as any)?.error
     if (err) { alert(`Approve failed: ${err}${(data as any)?.hint ? ' — ' + (data as any).hint : ''}`); return }
-    if (manager?.name) await fetchCrmDataForProperty(manager.name)
+    await refreshCrmData()
   }
 
   async function declineGuestAuthRequestCrm(id: number, reason: string) {
@@ -741,7 +741,7 @@ export default function ManagerPortal() {
     if (error) { alert(`Decline failed: ${error.message}`); return }
     const err = (data as any)?.error
     if (err) { alert(`Decline failed: ${err}`); return }
-    if (manager?.name) await fetchCrmDataForProperty(manager.name)
+    await refreshCrmData()
   }
 
   async function savePassLimit() {
@@ -840,6 +840,34 @@ export default function ManagerPortal() {
   //   existing tab-activation useEffects still call with no arg (default
   //   to manager?.name) and are now defensive refreshers, not the sole
   //   path.
+  // 2026-07-27 — single-fan-out CRM refresh, called after every write
+  // path. Individual sites previously picked hand-selected subsets of
+  // the refetch functions and drifted apart:
+  //   • refetchSpacesDashboard / refetchSpacesList update the SPACES-TAB
+  //     state (setOccupancy, setSpacesList, setAvailableSpacesForAssign).
+  //   • fetchCrmDataForProperty updates the CRM state that
+  //     PmResidentCrm actually reads: crmSpacesAtProperty,
+  //     crmSpaceResidentTies, crmGuestAuthsAtProperty,
+  //     crmPendingGuestRequestsAtProperty, crmSpaceRequestsAtProperty,
+  //     crmPendingPlateChanges.
+  //   • fetchResidents / fetchVehicles update the residents / vehicles /
+  //     pendingVehicles state consumed by both surfaces.
+  // Nobody's mental list included all three groups; R-10 didn't clear
+  // and R-12 didn't appear because the CRM axis was never on any write
+  // path. Every write now calls THIS — the decision of what to refresh
+  // is made once, so adding a new CRM axis means one file changes not
+  // ten. Promise.all keeps added latency to one round trip.
+  async function refreshCrmData() {
+    if (!manager?.name) return
+    await Promise.all([
+      fetchResidents(manager.name),
+      fetchVehicles(manager.name),
+      fetchCrmDataForProperty(manager.name),
+      refetchSpacesDashboard(),
+      refetchSpacesList(),
+    ])
+  }
+
   async function refetchSpacesDashboard(property?: string) {
     const prop = property ?? manager?.name
     if (!prop) return
@@ -894,8 +922,7 @@ export default function ManagerPortal() {
     const typeLabel = TYPE_LABELS[addForm.type]
     setTargetAdd(false)
     setAddForm({ type: 'carport', quantity: 1 })
-    await refetchSpacesDashboard()
-    await refetchSpacesList()
+    await refreshCrmData()
     if (qty > 1) alert(`Added ${qty} ${typeLabel} spaces`)
   }
 
@@ -913,8 +940,7 @@ export default function ManagerPortal() {
     if (error) { setSpacesError(error.message); return }
     setTargetAssign(null)
     setAssignFormEmail('')
-    await refetchSpacesDashboard()
-    await refetchSpacesList()
+    await refreshCrmData()
   }
 
   // v1.1 multi-resident: submitReassignSpace DROPPED. Manager UX is
@@ -944,8 +970,7 @@ export default function ManagerPortal() {
     if (error) { setSpacesError(error.message); return }
     setTargetFree(null)
     setFreeResidentEmail(null)
-    await refetchSpacesDashboard()
-    await refetchSpacesList()
+    await refreshCrmData()
   }
 
   async function submitDecommissionSpace() {
@@ -956,8 +981,7 @@ export default function ManagerPortal() {
     })
     if (error) { setSpacesError(error.message); return }
     setTargetDecommission(null)
-    await refetchSpacesDashboard()
-    await refetchSpacesList()
+    await refreshCrmData()
   }
 
   async function submitEditMetadata() {
@@ -972,8 +996,7 @@ export default function ManagerPortal() {
     })
     if (error) { setSpacesError(error.message); return }
     setTargetEdit(null)
-    await refetchSpacesDashboard()
-    await refetchSpacesList()
+    await refreshCrmData()
   }
 
   // B70: Plate Lookup — calls the SECURITY DEFINER pm_plate_lookup RPC.
@@ -1152,10 +1175,7 @@ export default function ManagerPortal() {
     // this was the resident's last pending item; the CRM display can't
     // recompute that until pendingVehicles + the other CRM dimensions
     // are current.
-    await Promise.all([
-      fetchVehicles(manager.name),
-      fetchCrmDataForProperty(manager.name),
-    ])
+    await refreshCrmData()
   }
 
   async function declineVehicle(id: string) {
@@ -1171,7 +1191,7 @@ export default function ManagerPortal() {
         .eq('status', 'pending')
     }
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
-    fetchVehicles(manager.name)
+    await refreshCrmData()
   }
 
   async function approveAllForUnit(unitVehicles: any[], unit: string) {
@@ -1219,10 +1239,7 @@ export default function ManagerPortal() {
     // the CRM's Needs-approval lane stale (needsApproval derives from 5
     // dimensions; refreshing 1 is insufficient). Await both fetches so
     // the queue reflects the mutation before the button re-enables.
-    await Promise.all([
-      fetchVehicles(manager.name),
-      fetchCrmDataForProperty(manager.name),
-    ])
+    await refreshCrmData()
   }
 
   // Permit-Door Piece 1 §5 — property-wide Approve-All Pending Vehicles.
@@ -1276,10 +1293,7 @@ export default function ManagerPortal() {
     // approveAllPendingCrm. Refetch both vehicles + CRM dimensions so
     // needsApproval recomputes against the authoritative post-mutation
     // truth (not just the vehicles dimension).
-    await Promise.all([
-      fetchVehicles(manager.name),
-      fetchCrmDataForProperty(manager.name),
-    ])
+    await refreshCrmData()
   }
 
   async function declineAllForUnit(unitVehicles: any[], unit: string) {
@@ -1295,7 +1309,7 @@ export default function ManagerPortal() {
       .ilike('property', escapeIlikeValue(manager.name))
       .eq('status', 'pending')
     setUnitNotes(n => { const c = {...n}; delete c[unit]; return c })
-    fetchVehicles(manager.name)
+    await refreshCrmData()
   }
 
   async function fetchViolations(property: string) {
@@ -1480,11 +1494,7 @@ export default function ManagerPortal() {
     // if not refetched. Also refresh the CRM dimensions so
     // needsApproval recomputes against the authoritative post-mutation
     // truth (see approveAllPendingCrm comment).
-    await Promise.all([
-      fetchResidents(manager.name),
-      fetchVehicles(manager.name),
-      fetchCrmDataForProperty(manager.name),
-    ])
+    await refreshCrmData()
     // Refresh spaces dashboard + available-pool so the freshly-assigned
     // space disappears from the assign dropdowns for other pending rows.
     if (pickedSpaceId) await refetchSpacesDashboard()
@@ -1578,11 +1588,7 @@ export default function ManagerPortal() {
     // handler only checks residents + vehicles). Await both narrow
     // fetches + refresh the CRM dimension state so needsApproval
     // recomputes against the authoritative post-mutation truth.
-    await Promise.all([
-      fetchResidents(manager.name),
-      fetchVehicles(manager.name),
-      fetchCrmDataForProperty(manager.name),
-    ])
+    await refreshCrmData()
   }
 
   // PM CRM slice 3 — space-write handlers. Route through the existing
@@ -1612,8 +1618,7 @@ export default function ManagerPortal() {
     console.info('[free_space]', { site: 'crm-release', spaceId, residentEmail, result: data })
     // Refresh CRM data + spaces dashboard so the released space returns to
     // the available pool visible on the Spaces tab.
-    fetchCrmDataForProperty(manager.name)
-    refetchSpacesDashboard()
+    await refreshCrmData()
   }
 
   async function assignSpaceForRequest(requestId: number, spaceId: number) {
@@ -1634,7 +1639,7 @@ export default function ManagerPortal() {
       return
     }
     console.info('[approve_space_request]', { site: 'crm-assign', requestId, spaceId, result })
-    fetchCrmDataForProperty(manager.name)
+    await refreshCrmData()
     fetchPendingSpaceRequests(manager.name)
     refetchSpacesDashboard()
   }
@@ -1660,7 +1665,7 @@ export default function ManagerPortal() {
       return
     }
     console.info('[decline_space_request]', { site: 'crm-decline', requestId, result })
-    fetchCrmDataForProperty(manager.name)
+    await refreshCrmData()
     fetchPendingSpaceRequests(manager.name)
   }
 
@@ -1690,8 +1695,7 @@ export default function ManagerPortal() {
       return
     }
     console.info('[approve_plate_change]', { site: 'crm', changeId, old_plate: result.old_plate, new_plate: result.new_plate, meter_fired: false })
-    fetchCrmDataForProperty(manager.name)
-    fetchVehicles(manager.name)
+    await refreshCrmData()
   }
 
   async function declinePlateChange(changeId: number) {
@@ -1714,8 +1718,7 @@ export default function ManagerPortal() {
       return
     }
     console.info('[decline_plate_change]', { site: 'crm', changeId })
-    fetchCrmDataForProperty(manager.name)
-    fetchVehicles(manager.name)
+    await refreshCrmData()
   }
 
   // PM CRM slice 5 — vehicle deactivate/reactivate.
@@ -1749,7 +1752,7 @@ export default function ManagerPortal() {
       new_values: { is_active: false, status: 'deactivated', property: manager.name, meter_fired: false, note: 'record kept; count decrements at cycle close via reconcileAtRenewal' },
     })
     console.info('[deactivate_vehicle]', { site: 'crm', vehicleId: id, meter_fired: false })
-    fetchVehicles(manager.name)
+    await refreshCrmData()
   }
 
   async function reactivateVehicleCrm(id: string | number) {
@@ -1837,7 +1840,7 @@ export default function ManagerPortal() {
       old_values: oldVals,
       new_values: newVals,
     })
-    fetchVehicles(manager.name)
+    await refreshCrmData()
   }
 
   async function editResidentCosmetic(residentId: string | number, patch: Partial<Record<ResidentField, any>>) {
@@ -1877,7 +1880,7 @@ export default function ManagerPortal() {
       old_values: oldVals,
       new_values: newVals,
     })
-    fetchResidents(manager.name)
+    await refreshCrmData()
   }
 
   async function declineResident(r: any) {
@@ -1906,7 +1909,7 @@ export default function ManagerPortal() {
     // appearing email would survive without this).
     await trimDepartedResidentVehicles(r.email, r.unit, manager.name, 'DECLINE_RESIDENT')
     setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
-    fetchResidents(manager.name)
+    await refreshCrmData()
   }
 
   // B166 — fetch active residents at (unit, property) so the addVehicle
@@ -1977,7 +1980,7 @@ export default function ManagerPortal() {
         setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', unit:'', space:'', permit_expiry:'' })
         setVehicleOwnerEmail('')
         setResidentsAtUnit([])
-        fetchVehicles(manager.name)
+        await refreshCrmData()
       }
     } finally {
       setAddVehicleSubmitting(false)
@@ -1988,7 +1991,7 @@ export default function ManagerPortal() {
     if (!confirm('Remove this vehicle?')) return
     await supabase.from('vehicles').update({ is_active: false }).eq('id', id)
     await logAudit({ action: 'REMOVE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { is_active: false, property: manager.name } })
-    fetchVehicles(manager.name)
+    await refreshCrmData()
   }
 
   async function addResident() {
@@ -2170,8 +2173,7 @@ export default function ManagerPortal() {
       if (assignErr) {
         alert(`Resident created, but space assignment failed: ${assignErr.message}\n\nYou can assign a space later via the Spaces tab.`)
       } else {
-        await refetchSpacesDashboard()
-        await refetchSpacesList()
+        await refreshCrmData()
       }
       setNewResidentAssignSpaceId('')
     }
@@ -2188,8 +2190,7 @@ export default function ManagerPortal() {
 
     setShowAddResident(false)
     setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'', vehicle_plate:'', vehicle_state:'TX', vehicle_make:'', vehicle_model:'', vehicle_year:'', vehicle_color:'' })
-    fetchResidents(manager.name)
-    fetchVehicles(manager.name)
+    await refreshCrmData()
     setCredentials({ email: targetEmail, password: tempPassword })
     } finally {
       // B217 outer guard reset — covers all exit paths (swift-handler
@@ -2330,10 +2331,7 @@ export default function ManagerPortal() {
     } finally {
       setTargetDeactivate(null)
       setDeactivateBusy(false)
-      fetchResidents(manager.name)
-      fetchVehicles(manager.name)
-      await refetchSpacesDashboard()
-      await refetchSpacesList()
+      await refreshCrmData()
     }
   }
 
@@ -2443,8 +2441,7 @@ export default function ManagerPortal() {
         restored_plates: restoredVehicles.map(v => v.plate),
       },
     })
-    fetchResidents(manager.name)
-    fetchVehicles(manager.name)
+    await refreshCrmData()
   }
 
   // B166 — owner-trim. Flips vehicles.is_active=false for the departed
