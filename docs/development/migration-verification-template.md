@@ -414,6 +414,83 @@ The `_diagnostic.sql` and `_verification.sql` filenames pair with the migration'
 verbatim. `pm_plate_lookup_viewing_property` → three files that sort adjacent in the file browser,
 grep together, and rollback as a set.
 
+## Grant remediation passes — cross-reference against `pg_policies`
+
+**Filed:** 2026-07-27 after the `user_roles` UPDATE-grant regression.
+**Trigger:** `20260722_grant_remediation_deny_by_default.sql:127` granted `INSERT` only on
+`public.user_roles`, missing `UPDATE`. `company_admin_update_users` (FOR UPDATE, live since
+2026-06-10) became unreachable — the privilege check fires before the policy is consulted.
+Every CA-portal user-edit `.update()` returned `permission denied for table user_roles` (42501 →
+HTTP 403) for **5 days** until A1's go-live surfaced it. Silent five-day CA-facing outage on the
+authorization table.
+
+**Rule:** any migration that grants or revokes table privileges MUST include the cross-reference
+block below as the final verification. Silent completion = every policy on the touched tables
+has the underlying privilege it needs to be evaluable. Loud failure = a policy is stranded and
+the grant list is incomplete.
+
+**This is a different discipline from the NEW-TABLE block above.** That block asserts baseline
+grants are absent on newly-created tables. This block asserts that a grant remediation pass
+didn't leave any existing policy without an underlying privilege.
+
+### The reusable block
+
+```sql
+-- ── VQ.POLICY_GRANT_MATCH — no policy is stranded by missing table privilege ──
+-- Fails if any policy grants a command the role can't exercise. Reusable
+-- across every grant migration (docs/development/migration-verification-
+-- template.md). A grant remediation that omits UPDATE on a table with a
+-- FOR UPDATE (or FOR ALL) policy strands the policy — the policy is never
+-- consulted because the privilege check fails first, returning 42501/HTTP 403.
+--
+-- The July 22 pass shipped without this block. user_roles was granted
+-- INSERT only; company_admin_update_users (FOR UPDATE) was stranded; the
+-- gap was invisible until A1's CA opened the People-tab on 2026-07-27
+-- and hit "permission denied for table user_roles".
+DO $vq_policy_grant$
+DECLARE
+  v_stranded RECORD;
+  v_msg      TEXT := '';
+BEGIN
+  FOR v_stranded IN
+    SELECT p.tablename, p.policyname, p.cmd
+      FROM pg_policies p
+     WHERE p.schemaname = 'public'
+       AND 'authenticated' = ANY(p.roles)
+       AND p.cmd IN ('UPDATE', 'DELETE', 'ALL')
+       AND NOT has_table_privilege(
+             'authenticated',
+             'public.' || quote_ident(p.tablename),
+             CASE p.cmd WHEN 'DELETE' THEN 'DELETE' ELSE 'UPDATE' END)
+     ORDER BY p.tablename, p.policyname
+  LOOP
+    v_msg := v_msg || format(E'\n  - %s.%s (%s)',
+                             v_stranded.tablename, v_stranded.policyname, v_stranded.cmd);
+  END LOOP;
+  IF length(v_msg) > 0 THEN
+    RAISE EXCEPTION 'VQ.POLICY_GRANT_MATCH FAIL: stranded policies (authenticated missing base privilege):%', v_msg;
+  END IF;
+END $vq_policy_grant$;
+```
+
+### Scope note
+
+The block asserts on `'authenticated' = ANY(p.roles)` — the standard user role. Extend to
+`anon` if the grant remediation touches anon-callable tables (rare — the NEW-TABLE block already
+asserts anon has nothing). Skip for admin-only migrations if no `authenticated`-scoped policy
+was touched.
+
+### When to include
+
+- Any migration that runs `GRANT` or `REVOKE` on public-schema tables.
+- Any migration that CREATE POLICY-s a new `UPDATE`/`DELETE`/`FOR ALL` policy (asserts the
+  underlying grant already exists before the policy ships).
+
+### When to skip
+
+- Column-only changes, RPC-only changes, RLS-enable-only changes, or migrations that touch no
+  table grants and no writable policies.
+
 ## Cross-references
 
 - [scripts/audit-public-grants-2026-07-22.sql](../../scripts/audit-public-grants-2026-07-22.sql) —
