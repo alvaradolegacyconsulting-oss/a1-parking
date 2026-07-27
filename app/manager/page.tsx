@@ -922,8 +922,9 @@ export default function ManagerPortal() {
     const typeLabel = TYPE_LABELS[addForm.type]
     setTargetAdd(false)
     setAddForm({ type: 'carport', quantity: 1 })
-    await refreshCrmData()
+    // 2026-07-27 — feedback before refresh (multi-space adds only).
     if (qty > 1) alert(`Added ${qty} ${typeLabel} spaces`)
+    await refreshCrmData()
   }
 
   // v1.1 multi-resident: submitAssignSpace adds one resident to the
@@ -2190,8 +2191,13 @@ export default function ManagerPortal() {
 
     setShowAddResident(false)
     setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'', vehicle_plate:'', vehicle_state:'TX', vehicle_make:'', vehicle_model:'', vehicle_year:'', vehicle_color:'' })
-    await refreshCrmData()
+    // 2026-07-27 — feedback before refresh. The manager is on the phone
+    // with the resident, waiting to read out the temp password; fire the
+    // credentials modal first so it appears immediately, then run the
+    // CRM refresh in the background. Reverse order would delay the modal
+    // behind five parallel refetches.
     setCredentials({ email: targetEmail, password: tempPassword })
+    await refreshCrmData()
     } finally {
       // B217 outer guard reset — covers all exit paths (swift-handler
       // fail return, inner-catch rollback return, normal completion).
