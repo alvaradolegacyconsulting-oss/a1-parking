@@ -15,6 +15,19 @@ function VisitorForm() {
   const [supportEmail, setSupportEmail] = useState('')
   const [supportWebsite, setSupportWebsite] = useState('')
   const [companyName, setCompanyName] = useState('')
+  // 2026-07-27 — phantom-pass guard. If a scanner arrives with a
+  // ?property= value that doesn't resolve in the DB, previous behaviour
+  // rendered a plausible-looking form that submitted with the raw URL
+  // string as the property — writing a visitor_passes row invisible to
+  // enforcement (driver plate-lookup scopes by the DB-resolved property
+  // name). Root cause was /qr's hardcoded PROPERTIES array drifting
+  // from the properties table after a data wipe. This state tracks the
+  // resolution result so the form only renders when the property is
+  // actually resolvable.
+  //   null   → resolution in flight (or 'Managed Property' fallback)
+  //   true   → resolved; render form
+  //   false  → unresolved; render invalid-link message, no form
+  const [propertyResolved, setPropertyResolved] = useState<boolean | null>(null)
 
   useEffect(() => {
     async function loadSupportInfo() {
@@ -24,6 +37,7 @@ function VisitorForm() {
         const { data: propRows } = await supabase.rpc('get_property_for_visitor', { p_name: propertyName })
         const prop = propRows?.[0] as { company: string } | undefined
         if (prop?.company) {
+          setPropertyResolved(true)
           const { data: coRows } = await supabase.rpc('get_company_branding', { p_name: prop.company })
           const co = coRows?.[0] as { support_phone: string | null; support_email: string | null; support_website: string | null; display_name: string | null } | undefined
           if (co) {
@@ -33,6 +47,15 @@ function VisitorForm() {
             setCompanyName(co.display_name || prop.company)
             return
           }
+        } else {
+          // Property URL param doesn't match any row. Log and flip the
+          // guard so the render path shows the invalid-link message
+          // rather than a submittable form. Anon page — no audit_logs
+          // write available; console.error is the visibility path for
+          // future mismatches (source/DB drift, mistyped links, stale
+          // signage).
+          console.error('[visitor-property-unresolved]', { propertyName })
+          setPropertyResolved(false)
         }
       }
       const { data: psRows } = await supabase.rpc('get_platform_defaults')
@@ -206,6 +229,34 @@ function VisitorForm() {
     d.setHours(d.getHours() + parseInt(hours))
     return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) +
            ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+
+  // 2026-07-27 — phantom-pass guard render. If the ?property= URL param
+  // was present but didn't resolve in the DB, refuse to render the form.
+  // Prevents writing visitor_passes rows against a property string that
+  // no enforcement query can match. Loading state (null) falls through
+  // to the form (existing behaviour) so a slow RPC doesn't visibly
+  // block; the guard only bites on a confirmed non-match.
+  if (propertyName !== 'Managed Property' && propertyResolved === false) {
+    return (
+      <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+        <div style={{ maxWidth:'420px', width:'100%' }}>
+          <div style={{ marginBottom:'24px', textAlign:'center' }}>
+            <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>ShieldMyLot&trade;</h1>
+          </div>
+          <div style={{ background:'#161b26', border:'1px solid #b71c1c', borderRadius:'12px', padding:'24px', textAlign:'center' }}>
+            <div style={{ width:'56px', height:'56px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #f44336', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px', fontSize:'24px' }}>⚠</div>
+            <h2 style={{ color:'#f44336', fontSize:'17px', fontWeight:'bold', margin:'0 0 12px' }}>This parking-pass link isn&apos;t valid</h2>
+            <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
+              We couldn&apos;t find a property matching this link. The link may be outdated or contain a typo.
+            </p>
+            <p style={{ color:'#666', fontSize:'12px', lineHeight:'1.6', margin:'0' }}>
+              Please contact the property directly for a valid visitor-pass link.
+            </p>
+          </div>
+        </div>
+      </main>
+    )
   }
 
   if (step === 'success') {
