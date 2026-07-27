@@ -28,6 +28,16 @@ function VisitorForm() {
   //   true   → resolved; render form
   //   false  → unresolved; render invalid-link message, no form
   const [propertyResolved, setPropertyResolved] = useState<boolean | null>(null)
+  // 2026-07-28 — canonical name for write paths. get_property_for_visitor
+  // is alias-aware (property_name_aliases table); when the URL param uses
+  // an alias (e.g. "Green Acers" post-rename), the RPC returns the
+  // canonical name ("Green Acres"). We use the canonical value in the
+  // POST body so the visitor_passes row is keyed to the property row
+  // enforcement actually queries. Falls back to the raw URL param until
+  // the RPC resolves — the guard render below prevents form submit
+  // while propertyResolved is false, so a fallback is never sent as
+  // a write.
+  const [resolvedPropertyName, setResolvedPropertyName] = useState<string>(propertyName)
 
   useEffect(() => {
     async function loadSupportInfo() {
@@ -35,9 +45,10 @@ function VisitorForm() {
         // B155.3 — anon RPCs replace direct table SELECTs. Same data
         // shape; safe columns only; no anon over-read.
         const { data: propRows } = await supabase.rpc('get_property_for_visitor', { p_name: propertyName })
-        const prop = propRows?.[0] as { company: string } | undefined
+        const prop = propRows?.[0] as { name: string; company: string } | undefined
         if (prop?.company) {
           setPropertyResolved(true)
+          setResolvedPropertyName(prop.name)
           const { data: coRows } = await supabase.rpc('get_company_branding', { p_name: prop.company })
           const co = coRows?.[0] as { support_phone: string | null; support_email: string | null; support_website: string | null; display_name: string | null } | undefined
           if (co) {
@@ -177,7 +188,11 @@ function VisitorForm() {
           plate,
           visitor_name: form.name,
           visiting_unit: form.unit,
-          property: propertyName,
+          // 2026-07-28 — canonical name from get_property_for_visitor
+          // (alias-aware) instead of raw URL param. Ensures the pass row
+          // keys to the property row enforcement actually queries after
+          // a rename with an alias in circulation.
+          property: resolvedPropertyName,
           vehicle_desc: form.vehicle_desc,
           duration_hours: parseInt(form.duration),
         }),
@@ -289,7 +304,7 @@ function VisitorForm() {
               )
               return (
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', fontSize:'12px' }}>
-                  {tile('Property', propertyName)}
+                  {tile('Property', resolvedPropertyName)}
                   {tile('Visiting Unit', form.unit)}
                   {tile('Duration', `${form.duration} hours`)}
                   {tile('Issued', formatTimestamp(issuedAt))}
@@ -346,7 +361,7 @@ function VisitorForm() {
 
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
           <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>{companyName || 'Visitor Parking Pass'}</h1>
-          <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass · {propertyName}</p>
+          <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass · {resolvedPropertyName}</p>
           <p style={{ color:'#555', fontSize:'11px', margin:'4px 0 0' }}>Valid up to 24 hours · No app download required</p>
         </div>
 

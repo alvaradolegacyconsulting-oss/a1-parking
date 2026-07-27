@@ -65,6 +65,55 @@ function RegisterForm() {
     setCompanyName(localStorage.getItem('company_name'))
   }, [])
 
+  // 2026-07-28 — canonical resolution + phantom-registration guard.
+  // /register previously wrote residents.property, insert_user_role's
+  // p_property array, user_roles.property fallback, and audit_logs
+  // new_values ALL from the raw ?property= URL param — with no
+  // resolution step. Post-rename with an alias in place, that path
+  // would silently orphan the new resident row (property string with
+  // no matching properties row). The same phantom-pass class /visitor
+  // fixed, but on the write path.
+  //
+  // Resolution uses get_property_for_visitor (alias-aware). Pair
+  // validation: URL company must match the RPC-returned company for
+  // the property. Mismatch → treat as unresolved (guard renders).
+  // Prevents an anon caller from registering at any (property, company)
+  // combination — a data-integrity write-path gap of the six-site
+  // arc's class, closed nearly-for-free once resolution exists.
+  //
+  //   null  → resolution in flight
+  //   true  → resolved (write paths use canonical values below)
+  //   false → unresolved or company mismatch (guard renders, no form)
+  const [propertyResolved, setPropertyResolved] = useState<boolean | null>(null)
+  const [resolvedProperty, setResolvedProperty] = useState<string>(property)
+  const [resolvedCompany, setResolvedCompany] = useState<string>(company)
+
+  useEffect(() => {
+    if (!property) { setPropertyResolved(true); return }
+    async function resolveProperty() {
+      const { data: propRows } = await supabase.rpc('get_property_for_visitor', { p_name: property })
+      const prop = propRows?.[0] as { id: number; name: string; company: string } | undefined
+      if (!prop) {
+        console.error('[register-property-unresolved]', { property })
+        setPropertyResolved(false)
+        return
+      }
+      // Pair validation. URL company is optional; if provided, it must
+      // match the resolved property's company. Prevents anon writes at
+      // (property_X, company_Y) mismatched pairs.
+      if (company && lower(company) !== lower(prop.company)) {
+        console.error('[register-property-company-mismatch]', { property, company, resolved_company: prop.company })
+        setPropertyResolved(false)
+        return
+      }
+      setResolvedProperty(prop.name)
+      setResolvedCompany(prop.company)
+      setPropertyResolved(true)
+    }
+    resolveProperty()
+  }, [property, company])
+  function lower(s: string): string { return s.trim().toLowerCase() }
+
   function validateStep1(): string {
     if (!account.email || !account.password || !account.name || !account.unit) return 'Email, password, full name, and unit are required.'
     if (!account.email.includes('@')) return 'Please enter a valid email address.'
@@ -204,8 +253,11 @@ function RegisterForm() {
         name: account.name.trim(),
         phone: account.phone.trim() || null,
         unit: account.unit.trim(),
-        property: property || null,
-        company: company || null,
+        // 2026-07-28 — canonical name/company from get_property_for_visitor
+        // (alias-aware + pair-validated) instead of raw URL params.
+        // Ensures residents row keys to the property row post-rename.
+        property: resolvedProperty || null,
+        company: resolvedCompany || null,
         is_active: false,
         status: 'pending',
         texas_confirmed: true,
@@ -220,16 +272,16 @@ function RegisterForm() {
       const rpcResult = await supabase.rpc('insert_user_role', {
         p_email: account.email.trim().toLowerCase(),
         p_role: 'resident',
-        p_company: company || null,
-        p_property: property ? [property] : [],
+        p_company: resolvedCompany || null,
+        p_property: resolvedProperty ? [resolvedProperty] : [],
       })
       if (rpcResult.error) {
         console.error('insert_user_role failed:', rpcResult.error)
         await supabase.from('user_roles').insert([{
           email: account.email.trim().toLowerCase(),
           role: 'resident',
-          company: company || null,
-          property: property ? [property] : [],
+          company: resolvedCompany || null,
+          property: resolvedProperty ? [resolvedProperty] : [],
         }])
       }
 
@@ -307,7 +359,7 @@ function RegisterForm() {
           table_name: 'residents',
           new_values: {
             email: account.email.trim(),
-            property: property || null,
+            property: resolvedProperty || null,
             // B118 Layer 2 Commit 3 acceptance-surface pass — carry
             // the version + T1 stamps into the audit_log too so the
             // evidence isn't only in tos_acceptances (defense-in-depth
@@ -349,6 +401,33 @@ function RegisterForm() {
   }
 
   const displayName = companyName || 'ShieldMyLot'
+
+  // 2026-07-28 — phantom-registration guard. If the ?property= URL
+  // param didn't resolve (or company mismatched), refuse the form so
+  // no residents / user_roles rows are written against a property
+  // string that has no matching row. Loading state (null) falls
+  // through to the form; the guard only bites on confirmed failure.
+  if (property && propertyResolved === false) {
+    return (
+      <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+        <div style={{ maxWidth:'460px', width:'100%' }}>
+          <div style={{ marginBottom:'24px', textAlign:'center' }}>
+            <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{displayName}</h1>
+          </div>
+          <div style={{ background:'#161b26', border:'1px solid #b71c1c', borderRadius:'12px', padding:'24px', textAlign:'center' }}>
+            <div style={{ width:'56px', height:'56px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #f44336', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px', fontSize:'24px' }}>⚠</div>
+            <h2 style={{ color:'#f44336', fontSize:'17px', fontWeight:'bold', margin:'0 0 12px' }}>This registration link isn&apos;t valid</h2>
+            <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
+              We couldn&apos;t find a property matching this link. The link may be outdated, contain a typo, or belong to a different company.
+            </p>
+            <p style={{ color:'#666', fontSize:'12px', lineHeight:'1.6', margin:'0' }}>
+              Please contact your property manager for a valid registration link.
+            </p>
+          </div>
+        </div>
+      </main>
+    )
+  }
 
   if (done) {
     return (
