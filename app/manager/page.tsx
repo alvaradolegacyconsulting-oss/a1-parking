@@ -1993,6 +1993,18 @@ export default function ManagerPortal() {
 
   async function addResident() {
     if (!newResident.name || !newResident.unit || !newResident.email) { alert('Name, email and unit are required'); return }
+    // 2026-07-27 — fail-loud guard on company scoping. managerCompany
+    // is useState('') and populates async from user_roles; if it hasn't
+    // landed OR the manager genuinely has no company, the insert would
+    // otherwise write company=null (the RPC signature accepts null),
+    // creating a resident that company-scoped predicates treat
+    // inconsistently. The Add Resident button is separately gated on
+    // managerCompany so this alert essentially never fires on the load
+    // race; it exists as a backstop for the genuine no-company case.
+    if (!managerCompany) {
+      alert('Could not determine your company. Refresh and try again, or contact support.')
+      return
+    }
     // B217 — double-click guard. Highest-blast-radius dup path on this
     // page: a second cascade would attempt to create another auth user
     // (rejected by swift-handler as duplicate), then a second
@@ -2159,6 +2171,7 @@ export default function ManagerPortal() {
         alert(`Resident created, but space assignment failed: ${assignErr.message}\n\nYou can assign a space later via the Spaces tab.`)
       } else {
         await refetchSpacesDashboard()
+        await refetchSpacesList()
       }
       setNewResidentAssignSpaceId('')
     }
@@ -2176,6 +2189,7 @@ export default function ManagerPortal() {
     setShowAddResident(false)
     setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'', vehicle_plate:'', vehicle_state:'TX', vehicle_make:'', vehicle_model:'', vehicle_year:'', vehicle_color:'' })
     fetchResidents(manager.name)
+    fetchVehicles(manager.name)
     setCredentials({ email: targetEmail, password: tempPassword })
     } finally {
       // B217 outer guard reset — covers all exit paths (swift-handler
@@ -3616,6 +3630,68 @@ export default function ManagerPortal() {
           </div>
         )}
 
+        {/* RESIDENTS — hoisted +Add Resident affordance (2026-07-27).
+            Renders above whichever residents view is active (CRM by
+            default, legacy under !PM_CRM_ENABLED). Gate on managerCompany
+            prevents the addResident() no-company alert from firing on
+            the cold-load race; the alert stays inside addResident as a
+            genuine-no-company backstop. */}
+        {activeTab === 'residents' && manager && managerCompany && !isReadOnly && (
+          <>
+            <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'8px' }}>
+              <button onClick={() => setShowAddResident(!showAddResident)}
+                style={{ padding:'8px 14px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor:'pointer', fontFamily:'Arial' }}>
+                + Add Resident
+              </button>
+            </div>
+            {showAddResident && (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Add New Resident</p>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                  <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Full Name *</label><input value={newResident.name} onChange={e => setNewResident({...newResident, name: e.target.value})} placeholder="John Smith" style={inputStyle} /></div>
+                  <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Email *</label><input value={newResident.email} onChange={e => setNewResident({...newResident, email: e.target.value})} placeholder="john@email.com" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Phone</label><input value={newResident.phone} onChange={e => setNewResident({...newResident, phone: e.target.value})} placeholder="713-555-0100" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Unit *</label><input value={newResident.unit} onChange={e => setNewResident({...newResident, unit: e.target.value})} placeholder="Apt 214" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Space</label><input value={newResident.space} onChange={e => setNewResident({...newResident, space: e.target.value})} placeholder="A-12" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Lease End</label><input type="date" value={newResident.lease_end} onChange={e => setNewResident({...newResident, lease_end: e.target.value})} style={inputStyle} /></div>
+                  {/* B167 — optional vehicle fields. Plate empty => resident-only. */}
+                  <div style={{ gridColumn:'span 2', borderTop:'1px solid #2a2f3d', paddingTop:'10px', marginTop:'4px' }}>
+                    <p style={{ color:'white', fontSize:'12px', fontWeight:'bold', margin:'0 0 6px' }}>Vehicle (optional)</p>
+                    <p style={{ color:'#777', fontSize:'10px', margin:'0' }}>Leave Plate empty to add the resident without a vehicle.</p>
+                  </div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate</label><input value={newResident.vehicle_plate} onChange={e => setNewResident({...newResident, vehicle_plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><select value={newResident.vehicle_state} onChange={e => setNewResident({...newResident, vehicle_state: e.target.value})} style={inputStyle}>{['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}</select></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Make</label><input value={newResident.vehicle_make} onChange={e => setNewResident({...newResident, vehicle_make: e.target.value})} placeholder="Toyota" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Model</label><input value={newResident.vehicle_model} onChange={e => setNewResident({...newResident, vehicle_model: e.target.value})} placeholder="Camry" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Year</label><input value={newResident.vehicle_year} onChange={e => setNewResident({...newResident, vehicle_year: e.target.value})} placeholder="2022" style={inputStyle} /></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Color</label><input value={newResident.vehicle_color} onChange={e => setNewResident({...newResident, vehicle_color: e.target.value})} placeholder="Black" style={inputStyle} /></div>
+                </div>
+                {/* Spaces v1 commit 4 — OPTIONAL assign-space step on add.
+                    Empty = add resident without space; same "approval ≠
+                    assignment" lock. Dropdown sourced from the available-
+                    spaces pool refreshed alongside the dashboard. */}
+                {availableSpacesForAssign.length > 0 && (
+                  <div style={{ borderTop:'1px solid #2a2f3d', paddingTop:'10px', marginTop:'10px' }}>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Assign space (optional)</label>
+                    <select value={newResidentAssignSpaceId}
+                      onChange={e => setNewResidentAssignSpaceId(e.target.value)}
+                      style={{ ...inputStyle, marginTop:'4px' }}>
+                      <option value=''>— No space assignment —</option>
+                      {availableSpacesForAssign.map(s => (
+                        <option key={s.id} value={String(s.id)}>{s.label} · {TYPE_LABELS[s.type] ?? s.type}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div style={{ display:'flex', gap:'8px' }}>
+                  <button onClick={addResident} disabled={addResidentSubmitting} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: addResidentSubmitting ? 'not-allowed' : 'pointer', opacity: addResidentSubmitting ? 0.6 : 1 }}>{addResidentSubmitting ? 'Adding…' : 'Add Resident'}</button>
+                  <button onClick={() => { setShowAddResident(false); setNewResidentAssignSpaceId('') }} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
         {/* RESIDENTS — PM CRM (slice 1) */}
         {activeTab === 'residents' && PM_CRM_ENABLED && manager && (
           <PmResidentCrm
@@ -3760,57 +3836,10 @@ export default function ManagerPortal() {
               <input value={residentSearch} onChange={e => setResidentSearch(e.target.value)} placeholder="Search name, email, unit, phone..." style={{ ...inputStyle, flex:1, marginTop:0, marginBottom:0 }} />
               <button onClick={() => setShowActiveResidents(s => !s)} style={{ padding:'4px 10px', background: showActiveResidents ? '#1a1f2e' : '#111', color: showActiveResidents ? '#C9A227' : '#555', border:`1px solid ${showActiveResidents ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial', whiteSpace:'nowrap' as const }}>{showActiveResidents ? '● Active Only' : '○ Show All'}</button>
             </div>
-            {!isReadOnly && (
-              <button onClick={() => setShowAddResident(!showAddResident)}
-                style={{ width:'100%', padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'12px' }}>
-                + Add Resident
-              </button>
-            )}
-            {showAddResident && (
-              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
-                <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Add New Resident</p>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
-                  <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Full Name *</label><input value={newResident.name} onChange={e => setNewResident({...newResident, name: e.target.value})} placeholder="John Smith" style={inputStyle} /></div>
-                  <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Email *</label><input value={newResident.email} onChange={e => setNewResident({...newResident, email: e.target.value})} placeholder="john@email.com" style={inputStyle} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Phone</label><input value={newResident.phone} onChange={e => setNewResident({...newResident, phone: e.target.value})} placeholder="713-555-0100" style={inputStyle} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Unit *</label><input value={newResident.unit} onChange={e => setNewResident({...newResident, unit: e.target.value})} placeholder="Apt 214" style={inputStyle} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Space</label><input value={newResident.space} onChange={e => setNewResident({...newResident, space: e.target.value})} placeholder="A-12" style={inputStyle} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Lease End</label><input type="date" value={newResident.lease_end} onChange={e => setNewResident({...newResident, lease_end: e.target.value})} style={inputStyle} /></div>
-                  {/* B167 — optional vehicle fields. Plate empty => resident-only. */}
-                  <div style={{ gridColumn:'span 2', borderTop:'1px solid #2a2f3d', paddingTop:'10px', marginTop:'4px' }}>
-                    <p style={{ color:'white', fontSize:'12px', fontWeight:'bold', margin:'0 0 6px' }}>Vehicle (optional)</p>
-                    <p style={{ color:'#777', fontSize:'10px', margin:'0' }}>Leave Plate empty to add the resident without a vehicle.</p>
-                  </div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate</label><input value={newResident.vehicle_plate} onChange={e => setNewResident({...newResident, vehicle_plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><select value={newResident.vehicle_state} onChange={e => setNewResident({...newResident, vehicle_state: e.target.value})} style={inputStyle}>{['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}</select></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Make</label><input value={newResident.vehicle_make} onChange={e => setNewResident({...newResident, vehicle_make: e.target.value})} placeholder="Toyota" style={inputStyle} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Model</label><input value={newResident.vehicle_model} onChange={e => setNewResident({...newResident, vehicle_model: e.target.value})} placeholder="Camry" style={inputStyle} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Year</label><input value={newResident.vehicle_year} onChange={e => setNewResident({...newResident, vehicle_year: e.target.value})} placeholder="2022" style={inputStyle} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Color</label><input value={newResident.vehicle_color} onChange={e => setNewResident({...newResident, vehicle_color: e.target.value})} placeholder="Black" style={inputStyle} /></div>
-                </div>
-                {/* Spaces v1 commit 4 — OPTIONAL assign-space step on add.
-                    Empty = add resident without space; same "approval ≠
-                    assignment" lock. Dropdown sourced from the available-
-                    spaces pool refreshed alongside the dashboard. */}
-                {availableSpacesForAssign.length > 0 && (
-                  <div style={{ borderTop:'1px solid #2a2f3d', paddingTop:'10px', marginTop:'10px' }}>
-                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Assign space (optional)</label>
-                    <select value={newResidentAssignSpaceId}
-                      onChange={e => setNewResidentAssignSpaceId(e.target.value)}
-                      style={{ ...inputStyle, marginTop:'4px' }}>
-                      <option value=''>— No space assignment —</option>
-                      {availableSpacesForAssign.map(s => (
-                        <option key={s.id} value={String(s.id)}>{s.label} · {TYPE_LABELS[s.type] ?? s.type}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={addResident} disabled={addResidentSubmitting} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: addResidentSubmitting ? 'not-allowed' : 'pointer', opacity: addResidentSubmitting ? 0.6 : 1 }}>{addResidentSubmitting ? 'Adding…' : 'Add Resident'}</button>
-                  <button onClick={() => { setShowAddResident(false); setNewResidentAssignSpaceId('') }} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
-                </div>
-              </div>
-            )}
+            {/* 2026-07-27 — +Add Resident affordance hoisted OUT of this
+                branch to render above whichever residents view is active
+                (CRM or legacy fallback). See the hoisted block at the
+                RESIDENTS — PM CRM comment. */}
             {editingResident && (
               /* Bible-view mobile scroll-lock fix — Fix A / Option A2
                  (2026-07-17). Wraps the resident-detail panel in the
