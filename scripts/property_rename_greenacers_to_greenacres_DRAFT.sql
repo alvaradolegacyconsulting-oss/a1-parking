@@ -3,11 +3,17 @@
 --
 -- DRAFT — NOT APPLIED. Jose runs when:
 --   0. 🔴 property_name_aliases schema migration APPLIED + VERIFIED
---      (Test-LEGACY probe: alias-add → rename test property → old URL
---      resolves → cleanup). Alias for Green Acers → 143 INSERTED
---      BEFORE this rename runs; printed signage URLs remain functional
---      through the rename window because the RPC's 2-step resolver
---      falls through to the alias.
+--      on Test-LEGACY (probe: alias-add → rename test property → old
+--      URL resolves → cleanup), THEN applied to PROD.
+--      NOTE: the alias row for 'Green Acers' → 143 is INSERTED INSIDE
+--      this script's transaction (STEP 2e), AFTER the parent rename.
+--      Inserting BEFORE the rename would be rejected by the no-shadow
+--      trigger because 'Green Acers' would shadow the still-live
+--      property name (SQLSTATE 23505, verified 2026-07-27 against a
+--      test property). Inserting in a separate statement AFTER the
+--      rename would open a window where the flyer URL doesn't
+--      resolve. Same-transaction, post-rename is the only shape that
+--      is both trigger-legal and printed-artifact-safe.
 --   1. A1 confirmed target spelling: "Green Acres" (2026-07-27).
 --      Property 143 ONLY. Miramar (144) and Sugarberry (145) NOT
 --      being renamed per A1 confirmation same day.
@@ -46,10 +52,14 @@
 --     FK epic will generalize.
 --   • audit_logs — immutable historical record (Chapter 2308 evidence
 --     integrity — historical rows preserve name value AT TIME OF EVENT).
---   • property_name_aliases — the alias row for 'Green Acers' → 143
---     was INSERTED before this script (step 0). It stays after rename,
---     keeping printed signage functional. Retire only when signage is
---     confirmed replaced (unlikely — A1 may never reprint).
+--
+-- Table ALSO written by this script (inside STEP 2, after the rename):
+--   • property_name_aliases — the 'Green Acers' → 143 alias row.
+--     Inserted at STEP 2e, INSIDE the transaction, AFTER the parent
+--     rename so the no-shadow trigger sees no active property named
+--     'Green Acers' and permits the insert. Stays after commit,
+--     keeping printed flyer URLs functional. Retire only when signage
+--     is confirmed replaced (unlikely — A1 may never reprint).
 --
 -- ── 🔴 CHILDREN-FIRST ORDER (the trigger becomes a completeness check) ─
 -- trg_properties_name_block_rename fires BEFORE UPDATE OF name on
@@ -144,6 +154,20 @@ UPDATE public.drivers SET assigned_properties = array_replace(assigned_propertie
 --     for any role. If any child UPDATE above was missed, the trigger
 --     aborts the entire transaction — completeness check by construction.
 UPDATE public.properties SET name = 'Green Acres' WHERE id = 143;
+
+-- 2e. Alias INSERT — 'Green Acers' → 143. INSIDE the same transaction,
+--     AFTER the parent rename, so the no-shadow trigger sees no active
+--     property named 'Green Acers' and permits the insert. If moved
+--     before 2d it would be rejected (23505). If moved outside the
+--     txn it would open a window where the flyer URL doesn't resolve.
+--     Same-txn, post-rename is the only shape that is both trigger-
+--     legal and printed-artifact-safe.
+INSERT INTO public.property_name_aliases (property_id, alias, note)
+VALUES (
+  143,
+  'Green Acers',
+  'typo corrected 2026-07-28; printed resident-registration flyers in circulation with QR encoding ?property=Green%20Acers. See scripts/property_rename_greenacers_to_greenacres_DRAFT.sql for the coordinated rename that this alias closes the gap for.'
+);
 
 COMMIT;
 
