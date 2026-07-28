@@ -1,6 +1,21 @@
 -- ══════════════════════════════════════════════════════════════════════
 -- Property rename: "Green Acers" → "Green Acres" (property id 143 ONLY)
 --
+-- ✅ APPLIED 2026-07-28, property 143.
+-- Verified: every AFTER-Acers count zero across 11 carriers;
+-- get_property_for_visitor returns 'Green Acres' for both old and new
+-- names; /register + /visitor render canonical off old-spelling URL.
+--
+-- File retained as the TEMPLATE for the next name-keyed rename. To
+-- reuse: search-replace 'Green Acers'/'Green Acres', substitute the
+-- new property id in step 2d, and confirm the trigger's 3 tracked
+-- carriers (residents/user_roles/drivers) are still the complete set
+-- against pg_trigger + pg_get_functiondef before applying.
+-- ══════════════════════════════════════════════════════════════════════
+--
+-- Original DRAFT preamble preserved below for historical context.
+-- ══════════════════════════════════════════════════════════════════════
+--
 -- DRAFT — NOT APPLIED. Jose runs when:
 --   0. 🔴 property_name_aliases schema migration APPLIED + VERIFIED
 --      on Test-LEGACY (probe: alias-add → rename test property → old

@@ -6,7 +6,7 @@ kickoff.** Read it first; it is the source of truth for where things stand.
 **Should live in the repo** (`docs/CURRENT_STATE.md`) so Mateo can read and maintain it. Jose
 uploads the current copy to project knowledge when starting a new chat.
 
-*Last updated: July 24, 2026 (AP-CATEGORY + AP-UI-REFINE + pm_plate_lookup viewing-property shipped; template gained 8th + 9th disciplines)*
+*Last updated: July 28, 2026 — Green Acres rename complete*
 
 ---
 
@@ -20,6 +20,108 @@ portal** — he uses Test-LEGACY. **A1 checks must be SQL.**
 
 **Tenant IDs:** Test-PM 87 · Test-ENF 88 · Test-LEGACY 89 · Demo 90 · **A1 Wrecker llc 91**
 (production).
+
+---
+
+## 🔴 A1 GO-LIVE (July 26–28)
+
+A1 went live at Green Acers on July 27. Residents self-registered against printed flyers; the go-live surfaced
+a P1 gate-skip bug (residents seeing "deactivated" instead of "pending"), a 5-day CA-write regression from
+the July 22 grant remediation, a `/qr` hardcoded-array vs DB drift, and a property-name typo Amanda entered at
+create-time. Everything below closed within the arc.
+
+### Properties (A1 Wrecker llc, id 91)
+
+| id | name | notes |
+|---|---|---|
+| 143 | **Green Acres** | renamed 2026-07-28; alias `Green Acers` retained for printed flyers |
+| 144 | Miramar Apartments | correct, not renamed |
+| 145 | Sugarberry Place | correct, not renamed |
+
+Live counts as of 2026-07-28: **18 residents (17 pending), 24 vehicles (23 pending)**, ~2 assigned managers +
+2 CAs + drivers. Still climbing at roughly 10–20/day; A1's onboarding runs over the next month.
+
+### ✅ COMPLETE — Green Acers → Green Acres (2026-07-28)
+
+Property 143 renamed. **Verified: every `AFTER-Acers` count zero across all 11 carriers**;
+`get_property_for_visitor` returns `Green Acres` for **both** the old and new names — the alias path and the
+direct path. `/register` and `/visitor` both render the canonical name off the old-spelling URL.
+
+Final counts on the new name: properties 1 · residents 18 · vehicles 24 · user_roles 19 · drivers 2 ·
+visitor_passes 6.
+
+**A1's printed flyers keep working permanently — no reprint.** Their QR encodes
+`/register?property=Green%20Acers&company=A1%20Wrecker%20llc`; `property_name_aliases` maps `Green Acers` → 143
+and the flyers resolve through it. The flyer *artwork* still shows the old spelling — flagged to A1 for their
+next print run.
+
+#### Why the ordering was what it was — keep this if the pattern recurs
+
+- **Children first, parent last.** `trg_properties_name_block_rename` counts references across
+  `user_roles.property`, `drivers.assigned_properties`, and `residents.property`. Updating children first means
+  `v_refs = 0` when the parent runs, so the rename is permitted **and the trigger acts as a completeness check** —
+  miss a carrier and the transaction aborts. Never disable it to get past it.
+- **Alias INSERT last, inside the same transaction.** The no-shadow trigger rejects an alias matching a live
+  property name, so it could not be inserted before the rename; doing it after, as a separate statement, would
+  have left printed flyer URLs unresolvable in the gap. Same transaction, after the parent, satisfies both.
+- **Array updates used an order-preserving `unnest`/`array_agg` rewrite, not `array_replace`.** `array_replace`
+  is exact-match and would have missed `'green acers'` or `' Green Acers'` inside an array.
+
+`scripts/property_rename_greenacers_to_greenacres_DRAFT.sql` stays in the repo as the template for the next
+rename — header marked **APPLIED 2026-07-28, property 143**.
+
+### Shipped July 26–28
+
+| Commit | What |
+|---|---|
+| `b80db63` | Six-site Commit A — tow-path company-scope hardening (`= not ~~*`) |
+| `1aa70b2` | P1 — pending residents reach Registration Pending banner (not `/deactivated`) — caught 6 real A1 users at go-live |
+| `7e337ca` | Manager view no longer badges deactivated residents as Active + refetch bundle |
+| `31cdfcf` | +Add Resident affordance restored to manager portal (Option B hoist, `managerCompany` guard, refetch tail) |
+| `4440457` | Single `refreshCrmData()` fan-out — closes the missing-call class across ~28 manager write paths |
+| `9a47464` | Feedback-before-refresh — credentials modal / alerts fire before the 5-query refresh |
+| `b2645d6` | `/visitor` phantom-pass guard — refuses form when RPC doesn't resolve the property |
+| `c09e9b1` | `property_name_aliases` schema (table + trigger + 2-step RPC) + canonical writes on `/visitor` + `/register` R1 pair-validation |
+| `08986c6`* | Rename script — DISABLE/ENABLE + drivers.assigned_properties added (superseded by 06ab2e9) |
+| `06ab2e9` | Grant-fix draft (`user_roles` UPDATE) + rename script children-first rewrite (trigger becomes completeness check) |
+| `ee2c926` | Verification template — discipline 10 (VQ.POLICY_GRANT_MATCH cross-reference for grant remediation passes) |
+| `cbfdeaf` | Rename script — alias INSERT moved INSIDE the transaction, after parent rename |
+| `7552752` | `/register` displays canonical property name (not raw URL param) at all 3 display sites |
+
+Plus `20260728_user_roles_update_grant_fix.sql` applied (fixed 5-day CA-write regression from July 22
+`GRANT INSERT` omission of UPDATE) and the alias schema applied to prod ahead of the rename.
+
+### Confirmed bugs (open, ranked)
+
+- 🔴 **`approveAllPendingProperty` — no property-level bulk vehicle approve.** 23 pending vehicles at Green Acres
+  today, growing daily; each is an individual click. Resident bulk-approve exists in the CRM and refreshes once
+  rather than per row. **This outranks add-vehicle.**
+- 🔴 **No pending-queue notification.** Nothing tells a manager that registrations are waiting. From outside,
+  "reviewing at their own pace" and "doesn't know they're there" are indistinguishable. At 10–20/day for a
+  month, that queue needs a nudge — digest email or a badge that survives logout.
+- **Email `~~*` in RLS policies (PII disclosure).** 24 SELECT-only policy sites using `email ~~* auth.jwt`
+  wildcard-match on the caller's own email. Fix: change to `lower(email) = lower(jwt->>'email')` — its own
+  commit, three-file, negative control that a `_`-substituted email no longer matches victim. Ungated
+  (self-signup open) but non-escalating (helper functions verified to use equality). Ahead of company-name
+  work.
+- **`/qr` hardcoded PROPERTIES array vs DB.** Post-A1-stabilization: derive from `properties` scoped to
+  signed-in company. Root defect that created the Green Acers/Acres divergence in the first place.
+- **`resetResidentPassword` gated in `!PM_CRM_ENABLED` branch.** Same class as +Add Resident before restore.
+  PM_CRM_ENABLED-branch parity audit item.
+
+### Open verifications (not blockers)
+
+1. **Post-rename registration writes.** The five rows checked today predate the transaction, so they only
+   prove the rename updated them. Jose watching for the next registration created **after** the STEP 2
+   timestamp — it should read `Green Acres`.
+2. **`/register` Step 3 review row and the Submitted screen** — two of the three fixed display sites the
+   go-live screenshots didn't reach. Reachable with a throwaway `+probe` email on Test-LEGACY.
+
+### Queued for next session
+
+Six-site **Commit B** (Wed/Thu) — still needs a name that isn't "B", since `vehicle-state.ts` already has a
+"Migration B" and both touch enforcement. Then the email `~~*` → equality commit, `approveAllPendingProperty`,
+and the `PM_CRM_ENABLED` parity sweep.
 
 ---
 
@@ -64,30 +166,46 @@ now named apart:
 | Label suppression: manager sees "Selena's Car" · driver sees no label | ✅ **PASS** |
 | Manager Settings section renders (add form, boundary copy, empty state) | ✅ **PASS** |
 | CA add / list / empty state | ✅ **PASS** |
+| `pm_plate_lookup` viewing-property — manager viewing 138, `TESTAP` (authorized at 146) → **not** green Authorized (AP argument change) | ✅ **PASS** (2026-07-24) |
+| `pm_plate_lookup` viewing-property — `LESLY` (resident of 138), viewing 138 → resident · viewing 146 → **Unauthorized** (predicate works on the silent branch) | ✅ **PASS** (2026-07-24) |
+| `pm_plate_lookup` viewing-property — search plate, switch property → result clears (client fix) | ✅ **PASS** (2026-07-24) |
 
-**Four commits of source-only verification now have behavioural evidence.** `check_authorized_plate` property predicate + role-conditional label suppression + `pm_plate_lookup` branch 1.5 + driver render + manager Settings integration + CA integration all confirmed working against real plates.
+**Four commits of source-only verification now have behavioural evidence.** `check_authorized_plate` property predicate + role-conditional label suppression + `pm_plate_lookup` branch 1.5 + driver render + manager Settings integration + CA integration + **viewing-property scoping across all 7 branches** all confirmed working against real plates.
+
+### Lesson worth recording (the `LESLY` defect was invisible by construction)
+
+Five of seven `pm_plate_lookup` branches returned **no property field**, so a manager was told a
+vehicle from another property was a resident of the one they were standing at — with nothing on
+screen to contradict it and no way to notice.
+
+It surfaced only because **Authorized Plates was the first branch to return a property name**, and
+only because Jose pulled the thread when the AP card looked wrong. The feature that exposed it had
+nothing to do with it.
+
+Two things carry forward:
+
+- **A response that omits the field it scoped on can't be checked by the person reading it.**
+  Where a query narrows by something, the answer should say what it narrowed by. Now true of
+  `pm_plate_lookup`'s audit row (`properties_in_scope` + `viewing_property`) — worth being true of
+  returns as well, in a future pass.
+- **Adjacent features find each other's bugs.** The DNT arc found the cross-tenant RLS hole; AP
+  found this. Neither was the thing being built.
 
 ### Still open on AP arc
 
-- **Step 3 (manager pm_plate_lookup out-of-scope refusal)** — BLOCKED by the viewing-property defect (see 🔴 below). `legacy-manager@` searching `TESTAP` correctly returns "unauthorized" but the current miss is because the plate is outside `get_my_properties()`, not because of viewing-property scoping.
-- **Step 4 (CA search for `TESTAP` → Authorized)** — not yet run
-- **Step 5b (driver NOT assigned to property)** — needs a second Test-LEGACY driver (probe account provisioning) OR reuse manager-branch substitute. **Worth provisioning** — it's the one branch of `check_authorized_plate` no current test can reach, and it's the branch standing between a staff vehicle and a tow truck.
+- **Step 4 (CA search for `TESTAP` → Authorized)** — never run
+- **Step 5b (driver NOT assigned to property)** — **untestable via UI.** Second Test-LEGACY
+  driver provisioned 2026-07-24, but was assigned to both properties so the run repeated 5a.
+  The driver portal only offers properties the driver is assigned to, so the
+  `check_authorized_plate` unassigned-property branch cannot be produced by clicking — it guards
+  **direct API calls** (session hitting the RPC with an unassigned `p_property`). Source-verified,
+  defence-in-depth, and no PM-track customers exist. If behavioural proof is wanted, needs a
+  `sessionAs` script (the shape the old 4.5 smoke was going to use). Low priority.
+- **CA count column** — deferred, trigger: the `public_signup_open` flip
+- **Category editing after add** — remove-and-re-add for now; first follow-up if it annoys anyone
+- **A1 feedback on CA read-only** before public signup (Jose)
 
-## 🔴 Tomorrow's first task — `pm_plate_lookup` viewing-property scope
-
-**All 7 branches of `pm_plate_lookup` scope against the manager's ENTIRE assigned-properties portfolio.** Manager viewing property X sees matches from property Y as if they were at X. **Grep-verified AND behaviourally verified 2026-07-23**: resident `LESLY` (Unit 205) shows "Active resident" whether manager is viewing 138 or 146.
-
-**Severity ranking:** silent-and-confidently-wrong (5 branches: resident / pending / plate_change / guest / visitor — no property field returned) beats visibly-inconsistent (1 branch: AP, returns `ap_property_name` alongside green ✓) as a failure mode. **Both should be fixed together** via a viewing-property parameter on `pm_plate_lookup` — one migration, seven predicate changes, all branches at once.
-
-**AP-only client patch HELD.** Would be throwaway work — the correct fix is at the RPC layer, not the client. Silent 5 branches are more urgent than the visible 1. See `docs/backlog/pm-plate-lookup-viewing-property-scope.md` for the full analysis + report-first pre-build checks.
-
-**Zero live-customer impact today.** A1 has zero managers; only Test-LEGACY `+forcee@` reaches the defect.
-
-**Count column deferred** to Bar-2 pricing entry (leak-vector visibility becomes real at `public_signup_open` flip). Multi-property manager Settings-tab gap filed as `docs/backlog/manager-multi-property-settings-selector.md` (inherited from Visitor Pass Quota Exemptions pattern; DIFFERENT from the pm_plate_lookup viewing-property gap — that's a Plate Lookup RPC issue, this is a Settings UI issue).
-
-**Count column deferred** to Bar-2 pricing entry (leak-vector visibility becomes real at `public_signup_open` flip). Multi-property manager gap filed as `docs/backlog/manager-multi-property-settings-selector.md` (inherited from Visitor Pass Quota Exemptions pattern).
-
-Every commit before AP-MANAGE is inert because the table stays empty — but note a CA *can* write
+Every commit before AP-MANAGE was inert because the table stays empty — but note a CA *can* write
 to `authorized_plates` via PostgREST today, so "inert" means no UI path, not unreachable.
 
 ### Locked decisions
@@ -219,6 +337,26 @@ live the moment `public_signup_open` flips. Fix shape:
    captures were lost to chat-based diagnostics (AP-CATEGORY, pm_plate_lookup). Every new
    migration ships three files: `<date>_<name>.sql`, `<date>_<name>_diagnostic.sql`,
    `<date>_<name>_verification.sql`. Three identical pastes from VS Code, one source.
+10. **Grant remediation passes cross-reference `pg_policies`** — any migration that grants or
+    revokes table privileges must include the reusable `VQ.POLICY_GRANT_MATCH` block (template
+    section added `ee2c926`). Catches the class where an INSERT-only grant strands a FOR UPDATE
+    or FOR ALL policy silently for days until someone exercises the surface. Root case: the
+    July 22 pass omitted UPDATE on `user_roles`, leaving `company_admin_update_users`
+    unreachable — surfaced on A1's go-live day (5 days later, 42501/HTTP 403 on CA saves).
+
+### From the Green Acers rename (2026-07-28)
+
+Not template disciplines (no VQ artifact); general lessons from the rename arc worth carrying
+into the next name-keyed operation:
+
+- **A guard that prevents a bad state also constrains the order of a legitimate change.**
+  Resolve it *inside* the transaction rather than sequencing around it or switching it off. The
+  block-rename trigger forced children-first (and became a free completeness check); the
+  no-shadow trigger forced the alias INSERT to the end of the same transaction.
+- **`array_replace` is exact-match.** For name normalization inside an array, use an
+  order-preserving `unnest … WITH ORDINALITY` / `array_agg` rewrite so case and whitespace
+  variants are caught — otherwise the update and a `lower(trim())`-based verification query
+  disagree.
 
 **Supabase editor:** paste verification files **whole** — the auto-RLS helper injects
 `ALTER TABLE … ENABLE ROW LEVEL SECURITY` into partial pastes and breaks dollar quoting. This is
@@ -227,6 +365,16 @@ also what makes `DO`-block atomicity hold.
 **Validated detectors to date: 3** — VQ.1 (B1), VQ.CANONICAL (B2), and AP.CATEGORY_COLUMN (AP-CATEGORY 2026-07-24). Each was the FIRST assertion in its verification file. **Root cause of the stuck count** (established 2026-07-24): a `BEGIN…COMMIT`-wrapped verification file aborts at the first `RAISE`, so a pre-apply run validates only its first assertion — every later VQ is masked by construction. **Fixed forward via 8th codified discipline:** Negative controls run as a read-only diagnostic (jsonb readout), not as the verification file. Every `false`/`0` in the diagnostic is a validated detector.
 
 **pm_plate_lookup viewing-property (2026-07-24):** four flipping detectors + two preservation invariants specified — diagnostic **not captured** (Jose pasted a markdown chat message into the SQL editor, `syntax error at or near "#"`). Second consecutive miss traced to the same root: diagnostic lived in chat while migration lived in a file. **9th discipline codified this session:** Diagnostics ship as files (`_diagnostic.sql` alongside migration + verification). Post-apply verification silent across three files including B2's preservation checks, but count stays 3 — assertions unvalidated as detectors because they weren't observed against wrong state.
+
+**Behavioural smoke (2026-07-24) — pm_plate_lookup viewing-property: 3/3 pass.** Three different
+mechanisms confirmed independently — AP argument change (TESTAP branch), predicate on the silent
+branch (LESLY / resident), client `switchProperty` clear. Recorded above as *predicates confirmed
+non-inert*; not counted as validated detectors — it proves the assertions can return the failing
+value, not that they were observed doing so against real wrong state.
+
+**Backlog closed (2026-07-24):** `pm-plate-lookup-viewing-property-scope` (fixed + verified) ·
+`manager-multi-property-settings-selector` (deleted earlier — described a non-bug; `switchProperty`
+at `app/manager/page.tsx:490` handles the case).
 
 ---
 
