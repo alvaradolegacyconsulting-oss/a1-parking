@@ -440,7 +440,7 @@ function RegisterForm() {
               Your property manager will review and approve your account.
               You will be able to log in once approved.
             </p>
-            {property && <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Property: {property}</p>}
+            {propertyResolved && resolvedProperty && <p style={{ color:'#555', fontSize:'12px', margin:'0' }}>Property: {resolvedProperty}</p>}
           </div>
           {/* B209 — unmissable tow-stakes warning. Rendered as a high-
               contrast warning band immediately below the success card,
@@ -473,7 +473,11 @@ function RegisterForm() {
           }
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0 0 4px' }}>{displayName}</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'0 0 4px' }}>Resident Registration</p>
-          {property && <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{property}</p>}
+          {/* 2026-07-28 — gate on propertyResolved (not raw property) so a
+              resident arriving from an old-name flyer sees the canonical
+              name, and to prevent a flash of the raw URL param while the
+              alias-aware RPC is in flight. Matches /visitor's shape. */}
+          {propertyResolved && resolvedProperty && <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{resolvedProperty}</p>}
         </div>
 
         {/* Step indicator */}
@@ -608,7 +612,7 @@ function RegisterForm() {
                   <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#555' }}>Email</span><span style={{ color:'white' }}>{account.email}</span></div>
                   {account.phone && <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#555' }}>Phone</span><span style={{ color:'white' }}>{account.phone}</span></div>}
                   <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#555' }}>Unit</span><span style={{ color:'white' }}>{account.unit}</span></div>
-                  {property && <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#555' }}>Property</span><span style={{ color:'white' }}>{property}</span></div>}
+                  {propertyResolved && resolvedProperty && <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#555' }}>Property</span><span style={{ color:'white' }}>{resolvedProperty}</span></div>}
                 </div>
               </div>
 
