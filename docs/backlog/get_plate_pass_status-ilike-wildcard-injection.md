@@ -1,5 +1,9 @@
 # get_plate_pass_status — ILIKE on caller-supplied argument enables wildcard cross-tenant read
 
+> **2026-07-29 — canonical spec is [plate-status-company-scoping.md](plate-status-company-scoping.md).**
+> This item bundles into that commit (which also inherits the rolling-30 body and adds company scoping).
+> Fixes remain accurate; the standalone form is retained for reference.
+
 **Status:** open, near-term. Not gated on Bar-2 / `public_signup_open`.
 **Priority:** low-moderate — reachable today by any HTTP client (function is anon-callable by design), but disclosure surface is limited to `visitor_pass_limit` + `exempt_plates` array. Not PII.
 **Filed:** 2026-07-23 (surfaced during DNT re-scope discovery)

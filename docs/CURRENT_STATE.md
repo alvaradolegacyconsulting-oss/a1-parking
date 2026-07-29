@@ -6,7 +6,7 @@ kickoff.** Read it first; it is the source of truth for where things stand.
 **Should live in the repo** (`docs/CURRENT_STATE.md`) so Mateo can read and maintain it. Jose
 uploads the current copy to project knowledge when starting a new chat.
 
-*Last updated: July 28, 2026 — Green Acres rename complete*
+*Last updated: July 29, 2026 — rolling-30 visitor pass semantics shipped + verified*
 
 ---
 
@@ -70,7 +70,7 @@ next print run.
 `scripts/property_rename_greenacers_to_greenacres_DRAFT.sql` stays in the repo as the template for the next
 rename — header marked **APPLIED 2026-07-28, property 143**.
 
-### Shipped July 26–28
+### Shipped July 26–29
 
 | Commit | What |
 |---|---|
@@ -87,9 +87,47 @@ rename — header marked **APPLIED 2026-07-28, property 143**.
 | `ee2c926` | Verification template — discipline 10 (VQ.POLICY_GRANT_MATCH cross-reference for grant remediation passes) |
 | `cbfdeaf` | Rename script — alias INSERT moved INSIDE the transaction, after parent rename |
 | `7552752` | `/register` displays canonical property name (not raw URL param) at all 3 display sites |
+| `ec4493f` | Visitor pass limit — rolling-30 semantics (11 items, one commit): SQL migration + client + copy + smoke script + backlog file |
+| `0a46ed5` | Rolling-30 verification+diagnostic v2 — whitespace-normalized + structural count (VQ.GATED_EXIT_COUNT) after v1's `%within%CASE WHEN v_is_anon%` false-failed a correct function |
+| `35b18eb` | Rolling-30 verification+diagnostic v3 — absence checks scoped to executable-clause form + `::regprocedure` pin; VQ.NO_JWT_IS_NULL_TRAP matches assignment `:= (auth.jwt()` (bare-token match false-failed on its own anti-refactor comment) |
 
 Plus `20260728_user_roles_update_grant_fix.sql` applied (fixed 5-day CA-write regression from July 22
 `GRANT INSERT` omission of UPDATE) and the alias schema applied to prod ahead of the rename.
+Rolling-30 migration + verification v3 applied 2026-07-29; probe-verified silent on Test-LEGACY.
+
+### ✅ Visitor pass limit — rolling 30 days (2026-07-29, `ec4493f` + `35b18eb`)
+
+`visitor_pass_limit` was labelled "per year" and counted **concurrent active passes** — neither per year nor per
+month, and it did not prevent the abuse it existed for (a resident could take a fresh pass daily and never
+approach the limit). Both `enforce_visitor_pass_limit()` and `get_plate_pass_status()` now count
+`created_at > now() - interval '30 days'`.
+
+**Locked decisions** (all in the migration header with reasoning — do not "fix" any of them back):
+- **Count everything issued.** Revoked passes still count; `exempt_plates` is the remedy when a manager revokes
+  in error. Do NOT re-add `is_active = TRUE`.
+- **Quota is permanent within the window.** No UI hard-delete of a visitor pass exists (SQL only), so
+  `exempt_plates` is the sole reset. Adding a hard-delete affordance means revisiting the count-everything
+  decision.
+- **Anon count-stripping.** The RPC omits `used`/`limit` when `auth.uid() IS NULL`, because rolling-30 turns
+  `used` into visit history for an arbitrary plate on an anon page. Gated at the **two count-carrying exits**;
+  the three no-count exits are untouched. **`auth.uid()`, never `auth.jwt()`** — the Supabase anon key IS a JWT,
+  so a guard on `auth.jwt() IS NULL` silently never fires.
+- **Guidance, not a figure.** Help docs teach how to choose rather than naming a default; "typical default: 1-2"
+  was catastrophic under the new unit.
+
+**Verified on Test-LEGACY:** anon `{"state":"at_limit"}` with no counts; authenticated `used:3, limit:3`; a
+31-day-old pass present and **not** counted; all three counted passes expired or revoked — so the old predicate
+would have counted zero and permitted the insert that now raises `23514`.
+
+**Behaviourally inert for A1** — every property still has `visitor_pass_limit = NULL`, so the limit check does
+not fire for them. The control is now correct and available when a property chooses to use it.
+
+**Untested:** `/api/visitor/create-pass`'s `23514` sanitize — the UI pre-check disables submit first, so that
+path only fires on a direct POST.
+
+**Ships next on these functions:** [plate-status-company-scoping](../backlog/plate-status-company-scoping.md)
+(formerly "Commit B") MUST inherit this body — 4 `VQ.INHERIT_*` guards specified in that file so the widening
+can't silently revert the 30-day predicate or the anon count-strip.
 
 ### Confirmed bugs (open, ranked)
 
@@ -119,9 +157,11 @@ Plus `20260728_user_roles_update_grant_fix.sql` applied (fixed 5-day CA-write re
 
 ### Queued for next session
 
-Six-site **Commit B** (Wed/Thu) — still needs a name that isn't "B", since `vehicle-state.ts` already has a
-"Migration B" and both touch enforcement. Then the email `~~*` → equality commit, `approveAllPendingProperty`,
-and the `PM_CRM_ENABLED` parity sweep.
+**[plate-status-company-scoping](../backlog/plate-status-company-scoping.md)** (formerly "Commit B" — renamed
+2026-07-29 because `vehicle-state.ts` already has a "Migration B" and both touch enforcement). Follow-on
+FK-epic item **`visitor-pass-trigger-scoping`** (formerly "Commit C").
+
+Then the email `~~*` → equality commit, `approveAllPendingProperty`, and the `PM_CRM_ENABLED` parity sweep.
 
 ---
 
@@ -357,6 +397,28 @@ into the next name-keyed operation:
   order-preserving `unnest … WITH ORDINALITY` / `array_agg` rewrite so case and whitespace
   variants are caught — otherwise the update and a `lower(trim())`-based verification query
   disagree.
+
+### From the rolling-30 visitor pass semantics (2026-07-29)
+
+Three cycles this week cost by tests that couldn't fail. All three apply to any negative
+control / pattern VQ / absence check going forward:
+
+- **A negative control must assert it reached the guarded path.** A `<PID>` placeholder in
+  the rename probe meant the no-shadow trigger test never ran (reported syntax error, recorded
+  as pass); the rolling-30 anon count assertion would have gone green against `unlimited`
+  without touching the guarded branch (setup must set a limit + seed a pass to force
+  count-carrying exit). **A test that cannot fail is worse than no test — it gets recorded as
+  evidence.**
+- **Pattern assertions must be format-robust.** `VQ.WITHIN_GATED` false-failed on a correct
+  function because the two gated exits differ only in indentation. Normalize with
+  `regexp_replace(…, '\s+', ' ', 'g')` and pin body fetches via `::regprocedure`. Column
+  alignment is not executable syntax.
+- 🔴 **Absence checks are the dangerous direction.** Documentation naturally quotes what it
+  warns against — the anti-refactor comment saying *do not use `auth.jwt() IS NULL`* tripped
+  the VQ banning that string. A presence check matching a comment is merely weak; an absence
+  check matching a comment **fails a correct function**. Any `NOT LIKE` needs a form prose
+  cannot contain: an assignment (`:= (auth.jwt()`), an operator with operands
+  (`AND expires_at > now()`), a full clause. Bare tokens are documentation-fragile.
 
 **Supabase editor:** paste verification files **whole** — the auto-RLS helper injects
 `ALTER TABLE … ENABLE ROW LEVEL SECURITY` into partial pastes and breaks dollar quoting. This is
