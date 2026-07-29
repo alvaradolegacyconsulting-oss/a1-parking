@@ -9,6 +9,13 @@
 import { useMemo, useState } from 'react'
 import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus } from '@/app/lib/pm-crm'
 import { computeInsights, filterCrmRows, initials, residentDisplayStatus } from '@/app/lib/pm-crm'
+import {
+  CSV_HEADERS,
+  flattenResidentsForExport,
+  serializeCsv,
+  downloadCsv,
+  buildExportFilename,
+} from '@/app/lib/residents-export'
 
 type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
 
@@ -81,6 +88,10 @@ interface Props {
   // the affordance + gates.
   onDeactivateResident: (r: CrmResident) => Promise<void>
   onReactivateResident: (r: CrmResident) => Promise<void>
+  // 2026-07-29 — resident+vehicle CSV export. Optional callback so the
+  // parent can log the export (EXPORT_RESIDENT_LIST audit row); the
+  // download itself is done inline via lib/residents-export helpers.
+  onExportLogged?: (info: { propertyName: string; residentCount: number; vehicleCount: number; filterUsed: CrmFilter; searchUsed: string }) => Promise<void>
 }
 
 // Manager-portal design tokens (matched to existing manager/page.tsx palette).
@@ -149,6 +160,7 @@ export default function PmResidentCrm({
   onEditVehicle, onEditResident,
   onApproveGuestAuthRequest, onDeclineGuestAuthRequest,
   onDeactivateResident, onReactivateResident,
+  onExportLogged,
 }: Props) {
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
@@ -195,11 +207,51 @@ export default function PmResidentCrm({
           alignSelf: 'start',
         }}>
           <div style={{ padding: '14px 14px 10px', borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '10px', gap: '10px', flexWrap: 'wrap' }}>
               <h2 style={{ margin: 0, fontSize: '15px', color: C.text }}>Residents</h2>
-              <span style={{ color: C.faint, fontSize: '12px' }}>
-                {filtered.length} {filtered.length === 1 ? 'person' : 'people'}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ color: C.faint, fontSize: '12px' }}>
+                  {filtered.length} {filtered.length === 1 ? 'person' : 'people'}
+                </span>
+                {/* 2026-07-29 — Export CSV button. Exports the currently
+                    filtered + searched set (matches what's on screen).
+                    Filename encodes property + date. Audit row fired via
+                    onExportLogged prop so parent (which has managerEmail
+                    + supabase client) writes the EXPORT_RESIDENT_LIST
+                    audit_logs row — this component just does the flatten
+                    + download. */}
+                <button
+                  onClick={async () => {
+                    const { rows, residentCount, vehicleCount } = flattenResidentsForExport(filtered)
+                    const csv = serializeCsv(CSV_HEADERS, rows)
+                    downloadCsv(buildExportFilename(propertyName), csv)
+                    if (onExportLogged) {
+                      try {
+                        await onExportLogged({ propertyName, residentCount, vehicleCount, filterUsed: filter, searchUsed: search })
+                      } catch (err) {
+                        console.error('[export-residents] audit-log callback failed', err)
+                      }
+                    }
+                    alert(`${residentCount} ${residentCount === 1 ? 'resident' : 'residents'}, ${vehicleCount} ${vehicleCount === 1 ? 'vehicle' : 'vehicles'} exported.`)
+                  }}
+                  disabled={filtered.length === 0}
+                  style={{
+                    padding: '5px 10px',
+                    background: filtered.length === 0 ? C.panel2 : C.panel2,
+                    color: filtered.length === 0 ? C.faint : C.gold,
+                    border: `1px solid ${filtered.length === 0 ? C.border : C.goldLine}`,
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    cursor: filtered.length === 0 ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={filtered.length === 0 ? 'No residents to export' : 'Export current filtered list as CSV'}
+                >
+                  ↓ Export CSV
+                </button>
+              </div>
             </div>
             <input
               value={search}

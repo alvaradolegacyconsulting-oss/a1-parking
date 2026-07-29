@@ -3738,6 +3738,26 @@ export default function ManagerPortal() {
             onDeclineGuestAuthRequest={(id, reason) => declineGuestAuthRequestCrm(id, reason)}
             onDeactivateResident={(r) => deactivateResident(String(r.id))}
             onReactivateResident={(r) => reactivateResident(String(r.id))}
+            onExportLogged={async ({ propertyName, residentCount, vehicleCount, filterUsed, searchUsed }) => {
+              // 2026-07-29 — resident+vehicle CSV export audit trail.
+              // The CSV contains resident PII (name/email/phone/plates)
+              // leaving the system onto someone's laptop; audit_logs
+              // records who exported what, from what property, and how
+              // it was filtered so a later "who accessed my data" ask
+              // has an answer.
+              await logAudit({
+                action: 'EXPORT_RESIDENT_LIST',
+                table_name: 'residents',
+                new_values: {
+                  property: propertyName,
+                  resident_count: residentCount,
+                  vehicle_count: vehicleCount,
+                  filter: filterUsed,
+                  search: searchUsed || null,
+                  exported_by: managerEmail,
+                },
+              })
+            }}
           />
         )}
 
