@@ -35,14 +35,12 @@ DECLARE
   v_norm_rpc         TEXT;
   v_gated_exit_count INT;
 BEGIN
-  SELECT pg_get_functiondef(oid) INTO v_def_enforce
-    FROM pg_proc
-   WHERE proname = 'enforce_visitor_pass_limit'
-     AND pronamespace = 'public'::regnamespace;
-  SELECT pg_get_functiondef(oid) INTO v_def_rpc
-    FROM pg_proc
-   WHERE proname = 'get_plate_pass_status'
-     AND pronamespace = 'public'::regnamespace;
+  -- Pinned via ::regprocedure — errors loudly on ambiguous overload or
+  -- missing function rather than silently inspecting the wrong body.
+  -- Overload-count VQs run below as a paranoid check that only one
+  -- exists at all, but the fetch itself is unambiguous either way.
+  v_def_enforce := pg_get_functiondef('public.enforce_visitor_pass_limit()'::regprocedure);
+  v_def_rpc     := pg_get_functiondef('public.get_plate_pass_status(text,text)'::regprocedure);
 
   -- Whitespace normalization — collapse all runs of whitespace (spaces,
   -- tabs, newlines, deparser indentation) to a single space. Every
@@ -54,11 +52,13 @@ BEGIN
 
   -- ═══════════ enforce_visitor_pass_limit (trigger) ═══════════════════
 
-  -- VQ.OLD_ABSENT_ENFORCE — old predicate gone. `expires_at` was only
-  -- used inside the concurrency count predicate; its presence is
-  -- diagnostic of the old code returning.
-  IF v_norm_enforce ILIKE '%expires_at%' THEN
-    RAISE EXCEPTION 'VQ.OLD_ABSENT_ENFORCE FAILED — enforce_visitor_pass_limit still references expires_at (old concurrency predicate returned)';
+  -- VQ.OLD_ABSENT_ENFORCE — old predicate gone. Scope to the executable
+  -- clause form ('AND expires_at > now()') rather than the bare token
+  -- `expires_at` — bare-token absence would fail on a future comment
+  -- that quotes the old predicate ("removed the AND expires_at check").
+  -- Prose won't naturally contain the exact multi-token concatenation.
+  IF v_norm_enforce ILIKE '%AND expires_at > now()%' THEN
+    RAISE EXCEPTION 'VQ.OLD_ABSENT_ENFORCE FAILED — enforce_visitor_pass_limit still has `AND expires_at > now()` (old concurrency predicate returned)';
   END IF;
 
   -- VQ.NEW_PRESENT_ENFORCE — 30-day rolling window predicate present.
@@ -74,10 +74,10 @@ BEGIN
 
   -- ═══════════ get_plate_pass_status (RPC) ════════════════════════════
 
-  -- VQ.OLD_ABSENT_RPC — same shape as trigger. `expires_at` only used
-  -- in the old concurrency count.
-  IF v_norm_rpc ILIKE '%expires_at%' THEN
-    RAISE EXCEPTION 'VQ.OLD_ABSENT_RPC FAILED — get_plate_pass_status still references expires_at (old concurrency predicate returned)';
+  -- VQ.OLD_ABSENT_RPC — same shape as trigger. Executable-clause form,
+  -- not bare token — see VQ.OLD_ABSENT_ENFORCE comment.
+  IF v_norm_rpc ILIKE '%AND expires_at > now()%' THEN
+    RAISE EXCEPTION 'VQ.OLD_ABSENT_RPC FAILED — get_plate_pass_status still has `AND expires_at > now()` (old concurrency predicate returned)';
   END IF;
 
   -- VQ.NEW_PRESENT_RPC — 30-day predicate.
@@ -115,11 +115,14 @@ BEGIN
     RAISE EXCEPTION 'VQ.GATED_EXIT_COUNT FAILED — expected exactly 2 v_is_anon-gated exits, got %', v_gated_exit_count;
   END IF;
 
-  -- VQ.NO_JWT_IS_NULL_TRAP — anti-refactor guard. If someone
-  -- "simplifies" v_is_anon back to `auth.jwt() IS NULL`, the guard
-  -- silently never fires (Supabase anon key IS a JWT).
-  IF v_norm_rpc ILIKE '%auth.jwt() IS NULL%' THEN
-    RAISE EXCEPTION 'VQ.NO_JWT_IS_NULL_TRAP FAILED — get_plate_pass_status contains auth.jwt() IS NULL. Supabase anon key IS a JWT — guard silently no-ops. Use auth.uid() IS NULL.';
+  -- VQ.NO_JWT_IS_NULL_TRAP — anti-refactor guard. Match the ASSIGNMENT
+  -- form ':= (auth.jwt()' — prose (including this file's anti-refactor
+  -- warning comment that names the anti-pattern) can't naturally
+  -- contain the assignment operator inline. Bare-token
+  -- '%auth.jwt() IS NULL%' would false-fail because the function's
+  -- own anti-refactor comment quotes that exact phrase.
+  IF v_norm_rpc ILIKE '%:= (auth.jwt()%' THEN
+    RAISE EXCEPTION 'VQ.NO_JWT_IS_NULL_TRAP FAILED — get_plate_pass_status assigns v_is_anon from auth.jwt(). Supabase anon key IS a JWT — guard silently no-ops. Use auth.uid() IS NULL.';
   END IF;
 
 

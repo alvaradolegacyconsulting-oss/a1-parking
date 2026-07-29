@@ -54,13 +54,13 @@ rpc_def AS (
 )
 SELECT jsonb_pretty(jsonb_build_object(
   'enforce_old_predicate_present',
-    (SELECT body ILIKE '%expires_at%' FROM enforce_def),
+    (SELECT body ILIKE '%AND expires_at > now()%' FROM enforce_def),
   'enforce_new_predicate_present',
     (SELECT body ILIKE '%created_at%interval%30 days%' FROM enforce_def),
   'enforce_hint_new',
     (SELECT body ILIKE '%Contact the property manager if you need access%' FROM enforce_def),
   'rpc_old_predicate_present',
-    (SELECT body ILIKE '%expires_at%' FROM rpc_def),
+    (SELECT body ILIKE '%AND expires_at > now()%' FROM rpc_def),
   'rpc_new_predicate_present',
     (SELECT body ILIKE '%created_at%interval%30 days%' FROM rpc_def),
   'rpc_has_v_is_anon',
