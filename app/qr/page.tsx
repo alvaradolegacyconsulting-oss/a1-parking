@@ -12,10 +12,12 @@ import { supabase } from '../supabase'
 // table is what stops it recurring the next time a property is added,
 // renamed, or deactivated.
 //
-// Role gate (added this pass): admin or company_admin only. Previously
-// no client-side auth check; middleware only required *some* session,
-// so a resident or driver could load /qr. Tightening — not a
-// restriction of anything in use.
+// Role gate (added this pass): affordance-level gate for admin +
+// company_admin. Previously no client-side auth check; middleware only
+// required *some* session, so a resident or driver could load /qr.
+// This closes the UI leak. The actual data boundary is RLS on
+// public.properties — a resident bypassing this gate sees whatever
+// their own policies allow, which is nothing at this table today.
 //
 // Managers deliberately excluded. They generate /visitor links from
 // their own portal (manager/page.tsx:4211) scoped to their assigned
@@ -55,16 +57,25 @@ export default function QRPage() {
   const [branding, setBranding] = useState<CompanyBranding | null>(null)
 
   // ── Role gate ──────────────────────────────────────────────────────
+  // Uses get_my_role() rather than a direct .ilike('email', ...) SELECT:
+  //   1. Equality match. The RPC uses lower(email) = lower(jwt->>'email')
+  //      per 20260610_b155_2_f9_helper_lower_match.sql. A direct .ilike
+  //      would pattern-match — `_` is common in email local parts, so a
+  //      caller with 'john_smith@…' could match 'johnasmith@…' and pick
+  //      up that user's role. Filed with the 24 email `~~*` policy sites
+  //      as one class; do not add to it.
+  //   2. Duplicate-safe. .maybeSingle() ERRORS when >1 row matches —
+  //      ~23 duplicate user_roles rows exist on the dedup list, so any
+  //      user with two rows would get roleRow=undefined and be shown
+  //      "Not authorized" despite being authorized. get_my_role() uses
+  //      LIMIT 1 internally.
+  //   3. SECURITY DEFINER. Works without a user_roles SELECT policy in
+  //      the caller's path.
   useEffect(() => {
     async function checkAuth() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user?.email) { setAuth({ status: 'unauthorized' }); return }
-      const { data: roleRow } = await supabase
-        .from('user_roles')
-        .select('role')
-        .ilike('email', user.email)
-        .maybeSingle()
-      const role = roleRow?.role
+      const { data: role } = await supabase.rpc('get_my_role')
       if (role === 'admin' || role === 'company_admin') {
         setAuth({ status: 'ready', role })
       } else {
@@ -160,25 +171,46 @@ export default function QRPage() {
 
   return (
     <main style={{ minHeight:'100vh', background:'#0f1117', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+      {/* Print CSS — window.print() prints the page. Without these
+          rules the dark UI chrome (header, back link, selector, print
+          button, direct-link box) all render on the physical sign.
+          @media print hides everything with .qr-no-print, resets the
+          page background, and lifts the sign card to full page width
+          so the QR + text fills the sheet cleanly. Print-preview to
+          PDF is enough to verify. */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          body { background: white !important; margin: 0 !important; }
+          main { background: white !important; padding: 0 !important; }
+          .qr-no-print { display: none !important; }
+          .qr-sign-card {
+            box-shadow: none !important;
+            border: none !important;
+            margin: 0 auto !important;
+            padding: 20px !important;
+            max-width: 100% !important;
+          }
+        }
+      ` }} />
       <div style={{ maxWidth:'500px', margin:'0 auto' }}>
 
-        <div style={{ marginBottom:'24px', textAlign:'center' }}>
+        <div className="qr-no-print" style={{ marginBottom:'24px', textAlign:'center' }}>
           <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>ShieldMyLot</h1>
           <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>QR Code Generator · Visitor Pass Signs</p>
         </div>
 
-        <a href="/" style={{ display:'inline-block', marginBottom:'20px', color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>
+        <a href="/" className="qr-no-print" style={{ display:'inline-block', marginBottom:'20px', color:'#C9A227', fontSize:'13px', textDecoration:'none' }}>
           ← Back to Plate Lookup
         </a>
 
         {properties === null && (
-          <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'20px', marginBottom:'16px', textAlign:'center' }}>
+          <div className="qr-no-print" style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'20px', marginBottom:'16px', textAlign:'center' }}>
             <p style={{ color:'#888', fontSize:'13px', margin:'0' }}>Loading properties…</p>
           </div>
         )}
 
         {properties !== null && properties.length === 0 && (
-          <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'20px', marginBottom:'16px', textAlign:'center' }}>
+          <div className="qr-no-print" style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'20px', marginBottom:'16px', textAlign:'center' }}>
             <p style={{ color:'#aaa', fontSize:'13px', margin:'0' }}>No properties available — add one first.</p>
           </div>
         )}
@@ -186,7 +218,7 @@ export default function QRPage() {
         {properties !== null && properties.length > 0 && (
           <>
             {/* Property Selector */}
-            <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'20px', marginBottom:'16px' }}>
+            <div className="qr-no-print" style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'20px', marginBottom:'16px' }}>
               <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Select Property</label>
               <select
                 value={selectedId ?? ''}
@@ -203,10 +235,10 @@ export default function QRPage() {
               </select>
             </div>
 
-            {/* QR Sign Preview */}
+            {/* QR Sign Preview — .qr-sign-card is what @media print keeps */}
             {selected && (
               <>
-                <div style={{ background:'white', borderRadius:'12px', padding:'32px', textAlign:'center', marginBottom:'16px' }}>
+                <div className="qr-sign-card" style={{ background:'white', borderRadius:'12px', padding:'32px', textAlign:'center', marginBottom:'16px' }}>
 
                   <div style={{ background:'#0f1117', borderRadius:'8px', padding:'12px', marginBottom:'20px' }}>
                     <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.1em', margin:'0' }}>
@@ -225,7 +257,7 @@ export default function QRPage() {
                       value={visitorUrl}
                       size={180}
                       level="H"
-                      includeMargin={true}
+                      marginSize={4}
                     />
                   </div>
 
@@ -257,12 +289,13 @@ export default function QRPage() {
                 {/* Buttons */}
                 <button
                   onClick={() => window.print()}
+                  className="qr-no-print"
                   style={{ width:'100%', padding:'14px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor:'pointer', marginBottom:'10px' }}
                 >
                   🖨 Print This Sign
                 </button>
 
-                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                <div className="qr-no-print" style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
                   <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 6px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Direct link for this property</p>
                   <p style={{ color:'#C9A227', fontSize:'11px', wordBreak:'break-all', margin:'0', fontFamily:'Courier New' }}>{visitorUrl}</p>
                 </div>
