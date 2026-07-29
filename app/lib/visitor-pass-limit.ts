@@ -10,11 +10,18 @@
 
 import { supabase } from '../supabase'
 
+// 2026-07-29: `used` and `limit` are OPTIONAL on within/at_limit.
+// get_plate_pass_status returns them only to authenticated callers;
+// on anon (auth.uid() IS NULL inside the RPC) it omits both keys so
+// rolling-30 counts don't leak as visit history for arbitrary plates
+// on the /visitor page. Renderers must handle undefined values —
+// /visitor uses count-free fallback copy; /resident (authenticated)
+// keeps the "N of M" line.
 export type PlateLimitStatus =
   | { state: 'unlimited' }
   | { state: 'exempt' }
-  | { state: 'within'; used: number; limit: number }
-  | { state: 'at_limit'; used: number; limit: number }
+  | { state: 'within'; used?: number; limit?: number }
+  | { state: 'at_limit'; used?: number; limit?: number }
 
 export async function getPlateLimitStatus(
   property: string,

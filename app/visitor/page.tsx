@@ -379,10 +379,17 @@ function VisitorForm() {
               <p style={{ color:'#4caf50', fontSize:'11px', margin:'6px 0 0' }}>✓ Exempt plate — no limit</p>
             )}
             {limitStatus?.state === 'within' && (
-              <p style={{ color:'#888', fontSize:'11px', margin:'6px 0 0' }}>{limitStatus.used} of {limitStatus.limit} active passes used.</p>
+              // 2026-07-29: anon RPC omits used/limit — rolling-30
+              // would leak visit history if rendered here. Show only
+              // that the plate is within the limit.
+              <p style={{ color:'#888', fontSize:'11px', margin:'6px 0 0' }}>This vehicle is within the visitor pass limit at this property.</p>
             )}
             {limitStatus?.state === 'at_limit' && (
-              <p style={{ color:'#f44336', fontSize:'11px', margin:'6px 0 0', lineHeight:'1.5' }}>Limit reached: {limitStatus.used} of {limitStatus.limit} active passes. Wait for existing passes to expire or contact the property manager.</p>
+              // 2026-07-29: rolling-30 window; the count isn't shown
+              // to anon (visit-history leak). Copy no longer says "wait
+              // for passes to expire" — waiting doesn't help under
+              // rolling-30, the count is issue-based.
+              <p style={{ color:'#f44336', fontSize:'11px', margin:'6px 0 0', lineHeight:'1.5' }}>This vehicle has reached the visitor pass limit at this property. Contact the property manager if you need access.</p>
             )}
           </div>
 

@@ -54,13 +54,17 @@ Most properties prefer the resident-issued path when possible — it's faster, d
 
 Every property has limits on visitor pass usage. These come from your tier:
 
-### Per-plate concurrent limit
+### Per-plate visits per 30 days
 
-The number of active (unexpired) passes that can exist for the same license plate at the same time. Typical default: 1-2.
+The number of times the same license plate can be issued a visitor pass at this property within any rolling 30-day period.
 
-Why this exists: prevents a single problem vehicle from getting unlimited authorization. If a vehicle is at the property continuously, it should be a registered resident or exempt plate, not a perpetual visitor pass.
+Why this exists: prevents a resident (or their frequent visitor) from using visitor passes in place of paying for a reserved parking space. Someone arriving as a "visitor" every day, indefinitely, is using the visitor system to avoid resident registration or a permit — this limit catches that pattern.
 
-This limit is set **per property** and is configurable by the property manager. Default values are reasonable for most properties; adjust if your property has unusual needs.
+Every pass issued in the window counts, including passes a manager later revoked. That's deliberate: it prevents an issue-revoke-reissue reset. If a manager revokes a pass in error and needs to hand the quota back, add the plate to the **exempt list** (below) — that's the designed remedy.
+
+**Setting the number.** There's no universal default. Set it well above normal visiting frequency and low enough to catch someone parking daily. A vehicle visiting a few times a week is a normal guest; a vehicle here most days is using visitor passes instead of paying for a space. **Leave it blank until you see a pattern worth limiting** — an unset limit is unlimited.
+
+**Legitimate frequent visitors.** Caregivers, adult children visiting a parent weekly, home health aides, and other regulars can easily exceed a well-chosen limit through nothing but normal use. Add their plates to the exempt list so they're never counted against the limit. Pair the two settings together — the limit catches abuse, the exempt list protects legitimate frequency.
 
 ### Monthly usage per property
 

@@ -114,9 +114,22 @@ export async function POST(req: NextRequest) {
   })
 
   if (rpcErr) {
-    // RPC errors include B19 friendly trigger messages (visitor pass
-    // limit / per-plate concurrent). Pass through the raw message so
-    // /visitor can parseLimitTriggerError() as it does today.
+    // 2026-07-29: sanitize the enforce_visitor_pass_limit trigger's
+    // 23514 for anon callers. The raw message includes the count
+    // ("issued N visitor passes in the last 30 days") which would leak
+    // visit history — same class as the anon-count-strip inside
+    // get_plate_pass_status. Detect the trigger's SQLSTATE and swap in
+    // a generic-but-actionable message; log the full detail server-side.
+    // Any other error class passes through unchanged.
+    const isVisitorPassLimit = (rpcErr as { code?: string }).code === '23514'
+      || rpcErr.message.includes('visitor passes at this property in the last 30 days')
+    if (isVisitorPassLimit) {
+      console.warn('[B-CAPTCHA] /api/visitor/create-pass: visitor-pass-limit rejected', { plate, property, error: rpcErr.message })
+      return NextResponse.json(
+        { ok: false, error: 'This vehicle has reached the visitor pass limit at this property. Contact the property manager if you need access.', error_class: 'pass_limit' },
+        { status: 400 },
+      )
+    }
     console.error('[B-CAPTCHA] /api/visitor/create-pass: RPC failed', { plate, property, error: rpcErr.message })
     return NextResponse.json(
       { ok: false, error: rpcErr.message, error_class: 'rpc_error' },

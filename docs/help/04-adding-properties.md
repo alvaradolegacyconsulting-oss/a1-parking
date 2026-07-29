@@ -93,7 +93,7 @@ To add exempt plates:
 2. Find the **Exempt Plates** section
 3. Add plates one at a time
 
-Exempt plates bypass both violation submission warnings AND visitor pass limits. Use this list carefully.
+Exempt plates bypass both violation submission warnings AND visitor pass limits. Use this list for regular visitors who would otherwise exceed the rolling 30-day visitor-pass cap through nothing but normal use — caregivers, family members visiting weekly, service providers, contractors. Without the exemption, the limit will start rejecting their passes once they cross the threshold.
 
 ### Visitor pass settings (Property Management track only)
 

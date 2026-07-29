@@ -4140,8 +4140,8 @@ export default function ManagerPortal() {
             {/* Section A — Visitor Pass Limit */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'14px' }}>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Visitor Pass Limit</p>
-              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>Max visitor passes per plate per year. Leave blank for unlimited. Applies to all visitors at this property.</p>
-              <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Max Passes Per Plate Per Year</label>
+              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>How many times the same vehicle can be issued a visitor pass at this property within a rolling 30-day period. Leave blank for unlimited. Add regular visitors — caregivers, family, service providers — to the exempt list below so they&apos;re never counted.</p>
+              <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Max Visitor Passes Per Plate Per 30 Days</label>
               <input
                 type="number"
                 min="0"
@@ -4245,7 +4245,7 @@ export default function ManagerPortal() {
                 ambiguity that caused wrongful-tow risk. */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px' }}>
               <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>Visitor Pass Quota Exemptions</p>
-              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>These plates skip the annual visitor pass cap — a plate on this list can be issued more than the yearly limit. <strong style={{ color:'#f59e0b' }}>This does NOT protect the vehicle from being towed.</strong> Vehicles still need an active visitor pass, resident registration, or guest authorization to avoid enforcement.</p>
+              <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px', lineHeight:'1.5' }}>Plates on this list are never counted against the visitor pass limit — use it for regular visitors (caregivers, family, service providers) who would otherwise exceed the rolling 30-day cap. <strong style={{ color:'#f59e0b' }}>This does NOT protect the vehicle from being towed.</strong> Vehicles still need an active visitor pass, resident registration, or guest authorization to avoid enforcement.</p>
 
               {exemptPlates.length === 0 ? (
                 <p style={{ color:'#555', fontSize:'12px', margin:'0 0 14px' }}>No quota exemptions configured yet.</p>

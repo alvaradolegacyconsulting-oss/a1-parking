@@ -189,9 +189,48 @@ async function main() {
   }
 
   {
-    const { data, error } = await anon.rpc('get_plate_pass_status', { p_plate: p.plate, p_property: testProperty })
-    if (error) fail(`get_plate_pass_status: ${error.message}`)
-    else ok(`get_plate_pass_status returned status`)
+    // 2026-07-29 — negative control on the anon count-strip in
+    // get_plate_pass_status. The prior assertion ("returned status")
+    // was vacuous: with visitor_pass_limit=NULL on every property, the
+    // RPC exits at the null-limit branch and returns {state:'unlimited'}
+    // without ever reaching the count-carrying gated exits.
+    //
+    // Setup FORCES the count-carrying path so the anon-strip check is
+    // meaningful. Do NOT remove the pass_limit set / seeded pass as
+    // "unnecessary setup" — they're what makes the negative control
+    // reach the guarded exit.
+    const probePlate = `SMKPLT${Date.now().toString(36).slice(-4).toUpperCase()}`
+    const { data: propRow } = await admin.from('properties').select('id').ilike('name', testProperty).maybeSingle()
+    const testPropertyId = propRow?.id
+    if (!testPropertyId) {
+      fail(`get_plate_pass_status probe: could not resolve testPropertyId for "${testProperty}"`)
+    } else {
+      const originalLimit = (await admin.from('properties').select('visitor_pass_limit').eq('id', testPropertyId).maybeSingle()).data?.visitor_pass_limit ?? null
+      await admin.from('properties').update({ visitor_pass_limit: 3 }).eq('id', testPropertyId)
+      const seededPass = await admin.from('visitor_passes').insert([{
+        plate: probePlate,
+        property: testProperty,
+        visiting_unit: 'SMOKE',
+        vehicle_desc: 'smoke probe',
+        is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }]).select('id').maybeSingle()
+      try {
+        const { data, error } = await anon.rpc('get_plate_pass_status', { p_plate: probePlate, p_property: testProperty })
+        if (error) fail(`get_plate_pass_status: ${error.message}`)
+        else if (!data) fail('get_plate_pass_status returned null data')
+        else if (data.state !== 'within' && data.state !== 'at_limit') {
+          fail(`get_plate_pass_status probe setup failed — got state=${data.state}, expected within/at_limit (limit=3, 1 seeded pass)`)
+        } else if (data.used !== undefined || data.limit !== undefined) {
+          fail(`get_plate_pass_status LEAKED counts to anon: ${JSON.stringify(data)}`)
+        } else {
+          ok(`get_plate_pass_status returned counts-free ${data.state} for anon on count-carrying branch`)
+        }
+      } finally {
+        if (seededPass.data?.id) await admin.from('visitor_passes').delete().eq('id', seededPass.data.id)
+        await admin.from('properties').update({ visitor_pass_limit: originalLimit }).eq('id', testPropertyId)
+      }
+    }
   }
 
   // ── 🔴 TOW LINK — non-negotiable per Mateo ─────────────────────────
