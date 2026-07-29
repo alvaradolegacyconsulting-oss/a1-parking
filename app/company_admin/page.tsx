@@ -693,26 +693,49 @@ export default function CompanyAdminPortal() {
     setStats(s => ({ ...s, total_vehicles: vehicles?.length || 0, violations_today: todayCount, violations_week: weekCount }))
   }
 
+  // 2026-07-29 silent-read sweep — every fetch below destructures error
+  // and console.errors on failure so a grant/RLS denial doesn't silently
+  // render as "empty." Root case: A1 CA Activity-tab investigation.
+  // Tag format: [CA <handler>] so support conversations can grep the
+  // console for something specific. Consistent bail: set the target
+  // state to [] (or null for scalar) and return.
   async function fetchStorageFacilities() {
     // B154 — defensive .eq('company', ...) alongside company-scoped RLS.
     // RLS gates functionally; the explicit filter makes scope legible
     // in the code (Class-B defensive-legibility; same principle as B150).
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('storage_facilities')
       .select('*')
       .eq('is_active', true)
       .ilike('company', role?.company ?? '')
       .order('name')
+    if (error) {
+      console.error('[CA fetchStorageFacilities] failed', { company: role?.company, error })
+      setStorageFacilities([])
+      return
+    }
     setStorageFacilities(data || [])
   }
 
   async function fetchViolations(property: string) {
     const sixmo = new Date(); sixmo.setMonth(sixmo.getMonth() - 6)
-    const { data } = await supabase.from('violations')
+    // 2026-07-29 silent-read sweep: destructure error so a grant/RLS
+    // denial doesn't silently render as "no violations found." Root
+    // case for this sweep: A1 Activity-tab investigation where three
+    // symptoms (empty property dropdown, empty driver dropdown, "no
+    // violations found") all traced to violations being []. Without
+    // the error surface, a real 42501 would look identical to
+    // legitimate zero rows.
+    const { data, error } = await supabase.from('violations')
       .select('*, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', true)
       .ilike('property', property).gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
+    if (error) {
+      console.error('[CA fetchViolations] failed', { property, error })
+      setViolations([])
+      return
+    }
     // B13/B18 Commit A: flatten photo_rows → v.photos filtered active.
     // C1: same flatten for video_rows → v.video_url filtered active.
     const flattened = (data || []).map(v => {
@@ -733,9 +756,14 @@ export default function CompanyAdminPortal() {
 
   async function fetchPasses(property: string) {
     const now = new Date().toISOString()
-    const { data } = await supabase.from('visitor_passes').select('*')
+    const { data, error } = await supabase.from('visitor_passes').select('*')
       .ilike('property', property).gte('expires_at', now).eq('is_active', true)
       .order('created_at', { ascending: false })
+    if (error) {
+      console.error('[CA fetchPasses] failed', { property, error })
+      setPasses([])
+      return
+    }
     setPasses(data || [])
     setStats(s => ({ ...s, active_passes: data?.length || 0 }))
   }
@@ -829,7 +857,12 @@ export default function CompanyAdminPortal() {
 
   async function fetchCompanyUsers() {
     if (!role?.company) return
-    const { data } = await supabase.from('user_roles').select('*').ilike('company', role.company).neq('role', 'admin').order('email')
+    const { data, error } = await supabase.from('user_roles').select('*').ilike('company', role.company).neq('role', 'admin').order('email')
+    if (error) {
+      console.error('[CA fetchCompanyUsers] failed', { company: role.company, error })
+      setCompanyUsers([])
+      return
+    }
     setCompanyUsers(data || [])
 
     // B144 (B66.5 c4.3): fetch activation status for driver + resident
@@ -884,7 +917,12 @@ export default function CompanyAdminPortal() {
 
   async function fetchCompanyDrivers() {
     if (!role?.company) return
-    const { data } = await supabase.from('drivers').select('*').ilike('company', role.company).order('name')
+    const { data, error } = await supabase.from('drivers').select('*').ilike('company', role.company).order('name')
+    if (error) {
+      console.error('[CA fetchCompanyDrivers] failed', { company: role.company, error })
+      setCompanyDrivers([])
+      return
+    }
     // B234 L3 — fold user_roles.can_regenerate_tow_ticket per driver so
     // the driver row can render the current toggle state without a
     // second round-trip. Merge by lowercased email; drivers with no
@@ -1050,7 +1088,12 @@ export default function CompanyAdminPortal() {
   async function loadLongChains() {
     setLongChainsLoading(true)
     try {
-      const { data } = await supabase.from('guest_auth_long_chains').select('*')
+      const { data, error } = await supabase.from('guest_auth_long_chains').select('*')
+      if (error) {
+        console.error('[CA loadLongChains] failed', { error })
+        setLongChains([])
+        return
+      }
       setLongChains(data || [])
       setLongChainsLoaded(true)
     } finally {
@@ -1212,18 +1255,24 @@ export default function CompanyAdminPortal() {
     setPlanLoading(true)
     // Drivers — same query as fetchCompanyDrivers, decoupled so the Plan
     // tab works even if Manage was never opened.
-    const { data: drvData } = await supabase.from('drivers').select('*')
+    const { data: drvData, error: drvErr } = await supabase.from('drivers').select('*')
       .ilike('company', role.company).order('name')
+    if (drvErr) {
+      console.error('[CA loadPlanData drivers] failed', { company: role.company, error: drvErr })
+    }
     setCompanyDrivers(drvData || [])
     // Visitor passes this calendar month, scoped to the company's
     // properties. Aggregated client-side into a property-name → count map.
     const propNames = (properties || []).map(p => p.name).filter(Boolean)
     if (propNames.length > 0) {
       const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
-      const { data: passData } = await supabase.from('visitor_passes')
+      const { data: passData, error: passErr } = await supabase.from('visitor_passes')
         .select('property')
         .in('property', propNames)
         .gte('created_at', monthStart)
+      if (passErr) {
+        console.error('[CA loadPlanData passes] failed', { company: role.company, error: passErr })
+      }
       const counts: Record<string, number> = {}
       for (const p of propNames) counts[p] = 0
       for (const row of passData || []) {
@@ -1262,16 +1311,26 @@ export default function CompanyAdminPortal() {
     // downstream pickers (driver tow-ticket + violation form) lives at
     // their fetch sites (driver/page.tsx:248) — CA visibility does not
     // affect enforcement selection.
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('storage_facilities')
       .select('*')
       .ilike('company', role?.company ?? '')
       .order('name')
+    if (error) {
+      console.error('[CA fetchAllFacilitiesManage] failed', { company: role?.company, error })
+      setAllFacilities([])
+      return
+    }
     setAllFacilities(data || [])
   }
 
   async function reloadProperties() {
-    const { data } = await supabase.from('properties').select('*').ilike('company', role?.company || '').order('name')
+    const { data, error } = await supabase.from('properties').select('*').ilike('company', role?.company || '').order('name')
+    if (error) {
+      console.error('[CA reloadProperties] failed', { company: role?.company, error })
+      setProperties([])
+      return
+    }
     setProperties(data || [])
   }
 
