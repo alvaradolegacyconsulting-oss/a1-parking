@@ -486,6 +486,20 @@ export default function CompanyAdminPortal() {
   // Phase 2a: Plan tab is standalone — fetches its own counts on activation
   // rather than depending on Manage tab's lifecycle.
   useEffect(() => { if (activeTab === 'plan') loadPlanData() }, [activeTab, selectedProperty])
+  // 2026-07-29 Activity scope fix: tab-arrival trigger for portfolio-wide
+  // violations fetch. Previously the Activity tab had NO data-loading
+  // trigger of its own — it rendered whatever `violations` state was left
+  // behind by the last property switch. Users navigating straight to
+  // Activity from another tab saw an empty list (arrived initial state
+  // = []; no fetch fires; three UI symptoms — empty property dropdown,
+  // empty driver dropdown, "no violations found"). Fires portfolio-wide;
+  // the client-side crmActivityPropertyFilter narrows within the fetched
+  // set. Depends on `properties` so a property added/removed re-fires.
+  useEffect(() => {
+    if (activeTab !== 'violations') return
+    if (!properties?.length) return
+    fetchViolations(properties.map(p => p.name).filter(Boolean))
+  }, [activeTab, properties])
   // CA CRM Recovery — load plan data on Overview when the flag is on,
   // so the inline Plan strip surfaces its metric numbers.
   useEffect(() => { if (activeTab === 'overview' && CA_CRM_REDESIGN) loadPlanData() }, [activeTab, selectedProperty])
@@ -676,7 +690,13 @@ export default function CompanyAdminPortal() {
   }
 
   async function fetchAll(prop: any) {
-    await Promise.all([fetchViolations(prop.name), fetchStats(prop.name), fetchPasses(prop.name)])
+    // 2026-07-29: fetchViolations is portfolio-wide now (see comment in
+    // its body). Pass the full CA property list rather than the newly-
+    // switched property; the client-side crmActivityPropertyFilter is
+    // the way users narrow. fetchStats + fetchPasses stay per-property
+    // (Overview/Passes tabs render per selected property).
+    const allPropNames = (properties || []).map(p => p.name).filter(Boolean)
+    await Promise.all([fetchViolations(allPropNames), fetchStats(prop.name), fetchPasses(prop.name)])
   }
 
   async function fetchStats(property: string) {
@@ -717,22 +737,54 @@ export default function CompanyAdminPortal() {
     setStorageFacilities(data || [])
   }
 
-  async function fetchViolations(property: string) {
+  async function fetchViolations(propertyNames: string[]) {
+    // 2026-07-29 Activity scope fix: portfolio-wide via .in() rather
+    // than single-property .ilike(). Reasons:
+    //   1. Activity tab labels the dropdown "All properties" — under
+    //      the old shape the derived filter options could never hold
+    //      more than 1 property (fetch was scoped to one at a time),
+    //      so the label lied. Amanda has 3 properties; this makes the
+    //      dropdown meaningful.
+    //   2. Client-side crmActivityPropertyFilter (existing) is now a
+    //      real narrow-across-set filter rather than decorative.
+    //   3. Doesn't lean on RLS as the only tenancy predicate — the
+    //      caller passes properties.map(p => p.name) from the CA's
+    //      already-loaded properties state (loadManager's SELECT
+    //      already scopes to role.company).
+    //
+    // Parity confirmed 2026-07-29 (Jose SQL): every distinct
+    // violations.property value shows exact_match=loose_match=1
+    // against properties.name — so .in()'s exact matching loses zero
+    // rows vs the prior .ilike(). If future data drift produces a
+    // case/whitespace variant, .in() will silently drop it — the
+    // sweep-first (ca658de) protects against errors but not against
+    // wrong counts here; a periodic parity re-check would catch it.
+    //
+    // NOTE: voided_at NOT filtered server-side here — voided rows
+    // come through and are handled by client-side filteredViolations.
+    // Contrasts with L689's KPI count which DOES .is('voided_at',
+    // null). Deliberate inconsistency: Activity tab's "All" tab shows
+    // voided rows as a visible historical record; the KPI counts
+    // active enforcement volume only. Do NOT align silently — the
+    // difference is meaningful.
+    if (!propertyNames || propertyNames.length === 0) {
+      // Empty array — don't send .in('property', []); it returns
+      // nothing anyway, and skipping the round trip is cheaper. Set
+      // [] so any lingering state clears.
+      setViolations([])
+      return
+    }
     const sixmo = new Date(); sixmo.setMonth(sixmo.getMonth() - 6)
-    // 2026-07-29 silent-read sweep: destructure error so a grant/RLS
-    // denial doesn't silently render as "no violations found." Root
-    // case for this sweep: A1 Activity-tab investigation where three
-    // symptoms (empty property dropdown, empty driver dropdown, "no
-    // violations found") all traced to violations being []. Without
-    // the error surface, a real 42501 would look identical to
-    // legitimate zero rows.
+    // silent-read sweep discipline (ca658de): destructure error so a
+    // grant/RLS denial doesn't silently render as "no violations found."
     const { data, error } = await supabase.from('violations')
       .select('*, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', true)
-      .ilike('property', property).gte('created_at', sixmo.toISOString())
+      .in('property', propertyNames)
+      .gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
     if (error) {
-      console.error('[CA fetchViolations] failed', { property, error })
+      console.error('[CA fetchViolations] failed', { propertyNames, error })
       setViolations([])
       return
     }
@@ -2867,7 +2919,8 @@ export default function CompanyAdminPortal() {
     setViolationVideo(null)
     setVideoDuration(null)
     await loadUnconfirmedDrafts()
-    if (selectedProperty) fetchViolations(selectedProperty.name)
+    // 2026-07-29 Activity scope fix: portfolio-wide refetch (see fetchViolations comment).
+    fetchViolations((properties || []).map(p => p.name).filter(Boolean))
     setTicketTarget(confirmed); setSelectedStorage(''); setTowFee(''); setMileage('')
   }
 
@@ -2908,7 +2961,8 @@ export default function CompanyAdminPortal() {
       return
     }
     // Server-confirmed refetch (Gate 3 — refetch, not optimistic).
-    if (selectedProperty) fetchViolations(selectedProperty.name)
+    // 2026-07-29 Activity scope fix: portfolio-wide refetch (see fetchViolations comment).
+    fetchViolations((properties || []).map(p => p.name).filter(Boolean))
   }
 
   async function editFromReview() {
@@ -8260,7 +8314,8 @@ export default function CompanyAdminPortal() {
           setEditMediaViolationId(null)
           // Refresh the violations list so a card whose only photo was just
           // removed re-renders with the updated v.photos / v.video_url state.
-          if (selectedProperty) fetchViolations(selectedProperty.name)
+          // 2026-07-29 Activity scope fix: portfolio-wide refetch (see fetchViolations comment).
+    fetchViolations((properties || []).map(p => p.name).filter(Boolean))
         }}
       />
 
