@@ -1315,12 +1315,40 @@ export default function ManagerPortal() {
 
   async function fetchViolations(property: string) {
     const week = new Date(); week.setDate(week.getDate() - 7)
-    const { data } = await supabase.from('violations')
+    // 2026-07-29 — hide voided tickets from the manager's working
+    // queue (A1 request via Jose). Display-only: the row stays,
+    // voided_at stays stamped, audit_logs stays immutable. `status`
+    // deliberately NOT touched by the void action (Gate 6 orthogonality
+    // — 'void' is NOT a status value; see app/company_admin/page.tsx:112).
+    //
+    // Reachability preserved by architectural split, not by a filter
+    // chip here: manager portal shows a rolling 7-day working queue;
+    // CA portal Activity is the 6-month system of record and DOES
+    // render voided rows with a red "Voided · date · reason" badge.
+    // A manager who needs to find a voided tow after the fact asks
+    // their CA — or the record is queryable in the DB.
+    //
+    // Side effect worth noting: the violations_week KPI at L2629 already
+    // filters .is('voided_at', null); this list did not. Adding the
+    // predicate here brings the two into agreement — one voided
+    // violation used to make the count read N while the list showed
+    // N+1. Managers noticed and didn't report.
+    //
+    // Silent-read discipline (same pattern as ca658de CA sweep): error
+    // destructured + logged so a grant/RLS denial doesn't render as
+    // "no violations" identically to the legitimate zero-rows case.
+    const { data, error } = await supabase.from('violations')
       .select('*, photo_rows:violation_photos(id, photo_url, removed_at), video_rows:violation_videos(id, video_url, removed_at)')
       .eq('is_confirmed', true)
       .ilike('property', property)
+      .is('voided_at', null)
       .gte('created_at', week.toISOString())
       .order('created_at', { ascending: false })
+    if (error) {
+      console.error('[Manager fetchViolations] failed', { property, error })
+      setViolations([])
+      return
+    }
     // B13/B18 Commit A: flatten photo_rows → v.photos filtered active.
     // C1: same flatten for video_rows → v.video_url filtered active.
     const flattened = (data || []).map(v => {
