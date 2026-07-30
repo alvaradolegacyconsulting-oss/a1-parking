@@ -1,7 +1,8 @@
 # Manager mobile approval + lookup view
 
-**Filed:** 2026-07-30. **Status:** designed, NOT built. **Blocked on:** `approveAllPendingProperty` bulk-approve
-restore (already queued).
+**Filed:** 2026-07-30. **Updated:** 2026-07-30 (bulk-approve shape locked as ordered combined action —
+see delta below). **Status:** designed, NOT built. **Blocked on:**
+[manager-bulk-approve-ordered-combined.md](manager-bulk-approve-ordered-combined.md).
 
 Scoped deliberately narrow instead of a responsive pass on the resident CRM.
 
@@ -42,16 +43,18 @@ That's faster, simpler, and it keeps the mobile surface from inheriting the desk
 ```
 Green Acres                              [Look up ▸]
 
-RESIDENTS AWAITING APPROVAL      3
+RESIDENTS AWAITING APPROVAL      4
+VEHICLES AWAITING APPROVAL       8
+
+  [ Approve all pending ]        ← residents first, then their vehicles
+
   ┌────────────────────────────────────┐
   │ Maria Gonzalez        Unit 214     │
   │ maria…@gmail.com                   │
   │  [ Approve ]      [ Decline ]      │
   └────────────────────────────────────┘
   …
-  [ Approve all 3 residents ]
 
-VEHICLES AWAITING APPROVAL      23
   ┌────────────────────────────────────┐
   │ TXP4471   Unit 214                 │
   │ 2019 Honda Civic · Silver          │
@@ -59,21 +62,21 @@ VEHICLES AWAITING APPROVAL      23
   │  [ Approve ]      [ Decline ]      │
   └────────────────────────────────────┘
   …
-  [ Approve all 23 vehicles ]
 ```
+
+**Delta 2026-07-30 (bulk-approve shape lock):** replaced the two separate bulk buttons ("Approve all N
+residents" + "Approve all N vehicles") with a single **`Approve all pending`** — the ordered combined action
+from [manager-bulk-approve-ordered-combined.md](manager-bulk-approve-ordered-combined.md). Residents first, then
+vehicles whose resident is NOW active (phase-1 result, not pre-phase-1 snapshot). A vehicles-only bulk on a
+phone is the exact way someone authorizes a car for an unapproved resident; the combined action removes that
+foot-gun. Per-row approve/decline stay on each card.
 
 Empty state: **"Nothing waiting."** Which is itself useful — a five-second check is most of what the missing
 pending-queue notification would have given her.
 
-🔴 **Bulk approve is not optional here.** 23 vehicles one-at-a-time on a phone is the current situation made
-worse. Which means this view and the queued **`approveAllPendingProperty` restore are the same work** — build
-the bulk capability once, expose it on both surfaces. Worth doing bulk-approve first or in the same commit.
-
-**Per-item failure must be visible.** If she approves 23 and one fails, she needs to know which — a summary
-line (*"22 approved · 1 failed"*) with the failure identified. That's the already-filed bulk-approve visibility
-item, and on a phone over spotty cellular it matters more than on a desk.
-
-**Feedback before refresh** — per the `9a47464` lesson: show the result immediately, refetch after.
+**Per-item failure summary shown before refresh** — per the bulk-approve spec:
+*"4 residents approved · 7 of 8 vehicles approved · 1 failed: TXP4471"*. Named by plate or resident, not row
+id. Feedback before refresh (`9a47464` discipline) — on cellular the gap is visible.
 
 ## Screen 2 — Lookup
 
@@ -134,8 +137,8 @@ than Miriam waiting for both.
 
 ## Cross-references
 
-- Bulk-approve restore item — already queued; this spec makes it the blocker
-- Bulk-approve per-item failure visibility — already queued; same surface needs it
+- [manager-bulk-approve-ordered-combined.md](manager-bulk-approve-ordered-combined.md) — the blocker; ordered
+  combined action + per-item failure visibility both live there. Reflected in the delta above.
 - `9a47464` feedback-before-refresh discipline — applies to every write on this surface
 - `9b73b53` role-gate lesson — `get_my_role()` RPC, not `.ilike('email')` + `.maybeSingle()`
 - Pending-queue notification (confirmed bug) — landing on the mobile view partly answers this; a persistent
