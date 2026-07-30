@@ -18,6 +18,7 @@ import { initialVehicleState } from '../lib/vehicle-state'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
+import { buildBulkApproveSummary } from '../lib/bulk-approve-summary'
 import SupportContact from '../components/SupportContact'
 // AP-MANAGE-CLIENT (2026-07-23): standing authorization per-property manager.
 // `manager` state IS a properties row (has .id + .name), so the component
@@ -1726,37 +1727,21 @@ export default function ManagerPortal() {
 
     // ── Phase 4: summary FIRST (feedback-before-refresh, 9a47464) ──
     // Failures named by plate / resident name, never row id (spec).
-    // alert() is desktop-appropriate but Build 2 (mobile view) will
-    // render this inline — a phone alert with a multi-line failure
-    // list scans poorly. Extract to a shared summary helper when
-    // Build 2 lands rather than reformatting here.
-    const rSucceeded = residentResults.filter(x => x.ok).length
-    const vSucceeded = vehicleResults.filter(x => x.ok).length
-    const vAttempted = eligibleVehicles.length
-    const summaryLines: string[] = []
-    if (rCount > 0) {
-      summaryLines.push(`${rSucceeded} of ${rCount} resident${rCount === 1 ? '' : 's'} approved`)
-      if (failedResidents.length > 0) {
-        const names = failedResidents.map(r => r.name || r.email || `(id ${r.id})`).join(', ')
-        summaryLines.push(`  ↳ Failed: ${names}`)
-      }
-    }
-    if (vCount > 0) {
-      summaryLines.push(`${vSucceeded} of ${vAttempted} vehicle${vAttempted === 1 ? '' : 's'} approved`)
-      if (failedVehicles.length > 0) {
-        const plates = failedVehicles.map(x => x.v.plate || `(id ${x.v.id})`).join(', ')
-        summaryLines.push(`  ↳ Failed: ${plates}`)
-      }
-      if (skippedFailedApproval.length > 0) {
-        const plates = skippedFailedApproval.map(v => v.plate || `(id ${v.id})`).join(', ')
-        summaryLines.push(`  ↳ ${skippedFailedApproval.length} skipped (resident approval failed): ${plates}`)
-      }
-      if (skippedResidentNotApproved.length > 0) {
-        const plates = skippedResidentNotApproved.map(v => v.plate || `(id ${v.id})`).join(', ')
-        summaryLines.push(`  ↳ ${skippedResidentNotApproved.length} skipped (resident not approved): ${plates}`)
-      }
-    }
-    alert(`Bulk approval complete.\n\n${summaryLines.join('\n')}`)
+    // Shape produced by app/lib/bulk-approve-summary.ts — the same helper
+    // Build 2's mobile view will use to render .lines inline. Denominator
+    // is vCount (pre-eligibility, matching the confirmation dialog);
+    // sum-to-total invariant lives in the helper.
+    const summary = buildBulkApproveSummary({
+      residentAttemptedCount: rCount,
+      residentSuccessCount: residentResults.filter(x => x.ok).length,
+      failedResidentLabels: failedResidents.map(r => r.name || r.email || `(id ${r.id})`),
+      vehicleAttemptedCount: vCount,
+      vehicleSuccessCount: vehicleResults.filter(x => x.ok).length,
+      failedVehicleLabels: failedVehicles.map(x => x.v.plate || `(id ${x.v.id})`),
+      skippedFailedApprovalLabels: skippedFailedApproval.map(v => v.plate || `(id ${v.id})`),
+      skippedResidentNotApprovedLabels: skippedResidentNotApproved.map(v => v.plate || `(id ${v.id})`),
+    })
+    alert(summary.text)
 
     // ── Phase 5: one refreshCrmData (after summary; 4440457 discipline)
     await refreshCrmData()
