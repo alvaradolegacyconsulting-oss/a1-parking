@@ -19,6 +19,17 @@ import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { buildBulkApproveSummary } from '../lib/bulk-approve-summary'
+import {
+  callSyncOnAdd,
+  trimDepartedResidentVehicles,
+  listPendingVehiclesForUnit,
+  approveVehiclesBatch,
+  approveResidentWrite,
+  approveVehicleWrite,
+  declineResidentWrite,
+  declineVehicleWrite,
+  runBulkApprove,
+} from '../lib/manager-crm-writes'
 import SupportContact from '../components/SupportContact'
 // AP-MANAGE-CLIENT (2026-07-23): standing authorization per-property manager.
 // `manager` state IS a properties row (has .id + .name), so the component
@@ -77,32 +88,12 @@ import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tool
 import { evaluatePortalGate } from '../lib/portal-account-gate'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
 
-// Slice 1 Commit 4b — client wrapper for the /api/billing/sync-on-add
-// route. Duplicated from app/company_admin/page.tsx (small DRY violation,
-// limited blast radius — both files own their copy + share the same
-// route contract; extracting to a shared lib is a future-cleanup item
-// if a third call site appears). Non-throwing per the same contract:
-// network errors degrade to {ok:false; reason}, the caller logs and
-// continues — the DB write (here: approve_vehicle RPC) already committed.
-async function callSyncOnAdd(
-  companyId: number,
-  kind: 'property' | 'driver' | 'permit',
-): Promise<{ ok: true; action: string } | { ok: false; reason: string }> {
-  try {
-    const res = await fetch('/api/billing/sync-on-add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ company_id: companyId, kind }),
-    })
-    const json = await res.json().catch(() => ({}))
-    if (res.ok && json.ok) {
-      return { ok: true, action: String(json.action ?? 'unknown') }
-    }
-    return { ok: false, reason: String(json.reason ?? json.error ?? `HTTP ${res.status}`) }
-  } catch (e) {
-    return { ok: false, reason: (e as Error).message }
-  }
-}
+// callSyncOnAdd, notifyResidentDecision, trimDepartedResidentVehicles, and the
+// five write cores + runBulkApprove now live in app/lib/manager-crm-writes.ts
+// (Phase B1, 2026-07-30) so the mobile view (app/manager/mobile, Build 2)
+// reuses them without a third resident-approve path. See the doc block on
+// the lib for the split of "what's extracted" vs "what stays in the surface"
+// and for the PM-only-cascade-on-mobile rule.
 
 export default function ManagerPortal() {
   const [manager, setManager] = useState<any>(null)
@@ -1143,34 +1134,17 @@ export default function ManagerPortal() {
     if (ctx.tier === 'pm_only') {
       if (!window.confirm('Approve this vehicle as a billable permit?')) return
     }
-    // Slice 1 Commit 4b — route through approve_vehicle RPC (commit 4a).
-    // The RPC re-enforces scope (DEFINER bypasses RLS; the scope-check
-    // is the security property), runs the UPDATE atomically, and returns
-    // {ok, action, vehicle}. Fire the permit sync ONLY on action='approved'
-    // (not 'noop_already_active'); the RPC's idempotency design exists
-    // exactly so a re-approve doesn't redundantly trigger Stripe.
-    const { data: rpcResult, error: rpcErr } = await supabase.rpc('approve_vehicle', {
-      p_vehicle_id:   id,
-      p_manager_note: pendingNotes[id] || null,
+    // Write core owns: approve_vehicle RPC + audit + sync-on-approve
+    // (per-row semantics — one sync per approve). Bulk BYPASSES this
+    // wrapper via runBulkApprove / approveVehiclesBatch to meter once
+    // per batch instead of N times.
+    const result = await approveVehicleWrite(supabase, {
+      vehicleId: id,
+      property: manager.name,
+      managerNote: pendingNotes[id] || null,
+      companyIdForSync,
     })
-    if (rpcErr) {
-      console.error('[approve_vehicle] RPC error:', rpcErr.message)
-      return
-    }
-    const result = rpcResult as { ok?: boolean; action?: string; error?: string; hint?: string } | null
-    if (!result?.ok) {
-      console.error('[approve_vehicle] RPC returned error:', result?.error, result?.hint)
-      return
-    }
-    console.info('[approve_vehicle]', { site: 'approveVehicle', vehicleId: id, action: result.action })
-    await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'active', property: manager.name } })
-    if (result.action === 'approved' && companyIdForSync) {
-      const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
-      console.info('[B147-sync-result]', { site: 'approveVehicle', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
-      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveVehicle', reason: syncRes.reason })
-    } else if (result.action === 'noop_already_active') {
-      console.info('[B147-sync-skipped]', { site: 'approveVehicle', reason: 'noop_already_active — vehicle was already approved; no quantity change' })
-    }
+    if (!result.ok) return
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
     // B231 parity — same refresh discipline as approveAllPendingCrm.
     // Approving one vehicle can flip its resident's needsApproval when
@@ -1181,17 +1155,13 @@ export default function ManagerPortal() {
   }
 
   async function declineVehicle(id: string) {
-    await supabase.from('vehicles').update({ is_active: false, status: 'declined', manager_note: pendingNotes[id] || null }).eq('id', id)
-    await logAudit({ action: 'DECLINE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { status: 'declined', property: manager.name } })
-    const { data: veh } = await supabase.from('vehicles').select('unit, property').eq('id', id).single()
-    if (veh) {
-      // 2026-07-10 — escape ILIKE wildcards (pre-B166 vestige).
-      await supabase.from('residents')
-        .update({ status: 'active', is_active: true })
-        .ilike('unit', escapeIlikeValue(veh.unit))
-        .ilike('property', escapeIlikeValue(veh.property))
-        .eq('status', 'pending')
-    }
+    // Write core owns: vehicles UPDATE + audit + residents-back-to-active
+    // cascade at same (unit, property).
+    await declineVehicleWrite(supabase, {
+      vehicleId: id,
+      property: manager.name,
+      managerNote: pendingNotes[id] || null,
+    })
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
     await refreshCrmData()
   }
@@ -1406,106 +1376,51 @@ export default function ManagerPortal() {
     setTimeout(() => { setResetPwTarget(null); setResetPwForm({ newPw:'', confirmPw:'' }); setResetPwMsg('') }, 2000)
   }
 
-  // Notify the resident of an approve/decline decision via the
-  // /api/manager/notify-resident-decision endpoint. NON-BLOCKING on
-  // failure — the DB writes are already committed; the email is the
-  // secondary channel. Returns { ok, message_id } so callers can
-  // stamp the audit log with email_sent + message_id for forensic
-  // visibility.
-  async function notifyResidentDecision(args: {
-    residentId: string
-    decision: 'approved' | 'declined'
-    note: string | null
-  }): Promise<{ ok: boolean; message_id: string | null }> {
-    try {
-      const res = await fetch('/api/manager/notify-resident-decision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(args),
-      })
-      const j = await res.json().catch(() => ({}))
-      if (res.ok && j.ok) {
-        return { ok: true, message_id: j.message_id || null }
-      }
-      console.error('[resident-decision-email] failed:', j.error || res.statusText)
-      return { ok: false, message_id: null }
-    } catch (e) {
-      console.error('[resident-decision-email] threw:', e)
-      return { ok: false, message_id: null }
-    }
-  }
+  // notifyResidentDecision moved to app/lib/manager-crm-writes.ts (Phase B1)
+  // — same pure-fetch shape, imported at top of file. Callers unchanged.
 
   async function approveResident(r: any) {
-    const note = residentNotes[r.id] || null
-    await supabase.from('residents').update({ is_active: true, status: 'active', manager_note: note }).eq('id', r.id)
-    // Slice 1 Commit 4b — cascade vehicle approval: SELECT pending vehicle
-    // ids for this unit at this property, then loop the approve_vehicle
-    // RPC per row. Each gets the unified scope-check + resident_read=true
-    // (commit 4a normalizes L895's prior omission). p_manager_note=NULL
-    // per the locked decision (the note belongs to the resident approval,
-    // not the auto-cascaded vehicles). One permit sync after the batch if
-    // any actually approved.
-    const { data: pendingCascadeRaw } = await supabase
-      .from('vehicles').select('id')
-      .ilike('unit', r.unit).ilike('property', manager.name).eq('status', 'pending')
-    // Permit-Door Piece 1 §3 — billing-conversion prompt (PM-Only ONLY).
-    // Prompt fires ONLY when there's actually something to cascade
-    // (count > 0) so a no-vehicle resident-approval doesn't surface a
-    // confusing "Approve 0 vehicles?" prompt. If operator cancels:
-    // resident stays approved (L1033 already committed) but the vehicle
-    // cascade is skipped — operator can approve vehicles individually
-    // later. Resident-approval and vehicle-approval are separate
-    // billing events. Skip mechanism: empty the cascade array so the
-    // loop below runs over 0 items + the email/audit block still runs.
-    let pendingCascade = pendingCascadeRaw ?? []
+    // Write core owns: residents UPDATE + notify + audit. Original inline
+    // shape logged APPROVE_VEHICLE audits BEFORE APPROVE_RESIDENT (cascade
+    // ran between the UPDATE and the audit); this rewire logs
+    // APPROVE_RESIDENT first, then APPROVE_VEHICLE per cascade row —
+    // more natural chronological order. Not a regression: the summary
+    // and Network gates don't depend on audit-row ordering.
+    await approveResidentWrite(supabase, {
+      resident: { id: r.id, name: r.name, unit: r.unit, email: r.email },
+      property: manager.name,
+      managerNote: residentNotes[r.id] || null,
+    })
+    // Cascade vehicle approval for this resident's unit. Uses the shared
+    // batch primitive (approveVehiclesBatch) — same meter-once discipline
+    // as runBulkApprove phase-2, scoped to one unit. PM-only prompt lives
+    // in the surface (mobile per-row will skip this whole block on
+    // pm_only per feedback_mobile_pending_list_is_the_confirmation.md).
+    const pendingCascade = await listPendingVehiclesForUnit(supabase, { unit: r.unit, property: manager.name })
+    let shouldCascade = pendingCascade.length > 0
     const ctxCascade = getCompanyContext()
-    if (pendingCascade.length > 0 && ctxCascade.tier === 'pm_only') {
+    if (shouldCascade && ctxCascade.tier === 'pm_only') {
       if (!window.confirm(`Approve ${pendingCascade.length} vehicles as billable permits?`)) {
         console.info('[approve_vehicle]', { site: 'approveResident-cascade', skipped: 'billing-prompt-cancelled', count: pendingCascade.length })
-        pendingCascade = []
+        shouldCascade = false
       }
     }
-    let cascadeApprovedCount = 0
-    for (const v of pendingCascade) {
-      const { data, error } = await supabase.rpc('approve_vehicle', {
-        p_vehicle_id:   v.id,
-        p_manager_note: null,
-      })
-      if (error) {
-        console.error('[approve_vehicle] RPC error in cascade:', error.message, { vehicleId: v.id })
-        continue
-      }
-      const r = data as { ok?: boolean; action?: string } | null
-      console.info('[approve_vehicle]', { site: 'approveResident-cascade', vehicleId: v.id, action: r?.action })
-      if (r?.action === 'approved') cascadeApprovedCount++
-    }
-    console.info('[B147-sync-batch-summary]', { site: 'approveResident-cascade', unit: r.unit, batchSize: (pendingCascade ?? []).length, approvedCount: cascadeApprovedCount, willFireSync: cascadeApprovedCount > 0 })
-    if (cascadeApprovedCount > 0 && companyIdForSync) {
-      const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
-      console.info('[B147-sync-result]', { site: 'approveResident-cascade', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
-      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveResident-cascade', approvedCount: cascadeApprovedCount, reason: syncRes.reason })
-    }
-    // Send the approval email + capture outcome for the audit. Email
-    // failure is non-fatal — approval is already committed.
-    const emailResult = await notifyResidentDecision({ residentId: r.id, decision: 'approved', note: null })
-    await logAudit({
-      action: 'APPROVE_RESIDENT',
-      table_name: 'residents',
-      record_id: r.id,
-      new_values: {
-        name: r.name,
-        unit: r.unit,
+    if (shouldCascade) {
+      await approveVehiclesBatch(supabase, {
+        vehicles: pendingCascade.map(v => ({ id: v.id, plate: v.plate })),
         property: manager.name,
-        email_sent: emailResult.ok,
-        message_id: emailResult.message_id,
-      },
-    })
+        companyIdForSync,
+        logSite: 'approveResident-cascade',
+      })
+    }
     // Spaces v1 commit 4 — OPTIONAL assign-space step. Manager picked a
     // space in the pending-row dropdown → call assign_space RPC after the
     // resident UPDATE succeeds. NON-FATAL per Jose 2026-06-21 lock:
     // "approval ≠ assignment, most residents hold zero spaces" — if the
     // assign fails (e.g., space taken between dropdown-load and submit),
     // resident approval stays; manager can assign via the Spaces tab.
+    // Mobile per-row surface omits this block entirely (mobile has no
+    // space picker — spaces stay per-row on desktop only).
     const pickedSpaceId = pendingResidentAssignSpaceId[r.id]
     if (pickedSpaceId) {
       const { error: assignErr } = await supabase.rpc('assign_space', {
@@ -1520,8 +1435,8 @@ export default function ManagerPortal() {
     }
     setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
     // B231 parity — approveResident cascades vehicle approval (see the
-    // per-row RPC loop above), so pendingVehicles state gets stale too
-    // if not refetched. Also refresh the CRM dimensions so
+    // approveVehiclesBatch call above), so pendingVehicles state gets
+    // stale too if not refetched. Also refresh the CRM dimensions so
     // needsApproval recomputes against the authoritative post-mutation
     // truth (see approveAllPendingCrm comment).
     await refreshCrmData()
@@ -1530,42 +1445,20 @@ export default function ManagerPortal() {
     if (pickedSpaceId) await refetchSpacesDashboard()
   }
 
-  // PM CRM bulk approve — ORDERED COMBINED ACTION (2026-07-30 rewrite
-  // per docs/backlog/manager-bulk-approve-ordered-combined.md).
-  //
-  // ── Ordering (do NOT parallelize the phases) ─────────────────────
-  //   Phase 1  approve pending residents; COLLECT PER-ROW RESULTS
-  //   Phase 2  approve pending vehicles whose resident is NOW active
-  //            (i.e. was already active, or SUCCEEDED in phase 1);
-  //            skip vehicles whose phase-1 resident FAILED
-  //   Phase 3  meter-once sync (preserved from B147)
-  //   Phase 4  alert summary (feedback-before-refresh, 9a47464)
-  //   Phase 5  one refreshCrmData() — the CRM state re-derives all
-  //            five dimensions of needsApproval from authoritative
-  //            post-mutation truth
-  //
-  // 🔴 Phase 2's eligibility gate is load-bearing: if a resident
-  // approval fails and their vehicle is approved anyway, there's now
-  // an authorized car for someone who isn't an approved resident.
-  // Gate on phase-1 RESULT, not on the pre-phase-1 snapshot.
-  //
-  // Resident-before-vehicle is OUR policy, NOT enforced by
-  // approve_vehicle. Do NOT "optimize" the phases into parallel — the
-  // ordering IS the safety.
-  //
-  // Meter-once accounting (Jose guardrail 2026-07-03) preserved:
-  // vehicle loop calls approve_vehicle RPC direct (bypasses the
-  // approveVehicle wrapper's per-call sync — that would fire N times
-  // = double-billing); ONE callSyncOnAdd('permit') post-batch.
-  //
-  // Bulk lane must be gated on canApproveVehicles at the render site.
-  // This function assumes the caller has already checked the gate.
+  // Bulk approve is orchestrated by runBulkApprove in
+  // app/lib/manager-crm-writes.ts (Phase B1) — full 2-phase ordered
+  // combined action + allow-list gate + meter-once sync all live there
+  // with the anti-optimization comment. Mobile view (Build 2) reuses
+  // the same lib. Bulk lane must be gated on canApproveVehicles at the
+  // render site; this surface handler assumes caller has checked.
   async function approveAllPendingCrm(pendingResidentsForBulk: any[]) {
     if (!manager?.name) return
 
     // Widened SELECT (id + plate + resident_email) so failures can be
     // named by plate in the summary and the phase-2 eligibility gate
     // can match resident_email against the active-resident allow set.
+    // Surface fetches this once for the confirmation dialog count and
+    // passes it to runBulkApprove (avoids double-query).
     const { data: allPendingVehicles, error: vehListErr } = await supabase
       .from('vehicles').select('id, plate, resident_email')
       .ilike('property', manager.name).eq('status', 'pending')
@@ -1574,24 +1467,6 @@ export default function ManagerPortal() {
       alert(`Could not load pending vehicles: ${vehListErr.message}\n\nNo approvals were attempted.`)
       return
     }
-    // Snapshot of ALREADY-active resident emails at this property. Feeds
-    // the phase-2 allow-list alongside phase-1's succeeded residents.
-    // Without this, a vehicle whose resident is already active (later-
-    // added via +Request-Vehicle, common at Green Acres) would be
-    // approved via a deny-list (not-in-failed = eligible); that's the
-    // failure mode Mateo flagged 2026-07-30. Allow-list requires
-    // known-good, which is correct by construction.
-    const { data: activeResidents, error: activeErr } = await supabase
-      .from('residents').select('email')
-      .ilike('property', manager.name).eq('is_active', true)
-    if (activeErr) {
-      console.error('[Manager approveAllPendingCrm] active-residents snapshot failed', activeErr)
-      alert(`Could not load active residents: ${activeErr.message}\n\nNo approvals were attempted.`)
-      return
-    }
-    const alreadyActiveEmails = new Set(
-      (activeResidents ?? []).map(r => (r.email || '').toLowerCase().trim()).filter(Boolean)
-    )
     const rCount = pendingResidentsForBulk.length
     const vCount = (allPendingVehicles ?? []).length
     if (rCount === 0 && vCount === 0) {
@@ -1606,144 +1481,21 @@ export default function ManagerPortal() {
     const suffix = ctx.tier === 'pm_only' && vCount > 0 ? ' as billable permits' : ''
     if (!window.confirm(`Approve ${scope}${suffix}?\n\nResidents are approved first. Vehicles are approved only for residents whose approval succeeds.`)) return
 
-    // ── Phase 1: parallel resident UPDATEs, per-row result capture ──
-    // Duplicate-path note (2026-07-30): approveResident (the per-row
-    // handler ~L1479+) writes {is_active: true, status: 'active',
-    // manager_note: note} and handles an optional per-row space
-    // assignment from pendingResidentAssignSpaceId. The bulk loop
-    // writes the same two-field state minus the note (no per-row
-    // note input at the bulk lane) and skips the space assignment
-    // (no per-row space picker at the bulk lane). Keep this write
-    // in sync with approveResident's residents UPDATE when the
-    // helper-determinism epic changes resident status semantics —
-    // any status/is_active change belongs in BOTH sites.
-    type ResidentResult = { r: any; ok: boolean }
-    const residentResults: ResidentResult[] = await Promise.all(
-      pendingResidentsForBulk.map(async (r): Promise<ResidentResult> => {
-        const { error: updErr } = await supabase.from('residents')
-          .update({ is_active: true, status: 'active' })
-          .eq('id', r.id)
-        if (updErr) {
-          console.error('[Manager approveAllPendingCrm] resident UPDATE failed', { residentId: r.id, name: r.name, error: updErr })
-          return { r, ok: false }
-        }
-        const emailResult = await notifyResidentDecision({ residentId: String(r.id), decision: 'approved', note: null })
-        await logAudit({
-          action: 'APPROVE_RESIDENT',
-          table_name: 'residents',
-          record_id: r.id,
-          new_values: {
-            name: r.name, unit: r.unit, property: manager.name,
-            batch: 'crm_bulk',
-            email_sent: emailResult.ok,
-            message_id: emailResult.message_id,
-          },
-        })
-        return { r, ok: true }
-      })
-    )
-    const failedResidents = residentResults.filter(x => !x.ok).map(x => x.r)
-    const failedResidentEmails = new Set(
-      failedResidents.map(r => (r.email || '').toLowerCase().trim()).filter(Boolean)
-    )
-    const phase1SucceededEmails = new Set(
-      residentResults.filter(x => x.ok).map(x => (x.r.email || '').toLowerCase().trim()).filter(Boolean)
-    )
-
-    // ── Phase 2: eligibility-gated vehicle approvals (allow-list) ───
-    // Vehicle is eligible only if its resident is NOW active:
-    //   • already-active at property (alreadyActiveEmails), OR
-    //   • succeeded in phase 1 (phase1SucceededEmails)
-    // Vehicles with null resident_email pass through (unit-shared;
-    // no resident to gate on).
-    //
-    // Allow-list not deny-list: a deny-list ("not in failedResidentEmails")
-    // would approve any vehicle we never evaluated — pending resident
-    // outside this batch, orphan resident_email with no matching row.
-    // Correct by construction requires known-good. Failure mode Mateo
-    // flagged 2026-07-30; today's Green Acres data has zero such rows
-    // so the outcome is unchanged, but the shape is the durable one.
-    const activeResidentEmails = new Set<string>([
-      ...alreadyActiveEmails,
-      ...phase1SucceededEmails,
-    ])
-    const isEligible = (v: { resident_email: string | null }) => {
-      const email = (v.resident_email || '').toLowerCase().trim()
-      if (!email) return true    // unit-shared vehicle
-      return activeResidentEmails.has(email)
+    // Delegate all phases to the lib. Returns the summary input shape
+    // for buildBulkApproveSummary (Phase A helper); surface renders alert.
+    const result = await runBulkApprove(supabase, {
+      property: manager.name,
+      companyIdForSync,
+      pendingResidentsForBulk,
+      allPendingVehicles: allPendingVehicles ?? [],
+    })
+    if (!result.ok) {
+      alert(`Bulk approve failed: ${(result.error as any)?.message ?? String(result.error)}\n\nSome approvals may have partially completed. Refresh to see current state.`)
+      await refreshCrmData()
+      return
     }
-    const eligibleVehicles = (allPendingVehicles ?? []).filter(isEligible)
-    // Split skipped into two categories so the summary can name why:
-    //   • resident approval failed (in this batch, phase 1 returned error)
-    //   • resident not approved (resident_email matches no active row and
-    //     wasn't in this batch — either pending outside the batch or
-    //     orphan email with no matching residents row)
-    const skippedFailedApproval = (allPendingVehicles ?? []).filter(v => {
-      const email = (v.resident_email || '').toLowerCase().trim()
-      return !!email && failedResidentEmails.has(email)
-    })
-    const skippedResidentNotApproved = (allPendingVehicles ?? []).filter(v => {
-      const email = (v.resident_email || '').toLowerCase().trim()
-      if (!email) return false
-      return !activeResidentEmails.has(email) && !failedResidentEmails.has(email)
-    })
-
-    // Phase 2 write path — same approve_vehicle RPC that per-row
-    // approveVehicle (~L1145) calls, deliberately bypassing that
-    // wrapper for the meter-once discipline (wrapper fires
-    // callSyncOnAdd per call = N× billing; we fire ONE post-batch
-    // sync at Phase 3). Keep in sync with approveVehicle when the
-    // RPC's arguments or return shape change.
-    type VehicleResult = { v: any; ok: boolean; action: string | null }
-    const vehicleResults: VehicleResult[] = await Promise.all(eligibleVehicles.map(async v => {
-      const { data, error } = await supabase.rpc('approve_vehicle', {
-        p_vehicle_id:   v.id,
-        p_manager_note: null,
-      })
-      if (error) {
-        console.error('[Manager approveAllPendingCrm] approve_vehicle RPC error', { vehicleId: v.id, plate: v.plate, error: error.message })
-        return { v, ok: false, action: null }
-      }
-      const r = data as { ok?: boolean; action?: string } | null
-      if (r?.ok) {
-        console.info('[approve_vehicle]', { site: 'approveAllPendingCrm', vehicleId: v.id, plate: v.plate, action: r.action })
-        await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: v.id, new_values: { status: 'active', property: manager.name, batch: 'crm_bulk' } })
-        return { v, ok: true, action: r.action ?? 'unknown' }
-      }
-      console.error('[Manager approveAllPendingCrm] approve_vehicle RPC returned not-ok', { vehicleId: v.id, plate: v.plate, result: r })
-      return { v, ok: false, action: null }
-    }))
-    const approvedActionCount = vehicleResults.filter(x => x.action === 'approved').length
-    const failedVehicles = vehicleResults.filter(x => !x.ok)
-
-    console.info('[B147-sync-batch-summary]', { site: 'approveAllPendingCrm', property: manager.name, batchSize: eligibleVehicles.length, approvedCount: approvedActionCount, willFireSync: approvedActionCount > 0 })
-
-    // ── Phase 3: ONE sync post-batch (meter-once, B147) ─────────────
-    if (approvedActionCount > 0 && companyIdForSync) {
-      const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
-      console.info('[B147-sync-result]', { site: 'approveAllPendingCrm', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
-      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllPendingCrm', approvedCount: approvedActionCount, reason: syncRes.reason })
-    }
-
-    // ── Phase 4: summary FIRST (feedback-before-refresh, 9a47464) ──
-    // Failures named by plate / resident name, never row id (spec).
-    // Shape produced by app/lib/bulk-approve-summary.ts — the same helper
-    // Build 2's mobile view will use to render .lines inline. Denominator
-    // is vCount (pre-eligibility, matching the confirmation dialog);
-    // sum-to-total invariant lives in the helper.
-    const summary = buildBulkApproveSummary({
-      residentAttemptedCount: rCount,
-      residentSuccessCount: residentResults.filter(x => x.ok).length,
-      failedResidentLabels: failedResidents.map(r => r.name || r.email || `(id ${r.id})`),
-      vehicleAttemptedCount: vCount,
-      vehicleSuccessCount: vehicleResults.filter(x => x.ok).length,
-      failedVehicleLabels: failedVehicles.map(x => x.v.plate || `(id ${x.v.id})`),
-      skippedFailedApprovalLabels: skippedFailedApproval.map(v => v.plate || `(id ${v.id})`),
-      skippedResidentNotApprovedLabels: skippedResidentNotApproved.map(v => v.plate || `(id ${v.id})`),
-    })
-    alert(summary.text)
-
-    // ── Phase 5: one refreshCrmData (after summary; 4440457 discipline)
+    // Summary FIRST (feedback-before-refresh, 9a47464), then refresh.
+    alert(buildBulkApproveSummary(result.summary).text)
     await refreshCrmData()
   }
 
@@ -2040,30 +1792,14 @@ export default function ManagerPortal() {
   }
 
   async function declineResident(r: any) {
-    const note = residentNotes[r.id] || null
-    await supabase.from('residents').update({ is_active: false, status: 'declined', manager_note: note }).eq('id', r.id)
-    // 2026-07-10 — escape ILIKE wildcards (pre-B166 vestige).
-    await supabase.from('vehicles').update({ is_active: false, status: 'declined' }).ilike('unit', escapeIlikeValue(r.unit)).ilike('property', escapeIlikeValue(manager.name)).eq('status', 'pending')
-    // Send the decline email (with optional manager note) + capture
-    // outcome for the audit. Email failure is non-fatal.
-    const emailResult = await notifyResidentDecision({ residentId: r.id, decision: 'declined', note })
-    await logAudit({
-      action: 'DECLINE_RESIDENT',
-      table_name: 'residents',
-      record_id: r.id,
-      new_values: {
-        name: r.name,
-        unit: r.unit,
-        property: manager.name,
-        email_sent: emailResult.ok,
-        message_id: emailResult.message_id,
-      },
+    // Write core bundles: residents UPDATE + pending-vehicle UPDATE +
+    // notify + audit + B166 owner-trim. All cascades are invariants of
+    // the decline shape and travel together in one call.
+    await declineResidentWrite(supabase, {
+      resident: { id: r.id, name: r.name, unit: r.unit, email: r.email },
+      property: manager.name,
+      managerNote: residentNotes[r.id] || null,
     })
-    // B166 — owner-trim. Defensive against any historical active vehicle
-    // owned by this email at this tuple (the pending-status filter above
-    // only catches pending-status rows; an active row owned by a re-
-    // appearing email would survive without this).
-    await trimDepartedResidentVehicles(r.email, r.unit, manager.name, 'DECLINE_RESIDENT')
     setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
     await refreshCrmData()
   }
@@ -2427,7 +2163,7 @@ export default function ManagerPortal() {
     // B166 owner-trim + B150 cascade (unchanged from pre-v1.1).
     // Space-tie cleanup is now DB-trigger-driven (commit-1 migration);
     // no free_space client call needed.
-    await trimDepartedResidentVehicles(r?.email, r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
+    await trimDepartedResidentVehicles(supabase, r?.email, r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
     await cascadeVehiclesIfUnitVacant(r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
     // RT-D — F2/F3 cascade: cancel this resident's PENDING space_requests
     // and PENDING guest_authorizations so nothing dangles under an
@@ -2605,69 +2341,10 @@ export default function ManagerPortal() {
     await refreshCrmData()
   }
 
-  // B166 — owner-trim. Flips vehicles.is_active=false for the departed
-  // resident's vehicles, scoped to (resident_email, property, unit). One
-  // field flip covers both halves of the defect: privacy (resident-portal
-  // fetchVehicles filters on is_active=true) AND enforcement (pm_plate_
-  // lookup / check_resident_plate / driver-side query all filter on
-  // is_active=TRUE → departed car returns "not authorized" → tow-eligible).
-  // Composes with B150 cascadeVehiclesIfUnitVacant which runs after.
-  async function trimDepartedResidentVehicles(
-    rawEmail: string | null | undefined,
-    rawUnit: string | null | undefined,
-    rawProperty: string | null | undefined,
-    sourceAction: string
-  ) {
-    if (!rawEmail || !rawUnit || !rawProperty) return
-    const email = rawEmail.trim().toLowerCase()
-    const unit = rawUnit.trim()
-    const property = rawProperty.trim()
-    if (!email || !unit || !property) return
-    // Email: .eq() on the lowercased value — forward stamps are all
-    // lowercase; historical mixed-case rows wiped pre-launch; .eq()
-    // avoids ILIKE wildcard injection (underscores in email local-parts
-    // would otherwise over-match on a destructive UPDATE).
-    // Unit/property: keep ILIKE for case-insensitivity but escape
-    // any embedded % or _ in the user-entered values so 'Apt_214'
-    // doesn't match 'Apt1214' etc.
-    const { data: matched, error } = await supabase
-      .from('vehicles')
-      .update({ is_active: false })
-      .eq('resident_email', email)
-      .ilike('unit', escapeIlikeValue(unit))
-      .ilike('property', escapeIlikeValue(property))
-      .eq('is_active', true)
-      .select('id, plate')
-    if (error) {
-      console.error('[B166-owner-trim-failed]', { sourceAction, email, property, unit, error: error.message })
-      return
-    }
-    const affected = matched?.length || 0
-    if (affected > 0) {
-      // F6 verify-after-write: re-SELECT the matched ids and confirm
-      // is_active=false. Non-fatal; log mismatch.
-      const { data: verify } = await supabase
-        .from('vehicles')
-        .select('id, is_active')
-        .in('id', matched!.map(v => v.id))
-      const mismatched = (verify || []).filter(v => v.is_active !== false)
-      if (mismatched.length > 0) {
-        console.error('[B166-owner-trim-verify-mismatch]', { sourceAction, email, property, unit, affected, mismatchedCount: mismatched.length })
-      }
-      await logAudit({
-        action: 'B166_OWNER_TRIM',
-        table_name: 'vehicles',
-        new_values: {
-          source: sourceAction,
-          resident_email: email,
-          property,
-          unit,
-          vehicles_affected: affected,
-          plates: matched!.map(v => v.plate),
-        },
-      })
-    }
-  }
+  // trimDepartedResidentVehicles moved to app/lib/manager-crm-writes.ts
+  // (Phase B1) — same B166 owner-trim shape. Call sites in this file now
+  // prepend `supabase` and pass positional args (email, unit, property,
+  // sourceAction) verbatim.
 
   // B150 — vehicle-lifecycle cascade. Fires when the LAST active resident
   // at a (unit, property) tuple leaves. Roommate-safe: gate-check counts
