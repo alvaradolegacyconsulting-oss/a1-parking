@@ -2547,7 +2547,7 @@ export default function ManagerPortal() {
 
         <div style={{ marginBottom:'16px', textAlign:'center' }}>
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{managerCompany || 'ShieldMyLot'}</h1>
-          <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Property Manager Portal</p>
+          <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Property Manager Portal · <a href="/manager/mobile" style={{ color:'#C9A227' }}>📱 Mobile view</a></p>
         </div>
 
         {allProperties.length > 1 && (
