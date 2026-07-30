@@ -6,7 +6,7 @@ kickoff.** Read it first; it is the source of truth for where things stand.
 **Should live in the repo** (`docs/CURRENT_STATE.md`) so Mateo can read and maintain it. Jose
 uploads the current copy to project knowledge when starting a new chat.
 
-*Last updated: July 29, 2026 — rolling-30 visitor pass semantics shipped + verified*
+*Last updated: July 29, 2026 (end of day) — rolling-30 + /qr from DB + resident export + CA silent-read sweep + CA Activity scope fix + grant audit closed on authenticated*
 
 ---
 
@@ -90,10 +90,20 @@ rename — header marked **APPLIED 2026-07-28, property 143**.
 | `ec4493f` | Visitor pass limit — rolling-30 semantics (11 items, one commit): SQL migration + client + copy + smoke script + backlog file |
 | `0a46ed5` | Rolling-30 verification+diagnostic v2 — whitespace-normalized + structural count (VQ.GATED_EXIT_COUNT) after v1's `%within%CASE WHEN v_is_anon%` false-failed a correct function |
 | `35b18eb` | Rolling-30 verification+diagnostic v3 — absence checks scoped to executable-clause form + `::regprocedure` pin; VQ.NO_JWT_IS_NULL_TRAP matches assignment `:= (auth.jwt()` (bare-token match false-failed on its own anti-refactor comment) |
+| `0ee2b75` | CURRENT_STATE bundle post-rolling-30 |
+| `99d88a9` | `/qr` derives from `properties` table (root defect behind Green Acers/Acres divergence); role gate admin+CA; branding follows selected property's company |
+| `9b73b53` | `/qr` follow-ups — print CSS, `get_my_role()` RPC (was `.ilike('email')` + `.maybeSingle()` — silent-denial + duplicate-row false-fail), `marginSize` for qrcode.react v4, gate framing corrected |
+| `ec09e8f` | Manager Residents CSV export — `↓ Export CSV` on Residents header; flatten+serialize helpers reusable at CA portfolio scope; `EXPORT_RESIDENT_LIST` audit row; UTF-8 BOM + CRLF + quote-and-double CSV escaping |
+| `ca658de` | CA silent-read sweep — 10 fetch handlers destructure `error` + log `[CA <handler>]` (8 more context-heavy sites deferred); root case: A1 CA-portal Activity tab investigation |
+| `fea21d5` | CA Activity scope fix — `fetchViolations(propertyNames: string[])` via `.in()` portfolio-wide + tab-arrival `useEffect`; parity confirmed pre-apply (6 distinct violations.property values, all exact_match=loose_match=1); voided_at inconsistency reported not silently aligned |
 
 Plus `20260728_user_roles_update_grant_fix.sql` applied (fixed 5-day CA-write regression from July 22
 `GRANT INSERT` omission of UPDATE) and the alias schema applied to prod ahead of the rename.
 Rolling-30 migration + verification v3 applied 2026-07-29; probe-verified silent on Test-LEGACY.
+Grant audit closed on `authenticated` side 2026-07-29 (Jose SQL): `property_name_aliases` correctly has zero
+grants — access is definer-only via `get_property_for_visitor`. **Do NOT grant SELECT there** — the table has
+exactly one legitimate reader and grants would widen access. Anon-side audit still outstanding to close the item
+fully.
 
 ### ✅ Visitor pass limit — rolling 30 days (2026-07-29, `ec4493f` + `35b18eb`)
 
@@ -128,6 +138,21 @@ path only fires on a direct POST.
 **Ships next on these functions:** [plate-status-company-scoping](../backlog/plate-status-company-scoping.md)
 (formerly "Commit B") MUST inherit this body — 4 `VQ.INHERIT_*` guards specified in that file so the widening
 can't silently revert the 30-day predicate or the anon count-strip.
+
+### Non-blocking residuals from today's arc
+
+- **CA Activity — expect two `violations` requests on first tab visit.** `fetchAll` (L679) and the new tab-arrival
+  `useEffect` (2026-07-29) both fire the first time a user clicks Activity after load. Harmless; not fixing.
+  `properties` is `useState`-backed so its reference is stable — this is NOT a render loop. Cleaner shape (dropping
+  `fetchViolations` from `fetchAll` and letting the tab own its own load) is a refactor for a real reason, not
+  this one.
+- **`fetchViolations`'s `.in('property', …)` is name-keyed — inherited, not introduced.** The query has no
+  company predicate; tenancy comes from `.in()` being built from the CA's own property names + RLS as the
+  backstop. Cross-company property-name collision would let a CA read another tenant's violations at that name.
+  Same shape as the prior `.ilike('property', property)` — the July 29 change did NOT introduce this exposure.
+  Filed at the FK epic; **higher sensitivity than most of the 141** because it's a read of another tenant's
+  enforcement records on a paying-customer daily surface. Durable fix: `property_id` FK, same as everywhere.
+  Latent today (zero cross-company property-name collisions verified 2026-07-27).
 
 ### Confirmed bugs (open, ranked)
 
@@ -419,6 +444,18 @@ control / pattern VQ / absence check going forward:
   check matching a comment **fails a correct function**. Any `NOT LIKE` needs a form prose
   cannot contain: an assignment (`:= (auth.jwt()`), an operator with operands
   (`AND expires_at > now()`), a full clause. Bare tokens are documentation-fragile.
+
+### From the CA Activity investigation (2026-07-29)
+
+Two failure classes need different guards; they don't substitute for each other:
+
+- **A visibility improvement makes failures visible, not incorrect successes.** The CA silent-read
+  sweep (`ca658de`) surfaces errored fetches as `[CA <handler>] failed` in the console. It does
+  NOT protect against a query that returns HTTP 200 with fewer rows than intended — no error,
+  nothing logged. That's why the parity check (`.in()` exact-match safety on
+  `violations.property` vs `properties.name`) had to run BEFORE `fea21d5` shipped: same-symptom
+  outcome (empty results) but different failure mode. **Ship the sweep first so scope-change
+  errors are visible; run the parity check separately so wrong results don't ship silently.**
 
 **Supabase editor:** paste verification files **whole** — the auto-RLS helper injects
 `ALTER TABLE … ENABLE ROW LEVEL SECURITY` into partial pastes and breaks dollar quoting. This is
