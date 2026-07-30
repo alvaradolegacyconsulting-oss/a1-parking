@@ -1564,7 +1564,7 @@ export default function ManagerPortal() {
 
     // Widened SELECT (id + plate + resident_email) so failures can be
     // named by plate in the summary and the phase-2 eligibility gate
-    // can match against phase-1's failed emails.
+    // can match resident_email against the active-resident allow set.
     const { data: allPendingVehicles, error: vehListErr } = await supabase
       .from('vehicles').select('id, plate, resident_email')
       .ilike('property', manager.name).eq('status', 'pending')
@@ -1573,6 +1573,24 @@ export default function ManagerPortal() {
       alert(`Could not load pending vehicles: ${vehListErr.message}\n\nNo approvals were attempted.`)
       return
     }
+    // Snapshot of ALREADY-active resident emails at this property. Feeds
+    // the phase-2 allow-list alongside phase-1's succeeded residents.
+    // Without this, a vehicle whose resident is already active (later-
+    // added via +Request-Vehicle, common at Green Acres) would be
+    // approved via a deny-list (not-in-failed = eligible); that's the
+    // failure mode Mateo flagged 2026-07-30. Allow-list requires
+    // known-good, which is correct by construction.
+    const { data: activeResidents, error: activeErr } = await supabase
+      .from('residents').select('email')
+      .ilike('property', manager.name).eq('is_active', true)
+    if (activeErr) {
+      console.error('[Manager approveAllPendingCrm] active-residents snapshot failed', activeErr)
+      alert(`Could not load active residents: ${activeErr.message}\n\nNo approvals were attempted.`)
+      return
+    }
+    const alreadyActiveEmails = new Set(
+      (activeResidents ?? []).map(r => (r.email || '').toLowerCase().trim()).filter(Boolean)
+    )
     const rCount = pendingResidentsForBulk.length
     const vCount = (allPendingVehicles ?? []).length
     if (rCount === 0 && vCount === 0) {
@@ -1588,6 +1606,16 @@ export default function ManagerPortal() {
     if (!window.confirm(`Approve ${scope}${suffix}?\n\nResidents are approved first. Vehicles are approved only for residents whose approval succeeds.`)) return
 
     // ── Phase 1: parallel resident UPDATEs, per-row result capture ──
+    // Duplicate-path note (2026-07-30): approveResident (the per-row
+    // handler ~L1479+) writes {is_active: true, status: 'active',
+    // manager_note: note} and handles an optional per-row space
+    // assignment from pendingResidentAssignSpaceId. The bulk loop
+    // writes the same two-field state minus the note (no per-row
+    // note input at the bulk lane) and skips the space assignment
+    // (no per-row space picker at the bulk lane). Keep this write
+    // in sync with approveResident's residents UPDATE when the
+    // helper-determinism epic changes resident status semantics —
+    // any status/is_active change belongs in BOTH sites.
     type ResidentResult = { r: any; ok: boolean }
     const residentResults: ResidentResult[] = await Promise.all(
       pendingResidentsForBulk.map(async (r): Promise<ResidentResult> => {
@@ -1617,19 +1645,54 @@ export default function ManagerPortal() {
     const failedResidentEmails = new Set(
       failedResidents.map(r => (r.email || '').toLowerCase().trim()).filter(Boolean)
     )
-
-    // ── Phase 2: eligibility-gated vehicle approvals ────────────────
-    // Skip vehicles whose resident_email is in the phase-1 failed set.
-    // Vehicles under already-active residents (not in the bulk list at
-    // all) pass through — their email isn't in failedResidentEmails.
-    // Vehicles with null resident_email pass through (unit-shared).
-    const eligibleVehicles = (allPendingVehicles ?? []).filter(v =>
-      !failedResidentEmails.has((v.resident_email || '').toLowerCase().trim())
-    )
-    const skippedVehicles = (allPendingVehicles ?? []).filter(v =>
-      failedResidentEmails.has((v.resident_email || '').toLowerCase().trim())
+    const phase1SucceededEmails = new Set(
+      residentResults.filter(x => x.ok).map(x => (x.r.email || '').toLowerCase().trim()).filter(Boolean)
     )
 
+    // ── Phase 2: eligibility-gated vehicle approvals (allow-list) ───
+    // Vehicle is eligible only if its resident is NOW active:
+    //   • already-active at property (alreadyActiveEmails), OR
+    //   • succeeded in phase 1 (phase1SucceededEmails)
+    // Vehicles with null resident_email pass through (unit-shared;
+    // no resident to gate on).
+    //
+    // Allow-list not deny-list: a deny-list ("not in failedResidentEmails")
+    // would approve any vehicle we never evaluated — pending resident
+    // outside this batch, orphan resident_email with no matching row.
+    // Correct by construction requires known-good. Failure mode Mateo
+    // flagged 2026-07-30; today's Green Acres data has zero such rows
+    // so the outcome is unchanged, but the shape is the durable one.
+    const activeResidentEmails = new Set<string>([
+      ...alreadyActiveEmails,
+      ...phase1SucceededEmails,
+    ])
+    const isEligible = (v: { resident_email: string | null }) => {
+      const email = (v.resident_email || '').toLowerCase().trim()
+      if (!email) return true    // unit-shared vehicle
+      return activeResidentEmails.has(email)
+    }
+    const eligibleVehicles = (allPendingVehicles ?? []).filter(isEligible)
+    // Split skipped into two categories so the summary can name why:
+    //   • resident approval failed (in this batch, phase 1 returned error)
+    //   • resident not approved (resident_email matches no active row and
+    //     wasn't in this batch — either pending outside the batch or
+    //     orphan email with no matching residents row)
+    const skippedFailedApproval = (allPendingVehicles ?? []).filter(v => {
+      const email = (v.resident_email || '').toLowerCase().trim()
+      return !!email && failedResidentEmails.has(email)
+    })
+    const skippedResidentNotApproved = (allPendingVehicles ?? []).filter(v => {
+      const email = (v.resident_email || '').toLowerCase().trim()
+      if (!email) return false
+      return !activeResidentEmails.has(email) && !failedResidentEmails.has(email)
+    })
+
+    // Phase 2 write path — same approve_vehicle RPC that per-row
+    // approveVehicle (~L1145) calls, deliberately bypassing that
+    // wrapper for the meter-once discipline (wrapper fires
+    // callSyncOnAdd per call = N× billing; we fire ONE post-batch
+    // sync at Phase 3). Keep in sync with approveVehicle when the
+    // RPC's arguments or return shape change.
     type VehicleResult = { v: any; ok: boolean; action: string | null }
     const vehicleResults: VehicleResult[] = await Promise.all(eligibleVehicles.map(async v => {
       const { data, error } = await supabase.rpc('approve_vehicle', {
@@ -1663,6 +1726,10 @@ export default function ManagerPortal() {
 
     // ── Phase 4: summary FIRST (feedback-before-refresh, 9a47464) ──
     // Failures named by plate / resident name, never row id (spec).
+    // alert() is desktop-appropriate but Build 2 (mobile view) will
+    // render this inline — a phone alert with a multi-line failure
+    // list scans poorly. Extract to a shared summary helper when
+    // Build 2 lands rather than reformatting here.
     const rSucceeded = residentResults.filter(x => x.ok).length
     const vSucceeded = vehicleResults.filter(x => x.ok).length
     const vAttempted = eligibleVehicles.length
@@ -1680,9 +1747,13 @@ export default function ManagerPortal() {
         const plates = failedVehicles.map(x => x.v.plate || `(id ${x.v.id})`).join(', ')
         summaryLines.push(`  ↳ Failed: ${plates}`)
       }
-      if (skippedVehicles.length > 0) {
-        const plates = skippedVehicles.map(v => v.plate || `(id ${v.id})`).join(', ')
-        summaryLines.push(`  ↳ ${skippedVehicles.length} skipped (resident approval failed): ${plates}`)
+      if (skippedFailedApproval.length > 0) {
+        const plates = skippedFailedApproval.map(v => v.plate || `(id ${v.id})`).join(', ')
+        summaryLines.push(`  ↳ ${skippedFailedApproval.length} skipped (resident approval failed): ${plates}`)
+      }
+      if (skippedResidentNotApproved.length > 0) {
+        const plates = skippedResidentNotApproved.map(v => v.plate || `(id ${v.id})`).join(', ')
+        summaryLines.push(`  ↳ ${skippedResidentNotApproved.length} skipped (resident not approved): ${plates}`)
       }
     }
     alert(`Bulk approval complete.\n\n${summaryLines.join('\n')}`)
