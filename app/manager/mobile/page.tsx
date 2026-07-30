@@ -263,7 +263,7 @@ export default function ManagerMobilePage() {
       await refetchPending()
     } catch (e) {
       console.error('[Manager mobile] approveResident failed', e)
-      setWriteError((e as Error).message || 'Approval failed. Refresh and try again.')
+      setWriteError(friendlyWriteError(e, 'single'))
     } finally {
       setBusyResidentId(null)
     }
@@ -279,7 +279,7 @@ export default function ManagerMobilePage() {
       await refetchPending()
     } catch (e) {
       console.error('[Manager mobile] declineResident failed', e)
-      setWriteError((e as Error).message || 'Decline failed. Refresh and try again.')
+      setWriteError(friendlyWriteError(e, 'single'))
     } finally {
       setBusyResidentId(null)
     }
@@ -303,7 +303,7 @@ export default function ManagerMobilePage() {
       await refetchPending()
     } catch (e) {
       console.error('[Manager mobile] approveVehicle failed', e)
-      setWriteError((e as Error).message || 'Approval failed. Refresh and try again.')
+      setWriteError(friendlyWriteError(e, 'single'))
     } finally {
       setBusyVehicleId(null)
     }
@@ -316,7 +316,7 @@ export default function ManagerMobilePage() {
       await refetchPending()
     } catch (e) {
       console.error('[Manager mobile] declineVehicle failed', e)
-      setWriteError((e as Error).message || 'Decline failed. Refresh and try again.')
+      setWriteError(friendlyWriteError(e, 'single'))
     } finally {
       setBusyVehicleId(null)
     }
@@ -347,8 +347,13 @@ export default function ManagerMobilePage() {
         })),
       })
       if (!result.ok) {
-        setWriteError(`Bulk approve failed: ${(result.error as any)?.message ?? String(result.error)}`)
-        await refetchPending()
+        // runBulkApprove returns {ok:false} ONLY when the pre-phase-1
+        // active-residents fetch fails — verifiable "no writes attempted"
+        // path, so the "nothing was changed" copy is accurate here.
+        // (Mid-batch throws land in the catch(e) branch below with the
+        // different copy that mentions the refetch.)
+        console.error('[Manager mobile] bulk approve pre-flight failed', result.error)
+        setWriteError(friendlyWriteError(result.error, 'bulk-preflight-failed'))
         return
       }
       // Render summary INLINE (not alert) via .lines — feedback-before-
@@ -356,8 +361,12 @@ export default function ManagerMobilePage() {
       setBulkSummary(buildBulkApproveSummary(result.summary).lines)
       await refetchPending()
     } catch (e) {
-      console.error('[Manager mobile] bulk approve failed', e)
-      setWriteError((e as Error).message || 'Bulk approve failed. Refresh and try again.')
+      // Mid-batch throw — writes may have partially completed. Refetch
+      // BEFORE showing the message so the visible queue matches the
+      // "the queue has been refreshed to show what actually landed" copy.
+      console.error('[Manager mobile] bulk approve mid-batch failure', e)
+      await refetchPending()
+      setWriteError(friendlyWriteError(e, 'bulk-mid-batch'))
     } finally {
       setBulkBusy(false)
     }
@@ -439,7 +448,7 @@ export default function ManagerMobilePage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', gap: '10px' }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ color: C.gold, fontSize: '18px', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{property}</div>
-          <div style={{ color: C.muted, fontSize: '11px' }}>Manager mobile · <a href="/manager" style={{ color: C.gold }}>Desktop view →</a></div>
+          <div style={{ color: C.muted, fontSize: '11px' }}>Resident &amp; vehicle approvals · <a href="/manager" style={{ color: C.gold }}>Desktop view →</a></div>
         </div>
         <button
           onClick={() => setScreen(screen === 'queue' ? 'lookup' : 'queue')}
@@ -726,6 +735,34 @@ function ButtonRow({ canApprove, busy, onApprove, onDecline }: {
       </button>
     </div>
   )
+}
+
+// Friendly error copy — raw JS/server error strings NEVER reach the user
+// (memory: feedback_raw_error_never_reaches_user.md). console.error keeps
+// the raw string for diagnostics; this returns a message the manager can
+// actually act on.
+function friendlyWriteError(e: unknown, action: 'single' | 'bulk-preflight-failed' | 'bulk-mid-batch'): string {
+  const err = e as Error
+  const msg = err?.message || ''
+  const isNetwork = e instanceof TypeError
+    || /Load failed|Failed to fetch|NetworkError|network|ECONNREFUSED|timeout/i.test(msg)
+  switch (action) {
+    case 'single':
+      return isNetwork
+        ? "Couldn't reach the server. Check your connection and try again."
+        : 'Action failed. Try again.'
+    case 'bulk-preflight-failed':
+      // Verifiable: only the pre-phase-1 fetch inside runBulkApprove failed.
+      // No writes were attempted. The "nothing was changed" copy is load-
+      // bearing here — it answers the manager's exact question.
+      return "Couldn't load the current state. Check your connection and try again — nothing was changed."
+    case 'bulk-mid-batch':
+      // Writes may have partially completed. Copy references the refetch
+      // so the visible state matches the message.
+      return isNetwork
+        ? 'Connection dropped during the bulk approve. Some approvals may have gone through — the queue has been refreshed to show what actually landed.'
+        : 'Bulk approve had a problem. The queue has been refreshed to show what actually landed.'
+  }
 }
 
 function vehicleStatusLabel(v: LookupVehicle): string {
