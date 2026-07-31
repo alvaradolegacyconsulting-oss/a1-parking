@@ -6,7 +6,7 @@ kickoff.** Read it first; it is the source of truth for where things stand.
 **Should live in the repo** (`docs/CURRENT_STATE.md`) so Mateo can read and maintain it. Jose
 uploads the current copy to project knowledge when starting a new chat.
 
-*Last updated: July 29, 2026 (end of day) — rolling-30 + /qr from DB + resident export + CA silent-read sweep + CA Activity scope fix + grant audit closed on authenticated*
+*Last updated: July 30, 2026 — bulk approve (ordered) + manager mobile approvals, both verified*
 
 ---
 
@@ -105,6 +105,17 @@ grants — access is definer-only via `get_property_for_visitor`. **Do NOT grant
 exactly one legitimate reader and grants would widen access. Anon-side audit still outstanding to close the item
 fully.
 
+### Shipped July 30
+
+| Commit | What |
+|---|---|
+| `e0223aa` | Bulk approve — ordered combined action, residents then eligible vehicles |
+| `c045416` | Allow-list eligibility gate + split skip reasons |
+| `3917dff` | `buildBulkApproveSummary` extracted + denominator fix |
+| `f02ce52` | Write cores + `runBulkApprove` extracted to `manager-crm-writes.ts` (−323 lines in the surface) |
+| `b914fd1` | Manager mobile approvals view (`/manager/mobile`) |
+| `162f562` | Naming + `friendlyWriteError()` — raw errors never reach the user |
+
 ### ✅ Visitor pass limit — rolling 30 days (2026-07-29, `ec4493f` + `35b18eb`)
 
 `visitor_pass_limit` was labelled "per year" and counted **concurrent active passes** — neither per year nor per
@@ -139,6 +150,50 @@ path only fires on a direct POST.
 (formerly "Commit B") MUST inherit this body — 4 `VQ.INHERIT_*` guards specified in that file so the widening
 can't silently revert the 30-day predicate or the anon count-strip.
 
+### ✅ Bulk approve — ordered combined action (2026-07-30)
+
+`Approve all pending` approves **residents first, then vehicles whose resident is now active.** Phase 2's
+eligibility is an **allow-list** gated on phase-1 *results*, not the pre-phase snapshot — a deny-list would
+approve vehicles whose resident was never evaluated (outside the batch, or `resident_email` matching no row),
+leaving an authorized car for someone unapproved.
+
+Skips report their reason separately: *"resident approval failed"* vs *"resident not approved."*
+
+**Meter-once lives in exactly one place** — `approveVehiclesBatch()` in `app/lib/manager-crm-writes.ts`. Both
+`runBulkApprove` phase 2 and the per-row unit cascade compose it. One `callSyncOnAdd` per batch, never per item.
+
+**Summary denominator is the pre-eligibility count**, matching the confirmation dialog. Invariant asserted in a
+comment above `buildBulkApproveSummary`: successes + failures + skips === attempted. Before the fix the
+confirmation said "5 vehicles" and the summary said "3 of 4" — both correct, silently different denominators.
+
+**Verified on Test-LEGACY**, reproduced identically after the extraction:
+`1 of 1 resident · 1 of 3 vehicles · Failed: BULKAPPROVE · 1 skipped (resident not approved): ORPHAN01`.
+Network trace showed **two** `approve_vehicle` calls for three pending vehicles — the skip never reaches the
+network — and no read burst while the summary dialog was open, demonstrating feedback-before-refresh.
+
+### ✅ Manager mobile approvals — `/manager/mobile` (2026-07-30)
+
+Narrow-purpose surface: pending queue, approve/decline (per-row and bulk), and lookup by unit or plate.
+**Deliberately excludes** editing, spaces, violations, visitor passes, CSV export, and deactivate — destructive
+cascades stay on desktop.
+
+- **Role gate: `manager` and `admin` only.** Leasing agents are `isReadOnly` on desktop; admitting them to an
+  approve/decline surface would be a write expansion arriving via a convenience feature. **When A1 asks, the
+  shape is read-only mobile** — queue and lookup visible, no action buttons.
+- **Property from `get_my_properties()`** (DEFINER, equality on lowered email) — no `user_roles` read for
+  property, nothing added to the 141. `can_approve_vehicles` uses the *escaped* `.ilike` form. Filed:
+  `get_my_can_approve_vehicles()` DEFINER RPC would remove the last direct read.
+- **Narrow reads throughout** — pending-only on load, search on demand, refetch just the pending list after a
+  write. `refreshCrmData()` is never called from mobile.
+- **PM-only never cascades.** Per-row resident approval on `pm_only` leaves their vehicles pending, where they
+  appear in the queue — **the pending list is the confirmation.** Non-metered tiers cascade normally.
+- `companyIdForSync` wired to match desktop — without it, mobile bulk approve would have metered zero permits
+  and drifted the Stripe counter silently on PM-Only.
+
+**Verified on device:** leasing agent blocked · approved plate returns via lookup with no action buttons ·
+**cross-company plate returns nothing** (tenancy holds on the new queries) · decline cascade confirmed by a 10/2
+split across residents and vehicles · touch targets and keyboard clean · Airplane Mode surfaces a red banner.
+
 ### Non-blocking residuals from today's arc
 
 - **CA Activity — expect two `violations` requests on first tab visit.** `fetchAll` (L679) and the new tab-arrival
@@ -156,12 +211,11 @@ can't silently revert the 30-day predicate or the anon count-strip.
 
 ### Confirmed bugs (open, ranked)
 
-- 🔴 **`approveAllPendingProperty` — no property-level bulk vehicle approve.** 23 pending vehicles at Green Acres
-  today, growing daily; each is an individual click. Resident bulk-approve exists in the CRM and refreshes once
-  rather than per row. **This outranks add-vehicle.**
 - 🔴 **No pending-queue notification.** Nothing tells a manager that registrations are waiting. From outside,
   "reviewing at their own pace" and "doesn't know they're there" are indistinguishable. At 10–20/day for a
-  month, that queue needs a nudge — digest email or a badge that survives logout.
+  month, that queue needs a nudge — digest email or a badge that survives logout. Mobile approvals lands
+  Miriam directly in the queue when she opens the app, which partly answers this for engaged managers; a
+  persistent badge or digest is still worth doing for the disengaged case.
 - **Email `~~*` in RLS policies (PII disclosure).** 24 SELECT-only policy sites using `email ~~* auth.jwt`
   wildcard-match on the caller's own email. Fix: change to `lower(email) = lower(jwt->>'email')` — its own
   commit, three-file, negative control that a `_`-substituted email no longer matches victim. Ungated
@@ -180,13 +234,37 @@ can't silently revert the 30-day predicate or the anon count-strip.
 2. **`/register` Step 3 review row and the Submitted screen** — two of the three fixed display sites the
    go-live screenshots didn't reach. Reachable with a throwaway `+probe` email on Test-LEGACY.
 
+### Filed follow-ups (2026-07-30)
+
+- **`get_my_can_approve_vehicles()` DEFINER RPC** — completes the helper family (`get_my_role`,
+  `get_my_company`, `get_my_properties`) and removes the last direct `user_roles` read on the mobile surface.
+  Small, low-risk migration.
+- **Read-only mobile for leasing agents** — the shape (queue + lookup visible, no action buttons) is decided.
+  **Do not ship until A1 asks** — no leasing agents are active on production today, and building it now would
+  be shipping past demand.
+- **`approveAllForUnit` / `approveAllPendingProperty` could adopt `approveVehiclesBatch` cheaply** — both are
+  bulk-shaped and share the meter-once discipline that now lives in the primitive. **Dead-code question on
+  `approveAllPendingProperty`:** with `approveAllPendingCrm` now the ordered combined action and both mobile
+  and desktop callers converging there, `approveAllPendingProperty` may have no callers left. Grep + confirm
+  before removing.
+- **A1 comms backlog** — home-screen affordance available today · manager 7-day violation window ·
+  voided rows now hidden · bulk approve live · **mobile approvals live** · collision-loser plates must be
+  **declined or corrected**, never retried (unique index rejects them on every bulk run).
+
 ### Queued for next session
 
 **[plate-status-company-scoping](../backlog/plate-status-company-scoping.md)** (formerly "Commit B" — renamed
 2026-07-29 because `vehicle-state.ts` already has a "Migration B" and both touch enforcement). Follow-on
 FK-epic item **`visitor-pass-trigger-scoping`** (formerly "Commit C").
 
-Then the email `~~*` → equality commit, `approveAllPendingProperty`, and the `PM_CRM_ENABLED` parity sweep.
+Then:
+1. **Anon-side grant audit** — one query, closes an item queued since the `user_roles` fix
+2. **email `~~*` → equality** — the only ungated security item, 24 sites
+3. **plate-status-company-scoping** — with the 4 `VQ.INHERIT_*` guards so widening can't silently revert
+   the rolling-30 body
+4. **Bar-2:** metacharacter validation blocker · cross-tenant cascade at `admin/page.tsx:470-509`
+5. **A1:** operator-license conversation · what a tow ticket renders when the field is empty · `PM_CRM_ENABLED`-
+   branch parity sweep · `resetResidentPassword` parity-audit follow-on
 
 ---
 
@@ -456,6 +534,23 @@ Two failure classes need different guards; they don't substitute for each other:
   `violations.property` vs `properties.name`) had to run BEFORE `fea21d5` shipped: same-symptom
   outcome (empty results) but different failure mode. **Ship the sweep first so scope-change
   errors are visible; run the parity check separately so wrong results don't ship silently.**
+
+### From the manager mobile arc (2026-07-30)
+
+Two disciplines from the bulk-approve + mobile-approvals arc, general enough to carry into the next
+user-facing surface:
+
+- **Never render a raw error to a user, and only claim *"nothing was changed"* when the return shape proves it.**
+  Airplane-Mode testing surfaced `TypeError: Load failed` to a property manager. Fixed by classifying transport
+  vs server failure, and — the subtler half — distinguishing a bulk **pre-flight** failure (provably no writes)
+  from a **mid-batch** drop (writes may have landed). On mid-batch the queue is refetched *before* the message,
+  so *"the queue has been refreshed"* is verifiable rather than a claim. The load-bearing pattern:
+  `friendlyWriteError(e, action)` returns copy chosen for what the manager needs to know, not what the runtime
+  threw.
+- **Name the job, not the device.** *"Mobile view"* invited managers to expect the whole portal on a phone;
+  *"Mobile approvals"* sets the scope in the label. Applies to any narrow-purpose surface split off a broad one
+  — the affordance name is the first thing that shapes user expectations, and a wrong name creates a support
+  question every time the missing feature is looked for.
 
 **Supabase editor:** paste verification files **whole** — the auto-RLS helper injects
 `ALTER TABLE … ENABLE ROW LEVEL SECURITY` into partial pastes and breaks dollar quoting. This is
