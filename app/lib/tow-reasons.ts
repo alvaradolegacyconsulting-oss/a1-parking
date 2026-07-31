@@ -60,20 +60,28 @@ export interface TowReason {
   pickerHint?: string
 }
 
+// ORDERING: alphabetical by label, with `other` PINNED LAST regardless
+// of sort (fallback belongs at the bottom of every picker). If a new
+// reason is added, insert it in alphabetical position and keep `other`
+// at the end. Rendering surfaces iterate this array as-is — no client
+// sort — so the file IS the order.
 export const TOW_REASONS: ReadonlyArray<TowReason> = [
-  { code: 'no_parking_permit',      label: 'No Parking Permit' },
-  { code: 'not_registered_visitor', label: 'Not Registered (Visitor)' },
+  { code: 'abandoned_vehicle',      label: 'Abandoned Vehicle' },
+  { code: 'blocking_access',        label: 'Blocking (Driveway / Gate / Access)' },
+  { code: 'compact_cars_only',      label: 'Compact Cars Only' },
+  { code: 'double_parked',          label: 'Double Parked' },
   { code: 'expired_visitor_pass',   label: 'Expired Visitor Pass' },
-  { code: 'wrong_space',            label: 'Wrong Space / Unauthorized Space' },
-  { code: 'reserved_parking',       label: 'Reserved Parking' },
-  { code: 'no_parking_zone',        label: 'No Parking Zone' },
   { code: 'fire_lane',              label: 'Fire Lane' },
   { code: 'handicap_zone',          label: 'Handicap Zone' },
-  { code: 'blocking_access',        label: 'Blocking (Driveway / Gate / Access)' },
-  { code: 'double_parked',          label: 'Double Parked' },
-  { code: 'abandoned_vehicle',      label: 'Abandoned Vehicle' },
   { code: 'inoperable_vehicle',     label: 'Inoperable Vehicle' },
-  { code: 'compact_cars_only',      label: 'Compact Cars Only' },
+  { code: 'no_parking_permit',      label: 'No Parking Permit' },
+  { code: 'no_parking_zone',        label: 'No Parking Zone' },
+  { code: 'not_registered_visitor', label: 'Not Registered (Visitor)' },
+  { code: 'parked_on_grass',        label: 'Parked on Grass / Landscaping' },
+  { code: 'reserved_parking',       label: 'Reserved Parking' },
+  { code: 'tow_away_zone',          label: 'Tow-Away Zone' },
+  { code: 'visitor_parking_only',   label: 'Visitor Parking Only' },
+  { code: 'wrong_space',            label: 'Wrong Space / Unauthorized Space' },
   { code: 'other',                  label: 'Other', pickerHint: 'Reason required, minimum 10 characters. This text appears on the tow ticket — describe why the vehicle was towed.' },
 ] as const
 
