@@ -160,7 +160,7 @@ function TicketView({ violation: v, photos }: { violation: ViolationRow; photos:
 
         {/* Warning banner */}
         <div style={warnStyle}>
-          ⚠ This vehicle has been towed pursuant to Texas Transportation Code §683. Contact the storage facility below to recover your vehicle.
+          ⚠ This vehicle has been towed pursuant to Texas Occupations Code Chapter 2308. Contact the storage facility below to recover your vehicle.
         </div>
 
         {/* Vehicle */}

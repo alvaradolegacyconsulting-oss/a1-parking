@@ -50,7 +50,14 @@
 
 export interface TowReason {
   code: string
+  // Printed on the tow ticket. Must describe why the vehicle was towed —
+  // NEVER carry form instructions (min chars, format hints). Instructions
+  // go in `pickerHint` and are shown only in the picker UI.
   label: string
+  // Shown as helper text below the reason picker when this option is
+  // selected. Never printed on the ticket. Use for form-only guidance
+  // (min chars, format rules, "pick this only if…" nudges).
+  pickerHint?: string
 }
 
 export const TOW_REASONS: ReadonlyArray<TowReason> = [
@@ -67,7 +74,7 @@ export const TOW_REASONS: ReadonlyArray<TowReason> = [
   { code: 'abandoned_vehicle',      label: 'Abandoned Vehicle' },
   { code: 'inoperable_vehicle',     label: 'Inoperable Vehicle' },
   { code: 'compact_cars_only',      label: 'Compact Cars Only' },
-  { code: 'other',                  label: 'Other (reason required, min 10 chars)' },
+  { code: 'other',                  label: 'Other', pickerHint: 'Reason required, minimum 10 characters. This text appears on the tow ticket — describe why the vehicle was towed.' },
 ] as const
 
 export type TowReasonCode = typeof TOW_REASONS[number]['code']

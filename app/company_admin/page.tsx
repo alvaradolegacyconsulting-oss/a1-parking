@@ -58,7 +58,7 @@ import { gateAccountState, AccountState } from '../lib/account-state'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { normalizePlate } from '../lib/plate'
-import { TOW_REASONS, RESTRICTED_ON_OVERRIDE, displayTowReason, type TowReasonCode } from '../lib/tow-reasons'
+import { TOW_REASONS, RESTRICTED_ON_OVERRIDE, displayTowReason, OTHER_NOTE_MIN_LENGTH, type TowReasonCode } from '../lib/tow-reasons'
 // B214 — guest_authorizations shared helpers (anti-drift; same source of
 // truth as manager portal). CA form's property dropdown sources from CA's
 // own company's active properties only (Jose lock 2026-06-20).
@@ -2764,6 +2764,17 @@ export default function CompanyAdminPortal() {
 
   async function submitViolation() {
     if (!violation.type || !violation.property) { alert('Violation type and property are required'); return }
+    // OTHER requires a describing note (min 10 chars) — the reason will
+    // appear on the tow ticket and 'Other' alone is not defensible under
+    // Chapter 2308. Server-side backstop via CHECK constraint on the
+    // violations table (violations_other_requires_note).
+    if (violation.type === 'other') {
+      const noteLen = (violation.notes || '').trim().length
+      if (noteLen < OTHER_NOTE_MIN_LENGTH) {
+        alert(`When "Other" is selected, please describe the reason in Notes (minimum ${OTHER_NOTE_MIN_LENGTH} characters). This text appears on the tow ticket.`)
+        return
+      }
+    }
     setSubmitting(true)
     // B18 Commit B: upload media first, then INSERT violation row with
     // is_confirmed=false, then INSERT photo rows into violation_photos.
@@ -3419,7 +3430,7 @@ export default function CompanyAdminPortal() {
           <div style="font-weight:bold">${String(v.id).substring(0, 8).toUpperCase()}</div>
         </div>
       </div>
-      <div class="warn">⚠ This vehicle has been towed pursuant to Texas Transportation Code §683. Contact the storage facility below to recover your vehicle.</div>
+      <div class="warn">⚠ This vehicle has been towed pursuant to Texas Occupations Code Chapter 2308. Contact the storage facility below to recover your vehicle.</div>
       <div class="sec"><div class="sh">Vehicle Information</div><div class="g2">
         <div class="f"><label>License Plate</label><span class="plate">${v.plate}</span></div>
         <div class="f"><label>State</label><span>${v.state || '—'}</span></div>
@@ -4288,6 +4299,11 @@ export default function CompanyAdminPortal() {
                       .filter(r => !(pendingDecline && RESTRICTED_ON_OVERRIDE.has(r.code as TowReasonCode)))
                       .map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
                   </select>
+                  {/* pickerHint — form-only helper text, NEVER prints on ticket. */}
+                  {(() => {
+                    const hint = TOW_REASONS.find(r => r.code === violation.type)?.pickerHint
+                    return hint ? <p style={{ color:'#fbbf24', fontSize:'11px', margin:'4px 0 0' }}>{hint}</p> : null
+                  })()}
                   <label style={lbl}>Space / Location</label>
                   <input value={violation.location} onChange={e => setViolation({ ...violation, location: e.target.value })} placeholder="e.g. Space A-14, North lot" style={inp} />
                   <label style={lbl}>Notes</label>
