@@ -515,8 +515,12 @@ function VisitorForm() {
               <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 6px', lineHeight:'1.6' }}>
                 If it&apos;s your vehicle, check your resident portal or contact your property manager — a visitor pass doesn&apos;t change how your vehicle is registered.
               </p>
+              {/* Non-permissive framing: state what a pass IS, don't
+                  grant permission to park. Platform describes; property
+                  rules decide. See
+                  feedback_platform_states_facts_not_permissions.md. */}
               <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 12px', lineHeight:'1.6' }}>
-                You can still issue a pass if you need to park today.
+                A pass can still be issued. It does not exempt any vehicle from this property&apos;s parking rules.
               </p>
               <div style={{ display:'flex', gap:'8px' }}>
                 <button

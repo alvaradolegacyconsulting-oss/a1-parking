@@ -1403,14 +1403,21 @@ export default function ResidentPortal() {
                               Pending copy names the "won't be recognised
                               until approved" fact; declined copy names
                               the "pass doesn't change that status" fact. */}
+                          {/* Non-permissive framing (2026-08-04 Mateo review):
+                              "lets you park" was a promise the system can't
+                              make — property rules decide, platform describes.
+                              Both clarifiers state what a pass IS/ISN'T and
+                              close with the "property's rules still apply"
+                              anchor. See
+                              feedback_platform_states_facts_not_permissions.md. */}
                           {v.status === 'pending' && (
                             <p style={{ color:'#888', fontSize:'11px', margin:'0 0 10px', lineHeight:'1.5', fontStyle:'italic' }}>
-                              A visitor pass lets you park today, but it doesn&apos;t change your registration — your vehicle won&apos;t be recognised as a resident vehicle until it&apos;s approved.
+                              Issuing a visitor pass won&apos;t change your registration. Your vehicle won&apos;t be recognised as a resident vehicle until it&apos;s approved, and your property&apos;s parking rules still apply.
                             </p>
                           )}
                           {v.status === 'declined' && (
                             <p style={{ color:'#888', fontSize:'11px', margin:'0 0 10px', lineHeight:'1.5', fontStyle:'italic' }}>
-                              A visitor pass doesn&apos;t change that status.
+                              A visitor pass doesn&apos;t change that status, and your property&apos;s parking rules still apply.
                             </p>
                           )}
                           {v.status === 'declined' && !v.resident_read && (
