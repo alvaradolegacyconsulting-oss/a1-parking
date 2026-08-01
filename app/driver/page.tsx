@@ -374,10 +374,29 @@ export default function DriverPortal() {
     const todayIso = new Date().toISOString().split('T')[0]
     // Parallel fetches — RLS already gates to driver's company.
     const [passRes, guestRes] = await Promise.all([
+      // 2026-08-01 SEED010 fix — is_active MUST be checked. The seed
+      // caught the negative-control gap: SEED010 was seeded with
+      // is_active=false + expires_at 10h in the future (revoked but
+      // unexpired), and rendered as an ACTIVE pass because this
+      // query filtered only on the time window. A manager or CA
+      // revoking a pass had zero effect on what drivers saw.
+      // Class rule: `is_active = true AND expires_at > now()` —
+      // BOTH, ALWAYS, EVERYWHERE. Same class as the stale-active
+      // finding (81 stale rows) inverted — that side was
+      // expired-but-flagged-active; this side is revoked-but-
+      // unexpired. Liveness is two independent facts; the predicate
+      // has to name both.
+      //
+      // Revoked-but-unexpired is now EXCLUDED from both sections
+      // (live and recently-expired). "Revoked" is a third state
+      // and inventing UI for it mid-arc is scope creep. If A1
+      // later wants revocation visible to drivers, that's its own
+      // small feature.
       supabase
         .from('visitor_passes')
         .select('plate, expires_at, created_at')
         .ilike('property', escapedProperty)
+        .eq('is_active', true)
         .gte('created_at', twentyFourHoursAgo)
         .order('created_at', { ascending: false }),
       // Guest auth: inline column selection (list only needs plate +
