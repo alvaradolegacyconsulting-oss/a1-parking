@@ -1708,8 +1708,47 @@ export default function DriverPortal() {
                   // signals "protected" — unmistakable at-a-glance vs any
                   // other cascade result, per Mateo's "unmistakable authorized
                   // styling, not red" spec.
-                  background: result.status === 'do_not_tow' ? '#0a1a08' : result.status === 'authorized' ? '#061406' : result.status === 'authorized_plate' ? '#061406' : result.status === 'plate_under_review' ? '#241a08' : result.status === 'visitor' ? '#150f00' : result.status === 'guest_authorized' ? '#0a1628' : '#140404',
-                  border: `1px solid ${result.status === 'do_not_tow' ? '#C9A227' : result.status === 'authorized' ? '#2e7d32' : result.status === 'authorized_plate' ? '#2e7d32' : result.status === 'plate_under_review' ? '#a16207' : result.status === 'visitor' ? '#a16207' : result.status === 'guest_authorized' ? '#3b82f6' : '#991b1b'}`
+                  //
+                  // 2026-08-01 P0 — EXPLICITLY ENUMERATE EVERY STATE. The
+                  // prior fallthrough → red default was fail-DANGEROUS: any
+                  // state not listed was rendered towable-red by default,
+                  // which is how `pending` shipped in the towable colour at
+                  // Green Acres. Adding a state to `plate-status.ts` and
+                  // forgetting the driver ternary must NOT produce a wrong-
+                  // colour badge silently — the failure mode is a tow.
+                  // Fallthrough is now grey ("we don't know what this is —
+                  // do not treat as authorized OR unauthorized"), which
+                  // reads as "verify before deciding" rather than "tow it."
+                  // Fast-follow: consolidate onto PLATE_STATUS_META so this
+                  // ternary retires entirely.
+                  background:
+                      result.status === 'do_not_tow'        ? '#0a1a08'
+                    : result.status === 'authorized'        ? '#061406'
+                    : result.status === 'authorized_plate'  ? '#061406'
+                    : result.status === 'pending'           ? '#241a08'
+                    : result.status === 'plate_under_review'? '#241a08'
+                    : result.status === 'visitor'           ? '#150f00'
+                    : result.status === 'guest_authorized'  ? '#0a1628'
+                    : result.status === 'otherproperty'     ? '#150f00'
+                    : result.status === 'declined'          ? '#140404'
+                    : result.status === 'expired'           ? '#140404'
+                    : result.status === 'unauthorized'      ? '#140404'
+                    : result.status === 'notfound'          ? '#140404'
+                    : '#1e2535',
+                  border: `1px solid ${
+                      result.status === 'do_not_tow'        ? '#C9A227'
+                    : result.status === 'authorized'        ? '#2e7d32'
+                    : result.status === 'authorized_plate'  ? '#2e7d32'
+                    : result.status === 'pending'           ? '#a16207'
+                    : result.status === 'plate_under_review'? '#a16207'
+                    : result.status === 'visitor'           ? '#a16207'
+                    : result.status === 'guest_authorized'  ? '#3b82f6'
+                    : result.status === 'otherproperty'     ? '#a16207'
+                    : result.status === 'declined'          ? '#991b1b'
+                    : result.status === 'expired'           ? '#991b1b'
+                    : result.status === 'unauthorized'      ? '#991b1b'
+                    : result.status === 'notfound'          ? '#991b1b'
+                    : '#3a4055'}`
                 }}>
                   {result.status === 'authorized' && (
                     <>

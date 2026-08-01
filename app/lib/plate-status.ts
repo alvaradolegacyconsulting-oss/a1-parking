@@ -83,20 +83,24 @@ const AUTHORIZED_META: PlateStatusMeta = {
 export const PLATE_STATUS_META: Record<PlateStatus, PlateStatusMeta> = {
   authorized:       AUTHORIZED_META,
   authorized_plate: AUTHORIZED_META,
+  // 2026-08-01 — imperatives stripped from user-facing copy per Mateo's
+  // Chapter-2308 posture: platform states facts, operators decide. The
+  // internal `isDoNotTow` flag stays TRUE (that's the enforcement-code
+  // invariant); the labels no longer command "DO NOT TOW."
   pending: {
-    label: 'REGISTRATION PENDING — DO NOT TOW',
+    label: 'REGISTRATION PENDING',
     bg: REVIEW_BG, border: REVIEW_BR, color: REVIEW_FG,
     doNotTow: true,
-    driverHeadline: '⚠ REGISTRATION PENDING — DO NOT TOW',
+    driverHeadline: '⚠ REGISTRATION PENDING',
     driverSubtitle: 'Resident has submitted this vehicle; awaiting PM approval.',
     pmHeadline: 'Under review',
     pmSubtitle: 'Permit approval pending. Do not treat as unauthorized.',
   },
   plate_under_review: {
-    label: 'PLATE UNDER REVIEW — DO NOT TOW',
+    label: 'PLATE UNDER REVIEW',
     bg: REVIEW_BG, border: REVIEW_BR, color: REVIEW_FG,
     doNotTow: true,
-    driverHeadline: '⚠ DO NOT TOW — plate change under review',
+    driverHeadline: '⚠ PLATE CHANGE UNDER REVIEW',
     driverSubtitle: 'Resident has requested this plate; awaiting PM approval.',
     pmHeadline: 'Plate change under review',
     pmSubtitle: 'A resident-submitted plate change is pending. Do not treat as unauthorized.',
@@ -155,6 +159,15 @@ export const PLATE_STATUS_META: Record<PlateStatus, PlateStatusMeta> = {
 
 // Load-bearing invariant on the enforcement side. Do NOT weaken by
 // adding an inline check at a call site — always route through this.
+//
+// NAMING NOTE (2026-08-01): `isDoNotTow` is an INTERNAL flag name.
+// User-facing copy must NEVER say "do not tow" — that's an operational
+// instruction the platform doesn't issue. Copy states facts; drivers
+// and property rules decide. If a later UI change reads this function
+// name and mirrors it into user-visible text, revert. The label +
+// driverHeadline + pmHeadline fields above are the authoritative
+// user-facing copy — none of them contain "do not tow" as of this
+// date. Keep it that way.
 export function isDoNotTow(status: PlateStatus): boolean {
   return PLATE_STATUS_META[status]?.doNotTow ?? false
 }
