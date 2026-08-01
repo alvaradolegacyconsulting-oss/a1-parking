@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
+import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { TOW_REASONS, RESTRICTED_ON_OVERRIDE, displayTowReason, OTHER_NOTE_MIN_LENGTH, type TowReasonCode } from '../lib/tow-reasons'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
@@ -79,8 +80,33 @@ export default function DriverPortal() {
   const [vin, setVin] = useState('')
 
   // Violations tab
-  const [activeTab, setActiveTab] = useState<'lookup' | 'violations'>('lookup')
+  const [activeTab, setActiveTab] = useState<'lookup' | 'violations' | 'passes'>('lookup')
   const [violations, setViolations] = useState<any[]>([])
+
+  // Active Passes tab (2026-08-01) — driver-facing view of live time-bounded
+  // grants at the property they're working. Plate-only per Jose decision;
+  // no visitor names, no vehicle descriptions, no visiting units. Row =
+  // plate + issued/expires (or start/end). Two sections: visitor passes
+  // + guest authorizations (togglable, default included). Third sub-
+  // section: recently-expired visitor passes (< 24h window, client-split
+  // on expires_at) — surfaces "pass ran out 40m ago" which plate lookup
+  // cannot distinguish from "never had a pass." See
+  // docs/backlog/... (this arc has no filed doc; spec is in commit
+  // message + chat).
+  const [activePasses, setActivePasses] = useState<Array<{ plate: string; created_at: string; expires_at: string }>>([])
+  const [expiredPasses, setExpiredPasses] = useState<Array<{ plate: string; created_at: string; expires_at: string }>>([])
+  const [activeGuestAuths, setActiveGuestAuths] = useState<Array<{ plate: string; start_date: string; end_date: string }>>([])
+  const [passesFetchState, setPassesFetchState] = useState<
+    { status: 'idle' | 'loading' | 'ok' | 'error' | 'unexpectedly_empty'; at: number }
+  >({ status: 'idle', at: 0 })
+  const [passesRefreshedAt, setPassesRefreshedAt] = useState<number>(0)
+  const [passesSearch, setPassesSearch] = useState<string>('')
+  const [includeGuestAuths, setIncludeGuestAuths] = useState<boolean>(true)
+  const [guestSectionCollapsed, setGuestSectionCollapsed] = useState<boolean>(false)
+  const [expiredSectionCollapsed, setExpiredSectionCollapsed] = useState<boolean>(false)
+  // Ticker to force relative-timestamp re-render every 30s without
+  // refetching data. Manager-surface pattern (page.tsx:376).
+  const [passesTicker, setPassesTicker] = useState<number>(0)
   const [violationFilter, setViolationFilter] = useState('today')
   const [searchQuery, setSearchQuery] = useState('')
   const [dateFrom, setDateFrom] = useState('')
@@ -104,6 +130,28 @@ export default function DriverPortal() {
       videoRef.current.play().catch(() => {})
     }
   }, [showCamera])
+
+  // Active Passes — refetch on tab activation OR property change while
+  // on the tab. Single-source refresh trigger (no ticker-driven
+  // refetch — ticker updates relative timestamps only, not data).
+  useEffect(() => {
+    if (activeTab === 'passes' && selectedProperty) {
+      fetchActivePasses(selectedProperty)
+    }
+    // fetchActivePasses is a closure over supabase (stable); safe to
+    // exclude from deps. Reactive on activeTab + selectedProperty only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedProperty])
+
+  // Active Passes — 30s ticker forces relative-timestamp re-render
+  // without refetching data. Manager-surface pattern (page.tsx:376).
+  // Auto-refetch that reorders the list under someone's thumb is
+  // worse than stale-by-a-minute (Mateo lock).
+  useEffect(() => {
+    if (activeTab !== 'passes') return
+    const id = setInterval(() => setPassesTicker(t => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [activeTab])
 
   async function loadDriver() {
     setLoading(true)
@@ -283,6 +331,153 @@ export default function DriverPortal() {
       }
     })
     setViolations(flattened)
+  }
+
+  // Active Passes fetch — 2026-08-01. Two queries in parallel: visitor
+  // passes (24h created_at window; client-splits live vs recently-
+  // expired on expires_at) + guest authorizations (active today, per
+  // driver cascade branch predicate). Property-scoped client-side;
+  // RLS (driver_read_passes + driver_read_guest_auths) already gates
+  // to driver's company.
+  //
+  // Three-outcome silent-read discipline: {data:[], error:null} is
+  // legitimate empty; {error} is transport/RLS/query failure;
+  // "unexpectedly empty" doesn't apply on first load (no prior state
+  // to compare) — use error branch only on this surface.
+  //
+  // Window rationale (visitor passes): visitor_passes cap at 24h TTL,
+  // so `created_at > now() - 24h` naturally captures live + recently
+  // lapsed. Splitting by `expires_at > now()` client-side gives the
+  // two sections. Elegant side-effect: the 81 stale is_active=true
+  // rows with old expiries fall OUT of the created_at window
+  // automatically — don't rely on is_active alone (81 stale vs 24
+  // real; is_active is a revocation flag, not a liveness flag).
+  //
+  // NOTE: no token-guard race pattern here — this surface has ONE
+  // trigger (tab activation) and ONE mutation site (setState below).
+  // Manager's fetchResidents needed the guard because rapid
+  // switchProperty caused overlapping fetches; this surface's tab
+  // switch is a single-fire event and property change routes through
+  // setSelectedProperty which triggers a refetch via the tab
+  // useEffect below (single-source). If we ever add rapid re-fetch
+  // triggers, add the useRef token pattern per
+  // feedback_last_write_wins_race_on_state_fetch.md.
+  async function fetchActivePasses(property: string) {
+    if (!property) {
+      setActivePasses([]); setExpiredPasses([]); setActiveGuestAuths([])
+      setPassesFetchState({ status: 'idle', at: Date.now() })
+      return
+    }
+    setPassesFetchState({ status: 'loading', at: Date.now() })
+    const escapedProperty = escapeIlikeValue(property)
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const todayIso = new Date().toISOString().split('T')[0]
+    // Parallel fetches — RLS already gates to driver's company.
+    const [passRes, guestRes] = await Promise.all([
+      supabase
+        .from('visitor_passes')
+        .select('plate, expires_at, created_at')
+        .ilike('property', escapedProperty)
+        .gte('created_at', twentyFourHoursAgo)
+        .order('created_at', { ascending: false }),
+      // Guest auth: inline column selection (list only needs plate +
+      // start_date + end_date; drops non_resident_reason to keep the
+      // list plate-only per PII decision).
+      supabase
+        .from('guest_authorizations')
+        .select('plate, start_date, end_date')
+        .ilike('property', escapedProperty)
+        .eq('is_active', true)
+        .eq('status', 'active')
+        .lte('start_date', todayIso)
+        .gte('end_date', todayIso)
+        .order('end_date', { ascending: true }),
+    ])
+    if (passRes.error || guestRes.error) {
+      console.error('[Driver fetchActivePasses] query failed', {
+        property,
+        pass_error: passRes.error,
+        guest_error: guestRes.error,
+      })
+      setPassesFetchState({ status: 'error', at: Date.now() })
+      // Prior state PRESERVED on error.
+      return
+    }
+    const allPasses = passRes.data ?? []
+    const now = Date.now()
+    // Client-side split on expires_at — separates the live from the
+    // recently-lapsed. is_active NOT part of the predicate (per
+    // Jose lock 2026-07-28 rolling-30 semantics; is_active is a
+    // revocation flag not a liveness flag).
+    const live = allPasses.filter(p => new Date(p.expires_at).getTime() > now)
+    const expired = allPasses.filter(p => new Date(p.expires_at).getTime() <= now)
+    // Live: ascending by expires_at (soonest-to-expire first — the
+    // driver's live risk). Expired: descending by expires_at (most-
+    // recently-lapsed first — most relevant conversation).
+    live.sort((a, b) => new Date(a.expires_at).getTime() - new Date(b.expires_at).getTime())
+    expired.sort((a, b) => new Date(b.expires_at).getTime() - new Date(a.expires_at).getTime())
+    setActivePasses(live)
+    setExpiredPasses(expired)
+    setActiveGuestAuths(guestRes.data ?? [])
+    setPassesFetchState({ status: 'ok', at: Date.now() })
+    setPassesRefreshedAt(Date.now())
+    console.info('[Driver fetchActivePasses] result', {
+      property,
+      live_count: live.length,
+      expired_count: expired.length,
+      guest_count: (guestRes.data ?? []).length,
+    })
+  }
+
+  // Relative-time helpers for the Active Passes tab. Kept local (manager
+  // has fmtAgo but different signature — this pair takes ISO strings,
+  // fmtAgo takes ms timestamps; extract to a lib helper if a third
+  // consumer needs it).
+  //
+  // fmtLeft: "4h 12m left" / "47m left" / "just now" — for live passes,
+  // measured against expires_at forward.
+  // fmtExpiredAgo: "expired 40m ago" / "expired 3h 15m ago" — for
+  // recently-expired passes, measured against expires_at backward.
+  // fmtIssued: "issued 8:47 PM" — absolute clock time, anchored to
+  // created_at for the "resident issued reactively" pattern signal.
+  //
+  // ticker dependency (passesTicker) drives re-render every 30s so
+  // these values stay current without a data refetch.
+  function fmtLeft(expiresAtIso: string): string {
+    void passesTicker
+    const ms = new Date(expiresAtIso).getTime() - Date.now()
+    if (ms <= 0) return 'expired'
+    const totalMin = Math.floor(ms / 60_000)
+    if (totalMin < 1) return 'less than 1m left'
+    if (totalMin < 60) return `${totalMin}m left`
+    const h = Math.floor(totalMin / 60)
+    const m = totalMin % 60
+    return m > 0 ? `${h}h ${m}m left` : `${h}h left`
+  }
+  function fmtExpiredAgo(expiresAtIso: string): string {
+    void passesTicker
+    const ms = Date.now() - new Date(expiresAtIso).getTime()
+    if (ms < 0) return 'not expired'
+    const totalMin = Math.floor(ms / 60_000)
+    if (totalMin < 1) return 'expired just now'
+    if (totalMin < 60) return `expired ${totalMin}m ago`
+    const h = Math.floor(totalMin / 60)
+    const m = totalMin % 60
+    return m > 0 ? `expired ${h}h ${m}m ago` : `expired ${h}h ago`
+  }
+  function fmtIssued(createdAtIso: string): string {
+    return `issued ${new Date(createdAtIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+  }
+  function fmtGuestRange(startDateIso: string, endDateIso: string): string {
+    void passesTicker
+    const end = new Date(endDateIso)
+    const now = new Date()
+    const diffDays = Math.ceil((end.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+    const endLabel = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    const daysLabel = diffDays <= 0 ? 'ends today'
+      : diffDays === 1 ? 'ends tomorrow'
+      : `${diffDays} days left`
+    return `through ${endLabel} · ${daysLabel}`
   }
 
   async function openCamera() {
@@ -593,7 +788,11 @@ export default function DriverPortal() {
     // approved_by_email (guest_auth) + visitor_name/phone, visiting_unit,
     // vehicle_*, notes (visitor_passes).
     const SAFE_GUEST_AUTH_COLS   = 'plate, start_date, end_date, non_resident_reason'
-    const SAFE_VISITOR_PASS_COLS = 'plate, expires_at'
+    // 2026-08-01 — created_at added for the Active Passes tab (list
+    // view surfaces issue time so a resident-reissue-under-enforcement
+    // pattern is visible). Plate-lookup path doesn't render created_at
+    // but the payload cost is negligible; single source of truth.
+    const SAFE_VISITOR_PASS_COLS = 'plate, expires_at, created_at'
 
     const todayIso = new Date().toISOString().split('T')[0]
     const { data: guestAuth } = await supabase
@@ -1626,6 +1825,9 @@ export default function DriverPortal() {
         {violationStage !== 'review' && (<>
         <div style={{ display: 'flex', gap: '4px', background: '#1e2535', borderRadius: '8px', padding: '3px', marginBottom: '14px' }}>
           <button style={tab('lookup')} onClick={() => setActiveTab('lookup')}>Plate Lookup</button>
+          <button style={tab('passes')} onClick={() => setActiveTab('passes')}>
+            Active Passes {(activePasses.length + (includeGuestAuths ? activeGuestAuths.length : 0)) > 0 ? `(${activePasses.length + (includeGuestAuths ? activeGuestAuths.length : 0)})` : ''}
+          </button>
           <button style={tab('violations')} onClick={() => setActiveTab('violations')}>
             Violations {violations.length > 0 ? `(${violations.length})` : ''}
           </button>
@@ -2271,6 +2473,183 @@ export default function DriverPortal() {
 
             {/* Tow ticket appears here after violation submit */}
             {ticketTarget && activeTab === 'lookup' && renderTicketForm()}
+          </div>
+        )}
+
+        {/* ── ACTIVE PASSES TAB (2026-08-01) ── */}
+        {/* Plate-only rows per Jose lock. NO visitor names, NO vehicle
+            descriptions, NO visiting units. Two sections: visitor passes
+            (24h window, client-split on expires_at) + guest authorizations
+            (togglable). Third sub-section: recently-expired within 24h —
+            surfaces "pass ran out 40m ago" which plate lookup can't
+            distinguish from "never had a pass." Sort: expiring-soonest
+            first (live); most-recently-lapsed first (expired). Client-
+            side search by plate (normalizePlate for parity with lookup).
+            Three-outcome empty-state discipline from the start (per
+            feedback_rls_denials_return_empty_not_error.md).
+
+            NOTE: this tab is patrol UX (browse-by-property) — it does
+            NOT close the Green Acres incident (driver who scans a
+            pending plate has no reason to open a separate tab).
+            Composite display (planned next arc) is that fix. */}
+        {activeTab === 'passes' && (
+          <div>
+            {!selectedProperty ? (
+              <div style={{ background:'#161b26', border:'1px solid #a16207', borderRadius:'10px', padding:'14px', color:'#fbbf24', fontSize:'13px' }}>
+                Select a property above to see active passes.
+              </div>
+            ) : (
+              <>
+                {/* Search + refresh row */}
+                <div style={{ display:'flex', gap:'8px', marginBottom:'12px', alignItems:'center' }}>
+                  <input
+                    value={passesSearch}
+                    onChange={e => setPassesSearch(e.target.value)}
+                    placeholder="Search plate…"
+                    style={{ ...inp, fontSize:'13px', padding:'11px 12px', flex:1, fontFamily:'Courier New', textTransform:'uppercase' }}
+                  />
+                  <button
+                    onClick={() => fetchActivePasses(selectedProperty)}
+                    disabled={passesFetchState.status === 'loading'}
+                    style={{ padding:'10px 14px', background:'#1e2535', color:'#C9A227', border:'1px solid #3a4055', borderRadius:'8px', fontSize:'12px', fontWeight:'bold', cursor: passesFetchState.status === 'loading' ? 'not-allowed' : 'pointer', opacity: passesFetchState.status === 'loading' ? 0.6 : 1 }}
+                  >
+                    {passesFetchState.status === 'loading' ? '…' : 'Refresh'}
+                  </button>
+                </div>
+
+                {/* Fetch state banners (three-outcome discipline) */}
+                {passesFetchState.status === 'error' && (
+                  <div style={{ background:'#2a1015', border:'1px solid #7f1d1d', borderRadius:'8px', padding:'10px 12px', marginBottom:'10px' }}>
+                    <p style={{ color:'#fca5a5', fontSize:'12px', margin:0 }}>
+                      Couldn&apos;t load passes. Check your connection and refresh.
+                    </p>
+                  </div>
+                )}
+                {passesRefreshedAt > 0 && passesFetchState.status === 'ok' && (
+                  <p style={{ color:'#666', fontSize:'10px', margin:'0 0 10px', textAlign:'right' }}>
+                    Updated {(() => {
+                      void passesTicker
+                      const ms = Date.now() - passesRefreshedAt
+                      const min = Math.floor(ms / 60_000)
+                      if (min < 1) return 'just now'
+                      if (min === 1) return '1 min ago'
+                      return `${min} min ago`
+                    })()}
+                  </p>
+                )}
+
+                {/* ── ACTIVE VISITOR PASSES section ── */}
+                {(() => {
+                  const q = normalizePlate(passesSearch)
+                  const filtered = q
+                    ? activePasses.filter(p => normalizePlate(p.plate).includes(q))
+                    : activePasses
+                  return (
+                    <div style={{ marginBottom:'16px' }}>
+                      <p style={{ color:'#4caf50', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>
+                        Active visitor passes ({filtered.length}{q && filtered.length !== activePasses.length ? ` of ${activePasses.length}` : ''})
+                      </p>
+                      {activePasses.length === 0 ? (
+                        <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', color:'#666', fontSize:'12px' }}>
+                          {passesFetchState.status === 'ok' ? 'No active visitor passes at this property right now.' : passesFetchState.status === 'loading' ? 'Loading…' : ' '}
+                        </div>
+                      ) : filtered.length === 0 ? (
+                        <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', color:'#666', fontSize:'12px' }}>
+                          No plates match &quot;{passesSearch}&quot;.
+                        </div>
+                      ) : (
+                        <div>
+                          {filtered.map(p => (
+                            <div key={`${p.plate}-${p.created_at}`} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 12px', marginBottom:'6px' }}>
+                              <span style={{ color:'white', fontSize:'15px', fontWeight:'bold', fontFamily:'Courier New' }}>{p.plate}</span>
+                              <span style={{ color:'#888', fontSize:'11px' }}>{fmtIssued(p.created_at)} · <span style={{ color:'#fbbf24', fontWeight:'bold' }}>{fmtLeft(p.expires_at)}</span></span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
+                {/* ── ACTIVE GUEST AUTHORIZATIONS section (togglable) ── */}
+                <div style={{ marginBottom:'16px' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'0 0 8px' }}>
+                    <p style={{ color:'#60a5fa', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:0, cursor:'pointer' }} onClick={() => setGuestSectionCollapsed(v => !v)}>
+                      {guestSectionCollapsed ? '▸' : '▾'} Guest authorizations ({activeGuestAuths.length})
+                    </p>
+                    <button
+                      onClick={() => setIncludeGuestAuths(v => !v)}
+                      style={{ background:'none', border:'none', color:'#666', fontSize:'10px', textTransform:'uppercase', cursor:'pointer', textDecoration:'underline' }}
+                    >
+                      {includeGuestAuths ? 'hide' : 'show'}
+                    </button>
+                  </div>
+                  {includeGuestAuths && !guestSectionCollapsed && (() => {
+                    const q = normalizePlate(passesSearch)
+                    const filtered = q
+                      ? activeGuestAuths.filter(g => normalizePlate(g.plate).includes(q))
+                      : activeGuestAuths
+                    if (activeGuestAuths.length === 0) return (
+                      <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', color:'#666', fontSize:'12px' }}>
+                        {passesFetchState.status === 'ok' ? 'No active guest authorizations today.' : ' '}
+                      </div>
+                    )
+                    if (filtered.length === 0) return (
+                      <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', color:'#666', fontSize:'12px' }}>
+                        No plates match &quot;{passesSearch}&quot;.
+                      </div>
+                    )
+                    return (
+                      <div>
+                        {filtered.map(g => (
+                          <div key={`${g.plate}-${g.start_date}`} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 12px', marginBottom:'6px' }}>
+                            <span style={{ color:'white', fontSize:'15px', fontWeight:'bold', fontFamily:'Courier New' }}>{g.plate}</span>
+                            <span style={{ color:'#888', fontSize:'11px' }}>{fmtGuestRange(g.start_date, g.end_date)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                {/* ── RECENTLY EXPIRED section (collapsible, v1) ──
+                    Surfaces "pass ran out 40m ago" — the class of
+                    information plate lookup cannot distinguish from
+                    "never had a pass." Visually de-emphasised so it's
+                    never mistakable for a live grant. */}
+                {expiredPasses.length > 0 && (
+                  <div>
+                    <p
+                      style={{ color:'#666', fontWeight:'bold', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px', cursor:'pointer' }}
+                      onClick={() => setExpiredSectionCollapsed(v => !v)}
+                    >
+                      {expiredSectionCollapsed ? '▸' : '▾'} Recently expired ({expiredPasses.length})
+                    </p>
+                    {!expiredSectionCollapsed && (() => {
+                      const q = normalizePlate(passesSearch)
+                      const filtered = q
+                        ? expiredPasses.filter(p => normalizePlate(p.plate).includes(q))
+                        : expiredPasses
+                      if (filtered.length === 0) return (
+                        <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', color:'#666', fontSize:'12px' }}>
+                          No expired plates match &quot;{passesSearch}&quot;.
+                        </div>
+                      )
+                      return (
+                        <div>
+                          {filtered.map(p => (
+                            <div key={`exp-${p.plate}-${p.created_at}`} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', background:'#0a0d14', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'10px 12px', marginBottom:'6px', opacity:0.7 }}>
+                              <span style={{ color:'#888', fontSize:'15px', fontWeight:'bold', fontFamily:'Courier New' }}>{p.plate}</span>
+                              <span style={{ color:'#f44336', fontSize:'11px' }}>{fmtExpiredAgo(p.expires_at)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
