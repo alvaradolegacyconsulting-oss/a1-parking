@@ -14,12 +14,98 @@ import { getCompanyContext, getLimit } from '../lib/tier'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 // AP-CASCADE (2026-07-23): PLATE_STATUS_META powers the unknown-status
 // fallback via hasOwnProperty check — see fallback branch near line ~1965.
-import { PLATE_STATUS_META } from '../lib/plate-status'
+// Composite refactor (2026-08-01): isDoNotTow powers the override gate
+// on Issue Violation — any protective record in composite forces the
+// decline-reason modal even when the headline itself is towable
+// (declined-vehicle + live-visitor-pass class; Green Acres arc).
+import { PLATE_STATUS_META, isDoNotTow, type PlateStatus } from '../lib/plate-status'
 // B71: decline-and-proceed interstitial for authorized-plate overrides.
 import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS } from '../components/DeclineReasonModal'
 // B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
 import { evaluatePortalGate } from '../lib/portal-account-gate'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
+
+// ────────────────────────────────────────────────────────────────────
+// Composite plate-lookup refactor (2026-08-01, Green Acres arc)
+// ────────────────────────────────────────────────────────────────────
+// searchPlate() used to be a serial short-circuit cascade — first
+// branch to match set the result and returned. When a plate had MULTIPLE
+// records (pending vehicle + live visitor pass), only the first one
+// surfaced. Green Acres: a pending resident with a live visitor pass was
+// towed because "REGISTRATION PENDING" hid the live pass one branch
+// down.
+//
+// Now: 9 branches fire in parallel via Promise.all. pickHeadline picks
+// one for the top card (SAME cascade order as before — see Condition B
+// in the spec). Every OTHER found record becomes an "also on record"
+// row in a block below. anyProtective consults the composite so Issue
+// Violation intercepts through the B71 decline-reason modal whenever
+// ANY protective record is on file, even if the headline is towable.
+//
+// See feedback_pending_vs_decided_no_is_not_one_class.md for why we
+// can NEVER change the headline pick order (declined-vehicle bypass
+// class). This refactor deliberately does not touch pick order — only
+// adds visibility of the other records and widens the override gate.
+type CompositeRecord =
+  | { type: 'do_not_tow';                    data: { plate: string; property: string; reason: string } }
+  | { type: 'vehicle_active';                data: { plate: string } }
+  | { type: 'authorized_plate';              data: { plate: string; property: string } }
+  | { type: 'vehicle_pending';               data: { plate: string } }
+  | { type: 'vehicle_declined';              data: { plate: string } }
+  | { type: 'vehicle_expired';               data: { plate: string } }
+  | { type: 'plate_under_review';            data: { old_plate: string; new_plate: string; submitted_at: string } }
+  | { type: 'guest_auth';                    data: { plate: string; start_date: string; end_date: string; non_resident_reason: string | null } }
+  | { type: 'visitor_pass_live';             data: { plate: string; created_at: string; expires_at: string } }
+  | { type: 'visitor_pass_recently_expired'; data: { plate: string; created_at: string; expires_at: string } }
+
+// Sort priority per spec: live grants first (protective, driver acts on
+// these), then decisions (pending/declined/expired/plate_under_review),
+// then recently-expired last (de-emphasised, informational).
+const COMPOSITE_SORT_PRIORITY: Record<CompositeRecord['type'], number> = {
+  do_not_tow: 0,
+  vehicle_active: 1,
+  authorized_plate: 2,
+  guest_auth: 3,
+  visitor_pass_live: 4,
+  vehicle_pending: 5,
+  vehicle_declined: 6,
+  vehicle_expired: 7,
+  plate_under_review: 8,
+  visitor_pass_recently_expired: 9,
+}
+
+// isDoNotTow-parity for composite record types. `do_not_tow` isn't in
+// PlateStatus (driver-only ad-hoc status), so it can't route through
+// isDoNotTow(); we hardcode it protective here. Recently-expired is
+// NEVER protective (it's the informational "pass ran out 40m ago" tell,
+// not a live grant).
+function compositeTypeIsProtective(t: CompositeRecord['type']): boolean {
+  switch (t) {
+    case 'do_not_tow':
+    case 'vehicle_active':
+    case 'authorized_plate':
+    case 'plate_under_review':
+    case 'vehicle_pending':
+    case 'guest_auth':
+    case 'visitor_pass_live':
+      return true
+    case 'vehicle_declined':
+    case 'vehicle_expired':
+    case 'visitor_pass_recently_expired':
+      return false
+  }
+}
+
+// Override modal authorizedAs picker. Only invoked from the two headline
+// buttons that skip the decline modal today (pending/declined/expired
+// and notfound). Prefer the most-specific alsoOnRecord type for a
+// human-readable modal banner; default 'resident' catches DNT, active
+// vehicle, authorized_plate, plate_under_review, vehicle_pending.
+function overrideAuthorizedAs(alsoOnRecord: CompositeRecord[]): 'resident' | 'visitor' | 'guest' {
+  if (alsoOnRecord.some(r => r.type === 'visitor_pass_live')) return 'visitor'
+  if (alsoOnRecord.some(r => r.type === 'guest_auth')) return 'guest'
+  return 'resident'
+}
 
 export default function DriverPortal() {
   const [driver, setDriver] = useState<any>(null)
@@ -587,7 +673,7 @@ export default function DriverPortal() {
     setTicketTarget(null)
     const clean = val.toUpperCase().replace(/\s/g, '').trim()
 
-    // Fix 2 (2026-07-15) — property-pattern normalization for the 5
+    // Fix 2 (2026-07-15) — property-pattern normalization for the .ilike
     // enforcement predicates below. .ilike() is case-insensitive but
     // whitespace-strict AND wildcard-interpreting (% / _ are treated as
     // patterns). Two failure modes closed here:
@@ -611,255 +697,317 @@ export default function DriverPortal() {
     const targetProp        = (selectedProperty ?? '').trim()
     const escapedTargetProp = targetProp.replace(/[%_\\]/g, '\\$&')
 
-    // Spaces v1.1 Q4 fix + Q5 narrow:
+    // Spaces v1.1 Q4 fix + Q5 narrow (vehicles):
     // - vehicles cascade .select() narrowed from '*' to explicit safe-column
     //   list (drops unit + owner_email from the network payload). Keeps
-    //   resident_email as the RPC join key for the spaces lookup below.
-    //   guest_authorizations + visitor_passes .select('*') stay un-narrowed
-    //   for this commit — full closure is B225 Pattern B (recorded).
-    // - vehicles.space + space_number lookup REMOVED (broken — vehicles.space
-    //   not auto-populated by assign_space; space_number renamed to label
-    //   in commit-1 backfill so the join misses every v1.1-generated space).
-    // - Replaced with derive_space_allowed_plates DEFINER RPC: server-side
-    //   role-pinned-to-driver; projects ONLY safe-public columns
-    //   (space_label, space_description, plates[]); ZERO resident PII over
-    //   the wire by construction; returns [] when resident holds no spaces.
+    //   resident_email as the RPC join key for the spaces lookup below,
+    //   plus id (needed by under_review enrichment to fetch the vehicle's
+    //   pending plate change) and status (branches the pending/declined/
+    //   expired render).
+    // - Space lookup uses derive_space_allowed_plates DEFINER RPC —
+    //   server-side role-pinned-to-driver; ZERO resident PII over the
+    //   wire; returns [] when resident holds no spaces.
     //
     // 🔒 INVARIANT: authorization derives from the VEHICLE. An authorized
     // vehicle whose resident holds ZERO spaces still returns 'authorized'
     // with the space field rendering as '—'. The RPC returning [] is a
     // valid reference-data absence, NOT a deauthorization signal.
-    const SAFE_VEHICLE_COLS = 'plate, is_active, status, year, color, make, model, property, space, resident_email'
+    const SAFE_VEHICLE_COLS      = 'plate, is_active, status, year, color, make, model, property, space, resident_email, id'
+    // B225 (2026-06-26) narrows — see prior arc's comment for consumer
+    // audit; unchanged from serial-cascade version.
+    const SAFE_GUEST_AUTH_COLS   = 'plate, start_date, end_date, non_resident_reason'
+    // 2026-08-01 — created_at added for Active Passes + composite rows.
+    const SAFE_VISITOR_PASS_COLS = 'plate, expires_at, created_at'
 
-    // ── Branch 0: Do Not Tow check (DNT Commit 3) ─────────────────────
-    // TOP PRECEDENCE — "never tow" trumps every other cascade branch.
-    // Backed by check_dnt_plate DEFINER RPC (caller-scoped: driver
-    // authenticates + drivers.assigned_properties must include
-    // targetProp — otherwise the RPC returns {is_dnt:false} without
-    // leaking DNT existence).
+    const nowIso         = new Date().toISOString()
+    const todayIso       = nowIso.split('T')[0]
+    // Recently-expired visitor pass window — 6h back per spec. Narrow
+    // enough that the "expired 40m ago" tell is timely; wide enough to
+    // catch the "pass ran out during my shift" pattern.
+    const sixHoursAgoIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString()
+
+    // ── Parallel-cascade refactor (2026-08-01 Green Acres arc) ────────
     //
-    // FAIL-OPEN on RPC error: continue to the existing cascade. The
-    // server-side guards (BEFORE INSERT trigger on violations +
-    // stamp_tow_ticket DNT guard) are the AUTHORITATIVE gate. Client
-    // failure = suboptimal UX (driver sees existing cascade result +
-    // clicks Issue Violation → server rejects with check_violation),
-    // NOT a wrongful tow. Fail-closed would block legitimate
-    // enforcement on transient RPC errors, worse than the fallback.
+    // Each branch returns `{ found, data, error }`:
+    //   • found=true  → this branch has a match (headline candidate +
+    //                   alsoOnRecord candidate)
+    //   • data=null && error=null → genuinely empty (RLS-deny or truly
+    //                   no row) — treat as "no match"
+    //   • error!=null → transport / RLS / SQL failure — this branch
+    //                   contributes to partialFailure regardless of
+    //                   whether it becomes headline
     //
-    // Commit 4 wires the driver UI card for result.type='do_not_tow'.
-    // Until Commit 4 lands, the setResult below with the new type
-    // variant is unhandled by the existing render — no visible impact
-    // in prod because the DNT table is empty until Commit 5.
-    {
-      const { data: dntCheck, error: dntErr } = await supabase
-        .rpc('check_dnt_plate', { p_plate: clean, p_property: targetProp })
-      if (dntErr) {
-        console.error('[searchPlate] check_dnt_plate failed — falling open to existing cascade', dntErr.message)
-      } else if (dntCheck && (dntCheck as { is_dnt: boolean }).is_dnt) {
-        const reason = (dntCheck as { is_dnt: boolean, reason: string }).reason
-        setResult({
-          status: 'do_not_tow',
-          data: { plate: clean, property: targetProp, reason },
-        })
-        setSearching(false)
-        return
+    // Condition A (spec): supabase-js returns {data:null, error:<Error>}
+    // on real failures and {data:[], error:null} on RLS deny (client-
+    // indistinguishable from genuine empty). Check the error field of
+    // EVERY branch and surface as partialFailure — don't silently render
+    // "no other records" when we couldn't check some of them (that's the
+    // same class as the pre-refactor short-circuit hiding pending+pass).
+    //
+    // Condition B (spec): pickHeadline order is IDENTICAL to the prior
+    // serial cascade. Do NOT change without a full audit of the declined-
+    // vehicle bypass class (see feedback_pending_vs_decided_no_is_not_
+    // one_class.md and the header-comment above the type defs).
+    type BranchResult<T> = { found: boolean; data: T | null; error: unknown | null }
+
+    // Fail-open on error is retained at the AUTHORIZATION side (the
+    // server-side BEFORE INSERT trigger on violations is the real gate,
+    // per the original DNT branch comment); we surface the error via
+    // partialFailure so the operator sees "some records couldn't be
+    // checked" rather than silently missing DNT.
+    async function branchDnt(): Promise<BranchResult<{ plate: string; property: string; reason: string }>> {
+      const { data, error } = await supabase.rpc('check_dnt_plate', { p_plate: clean, p_property: targetProp })
+      if (error) return { found: false, data: null, error }
+      if (data && (data as { is_dnt: boolean }).is_dnt) {
+        const d = data as { is_dnt: boolean; reason: string }
+        return { found: true, data: { plate: clean, property: targetProp, reason: d.reason }, error: null }
       }
+      return { found: false, data: null, error: null }
     }
 
-    // Slice 4 — appended `id, status` so we can enrich under-review with
-    // the pending plate change when the vehicle exists but is mid-change.
-    // Runtime concat defeats the tuple-typed inference; local `any` cast
-    // is fine since SAFE_VEHICLE_COLS already includes every field we
-    // read below.
-    const activeVehRes: any = await supabase
-      .from('vehicles').select(SAFE_VEHICLE_COLS + ', id, status').ilike('plate', clean).ilike('property', escapedTargetProp).eq('is_active', true).single()
-    const activeVeh: any = activeVehRes.data
-    if (activeVeh) {
+    async function branchActiveVeh(): Promise<BranchResult<Record<string, unknown>>> {
+      // maybeSingle (not single) — 0 rows is the common case for most
+      // plates; using .single() the way the pre-refactor code did
+      // silently discards the error, which would misclassify legitimate
+      // errors under parallel evaluation. maybeSingle returns error only
+      // on >1 rows (real problem) or transport failure.
+      const { data, error } = await supabase
+        .from('vehicles').select(SAFE_VEHICLE_COLS)
+        .ilike('plate', clean).ilike('property', escapedTargetProp).eq('is_active', true)
+        .maybeSingle()
+      if (error) return { found: false, data: null, error }
+      return { found: !!data, data: data as Record<string, unknown> | null, error: null }
+    }
+
+    async function branchAuthorizedPlate(): Promise<BranchResult<{ plate: string; property: string }>> {
+      const { data, error } = await supabase.rpc('check_authorized_plate', { p_plate: clean, p_property: targetProp })
+      if (error) return { found: false, data: null, error }
+      if (data && (data as { is_authorized: boolean }).is_authorized) {
+        const d = data as { is_authorized: boolean; property_name: string; label: string | null }
+        return { found: true, data: { plate: clean, property: d.property_name }, error: null }
+      }
+      return { found: false, data: null, error: null }
+    }
+
+    async function branchExpiredVeh(): Promise<BranchResult<Record<string, unknown>>> {
+      // Slice 5 — deactivated vehicles are NOT authorized; exclude them
+      // so they fall through to notfound (unauthorized). Preserved.
+      const { data, error } = await supabase
+        .from('vehicles').select(SAFE_VEHICLE_COLS)
+        .ilike('plate', clean).ilike('property', escapedTargetProp)
+        .eq('is_active', false).neq('status', 'deactivated')
+        .maybeSingle()
+      if (error) return { found: false, data: null, error }
+      return { found: !!data, data: data as Record<string, unknown> | null, error: null }
+    }
+
+    async function branchPendingPc(): Promise<BranchResult<{ id: string; old_plate: string; new_plate: string; submitted_at: string }>> {
+      // Slice 4 SAFETY-CRITICAL — driver scanned the NEW plate of a
+      // resident's pending plate change. Property-scoped by RLS AND
+      // client-side .ilike('property', ...) for defense-in-depth.
+      const { data, error } = await supabase
+        .from('vehicle_plate_changes')
+        .select('id, vehicle_id, old_plate, new_plate, submitted_at, property')
+        .ilike('new_plate', clean).ilike('property', escapedTargetProp).eq('status', 'pending')
+        .order('submitted_at', { ascending: false }).limit(1).maybeSingle()
+      if (error) return { found: false, data: null, error }
+      return { found: !!data, data: data as { id: string; old_plate: string; new_plate: string; submitted_at: string } | null, error: null }
+    }
+
+    async function branchGuestAuth(): Promise<BranchResult<{ plate: string; start_date: string; end_date: string; non_resident_reason: string | null }>> {
+      // B214 — active-today predicate matches the primary index
+      // (is_active+status+start_date+end_date). Overlap-tolerant via
+      // order(end_date desc).limit(1) — longest-running wins.
+      const { data, error } = await supabase
+        .from('guest_authorizations').select(SAFE_GUEST_AUTH_COLS)
+        .ilike('plate', clean).ilike('property', escapedTargetProp)
+        .eq('is_active', true).eq('status', 'active')
+        .lte('start_date', todayIso).gte('end_date', todayIso)
+        .order('end_date', { ascending: false }).limit(1).maybeSingle()
+      if (error) return { found: false, data: null, error }
+      return { found: !!data, data: data as { plate: string; start_date: string; end_date: string; non_resident_reason: string | null } | null, error: null }
+    }
+
+    async function branchLivePass(): Promise<BranchResult<{ plate: string; created_at: string; expires_at: string }>> {
+      // B224 read-side + visitor-pass-liveness class rule: BOTH
+      // predicates required (is_active=true AND expires_at > now).
+      // Order by expires_at DESC + limit 1 tolerates multi-pass dupes
+      // (T9380L Miramar case).
+      const { data, error } = await supabase.from('visitor_passes').select(SAFE_VISITOR_PASS_COLS)
+        .ilike('plate', clean).ilike('property', escapedTargetProp)
+        .eq('is_active', true).gt('expires_at', nowIso)
+        .order('expires_at', { ascending: false }).limit(1).maybeSingle()
+      if (error) return { found: false, data: null, error }
+      return { found: !!data, data: data as { plate: string; created_at: string; expires_at: string } | null, error: null }
+    }
+
+    async function branchRecentlyExpiredPass(): Promise<BranchResult<{ plate: string; created_at: string; expires_at: string }>> {
+      // NEW branch 9 (composite refactor) — NEVER a headline; alsoOnRecord
+      // only. Surfaces "pass ran out 40m ago" — the class of information
+      // the pre-refactor cascade could not distinguish from "never had a
+      // pass" (both fell into notfound). Same liveness-class-rule as
+      // branchLivePass: is_active AND expires_at in-window; recently-
+      // expired here means expires_at IN (now-6h, now]. Revoked-but-
+      // unexpired stays excluded (is_active=true predicate).
+      const { data, error } = await supabase.from('visitor_passes').select(SAFE_VISITOR_PASS_COLS)
+        .ilike('plate', clean).ilike('property', escapedTargetProp)
+        .eq('is_active', true)
+        .gte('expires_at', sixHoursAgoIso).lte('expires_at', nowIso)
+        .order('expires_at', { ascending: false }).limit(1).maybeSingle()
+      if (error) return { found: false, data: null, error }
+      return { found: !!data, data: data as { plate: string; created_at: string; expires_at: string } | null, error: null }
+    }
+
+    // All 8 branches fire in parallel (branchRecentlyExpiredPass makes 8
+    // even though the spec calls it "9th" — the fallthrough notfound is
+    // a computed default, not a fetch). Each wraps its own error so
+    // Promise.all never rejects.
+    const [dnt, activeVeh, authorizedPlate, expiredVeh, pendingPc, guestAuth, livePass, recentlyExpiredPass] = await Promise.all([
+      branchDnt(),
+      branchActiveVeh(),
+      branchAuthorizedPlate(),
+      branchExpiredVeh(),
+      branchPendingPc(),
+      branchGuestAuth(),
+      branchLivePass(),
+      branchRecentlyExpiredPass(),
+    ])
+
+    const results = { dnt, activeVeh, authorizedPlate, expiredVeh, pendingPc, guestAuth, livePass, recentlyExpiredPass }
+
+    // pickHeadline — Condition B. Do NOT change order.
+    type SourceBranch = keyof typeof results
+    function pickHeadline(): { status: string; data: unknown; sourceBranch: SourceBranch | null } {
+      if (results.dnt.found)             return { status: 'do_not_tow',         data: results.dnt.data,             sourceBranch: 'dnt' }
+      if (results.activeVeh.found)       return { status: 'authorized',         data: results.activeVeh.data,       sourceBranch: 'activeVeh' }
+      if (results.authorizedPlate.found) return { status: 'authorized_plate',   data: results.authorizedPlate.data, sourceBranch: 'authorizedPlate' }
+      if (results.expiredVeh.found) {
+        const s = (results.expiredVeh.data as { status?: string }).status
+        const status = s === 'pending' ? 'pending' : s === 'declined' ? 'declined' : 'expired'
+        return { status, data: results.expiredVeh.data, sourceBranch: 'expiredVeh' }
+      }
+      if (results.pendingPc.found)       return { status: 'plate_under_review', data: results.pendingPc.data,       sourceBranch: 'pendingPc' }
+      if (results.guestAuth.found)       return { status: 'guest_authorized',   data: results.guestAuth.data,       sourceBranch: 'guestAuth' }
+      if (results.livePass.found)        return { status: 'visitor',            data: results.livePass.data,        sourceBranch: 'livePass' }
+      // recentlyExpiredPass NEVER becomes headline (spec: alsoOnRecord only).
+      return { status: 'notfound', data: null, sourceBranch: null }
+    }
+    const headline = pickHeadline()
+
+    // Partial-failure detection — spec Condition A. Log the failed
+    // branches (never raw errors to the user — driver sees the friendly
+    // "couldn't check all records" warning at render time).
+    const errored = Object.entries(results).filter(([, r]) => r.error !== null)
+    if (errored.length > 0) {
+      console.error('[searchPlate] branch failures', errored.map(([k, r]) => ({ branch: k, error: r.error })))
+    }
+    const partialFailure = errored.length > 0
+
+    // Enrichment — vehicle headlines only (matches pre-refactor cost
+    // profile: +1 RPC when the headline is authorized or expired-family;
+    // +1 more query on under_review). alsoOnRecord vehicle rows are
+    // NEVER enriched — kept lean (plate only) per spec.
+    //
+    // Enrichment failure is NOT surfaced as partialFailure. The RPC's
+    // documented behavior is [] on absence; a real transport failure
+    // returns {data:null,error} which we coerce to []. That matches
+    // the pre-refactor behavior — space info was best-effort even when
+    // the resident had ties. Not raising this as partial failure keeps
+    // the surface honest: the missing data is enrichment, not one of
+    // the 8 cascade branches.
+    let enrichment: Record<string, unknown> = {}
+    if (headline.sourceBranch === 'activeVeh' || headline.sourceBranch === 'expiredVeh') {
+      const veh = headline.data as { resident_email?: string; status?: string; id?: string }
       const { data: assignedSpacesRaw } = await supabase.rpc('derive_space_allowed_plates', {
         p_property:       selectedProperty,
-        p_resident_email: activeVeh.resident_email,
+        p_resident_email: veh?.resident_email,
       })
-      // RPC returns JSONB array; supabase-js types it as `unknown`.
-      // Empty/null both render as no space (dash) per invariant.
       const assignedSpaces = Array.isArray(assignedSpacesRaw) ? assignedSpacesRaw : []
-      // Slice 4 — under-review enrichment. When the found vehicle has a
-      // pending plate change, attach it so the render shows a "plate
-      // change under review" banner alongside AUTHORIZED. The old plate
-      // (which is what the driver scanned) stays enforce-valid — do NOT
-      // downgrade to a warning; still show green AUTHORIZED, just add a
-      // context banner explaining a change is in flight.
-      let underReviewChange: any = null
-      if (activeVeh.status === 'under_review') {
+      enrichment._assigned_spaces = assignedSpaces
+      if (headline.sourceBranch === 'activeVeh' && veh?.status === 'under_review') {
+        // Slice 4 under-review enrichment. Old plate stays enforce-valid;
+        // banner just tells the driver a change is in flight.
         const { data: pc } = await supabase
           .from('vehicle_plate_changes')
           .select('id, old_plate, new_plate, submitted_at')
-          .eq('vehicle_id', activeVeh.id)
+          .eq('vehicle_id', veh.id)
           .eq('status', 'pending')
           .maybeSingle()
-        if (pc) underReviewChange = pc
-      }
-      setSearching(false); setResult({ status: 'authorized', data: { ...activeVeh, _assigned_spaces: assignedSpaces, _pending_plate_change: underReviewChange } }); return
-    }
-
-    // ── Branch 1.5: Authorized plate (AP-CASCADE) ─────────────────────
-    // Standing authorization (staff, vendors, contractors). Behaves like
-    // a resident at the render layer; still enforceable via the same
-    // Issue Violation button. DEFINER RPC bypasses RLS — drivers have no
-    // authorized_plates SELECT policy by design, so a direct client
-    // query would silently return empty. Fail-through on RPC error
-    // matches branch 0's pattern (a failed check must not block the
-    // rest of the cascade). label is NULL for drivers at the RPC per
-    // the role-conditional return; not referenced on this card.
-    {
-      const { data: apCheck, error: apErr } = await supabase
-        .rpc('check_authorized_plate', { p_plate: clean, p_property: targetProp })
-      if (apErr) {
-        console.error('[searchPlate] check_authorized_plate failed — falling through to next branch', apErr.message)
-      } else if (apCheck && (apCheck as { is_authorized: boolean }).is_authorized) {
-        const ap = apCheck as { is_authorized: boolean, property_name: string, label: string | null }
-        setSearching(false)
-        setResult({
-          status: 'authorized_plate',
-          data: { plate: clean, property: ap.property_name },
-        })
-        return
+        enrichment._pending_plate_change = pc ?? null
       }
     }
 
-    // Slice 5 — deactivated vehicles are NOT authorized. Exclude them from
-    // the expired-branch query so they fall through to notfound (returns
-    // "NO PERMIT FOUND" — the standing determination for unauthorized).
-    // A deactivated permit that still resolves as any authorized-family
-    // status would be an enforcement hole (same class as the slice-4
-    // collision guard).
-    const { data: expiredVeh } = await supabase
-      .from('vehicles').select(SAFE_VEHICLE_COLS).ilike('plate', clean).ilike('property', escapedTargetProp).eq('is_active', false).neq('status', 'deactivated').single()
-    if (expiredVeh) {
-      // Expired/pending/declined: same RPC call (the resident's space ties
-      // are reference data regardless of vehicle is_active state — the
-      // resident is still tied to whatever they're tied to, until the
-      // residents_deactivate_free_spaces trigger fires). Returning the
-      // space list here keeps the historical context visible to the driver
-      // (helps them understand "this car USED to park in C-12").
-      const { data: assignedSpacesRaw } = await supabase.rpc('derive_space_allowed_plates', {
-        p_property:       selectedProperty,
-        p_resident_email: expiredVeh.resident_email,
-      })
-      const assignedSpaces = Array.isArray(assignedSpacesRaw) ? assignedSpacesRaw : []
-      // B84: distinguish pending/declined from legacy-deactivated. Previously
-      // all is_active=false rows rendered as "permit expired" regardless of
-      // vehicles.status — confusing for newly-registered residents.
-      const resultStatus = expiredVeh.status === 'pending' ? 'pending'
-        : expiredVeh.status === 'declined' ? 'declined'
-        : 'expired'
-      setSearching(false); setResult({ status: resultStatus, data: { ...expiredVeh, _assigned_spaces: assignedSpaces } }); return
+    // Build alsoOnRecord — every found branch EXCEPT the one that
+    // became headline. Vehicle rows are trimmed to {plate} for the
+    // composite view (no year/color/make/model/space — plate-only per
+    // B225 discipline). Recently-expired is always eligible (never
+    // headline). Sort per spec: live grants → decisions → expired.
+    const alsoOnRecord: CompositeRecord[] = []
+    if (headline.sourceBranch !== 'dnt' && results.dnt.found && results.dnt.data)
+      alsoOnRecord.push({ type: 'do_not_tow', data: results.dnt.data })
+    if (headline.sourceBranch !== 'activeVeh' && results.activeVeh.found && results.activeVeh.data) {
+      const v = results.activeVeh.data as { plate: string }
+      alsoOnRecord.push({ type: 'vehicle_active', data: { plate: v.plate } })
     }
-
-    // Slice 4 — Do-Not-Tow safety branch (SAFETY-CRITICAL):
-    // Driver scanned a plate that ISN'T on any current vehicle row. Before
-    // treating as visitor/guest/unauthorized, check whether this plate is
-    // the NEW plate of a pending vehicle_plate_changes row. If so, the
-    // resident has requested this plate on their vehicle and it's awaiting
-    // PM decision — the driver must NOT tow. Show a bright do-not-tow
-    // signal with old→new + submitted date.
-    //
-    // Property-scoped by RLS (driver_read_plate_changes admits driver at
-    // own-company properties); additional client-side .ilike('property',
-    // selectedProperty) filter narrows to the property the driver picked.
-    const { data: pendingPc } = await supabase
-      .from('vehicle_plate_changes')
-      .select('id, vehicle_id, old_plate, new_plate, submitted_at, property')
-      .ilike('new_plate', clean)
-      .ilike('property', escapedTargetProp)
-      .eq('status', 'pending')
-      .order('submitted_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if (pendingPc) {
-      setSearching(false); setResult({ status: 'plate_under_review', data: pendingPc }); return
+    if (headline.sourceBranch !== 'authorizedPlate' && results.authorizedPlate.found && results.authorizedPlate.data)
+      alsoOnRecord.push({ type: 'authorized_plate', data: results.authorizedPlate.data })
+    if (headline.sourceBranch !== 'expiredVeh' && results.expiredVeh.found && results.expiredVeh.data) {
+      const v = results.expiredVeh.data as { plate: string; status?: string }
+      const t: 'vehicle_pending' | 'vehicle_declined' | 'vehicle_expired' =
+        v.status === 'pending' ? 'vehicle_pending'
+        : v.status === 'declined' ? 'vehicle_declined'
+        : 'vehicle_expired'
+      alsoOnRecord.push({ type: t, data: { plate: v.plate } })
     }
-
-    // B214 — guest_authorizations stage 2.5 of the enforcement cascade.
-    // Inserts BETWEEN vehicles (stages 1+2) and visitor_passes (stage 3) so
-    // a vetted guest's plate is recognized BEFORE the visitor-pass check
-    // (which would otherwise return notfound for a plate the manager
-    // explicitly authorized). Date predicate matches the table's primary
-    // index (is_active+status+start_date+end_date) for an index-only scan.
-    //
-    // .order(end_date desc).limit(1).maybeSingle() handles the overlap case
-    // (Finding 2): if two authorizations are simultaneously active for the
-    // same plate+property, surface the longer-running one. No hard unique
-    // constraint exists by design (overlap can be legit) — this just keeps
-    // the cascade deterministic when the soft-overlap-warning at create
-    // time (commit 3) isn't honored.
-    //
-    // B225 (2026-06-26) — driver-needs-only column narrows for the two
-    // remaining .select('*') calls. Closes 2/3 of B225 (vehicles narrow
-    // was 1/3, shipped a4b425b). Consumer-completeness verified pre-build:
-    //   - guest_auth renders use start_date / end_date / non_resident_reason
-    //     (L1305, L1315-1322); decline-modal payload (L1324) reads
-    //     non_resident_reason; submitViolation + logAudit + pendingDecline
-    //     read ZERO result.data fields.
-    //   - visitor_pass render uses expires_at (L1385); zero other consumers.
-    //   - plate kept in both sets — used as filter + implicit search context.
-    // Removes PII the render block was already stripping but the network
-    // payload was carrying: guest_name, resident_email, visiting_unit,
-    // approved_by_email (guest_auth) + visitor_name/phone, visiting_unit,
-    // vehicle_*, notes (visitor_passes).
-    const SAFE_GUEST_AUTH_COLS   = 'plate, start_date, end_date, non_resident_reason'
-    // 2026-08-01 — created_at added for the Active Passes tab (list
-    // view surfaces issue time so a resident-reissue-under-enforcement
-    // pattern is visible). Plate-lookup path doesn't render created_at
-    // but the payload cost is negligible; single source of truth.
-    const SAFE_VISITOR_PASS_COLS = 'plate, expires_at, created_at'
-
-    const todayIso = new Date().toISOString().split('T')[0]
-    const { data: guestAuth } = await supabase
-      .from('guest_authorizations').select(SAFE_GUEST_AUTH_COLS)
-      .ilike('plate', clean).ilike('property', escapedTargetProp)
-      .eq('is_active', true).eq('status', 'active')
-      .lte('start_date', todayIso).gte('end_date', todayIso)
-      .order('end_date', { ascending: false })
-      .limit(1).maybeSingle()
-    if (guestAuth) {
-      setSearching(false); setResult({ status: 'guest_authorized', data: guestAuth }); return
+    if (headline.sourceBranch !== 'pendingPc' && results.pendingPc.found && results.pendingPc.data) {
+      const pc = results.pendingPc.data
+      alsoOnRecord.push({ type: 'plate_under_review', data: { old_plate: pc.old_plate, new_plate: pc.new_plate, submitted_at: pc.submitted_at } })
     }
+    if (headline.sourceBranch !== 'guestAuth' && results.guestAuth.found && results.guestAuth.data)
+      alsoOnRecord.push({ type: 'guest_auth', data: results.guestAuth.data })
+    if (headline.sourceBranch !== 'livePass' && results.livePass.found && results.livePass.data)
+      alsoOnRecord.push({ type: 'visitor_pass_live', data: results.livePass.data })
+    if (results.recentlyExpiredPass.found && results.recentlyExpiredPass.data)
+      alsoOnRecord.push({ type: 'visitor_pass_recently_expired', data: results.recentlyExpiredPass.data })
 
-    // B224 read-side (2026-07-16) — swap .single() for .order+limit+
-    // maybeSingle to tolerate 2+ active passes on the SAME (plate,
-    // property). The prior .single() threw on multiples → the
-    // destructured data went null → fell through to notfound → driver
-    // towed a car with 2+ VALID passes. Wrongful-tow class, triggered
-    // by normal user behavior (visitor re-registers "to be safe" after
-    // leaving; system doesn't know they left). Live precedent 2026-07-14:
-    // T9380L Miramar had 3 active passes for the same visitor from Bug 1
-    // CAPTCHA-staleness retries.
-    //
-    // Property scope PRESERVED (.ilike('property', escapedTargetProp)
-    // stays). This is NOT the reverted 7f46252 change — that widened
-    // property scope AND changed single-vs-multi in one edit, reverted
-    // as bce95b1 for the enforcement-boundary flaw. THIS fix ONLY does
-    // the single-vs-multi change, within the correct property.
-    // See feedback_driver_plate_lookup_enforcement_boundary + B224 memo.
-    //
-    // Ordering: expires_at DESC returns the longest-remaining pass.
-    // With same-day dupes (typical: re-submit within minutes), all passes
-    // have the same 24h TTL from creation, so expires_at DESC ==
-    // created_at DESC in practice. Chose expires_at for semantic clarity
-    // (longest-remaining validity wins) + parity with the guest_auth
-    // block above (also .order('end_date', desc).limit(1).maybeSingle).
-    //
-    // Write-side dedup (create_visitor_pass refuses (plate, property,
-    // active-window) duplicates at INSERT time) is the hygiene fast-
-    // follow. Read-side is the SAFETY fix — makes the scan robust
-    // regardless of how many passes exist.
-    const { data: pass } = await supabase.from('visitor_passes').select(SAFE_VISITOR_PASS_COLS)
-      .ilike('plate', clean).ilike('property', escapedTargetProp)
-      .eq('is_active', true).gte('expires_at', new Date().toISOString())
-      .order('expires_at', { ascending: false }).limit(1).maybeSingle()
+    alsoOnRecord.sort((a, b) => COMPOSITE_SORT_PRIORITY[a.type] - COMPOSITE_SORT_PRIORITY[b.type])
+
+    // anyProtective — spec override-gate. Headline OR composite
+    // protective forces Issue Violation through the decline-reason
+    // modal (see button interception in render). Treat 'do_not_tow'
+    // headline as protective (not in PlateStatus enum, so
+    // isDoNotTow() would return false — hardcoded here).
+    const headlineIsProtective =
+      headline.status === 'do_not_tow' || isDoNotTow(headline.status as PlateStatus)
+    const anyProtective = headlineIsProtective || alsoOnRecord.some(r => compositeTypeIsProtective(r.type))
+
     setSearching(false)
-    if (pass) setResult({ status: 'visitor', data: pass })
-    else setResult({ status: 'notfound' })
+    setResult({
+      status:         headline.status,
+      data:           headline.data ? { ...(headline.data as object), ...enrichment } : null,
+      alsoOnRecord,
+      partialFailure,
+      anyProtective,
+    })
+  }
+
+  // Override-gate helper for the two headline buttons that skip the
+  // decline modal by default (pending/declined/expired vehicle and
+  // notfound). If ANY protective record is on file (headline OR
+  // composite), open the B71 decline modal first — same modal that
+  // authorized/authorized_plate/guest/visitor cards already use for
+  // location/manner overrides. This is the composite refactor's
+  // teeth: preventing another Green Acres by making the operator
+  // capture a decline reason whenever a protective record exists,
+  // even if the headline itself is towable.
+  function issueViolationOrOverride() {
+    const composite = (result?.alsoOnRecord ?? []) as CompositeRecord[]
+    if (result?.anyProtective && !pendingDecline) {
+      setDeclineModal({ authorizedAs: overrideAuthorizedAs(composite), detail: '' })
+      return
+    }
+    setViolation(v => ({ ...v, property: selectedProperty }))
+    setShowViolation(true)
   }
 
   async function submitViolation() {
@@ -1918,6 +2066,7 @@ export default function DriverPortal() {
               )}
 
               {result && (
+                <>
                 <div style={{
                   marginTop: '0', padding: '16px', borderRadius: '10px',
                   // B214: guest_authorized = blue (distinct from green=resident,
@@ -2202,7 +2351,15 @@ export default function DriverPortal() {
                           ))
                         )}
                       </div>
-                      <button onClick={() => { setViolation(v => ({ ...v, property: selectedProperty })); setShowViolation(true) }}
+                      {/* Composite refactor: if any protective record is on
+                          file (headline OR alsoOnRecord), Issue Violation
+                          routes through the B71 decline-reason modal FIRST.
+                          Under serial short-circuit this button skipped the
+                          modal — Green Acres arc showed that produces silent
+                          overrides when the pending headline hid a live
+                          visitor pass. anyProtective is computed once in
+                          searchPlate; this button consults it. */}
+                      <button onClick={issueViolationOrOverride}
                         style={{ width: '100%', padding: '11px', background: '#991b1b', color: 'white', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation
                       </button>
@@ -2278,7 +2435,12 @@ export default function DriverPortal() {
                     <>
                       <p style={{ color: '#f44336', fontWeight: 'bold', fontSize: '16px', margin: '0 0 6px' }}>✗ NO PERMIT FOUND</p>
                       <p style={{ color: '#aaa', fontSize: '13px', margin: '0 0 12px' }}>Plate is not registered. Vehicle may be towed.</p>
-                      <button onClick={() => { setViolation(v => ({ ...v, property: selectedProperty })); setShowViolation(true) }}
+                      {/* Composite refactor: same override gate as the
+                          pending/declined/expired branch. A notfound headline
+                          with a live-visitor-pass alsoOnRecord (Green Acres
+                          class) forces the decline-reason modal. Bare
+                          notfound with no alsoOnRecord → straight to form. */}
+                      <button onClick={issueViolationOrOverride}
                         style={{ width: '100%', padding: '11px', background: '#991b1b', color: 'white', fontWeight: 'bold', fontSize: '13px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation
                       </button>
@@ -2298,13 +2460,133 @@ export default function DriverPortal() {
                       `never` — the value can arrive from an RPC at runtime
                       regardless of compile-time type, which is why the
                       fallback exists. */}
-                  {!Object.prototype.hasOwnProperty.call(PLATE_STATUS_META, result.status as string) && (
+                  {/* Fallback for unrecognized status. Composite refactor:
+                      allow 'do_not_tow' (which is not a PLATE_STATUS_META
+                      key — it's driver-only ad-hoc) so this doesn't render
+                      the "UNKNOWN RESULT" warning alongside the intended
+                      DNT card. */}
+                  {result.status !== 'do_not_tow' && !Object.prototype.hasOwnProperty.call(PLATE_STATUS_META, result.status as string) && (
                     <>
                       <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '16px', margin: '0 0 6px' }}>⚠ UNKNOWN RESULT</p>
                       <p style={{ color: '#aaa', fontSize: '13px', margin: '0' }}>Status: <span style={{ fontFamily: 'Courier New' }}>{result.status}</span>. Screenshot this and report to support.</p>
                     </>
                   )}
                 </div>
+
+                {/* ── ALSO ON RECORD ────────────────────────────────
+                    Composite refactor (2026-08-01 Green Acres arc).
+                    Sibling to the headline card above. Renders every
+                    OTHER found record so the driver sees the full
+                    picture — not just what pickHeadline chose. Empty-
+                    block behavior is three-way explicit:
+                      • records found        → render list
+                      • no records + clean   → "No other records"
+                      • no records + failure → warning that we couldn't
+                        check them all. NEVER render the clean empty
+                        state when a branch errored (that hides the
+                        same class of failure the pre-refactor short-
+                        circuit did — the whole point of this block).
+                    Rows are plate-only per B225 discipline: no visitor
+                    names, no vehicle descriptions, no visiting units. */}
+                <div style={{ marginTop: '12px', padding: '12px 14px', background: '#0d1017', border: '1px solid #1e2535', borderRadius: '10px' }}>
+                  <div style={{ color: '#666', fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 8px' }}>
+                    ── Also on Record ─
+                  </div>
+                  {result.alsoOnRecord && result.alsoOnRecord.length > 0 ? (
+                    (result.alsoOnRecord as CompositeRecord[]).map((r, i) => {
+                      // Palette source: PLATE_STATUS_META for standard
+                      // types + literals for the two composite-only
+                      // types (do_not_tow gold, recently_expired grey).
+                      // Kept in sync with the driver's inline ternary
+                      // above (4631951 enumeration).
+                      const paletteFor = (t: CompositeRecord['type']) => {
+                        switch (t) {
+                          case 'do_not_tow':
+                            return { bg: '#1a1608', border: '#C9A227', color: '#fbbf24', opacity: 1 }
+                          case 'visitor_pass_recently_expired':
+                            return { bg: '#0a0d14', border: '#2a2f3d', color: '#888', opacity: 0.7 }
+                          case 'vehicle_active':           return { ...PLATE_STATUS_META.authorized,        opacity: 1 }
+                          case 'authorized_plate':         return { ...PLATE_STATUS_META.authorized_plate,  opacity: 1 }
+                          case 'vehicle_pending':          return { ...PLATE_STATUS_META.pending,           opacity: 1 }
+                          case 'vehicle_declined':         return { ...PLATE_STATUS_META.declined,          opacity: 1 }
+                          case 'vehicle_expired':          return { ...PLATE_STATUS_META.expired,           opacity: 1 }
+                          case 'plate_under_review':       return { ...PLATE_STATUS_META.plate_under_review,opacity: 1 }
+                          case 'guest_auth':               return { ...PLATE_STATUS_META.guest_authorized,  opacity: 1 }
+                          case 'visitor_pass_live':        return { ...PLATE_STATUS_META.visitor,           opacity: 1 }
+                        }
+                      }
+                      const p = paletteFor(r.type)
+                      // Row label per spec — plate always leads; the
+                      // per-type detail is enrichment context. Times
+                      // use the same fmtIssued/fmtLeft/fmtExpiredAgo/
+                      // fmtGuestRange helpers as the Active Passes tab
+                      // so relative-time semantics are consistent.
+                      let plateText = ''
+                      let detail: React.ReactNode = null
+                      switch (r.type) {
+                        case 'do_not_tow':
+                          plateText = r.data.plate
+                          detail = <>Do Not Tow{r.data.reason ? ` · reason: ${r.data.reason}` : ''}</>
+                          break
+                        case 'vehicle_active':
+                          plateText = r.data.plate
+                          detail = 'Authorized (resident vehicle)'
+                          break
+                        case 'authorized_plate':
+                          plateText = r.data.plate
+                          detail = 'Authorized standing plate'
+                          break
+                        case 'vehicle_pending':
+                          plateText = r.data.plate
+                          detail = 'Registration pending'
+                          break
+                        case 'vehicle_declined':
+                          plateText = r.data.plate
+                          detail = 'Registration declined'
+                          break
+                        case 'vehicle_expired':
+                          plateText = r.data.plate
+                          detail = 'Permit expired'
+                          break
+                        case 'plate_under_review':
+                          plateText = r.data.new_plate
+                          detail = 'Plate change under review'
+                          break
+                        case 'guest_auth':
+                          plateText = r.data.plate
+                          detail = fmtGuestRange(r.data.start_date, r.data.end_date)
+                          break
+                        case 'visitor_pass_live':
+                          plateText = r.data.plate
+                          detail = <>{fmtIssued(r.data.created_at)} · <span style={{ fontWeight: 'bold' }}>{fmtLeft(r.data.expires_at)}</span></>
+                          break
+                        case 'visitor_pass_recently_expired':
+                          plateText = r.data.plate
+                          detail = fmtExpiredAgo(r.data.expires_at)
+                          break
+                      }
+                      return (
+                        <div key={`${r.type}-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', background: p.bg, border: `1px solid ${p.border}`, borderRadius: '8px', padding: '8px 10px', marginBottom: '6px', opacity: p.opacity }}>
+                          <span style={{ color: 'white', fontFamily: 'Courier New', fontSize: '14px', fontWeight: 'bold', letterSpacing: '0.04em' }}>{plateText}</span>
+                          <span style={{ color: p.color, fontSize: '11px', textAlign: 'right' }}>{detail}</span>
+                        </div>
+                      )
+                    })
+                  ) : result.partialFailure ? (
+                    // Condition A — spec: NEVER render the clean empty
+                    // state when a branch errored. This warning shift is
+                    // the whole point of tracking per-branch errors
+                    // through the refactor.
+                    <div style={{ color: '#fbbf24', fontSize: '12px', margin: 0, lineHeight: '1.5' }}>
+                      ⚠ Couldn&apos;t check all records — some information may be missing. Try again before deciding.
+                    </div>
+                  ) : (
+                    <div style={{ color: '#555', fontSize: '12px', margin: 0, fontStyle: 'italic' }}>
+                      No other records for this plate.
+                    </div>
+                  )}
+                </div>
+                </>
               )}
 
               {/* Violation form */}
