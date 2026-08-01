@@ -77,8 +77,13 @@ export default function VideoLibraryIndexPage() {
           <h1 style={{ color: TEXT, fontSize: 36, fontWeight: 800, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
             Video Library
           </h1>
-          <p style={{ color: '#94a3b8', fontSize: 16, margin: 0, lineHeight: 1.6 }}>
+          <p style={{ color: '#94a3b8', fontSize: 16, margin: '0 0 16px', lineHeight: 1.6 }}>
             Short video walkthroughs of common workflows. New videos publish here as they&apos;re recorded.
+          </p>
+          {/* AI disclosure — primary variant. Same treatment as a doc's
+              "Last updated" line: present, not shouted, not dismissable. */}
+          <p style={{ color: MUTED, fontSize: 13, margin: 0, lineHeight: 1.6, fontStyle: 'italic' }}>
+            These walkthroughs use an AI-generated presenter and synthetic voice. The content is written and reviewed by the ShieldMyLot team.
           </p>
         </header>
 

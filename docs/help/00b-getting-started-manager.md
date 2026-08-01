@@ -5,6 +5,8 @@ audience: ["manager", "leasing_agent"]
 tier_required: "any"
 last_updated: "2026-07-11"
 related: ["signup-and-first-login", "resident-management", "property-management-overview", "spaces-and-reserved-parking", "visitor-passes"]
+related_videos:
+  - slug: getting-started-property-manager
 flyer: "getting-started-manager"
 ---
 

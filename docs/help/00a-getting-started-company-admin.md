@@ -5,6 +5,8 @@ audience: ["company_admin"]
 tier_required: "any"
 last_updated: "2026-07-11"
 related: ["signup-and-first-login", "account-setup", "adding-properties", "billing-and-tier-changes"]
+related_videos:
+  - slug: getting-started-company-admin
 flyer: "getting-started-company-admin"
 ---
 

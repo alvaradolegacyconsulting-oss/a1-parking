@@ -119,6 +119,12 @@ export default async function VideoDetailPage({ params }: { params: Promise<Para
           />
         </div>
 
+        {/* AI disclosure — compact variant near the player. Same style
+            treatment as the primary variant on the index page. */}
+        <p style={{ color: MUTED, fontSize: 12, margin: '-12px 0 24px', lineHeight: 1.6, fontStyle: 'italic' }}>
+          AI-generated presenter and voice. Content written and reviewed by ShieldMyLot.
+        </p>
+
         {/* Chapter list — display-only v1. Seek-link wiring deferred
             pending HeyGen ?t= support confirmation. */}
         {fm.chapters && fm.chapters.length > 0 && (

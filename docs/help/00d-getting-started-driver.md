@@ -5,6 +5,8 @@ audience: ["driver"]
 tier_required: "any"
 last_updated: "2026-07-11"
 related: ["signup-and-first-login", "submitting-violations", "tow-tickets-and-evidence"]
+related_videos:
+  - slug: getting-started-driver
 flyer: "getting-started-driver"
 ---
 

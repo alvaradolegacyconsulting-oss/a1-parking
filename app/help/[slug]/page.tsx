@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getAllDocs, getAllSlugs, getDocBySlug, getCategories } from '../../lib/help-docs'
+import { getVideoBySlug } from '../../lib/help-videos'
 
 // B85: per-doc renderer. Server component; SSG via generateStaticParams.
 // Each of the 16 help docs at docs/help/NN-slug.md becomes /help/<slug>.
@@ -159,6 +160,12 @@ export default async function HelpDocPage({ params }: { params: Promise<Params> 
   const related = (fm.related ?? [])
     .map((slug) => getDocBySlug(slug))
     .filter((d): d is NonNullable<typeof d> => d !== null)
+  // Doc → video cross-links from frontmatter (schema in help-docs.ts).
+  // Missing videos are silently filtered — a slug reference that doesn't
+  // resolve today just doesn't render (safer than a broken link).
+  const relatedVideos = (fm.related_videos ?? [])
+    .map((rv) => getVideoBySlug(rv.slug))
+    .filter((v): v is NonNullable<typeof v> => v !== null)
 
   // ── Flyer variant ────────────────────────────────────────────────
   // Getting-Started front doors (flyer field in frontmatter): render
@@ -183,13 +190,24 @@ export default async function HelpDocPage({ params }: { params: Promise<Params> 
           <article style={{ flex: 1, padding: '20px 24px 40px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
               <Breadcrumb category={fm.category} title={fm.title} />
-              <a
-                href={`/help-pdfs/${fm.flyer}.pdf`}
-                download
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(201,162,39,0.12)', border: `1px solid rgba(201,162,39,0.5)`, color: GOLD, fontSize: 13, fontWeight: 600, padding: '6px 12px', borderRadius: 6, textDecoration: 'none' }}
-              >
-                ⬇ Download PDF
-              </a>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {relatedVideos.map((v) => (
+                  <Link
+                    key={v.slug}
+                    href={`/help/videos/${v.slug}`}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(201,162,39,0.06)', border: '1px solid rgba(201,162,39,0.3)', color: GOLD, fontSize: 13, fontWeight: 600, padding: '6px 12px', borderRadius: 6, textDecoration: 'none' }}
+                  >
+                    🎬 Watch video
+                  </Link>
+                ))}
+                <a
+                  href={`/help-pdfs/${fm.flyer}.pdf`}
+                  download
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(201,162,39,0.12)', border: `1px solid rgba(201,162,39,0.5)`, color: GOLD, fontSize: 13, fontWeight: 600, padding: '6px 12px', borderRadius: 6, textDecoration: 'none' }}
+                >
+                  ⬇ Download PDF
+                </a>
+              </div>
             </div>
             <iframe
               src={`/help-flyers/${fm.flyer}.html`}
@@ -260,6 +278,25 @@ export default async function HelpDocPage({ params }: { params: Promise<Params> 
                   <li key={r.slug} style={{ marginBottom: 6 }}>
                     <Link href={`/help/${r.slug}`} style={{ color: GOLD, fontSize: 14, textDecoration: 'none' }}>
                       → {r.frontmatter.title}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Related videos — doc→video cross-links. One canonical home
+              per video (/help/videos/{slug}) — link, don't re-embed. */}
+          {relatedVideos.length > 0 && (
+            <div style={{ marginTop: related.length > 0 ? 24 : 48, padding: '24px 0 0', borderTop: `1px solid ${BORDER}` }}>
+              <p style={{ color: MUTED, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>
+                Related videos
+              </p>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {relatedVideos.map((v) => (
+                  <li key={v.slug} style={{ marginBottom: 6 }}>
+                    <Link href={`/help/videos/${v.slug}`} style={{ color: GOLD, fontSize: 14, textDecoration: 'none' }}>
+                      🎬 {v.frontmatter.title}
                     </Link>
                   </li>
                 ))}

@@ -20,6 +20,21 @@ const nextConfig: NextConfig = {
       },
     ]
   },
+  async redirects() {
+    return [
+      // 2026-07-31 — /help/videos/resident retired when the pre-Spaces /
+      // pre-CRM-redesign / pre-disputes-removal walkthrough was removed.
+      // Redirects to the new Resident walkthrough rather than the video
+      // library index: old bookmarks are residents wanting the resident
+      // video (per Mateo). Permanent (308) — bookmarks + any indexed URL
+      // land on the current file.
+      {
+        source: '/help/videos/resident',
+        destination: '/help/videos/getting-started-resident',
+        permanent: true,
+      },
+    ]
+  },
 };
 
 export default nextConfig;

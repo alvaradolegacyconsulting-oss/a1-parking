@@ -5,6 +5,8 @@ audience: ["resident"]
 tier_required: "any"
 last_updated: "2026-07-11"
 related: ["resident-self-registration", "spaces-and-reserved-parking", "visitor-passes"]
+related_videos:
+  - slug: getting-started-resident
 flyer: "getting-started-resident"
 ---
 
