@@ -96,14 +96,29 @@ function compositeTypeIsProtective(t: CompositeRecord['type']): boolean {
   }
 }
 
-// Override modal authorizedAs picker. Only invoked from the two headline
-// buttons that skip the decline modal today (pending/declined/expired
-// and notfound). Prefer the most-specific alsoOnRecord type for a
-// human-readable modal banner; default 'resident' catches DNT, active
-// vehicle, authorized_plate, plate_under_review, vehicle_pending.
-function overrideAuthorizedAs(alsoOnRecord: CompositeRecord[]): 'resident' | 'visitor' | 'guest' {
+// Override modal authorizedAs picker. Invoked from headline buttons
+// that skip the decline modal by default (pending/declined/expired,
+// notfound) when composite makes them anyProtective.
+//
+// Prefer the most-specific alsoOnRecord type for a human-readable modal
+// banner. When composite has NO visitor/guest addition (or is empty),
+// describe the HEADLINE honestly — a pending vehicle is NOT "active
+// resident" per Mateo review 2026-08-02. The modal is the evidence-
+// capture screen; inaccurate copy there is the worst place for it.
+function overrideAuthorizedAs(
+  headlineStatus: string,
+  alsoOnRecord: CompositeRecord[],
+): 'resident' | 'visitor' | 'guest' | 'pending' | 'plate_under_review' {
+  // Composite additions win — a live pass or approved guest is a more
+  // specific fact than the headline's "registration status" alone.
   if (alsoOnRecord.some(r => r.type === 'visitor_pass_live')) return 'visitor'
   if (alsoOnRecord.some(r => r.type === 'guest_auth')) return 'guest'
+  // No pass or guest in composite — describe headline honestly.
+  if (headlineStatus === 'pending') return 'pending'
+  if (headlineStatus === 'plate_under_review') return 'plate_under_review'
+  // Fallthrough: authorized / authorized_plate / do_not_tow. 'resident'
+  // is the least-wrong default for these; a follow-up could add
+  // dedicated banner copy for DNT + authorized_plate if wanted.
   return 'resident'
 }
 
@@ -148,7 +163,7 @@ export default function DriverPortal() {
   // violations.decline_reason / decline_reason_note + was_authorized_at_time).
   // B214: 'guest' added for guest_authorized plate scans (manager-vetted
   // multi-week authorizations). Same B71 override path as resident/visitor.
-  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor' | 'guest'; detail: string } | null>(null)
+  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor' | 'guest' | 'pending' | 'plate_under_review'; detail: string } | null>(null)
   const [pendingDecline, setPendingDecline] = useState<{ reason: DeclineReason; note: string | null } | null>(null)
   const [photos, setPhotos] = useState<File[]>([])
   const [violationVideo, setViolationVideo] = useState<File|null>(null)
@@ -1003,7 +1018,7 @@ export default function DriverPortal() {
   function issueViolationOrOverride() {
     const composite = (result?.alsoOnRecord ?? []) as CompositeRecord[]
     if (result?.anyProtective && !pendingDecline) {
-      setDeclineModal({ authorizedAs: overrideAuthorizedAs(composite), detail: '' })
+      setDeclineModal({ authorizedAs: overrideAuthorizedAs(result?.status ?? '', composite), detail: '' })
       return
     }
     setViolation(v => ({ ...v, property: selectedProperty }))

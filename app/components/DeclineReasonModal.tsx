@@ -63,7 +63,16 @@ interface Props {
   // vetted guest's vehicle can still violate location/manner (fire lane,
   // handicap, etc.) and needs the structured decline-reason capture before
   // the violation form opens.
-  authorizedAs: 'resident' | 'visitor' | 'guest'
+  //
+  // 2026-08-02 — 'pending' and 'plate_under_review' added for the composite-
+  // display override-gate widening (0efa235). The modal is now the
+  // evidence-capture screen for ANY protective state, not just B71
+  // authorized-plate. Banner copy states the fact honestly for each:
+  // a pending vehicle IS NOT "active resident" — it's "registration
+  // awaiting manager approval." Modal is the artifact a dispute turns
+  // on; describing a state that isn't true is the worst place for
+  // inaccuracy in the product.
+  authorizedAs: 'resident' | 'visitor' | 'guest' | 'pending' | 'plate_under_review'
   /** Description fragment shown in the banner ("active resident at Unit 12B", "active visitor pass visiting Unit 7", "authorized guest visiting Unit 503"). Caller composes from scan result. */
   authorizedDetail?: string
   onCancel: () => void
@@ -85,17 +94,28 @@ export default function DeclineReasonModal({ plate, authorizedAs, authorizedDeta
   }
 
   const authorizedLabel =
-    authorizedAs === 'resident' ? 'active resident'
-    : authorizedAs === 'visitor' ? 'active visitor pass'
-    : 'authorized guest'
+      authorizedAs === 'resident'           ? 'active resident'
+    : authorizedAs === 'visitor'            ? 'active visitor pass'
+    : authorizedAs === 'guest'              ? 'approved guest'
+    : authorizedAs === 'pending'            ? 'registration awaiting manager approval'
+    : authorizedAs === 'plate_under_review' ? 'plate change awaiting manager approval'
+    : 'protected plate'
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
       <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'14px', padding:'24px', maxWidth:'500px', width:'100%', maxHeight:'90vh', overflowY:'auto' }}>
 
-        <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Authorized plate override</p>
+        {/* 2026-08-02 — reframed from "Authorized plate override" to
+            "Protected plate override" when the composite-display gate
+            widened the modal beyond B71 authorized-plate. A pending
+            vehicle isn't "authorized" — the eyebrow + H2 have to
+            match the banner honestly across all 5 authorizedAs
+            values. The B71 semantics (was_authorized_at_time +
+            decline_reason + decline_reason_note) still persist to
+            audit_logs; the copy widens, the audit fields don't. */}
+        <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px', fontWeight:'bold' }}>Protected plate override</p>
         <h2 style={{ color:'white', fontSize:'18px', fontWeight:'bold', margin:'0 0 12px' }}>
-          Issue a violation against an authorized vehicle?
+          Issue a violation against a protected vehicle?
         </h2>
 
         <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px 14px', marginBottom:'16px' }}>
