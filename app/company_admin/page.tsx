@@ -99,7 +99,7 @@ import { generateTempPassword } from '../lib/temp-password'
 import CredentialsModal from '../components/CredentialsModal'
 import ViolationReviewScreen, { ReviewViolation } from '../components/ViolationReviewScreen'
 // B71: decline-and-proceed interstitial — symmetric to driver portal.
-import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS } from '../components/DeclineReasonModal'
+import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS, type AuthorizedAsValue } from '../components/DeclineReasonModal'
 import PostConfirmationEditModal from '../components/PostConfirmationEditModal'
 import { TierUpgradeModal, type TierUpgradeContext, nextWithinTrackTier } from '../components/TierUpgradeModal'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
@@ -207,7 +207,10 @@ export default function CompanyAdminPortal() {
   // B71: decline-and-proceed state. Mirrors driver/page.tsx semantics.
   // B214: 'guest' added for guest_authorized plate scans (manager-vetted
   // multi-week authorizations). Same B71 override path as resident/visitor.
-  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor' | 'guest'; detail: string } | null>(null)
+  // 2026-08-03: DeclineReasonModal widened to authorizedAsList (composite arc).
+  // CA portal keeps the single-value shape and wraps at call sites; the CA
+  // path doesn't participate in composite-display anyProtective aggregation.
+  const [declineModal, setDeclineModal] = useState<{ authorizedAsList: AuthorizedAsValue[] } | null>(null)
   const [pendingDecline, setPendingDecline] = useState<{ reason: DeclineReason; note: string | null } | null>(null)
   const [photos, setPhotos] = useState<File[]>([])
   const [violationVideo, setViolationVideo] = useState<File|null>(null)
@@ -4073,7 +4076,7 @@ export default function CompanyAdminPortal() {
                         <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Vehicle</span><br /><span style={{ color:'white', fontSize:'13px' }}>{[result.data.year, result.data.color, result.data.make, result.data.model].filter(Boolean).join(' ') || '—'}</span></div>
                       </div>
                       {/* B71: authorized-plate override. Same flow as driver portal. */}
-                      <button onClick={() => setDeclineModal({ authorizedAs:'resident', detail: '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAsList: ['resident'] })}
                         style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -4102,7 +4105,7 @@ export default function CompanyAdminPortal() {
                           <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Label (portal-only)</span><br /><span style={{ color:'#aaa', fontSize:'13px', fontStyle:'italic' }}>{result.data.label}</span></div>
                         )}
                       </div>
-                      <button onClick={() => setDeclineModal({ authorizedAs:'resident', detail: '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAsList: ['resident'] })}
                         style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -4138,7 +4141,7 @@ export default function CompanyAdminPortal() {
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Authorized From</span><br /><span style={{ color:'white', fontSize:'13px' }}>{result.data.start_date}</span></div>
                         <div><span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Authorized Through</span><br /><span style={{ color:'#3b82f6', fontSize:'13px', fontWeight:'bold' }}>{result.data.end_date}</span></div>
                       </div>
-                      <button onClick={() => setDeclineModal({ authorizedAs:'guest', detail: result.data.non_resident_reason ? `(${result.data.non_resident_reason})` : '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAsList: ['guest'] })}
                         style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -4221,7 +4224,7 @@ export default function CompanyAdminPortal() {
                       </div>
                       <p style={{ color:'#f59e0b', fontSize:'11px', margin:'0 0 12px', fontWeight:'bold' }}>Do not tow for unauthorized status — active visitor pass.</p>
                       {/* B71: location/manner override on active visitor pass. */}
-                      <button onClick={() => setDeclineModal({ authorizedAs:'visitor', detail: '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAsList: ['visitor'] })}
                         style={{ width:'100%', padding:'11px', background:'#1e2535', color:'#f59e0b', fontWeight:'bold', fontSize:'13px', border:'1px solid #f59e0b', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -8339,8 +8342,7 @@ export default function CompanyAdminPortal() {
       {declineModal && (
         <DeclineReasonModal
           plate={plate}
-          authorizedAs={declineModal.authorizedAs}
-          authorizedDetail={declineModal.detail}
+          authorizedAsList={declineModal.authorizedAsList}
           onCancel={() => setDeclineModal(null)}
           onConfirm={(reason, note) => {
             setPendingDecline({ reason, note })

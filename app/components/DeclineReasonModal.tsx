@@ -56,6 +56,8 @@ export const DECLINE_REASON_LABELS: Record<DeclineReason, string> = {
 
 const OTHER_NOTE_MIN_LENGTH = 10
 
+export type AuthorizedAsValue = 'resident' | 'visitor' | 'guest' | 'pending' | 'plate_under_review'
+
 interface Props {
   plate: string
   // B214: 'guest' added for manager-vetted multi-week guest authorizations
@@ -72,14 +74,35 @@ interface Props {
   // awaiting manager approval." Modal is the artifact a dispute turns
   // on; describing a state that isn't true is the worst place for
   // inaccuracy in the product.
-  authorizedAs: 'resident' | 'visitor' | 'guest' | 'pending' | 'plate_under_review'
-  /** Description fragment shown in the banner ("active resident at Unit 12B", "active visitor pass visiting Unit 7", "authorized guest visiting Unit 503"). Caller composes from scan result. */
-  authorizedDetail?: string
+  //
+  // 2026-08-03 — widened to a list of protective descriptors. Composite
+  // arc: a plate may hold MULTIPLE protective records at scan (pending
+  // vehicle + live visitor pass; approved guest + resident vehicle;
+  // etc). Banner Oxford-comma-joins the descriptors so the driver sees
+  // every protective fact behind the override, not just one. The
+  // authorizedDetail prop was retired (display-only per f4b7d28 review;
+  // never persisted).
+  authorizedAsList: AuthorizedAsValue[]
   onCancel: () => void
   onConfirm: (reason: DeclineReason, note: string | null) => void
 }
 
-export default function DeclineReasonModal({ plate, authorizedAs, authorizedDetail, onCancel, onConfirm }: Props) {
+const AUTHORIZED_LABEL: Record<AuthorizedAsValue, string> = {
+  resident:           'an active resident',
+  visitor:            'an active visitor pass',
+  guest:              'an approved guest',
+  pending:            'a registration awaiting manager approval',
+  plate_under_review: 'a plate change awaiting manager approval',
+}
+
+function joinOxford(parts: string[]): string {
+  if (parts.length === 0) return ''
+  if (parts.length === 1) return parts[0]
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`
+  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`
+}
+
+export default function DeclineReasonModal({ plate, authorizedAsList, onCancel, onConfirm }: Props) {
   const [reason, setReason] = useState<DeclineReason | ''>('')
   const [note, setNote] = useState('')
 
@@ -93,13 +116,20 @@ export default function DeclineReasonModal({ plate, authorizedAs, authorizedDeta
     onConfirm(reason as DeclineReason, note.trim().length > 0 ? note.trim() : null)
   }
 
-  const authorizedLabel =
-      authorizedAs === 'resident'           ? 'active resident'
-    : authorizedAs === 'visitor'            ? 'active visitor pass'
-    : authorizedAs === 'guest'              ? 'approved guest'
-    : authorizedAs === 'pending'            ? 'registration awaiting manager approval'
-    : authorizedAs === 'plate_under_review' ? 'plate change awaiting manager approval'
-    : 'protected plate'
+  // Defense-in-depth dedup — caller should already dedup (driver-page
+  // overrideAuthorizedAsList uses an add-only-if-absent push), but if a
+  // future caller forgets we don't want "an active visitor pass and an
+  // active visitor pass" rendering to the operator.
+  const dedupedList: AuthorizedAsValue[] = []
+  for (const v of authorizedAsList) {
+    if (!dedupedList.includes(v)) dedupedList.push(v)
+  }
+  const labels = dedupedList.map(v => AUTHORIZED_LABEL[v]).filter(Boolean)
+  // Fallback for the pathological empty-list case — banner still needs
+  // a subject. Shouldn't happen since anyProtective gates modal entry.
+  const bannerBody = labels.length > 0
+    ? `This plate has ${joinOxford(labels)}.`
+    : 'This plate has a protective record on file.'
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
@@ -122,7 +152,7 @@ export default function DeclineReasonModal({ plate, authorizedAs, authorizedDeta
           <p style={{ color:'#888', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 4px' }}>Plate</p>
           <p style={{ color:'#86efac', fontFamily:'Courier New', fontSize:'16px', fontWeight:'bold', margin:'0 0 6px' }}>{plate}</p>
           <p style={{ color:'#aaa', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>
-            This plate is an <strong style={{ color:'#86efac' }}>{authorizedLabel}</strong>{authorizedDetail ? ` ${authorizedDetail}` : ''}. Authorized vehicles can still be parked illegally (fire lane, handicap, blocked access, etc.). Select the reason for overriding to log a location/manner violation.
+            <strong style={{ color:'#86efac' }}>{bannerBody}</strong> Protected vehicles can still be parked illegally (fire lane, handicap, blocked access, etc.). Select the reason for overriding to log a location/manner violation.
           </p>
         </div>
 

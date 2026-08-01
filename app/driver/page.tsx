@@ -20,7 +20,7 @@ import { FEATURE_FLAGS } from '../lib/feature-flags'
 // (declined-vehicle + live-visitor-pass class; Green Acres arc).
 import { PLATE_STATUS_META, isDoNotTow, type PlateStatus } from '../lib/plate-status'
 // B71: decline-and-proceed interstitial for authorized-plate overrides.
-import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS } from '../components/DeclineReasonModal'
+import DeclineReasonModal, { DeclineReason, DECLINE_REASON_LABELS, type AuthorizedAsValue } from '../components/DeclineReasonModal'
 // B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
 import { evaluatePortalGate } from '../lib/portal-account-gate'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
@@ -96,30 +96,198 @@ function compositeTypeIsProtective(t: CompositeRecord['type']): boolean {
   }
 }
 
-// Override modal authorizedAs picker. Invoked from headline buttons
-// that skip the decline modal by default (pending/declined/expired,
-// notfound) when composite makes them anyProtective.
+// Override modal authorizedAs list builder. Invoked from headline
+// buttons that route Issue Violation through the B71 decline modal
+// whenever anyProtective is true.
 //
-// Prefer the most-specific alsoOnRecord type for a human-readable modal
-// banner. When composite has NO visitor/guest addition (or is empty),
-// describe the HEADLINE honestly — a pending vehicle is NOT "active
-// resident" per Mateo review 2026-08-02. The modal is the evidence-
-// capture screen; inaccurate copy there is the worst place for it.
-function overrideAuthorizedAs(
+// Returns the FULL list of protective descriptors (headline + every
+// composite record), so the modal banner can enumerate every fact
+// behind the override — not just the most-specific one. Composite
+// arc: a pending vehicle with a live visitor pass produces
+// ['pending','visitor'] and the modal says "This plate has a
+// registration awaiting manager approval and an active visitor pass."
+//
+// Dedup on the way in (add-only-if-absent). Order preserved: headline
+// first, then composite additions in the order alsoOnRecord provides
+// them (already sorted per COMPOSITE_SORT_PRIORITY at build time).
+function overrideAuthorizedAsList(
   headlineStatus: string,
   alsoOnRecord: CompositeRecord[],
-): 'resident' | 'visitor' | 'guest' | 'pending' | 'plate_under_review' {
-  // Composite additions win — a live pass or approved guest is a more
-  // specific fact than the headline's "registration status" alone.
-  if (alsoOnRecord.some(r => r.type === 'visitor_pass_live')) return 'visitor'
-  if (alsoOnRecord.some(r => r.type === 'guest_auth')) return 'guest'
-  // No pass or guest in composite — describe headline honestly.
-  if (headlineStatus === 'pending') return 'pending'
-  if (headlineStatus === 'plate_under_review') return 'plate_under_review'
-  // Fallthrough: authorized / authorized_plate / do_not_tow. 'resident'
-  // is the least-wrong default for these; a follow-up could add
-  // dedicated banner copy for DNT + authorized_plate if wanted.
-  return 'resident'
+): AuthorizedAsValue[] {
+  const list: AuthorizedAsValue[] = []
+  const push = (v: AuthorizedAsValue) => { if (!list.includes(v)) list.push(v) }
+
+  // Headline first. Only protective headline statuses contribute a
+  // descriptor — do_not_tow / declined / expired / notfound do not
+  // (DNT is protective but has no "authorized as X" phrasing that
+  // fits the banner; the composite additions carry any real detail).
+  if (headlineStatus === 'pending') push('pending')
+  else if (headlineStatus === 'plate_under_review') push('plate_under_review')
+  else if (headlineStatus === 'guest_authorized') push('guest')
+  else if (headlineStatus === 'visitor') push('visitor')
+  else if (headlineStatus === 'authorized' || headlineStatus === 'authorized_plate') push('resident')
+
+  // Composite additions. visitor_pass_recently_expired is NOT a live
+  // protective state (informational only) → no banner entry. Same
+  // for do_not_tow / vehicle_declined / vehicle_expired.
+  for (const r of alsoOnRecord) {
+    if (r.type === 'visitor_pass_live') push('visitor')
+    else if (r.type === 'guest_auth') push('guest')
+    else if (r.type === 'vehicle_pending') push('pending')
+    else if (r.type === 'plate_under_review') push('plate_under_review')
+    else if (r.type === 'vehicle_active' || r.type === 'authorized_plate') push('resident')
+  }
+
+  // Defensive fallback — shouldn't hit since anyProtective gates
+  // modal entry, but a bare DNT headline with no composite additions
+  // would otherwise leave the banner without a subject.
+  if (list.length === 0) list.push('resident')
+  return list
+}
+
+// ── Snapshot builder (2026-08-03) ─────────────────────────────────
+// Green Acres arc close. Converts a searchPlate result into the
+// jsonb-array payload the driver_create_violation_with_snapshot RPC
+// wants (see migrations/20260803_violation_snapshot.sql). Each entry
+// becomes a violation_context_records row.
+//
+// record_type values MUST match the CHECK constraint. was_live_at_scan
+// semantics per record type (see migration header block). source_id
+// nullable — some RPC-based branches (check_dnt_plate,
+// check_authorized_plate, visitor_passes via SAFE_VISITOR_PASS_COLS)
+// don't return an id we can capture, so it's null there.
+//
+// Headline first (as the FIRST snapshot row), then composite additions.
+// Dedup by (record_type, source_id) — headline wins.
+type SnapshotRow = {
+  record_type: string
+  source_id: string | null
+  expires_at?: string | null
+  start_date?: string | null
+  end_date?: string | null
+  was_live_at_scan: boolean
+}
+
+function buildSnapshotFromResult(result: {
+  status?: string
+  data?: Record<string, unknown> | null
+  alsoOnRecord?: CompositeRecord[]
+} | null): SnapshotRow[] {
+  const rows: SnapshotRow[] = []
+  const pushIfNew = (row: SnapshotRow) => {
+    const dup = rows.some(r => r.record_type === row.record_type && r.source_id === row.source_id)
+    if (!dup) rows.push(row)
+  }
+
+  const asStr = (v: unknown): string | null => (v == null ? null : String(v))
+
+  // ── Headline row ────────────────────────────────────────────────
+  const status = result?.status ?? ''
+  const data = (result?.data ?? {}) as Record<string, unknown>
+  switch (status) {
+    case 'do_not_tow':
+      // check_dnt_plate returns no id; source_id null. Protective/live.
+      pushIfNew({ record_type: 'do_not_tow', source_id: null, was_live_at_scan: true })
+      break
+    case 'authorized':
+      pushIfNew({ record_type: 'vehicle_active', source_id: asStr(data.id), was_live_at_scan: true })
+      break
+    case 'authorized_plate':
+      // check_authorized_plate returns no id; source_id null.
+      pushIfNew({ record_type: 'authorized_plate', source_id: null, was_live_at_scan: true })
+      break
+    case 'pending':
+      pushIfNew({ record_type: 'vehicle_pending', source_id: asStr(data.id), was_live_at_scan: true })
+      break
+    case 'declined':
+      pushIfNew({ record_type: 'vehicle_declined', source_id: asStr(data.id), was_live_at_scan: false })
+      break
+    case 'expired':
+      pushIfNew({ record_type: 'vehicle_expired', source_id: asStr(data.id), was_live_at_scan: false })
+      break
+    case 'plate_under_review':
+      // vehicle_plate_changes returns id via branchPendingPc.
+      pushIfNew({ record_type: 'plate_under_review', source_id: asStr(data.id), was_live_at_scan: true })
+      break
+    case 'guest_authorized':
+      // SAFE_GUEST_AUTH_COLS = 'plate, start_date, end_date, non_resident_reason' — no id.
+      pushIfNew({
+        record_type: 'guest_auth',
+        source_id: asStr(data.id),
+        start_date: asStr(data.start_date),
+        end_date: asStr(data.end_date),
+        was_live_at_scan: true,
+      })
+      break
+    case 'visitor':
+      // SAFE_VISITOR_PASS_COLS doesn't include id; source_id null.
+      pushIfNew({
+        record_type: 'visitor_pass_live',
+        source_id: asStr(data.id),
+        expires_at: asStr(data.expires_at),
+        was_live_at_scan: true,
+      })
+      break
+    case 'notfound':
+    default:
+      // No headline row for notfound (or unknown).
+      break
+  }
+
+  // ── Composite additions ─────────────────────────────────────────
+  for (const r of (result?.alsoOnRecord ?? [])) {
+    const d = r.data as Record<string, unknown>
+    switch (r.type) {
+      case 'do_not_tow':
+        pushIfNew({ record_type: 'do_not_tow', source_id: null, was_live_at_scan: true })
+        break
+      case 'vehicle_active':
+        pushIfNew({ record_type: 'vehicle_active', source_id: asStr(d.id), was_live_at_scan: true })
+        break
+      case 'authorized_plate':
+        pushIfNew({ record_type: 'authorized_plate', source_id: null, was_live_at_scan: true })
+        break
+      case 'vehicle_pending':
+        pushIfNew({ record_type: 'vehicle_pending', source_id: asStr(d.id), was_live_at_scan: true })
+        break
+      case 'vehicle_declined':
+        pushIfNew({ record_type: 'vehicle_declined', source_id: asStr(d.id), was_live_at_scan: false })
+        break
+      case 'vehicle_expired':
+        pushIfNew({ record_type: 'vehicle_expired', source_id: asStr(d.id), was_live_at_scan: false })
+        break
+      case 'plate_under_review':
+        pushIfNew({ record_type: 'plate_under_review', source_id: asStr(d.id), was_live_at_scan: true })
+        break
+      case 'guest_auth':
+        pushIfNew({
+          record_type: 'guest_auth',
+          source_id: asStr(d.id),
+          start_date: asStr(d.start_date),
+          end_date: asStr(d.end_date),
+          was_live_at_scan: true,
+        })
+        break
+      case 'visitor_pass_live':
+        pushIfNew({
+          record_type: 'visitor_pass_live',
+          source_id: asStr(d.id),
+          expires_at: asStr(d.expires_at),
+          was_live_at_scan: true,
+        })
+        break
+      case 'visitor_pass_recently_expired':
+        pushIfNew({
+          record_type: 'visitor_pass_recently_expired',
+          source_id: asStr(d.id),
+          expires_at: asStr(d.expires_at),
+          was_live_at_scan: false,
+        })
+        break
+    }
+  }
+
+  return rows
 }
 
 export default function DriverPortal() {
@@ -163,7 +331,10 @@ export default function DriverPortal() {
   // violations.decline_reason / decline_reason_note + was_authorized_at_time).
   // B214: 'guest' added for guest_authorized plate scans (manager-vetted
   // multi-week authorizations). Same B71 override path as resident/visitor.
-  const [declineModal, setDeclineModal] = useState<{ authorizedAs: 'resident' | 'visitor' | 'guest' | 'pending' | 'plate_under_review'; detail: string } | null>(null)
+  // 2026-08-03: widened to a list — composite arc lets multiple protective
+  // records coexist on one plate; the modal enumerates them all. detail
+  // field retired (display-only per f4b7d28, never persisted).
+  const [declineModal, setDeclineModal] = useState<{ authorizedAsList: AuthorizedAsValue[] } | null>(null)
   const [pendingDecline, setPendingDecline] = useState<{ reason: DeclineReason; note: string | null } | null>(null)
   const [photos, setPhotos] = useState<File[]>([])
   const [violationVideo, setViolationVideo] = useState<File|null>(null)
@@ -996,6 +1167,13 @@ export default function DriverPortal() {
       headline.status === 'do_not_tow' || isDoNotTow(headline.status as PlateStatus)
     const anyProtective = headlineIsProtective || alsoOnRecord.some(r => compositeTypeIsProtective(r.type))
 
+    // 2026-08-03 — scanned_at is the client's timestamp for WHEN the
+    // driver saw this plate result. Captured after Promise.all so it
+    // reflects the moment the operator actually made an enforcement
+    // decision (not when they first typed the plate). Persisted onto
+    // violations.scanned_at via driver_create_violation_with_snapshot
+    // so a dispute can answer "what did the driver know when."
+    const scannedAt = new Date().toISOString()
     setSearching(false)
     setResult({
       status:         headline.status,
@@ -1003,6 +1181,7 @@ export default function DriverPortal() {
       alsoOnRecord,
       partialFailure,
       anyProtective,
+      scanned_at:     scannedAt,
     })
   }
 
@@ -1018,7 +1197,7 @@ export default function DriverPortal() {
   function issueViolationOrOverride() {
     const composite = (result?.alsoOnRecord ?? []) as CompositeRecord[]
     if (result?.anyProtective && !pendingDecline) {
-      setDeclineModal({ authorizedAs: overrideAuthorizedAs(result?.status ?? '', composite), detail: '' })
+      setDeclineModal({ authorizedAsList: overrideAuthorizedAsList(result?.status ?? '', composite) })
       return
     }
     setViolation(v => ({ ...v, property: selectedProperty }))
@@ -1073,7 +1252,24 @@ export default function DriverPortal() {
       setUploadProgress(0)
     }
     const normalizedPlate = normalizePlate(plate)
-    const { data: newV, error: insErr } = await supabase.from('violations').insert([{
+
+    // ── Snapshot arc (2026-08-03 — Green Acres close) ──────────────
+    // Build the payload for driver_create_violation_with_snapshot. The
+    // RPC atomically INSERTs the violation row + N child snapshot rows
+    // (violation_context_records) in one transaction. On any failure
+    // we fall back to a plain violations INSERT with snapshot_status=
+    // 'failed' — Mateo lock: physical tow happens regardless of
+    // software; blocking violation creation to protect evidence
+    // quality gets the priority backwards. `failed` is queryable so
+    // reconciliation can stitch after-the-fact.
+    //
+    // Field notes:
+    //   • scanned_at + headline_status_at_scan are REQUIRED by the RPC.
+    //   • snapshot_status is intentionally omitted from the payload —
+    //     the RPC owns it and computes it from p_snapshot's length.
+    //   • The fallback path DOES set snapshot_status='failed' (RPC-
+    //     owned semantics only apply to the RPC path).
+    const violationPayload = {
       plate: normalizedPlate,
       violation_type: violation.type,
       location: violation.location,
@@ -1095,70 +1291,123 @@ export default function DriverPortal() {
       was_authorized_at_time: pendingDecline !== null,
       decline_reason: pendingDecline?.reason || null,
       decline_reason_note: pendingDecline?.note || null,
-    }]).select().single()
-    if (insErr) {
-      setSubmitting(false)
-      // Log EVERY insert failure with the raw shape — a missed DNT
-      // detection is precisely the case that most needs diagnosis
-      // (Mateo 2026-07-23). Was previously nested inside isDntBlock
-      // which meant misses were invisible.
-      console.error('[submitViolation] insert failed', {
-        code: (insErr as unknown as { code?: string }).code,
-        message: insErr.message,
-        details: (insErr as unknown as { details?: string }).details,
-        hint: (insErr as unknown as { hint?: string }).hint,
+      // Snapshot fields (2026-08-03) — RPC-required.
+      scanned_at: result?.scanned_at ?? new Date().toISOString(),
+      headline_status_at_scan: result?.status ?? 'notfound',
+    }
+    const snapshotPayload = buildSnapshotFromResult(result)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let newV: any = null
+
+    // Try RPC first (atomic parent + snapshot).
+    const rpcRes = await supabase.rpc('driver_create_violation_with_snapshot', {
+      p_violation: violationPayload,
+      p_snapshot: snapshotPayload,
+    })
+    // Silent-write discipline: RPCs can return errors two ways —
+    // transport/SQL error on rpcRes.error, OR a {error: '...'} payload
+    // in rpcRes.data (the RPC's own validation guards). Both must be
+    // checked; either triggers the fallback.
+    const rpcDataError = (rpcRes.data as { error?: string } | null)?.error ?? null
+
+    if (rpcRes.error || rpcDataError) {
+      console.error('[submitViolation] driver_create_violation_with_snapshot RPC failed; falling back to direct insert', {
+        rpc_error: rpcRes.error,
+        rpc_data_error: rpcDataError,
+        intended_snapshot_payload: snapshotPayload,
+        intended_violation_payload: violationPayload,
       })
-      // ── DNT creation-trigger catch (fail-open recovery — DNT Commit 4) ─
-      // If check_dnt_plate errored during searchPlate() (fail-open path),
-      // driver reaches the notfound card, clicks Issue Violation, and the
-      // BEFORE INSERT trigger dnt_reject_violation_insert refuses with
-      // check_violation. Detect + render as PROTECTION (not ERROR).
-      //
-      // 🔴 Detection is defensive-tolerant: PostgREST/supabase-js error
-      // shape is not empirically verified in this environment. Match on
-      // multiple keys so any surface (raw SQLSTATE, wrapped code,
-      // message-only) is caught. The console.error above captures the
-      // raw shape for ANY insert failure — miss or hit — so the first
-      // real DNT block in prod tightens the check for later.
-      //
-      // Filed with Mateo's caveat: "an assumed error shape fails just
-      // as silently as an assumed column." Diagnostic log + tolerant
-      // catch = graceful fallback; Commit 4.5's smoke will capture the
-      // real error shape via a sessioned trigger rejection and let us
-      // tighten this condition if any of the 5 keys aren't the right
-      // one to key on.
-      const errAny = insErr as unknown as { code?: string, message?: string, details?: string, hint?: string }
-      const isDntBlock =
-        errAny.code === '23514' ||                                    // Postgres check_violation SQLSTATE
-        (errAny.code ?? '').includes('23514') ||                      // wrapped code variant
-        /Do Not Tow/i.test(errAny.message ?? '') ||                   // trigger RAISE text
-        /Do Not Tow/i.test(errAny.details ?? '') ||                   // supabase-js may bury it in details
-        /Do Not Tow/i.test(errAny.hint ?? '')                         // trigger HINT text
-      if (isDntBlock) {
-        // Structured reason via check_dnt_plate (avoids parsing the RAISE
-        // message — reasons are manager-entered free text and may contain
-        // parentheses that would break a regex-based extraction).
-        let reason: string | null = null
-        try {
-          const { data: dntData } = await supabase.rpc('check_dnt_plate', {
-            p_plate: normalizedPlate,
-            p_property: violation.property,
-          })
-          reason = (dntData as { reason?: string } | null)?.reason ?? null
-        } catch (e) {
-          console.error('[submitViolation] check_dnt_plate recovery call failed', e)
+      // Direct-insert fallback with explicit snapshot_status='failed' so
+      // the evidence gap is queryable (not indistinguishable from
+      // none_present or from pre-feature NULL rows).
+      const fallbackRes = await supabase.from('violations').insert([{
+        ...violationPayload,
+        snapshot_status: 'failed',
+      }]).select().single()
+      if (fallbackRes.error) {
+        setSubmitting(false)
+        const insErr = fallbackRes.error
+        // Log EVERY fallback failure with the raw shape — a missed
+        // DNT detection is precisely the case that most needs
+        // diagnosis (Mateo 2026-07-23).
+        console.error('[submitViolation] fallback direct insert ALSO failed', {
+          code: (insErr as unknown as { code?: string }).code,
+          message: insErr.message,
+          details: (insErr as unknown as { details?: string }).details,
+          hint: (insErr as unknown as { hint?: string }).hint,
+        })
+        // ── DNT creation-trigger catch (fail-open recovery — DNT Commit 4) ─
+        // BEFORE INSERT trigger dnt_reject_violation_insert fires on
+        // any INSERT into violations (including the DEFINER RPC path
+        // upstream — the trigger runs in the DEFINER's transaction).
+        // When both paths trip the trigger, this fallback error path
+        // is where we detect and render as PROTECTION (not ERROR).
+        //
+        // 🔴 Detection is defensive-tolerant: PostgREST/supabase-js error
+        // shape is not empirically verified in this environment. Match on
+        // multiple keys so any surface (raw SQLSTATE, wrapped code,
+        // message-only) is caught.
+        const errAny = insErr as unknown as { code?: string, message?: string, details?: string, hint?: string }
+        const isDntBlock =
+          errAny.code === '23514' ||                                    // Postgres check_violation SQLSTATE
+          (errAny.code ?? '').includes('23514') ||                      // wrapped code variant
+          /Do Not Tow/i.test(errAny.message ?? '') ||                   // trigger RAISE text
+          /Do Not Tow/i.test(errAny.details ?? '') ||                   // supabase-js may bury it in details
+          /Do Not Tow/i.test(errAny.hint ?? '')                         // trigger HINT text
+        if (isDntBlock) {
+          // Structured reason via check_dnt_plate (avoids parsing the RAISE
+          // message — reasons are manager-entered free text and may contain
+          // parentheses that would break a regex-based extraction).
+          let reason: string | null = null
+          try {
+            const { data: dntData } = await supabase.rpc('check_dnt_plate', {
+              p_plate: normalizedPlate,
+              p_property: violation.property,
+            })
+            reason = (dntData as { reason?: string } | null)?.reason ?? null
+          } catch (e) {
+            console.error('[submitViolation] check_dnt_plate recovery call failed', e)
+          }
+          alert(
+            `This plate is protected at this property.\n\n` +
+            (reason ? `Reason: ${reason}\n\n` : '') +
+            `Do not tow. Contact the property manager if you believe this vehicle should not be protected.`
+          )
+          // Close the violation modal so driver returns to plate lookup
+          // instead of retrying the submit against a permanent rejection.
+          setShowViolation(false)
+          return
         }
-        alert(
-          `This plate is protected at this property.\n\n` +
-          (reason ? `Reason: ${reason}\n\n` : '') +
-          `Do not tow. Contact the property manager if you believe this vehicle should not be protected.`
-        )
-        // Close the violation modal so driver returns to plate lookup
-        // instead of retrying the submit against a permanent rejection.
-        setShowViolation(false)
+        // Raw error never reaches the user (feedback_raw_error_never_
+        // reaches_user); generic + actionable copy only.
+        alert("Couldn't save the violation. Check your connection and try again.")
         return
       }
-      alert('Error: ' + insErr.message); return
+      newV = fallbackRes.data
+    } else {
+      // RPC success. Synthesize a newV-shaped object from the payload
+      // we sent plus the returned id — downstream code reads only
+      // fields the payload already populated. created_at is unavailable
+      // from the RPC return; scanned_at is the closest honest substitute
+      // for the split-second before the ReviewViolation refetch would
+      // land, and matches the client's own perceived timestamp.
+      const rpcData = rpcRes.data as { ok: boolean; id: number; snapshot_status: string; snapshot_count: number }
+      newV = {
+        id: rpcData.id,
+        plate: violationPayload.plate,
+        violation_type: violationPayload.violation_type,
+        location: violationPayload.location,
+        notes: violationPayload.notes,
+        property: violationPayload.property,
+        driver_name: violationPayload.driver_name,
+        video_url: violationPayload.video_url,
+        vehicle_color: violationPayload.vehicle_color,
+        vehicle_make: violationPayload.vehicle_make,
+        vehicle_model: violationPayload.vehicle_model,
+        vehicle_year: violationPayload.vehicle_year,
+        created_at: violationPayload.scanned_at,
+      }
     }
     let insertedPhotoIds: number[] = []
     if (photoUrls.length > 0 && newV) {
@@ -2203,7 +2452,7 @@ export default function DriverPortal() {
                       {/* B71: authorized vehicles can still be parked illegally
                           (fire lane, handicap, blocked access). Issue Violation
                           opens the decline-reason interstitial first. */}
-                      <button onClick={() => setDeclineModal({ authorizedAs: 'resident', detail: '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAsList: ['resident'] })}
                         style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -2231,7 +2480,7 @@ export default function DriverPortal() {
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Property</span><br /><span style={{ color: '#4caf50', fontSize: '13px' }}>{result.data.property}</span></div>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Vehicle</span><br /><span style={{ color: 'white', fontSize: '13px' }}>—</span></div>
                       </div>
-                      <button onClick={() => setDeclineModal({ authorizedAs: 'resident', detail: '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAsList: ['resident'] })}
                         style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -2311,7 +2560,7 @@ export default function DriverPortal() {
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Authorized From</span><br /><span style={{ color: 'white', fontSize: '13px' }}>{result.data.start_date}</span></div>
                         <div><span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Authorized Through</span><br /><span style={{ color: '#3b82f6', fontSize: '13px', fontWeight: 'bold' }}>{result.data.end_date}</span></div>
                       </div>
-                      <button onClick={() => setDeclineModal({ authorizedAs: 'guest', detail: result.data.non_resident_reason ? `(${result.data.non_resident_reason})` : '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAsList: ['guest'] })}
                         style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -2432,7 +2681,7 @@ export default function DriverPortal() {
                       <p style={{ color: '#f59e0b', fontSize: '11px', margin: '0 0 12px', fontWeight: 'bold' }}>Do not tow for unauthorized status — active visitor pass.</p>
                       {/* B71: visitor passes are an "authorized" state per spec;
                           location/manner violations (fire lane, etc.) still apply. */}
-                      <button onClick={() => setDeclineModal({ authorizedAs: 'visitor', detail: '' })}
+                      <button onClick={() => setDeclineModal({ authorizedAsList: ['visitor'] })}
                         style={{ width: '100%', padding: '11px', background: '#1e2535', color: '#f59e0b', fontWeight: 'bold', fontSize: '13px', border: '1px solid #f59e0b', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Arial' }}>
                         Issue Violation (location/manner override)
                       </button>
@@ -3234,8 +3483,7 @@ export default function DriverPortal() {
       {declineModal && (
         <DeclineReasonModal
           plate={plate}
-          authorizedAs={declineModal.authorizedAs}
-          authorizedDetail={declineModal.detail}
+          authorizedAsList={declineModal.authorizedAsList}
           onCancel={() => setDeclineModal(null)}
           onConfirm={(reason, note) => {
             setPendingDecline({ reason, note })
