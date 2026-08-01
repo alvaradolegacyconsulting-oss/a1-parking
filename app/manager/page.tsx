@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
 import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { printQRSign } from '../lib/qr-print'
@@ -188,6 +188,14 @@ export default function ManagerPortal() {
   const [residentsFetchState, setResidentsFetchState] = useState<
     { status: 'ok' | 'error' | 'unexpectedly_empty' | 'idle'; at: number }
   >({ status: 'idle', at: Date.now() })
+  // Last-write-wins race guard (2026-08-01) — bumps on every
+  // fetchResidents call; the resolving response only sets state if it
+  // still holds the latest token. Root-cause fix for A1's "list goes
+  // empty after approve" incident: Amanda has 4 assigned properties;
+  // rapid switchProperty / mount races caused a slow response for one
+  // property to overwrite state with the wrong data (usually zero
+  // rows). See feedback_last_write_wins_race_on_state_fetch.md.
+  const fetchResidentsToken = useRef(0)
   const [, setRefreshTicker] = useState(0)
   // Per-modal target + form state — one slot per RPC, matches B214 pattern
   const [targetAdd, setTargetAdd] = useState(false)
@@ -1386,9 +1394,24 @@ export default function ManagerPortal() {
   //     doesn't inspect), but stable for future callers.
   async function fetchResidents(
     property: string,
-  ): Promise<{ ok: true } | { ok: false; reason: 'error' | 'unexpectedly_empty' }> {
+  ): Promise<{ ok: true } | { ok: false; reason: 'error' | 'unexpectedly_empty' | 'superseded' }> {
+    // Bump the token BEFORE the await. On return, compare — if another
+    // fetchResidents call bumped it in the meantime, the response we
+    // just got belongs to a prior request the user is no longer looking
+    // at. Discarding avoids overwriting state with stale (usually
+    // zero-row) data from a property they've since switched away from.
+    const token = ++fetchResidentsToken.current
     const { data, error } = await supabase
       .from('residents').select('*').ilike('property', property).order('unit')
+    if (token !== fetchResidentsToken.current) {
+      console.info('[Manager fetchResidents] superseded — discarding', {
+        property, token, current: fetchResidentsToken.current,
+      })
+      // Prior state PRESERVED. A later call is in flight or already
+      // landed; letting this response through would overwrite whatever
+      // that call sets (or is about to set).
+      return { ok: false, reason: 'superseded' }
+    }
     if (error) {
       console.error('[Manager fetchResidents] query failed', { property, error })
       setResidentsFetchState({ status: 'error', at: Date.now() })
