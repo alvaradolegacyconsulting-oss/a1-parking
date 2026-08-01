@@ -131,62 +131,38 @@ COMMENT ON TABLE public.violation_context_records IS
   '2026-08-03 — Pass snapshot per violation. One row per protective record present at scan time (visitor pass, guest auth, pending vehicle, etc). Written atomically with the parent violation via driver_create_violation_with_snapshot RPC; on RPC failure, direct-insert fallback sets violations.snapshot_status=failed and this table is empty (evidence gap explicit).';
 
 -- ── 3. RLS enable + policies ─────────────────────────────────────────
+-- Pattern matches violation_photos_select_inherits_violation verbatim
+-- (Jose confirmed 2026-08-03 the shipped RLS shape). Single SELECT
+-- policy that inherits scope from the parent violations row via EXISTS:
+-- if the caller can see the parent (per violations' own RLS), they can
+-- see the children. If they can't see the parent, the EXISTS check
+-- fails and the children stay hidden. No role checks on this table —
+-- the parent's policies are already the authoritative gate, and
+-- duplicating them here would be a drift surface (a manager whose
+-- violations RLS changes wouldn't see the change here without a
+-- separate migration).
+--
+-- 2026-08-03 fix: this file initially had four separate role-based
+-- policies + a driver_email-based policy. violations has NO
+-- driver_email column (driver_name only, no email address); the
+-- driver policy failed at CREATE. The parent-inherit pattern is
+-- both correct AND simpler, and it's what the sibling table
+-- violation_photos already uses. Rewrote to match.
+--
+-- WRITE policies: NONE. INSERTs happen only via
+-- driver_create_violation_with_snapshot DEFINER RPC (bypasses RLS
+-- on write). No UPDATE / DELETE policies means client roles cannot
+-- mutate evidence records. DELETE via parent CASCADE only.
 ALTER TABLE public.violation_context_records ENABLE ROW LEVEL SECURITY;
 
--- Deny writes to all client roles. INSERTs happen only via the DEFINER
--- RPC below. Updates + deletes never allowed on evidence records.
-DROP POLICY IF EXISTS "violation_context_records_no_client_write"
+DROP POLICY IF EXISTS "violation_context_records_select_inherits_violation"
   ON public.violation_context_records;
-
--- Manager + CA + admin SELECT — scope inherited from the parent
--- violations row. Pattern parallels violation_photos read policies.
-DROP POLICY IF EXISTS "manager_read_violation_context"
-  ON public.violation_context_records;
-CREATE POLICY "manager_read_violation_context"
-  ON public.violation_context_records FOR SELECT TO authenticated
+CREATE POLICY "violation_context_records_select_inherits_violation"
+  ON public.violation_context_records FOR SELECT
   USING (
-    (SELECT get_my_role()) IN ('manager', 'leasing_agent')
-    AND EXISTS (
+    EXISTS (
       SELECT 1 FROM public.violations v
        WHERE v.id = violation_context_records.violation_id
-         AND v.property ~~* ANY (SELECT unnest(get_my_properties()))
-    )
-  );
-
-DROP POLICY IF EXISTS "company_admin_read_violation_context"
-  ON public.violation_context_records;
-CREATE POLICY "company_admin_read_violation_context"
-  ON public.violation_context_records FOR SELECT TO authenticated
-  USING (
-    (SELECT get_my_role()) = 'company_admin'
-    AND EXISTS (
-      SELECT 1 FROM public.violations v
-       WHERE v.id = violation_context_records.violation_id
-         AND v.property IN (
-           SELECT properties.name FROM properties
-            WHERE properties.company ~~* (SELECT get_my_company())
-         )
-    )
-  );
-
-DROP POLICY IF EXISTS "admin_read_violation_context"
-  ON public.violation_context_records;
-CREATE POLICY "admin_read_violation_context"
-  ON public.violation_context_records FOR SELECT TO authenticated
-  USING ((SELECT get_my_role()) = 'admin');
-
--- Driver SELECT — only their own submissions (via driver_name join
--- match; pattern parallels violation_photos driver-read policy).
-DROP POLICY IF EXISTS "driver_read_own_violation_context"
-  ON public.violation_context_records;
-CREATE POLICY "driver_read_own_violation_context"
-  ON public.violation_context_records FOR SELECT TO authenticated
-  USING (
-    (SELECT get_my_role()) = 'driver'
-    AND EXISTS (
-      SELECT 1 FROM public.violations v
-       WHERE v.id = violation_context_records.violation_id
-         AND lower(v.driver_email) = lower(auth.jwt() ->> 'email')
     )
   );
 
