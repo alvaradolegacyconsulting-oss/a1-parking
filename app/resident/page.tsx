@@ -1393,6 +1393,26 @@ export default function ResidentPortal() {
                               <p style={{ color: v.status === 'declined' ? '#f44336' : '#aaa', fontSize:'12px', margin:'0' }}>{v.manager_note}</p>
                             </div>
                           )}
+                          {/* Finding 3 (2026-08-04) — explain how visitor
+                              passes relate to pending/declined vehicle
+                              state. Green Acres unit 186 issued daily
+                              passes for their own pending vehicle for
+                              three days; the driver's /visitor precheck
+                              (parallel arc) warns the anonymous side,
+                              this closes it on the authenticated side.
+                              Pending copy names the "won't be recognised
+                              until approved" fact; declined copy names
+                              the "pass doesn't change that status" fact. */}
+                          {v.status === 'pending' && (
+                            <p style={{ color:'#888', fontSize:'11px', margin:'0 0 10px', lineHeight:'1.5', fontStyle:'italic' }}>
+                              A visitor pass lets you park today, but it doesn&apos;t change your registration — your vehicle won&apos;t be recognised as a resident vehicle until it&apos;s approved.
+                            </p>
+                          )}
+                          {v.status === 'declined' && (
+                            <p style={{ color:'#888', fontSize:'11px', margin:'0 0 10px', lineHeight:'1.5', fontStyle:'italic' }}>
+                              A visitor pass doesn&apos;t change that status.
+                            </p>
+                          )}
                           {v.status === 'declined' && !v.resident_read && (
                             <button onClick={() => markDeclinedRead(v.id)}
                               style={{ width:'100%', padding:'7px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial', marginBottom:'8px' }}>

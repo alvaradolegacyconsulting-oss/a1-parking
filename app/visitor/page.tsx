@@ -97,6 +97,17 @@ function VisitorForm() {
   // Token is single-use; reset on failure so the user can re-challenge.
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<TurnstileHandle>(null)
+  // Finding 3 (2026-08-04): two-step warn when the plate matches an
+  // on-record inactive vehicle (pending/declined/expired). First
+  // submit runs the precheck; on match, sets warnPending=true and
+  // stops. The rendered warn block offers "Continue and issue pass"
+  // (sets warnAcknowledged=true; re-submit) or Cancel.
+  //
+  // warnAcknowledged is checked in submitPass to skip the warn branch
+  // on the second call. Reset to false on plate/unit edit — a fresh
+  // plate needs its own acknowledgement.
+  const [warnPending, setWarnPending] = useState(false)
+  const [warnAcknowledged, setWarnAcknowledged] = useState(false)
 
   // B19: query per-plate active-pass count on plate change so the user
   // sees the limit before submit. Debounced 400ms.
@@ -112,7 +123,14 @@ function VisitorForm() {
     return () => { cancelled = true; clearTimeout(timer) }
   }, [form.plate, propertyName])
 
-  async function submitPass() {
+  // bypassOnRecordWarn arg (Finding 3): the "Continue and issue pass"
+  // button calls submitPass(true) directly rather than relying on
+  // warnAcknowledged state — React 18 batches state updates in event
+  // handlers, so setWarnAcknowledged(true) + submitPass() would read
+  // stale (false) from closure. Explicit arg sidesteps the batching
+  // window entirely. warnAcknowledged state kept for the reset-on-
+  // plate-edit path.
+  async function submitPass(bypassOnRecordWarn: boolean = false) {
     if (!form.plate || !form.unit) {
       alert('Please enter your license plate and the unit you are visiting')
       return
@@ -157,14 +175,45 @@ function VisitorForm() {
     // return zero rows. The RPC returns a minimum-leak boolean (no row
     // visibility, no count enumeration).
     if (propertyName !== 'Managed Property') {
-      const { data: isResident } = await supabase
-        .rpc('check_resident_plate', { p_plate: plate, p_property: propertyName })
+      // Finding 3 (2026-08-04): parallel precheck. check_resident_plate
+      // (existing) blocks for is_active=true residents. New
+      // check_plate_on_record_inactive_at_property returns TRUE for
+      // any plate matching an is_active=false vehicle in status
+      // (pending, declined, expired). Parallel keeps latency = max
+      // rather than sum + no timing-attack signal (either both fire
+      // or neither).
+      //
+      // Deactivated vehicles deliberately EXCLUDED from the second
+      // check — moved-out residents can be genuine visitors.
+      const [residentRes, onRecordRes] = await Promise.all([
+        supabase.rpc('check_resident_plate', { p_plate: plate, p_property: propertyName }),
+        supabase.rpc('check_plate_on_record_inactive_at_property', { p_plate: plate, p_property: propertyName }),
+      ])
 
-      if (isResident === true) {
+      if (residentRes.data === true) {
+        // Existing behavior preserved (Mateo lock 2026-08-04): active-
+        // resident is a hard block — a pass for an already-authorized
+        // vehicle is a no-op. Copy unchanged.
         setLoading(false)
         setPlateError('This plate is already registered to a resident at this property and does not need a visitor pass.')
         return
       }
+      if (onRecordRes.data === true && !bypassOnRecordWarn) {
+        // Two-step warn: on first submit, show the warn block and
+        // stop. User clicks "Continue and issue pass" → sets
+        // warnAcknowledged → re-submit skips this branch.
+        // Uniform copy across pending/declined/expired — the RPC
+        // returns boolean only, no distinguishing state string
+        // reaches the client. Anti-enumeration between the three
+        // inactive states.
+        setLoading(false)
+        setWarnPending(true)
+        return
+      }
+      // Fall-through cases:
+      //  • onRecordRes.data === true && warnAcknowledged → proceed
+      //  • both false                                    → proceed (unknown / genuine visitor)
+      //  • onRecordRes has error                         → proceed (silent-read: don't block on transient RPC failure; the create-pass step still enforces per-plate limit)
     }
     // B19: per-plate-concurrent-active enforcement runs in the DB trigger
     // (enforce_visitor_pass_limit) — fires inside create_visitor_pass.
@@ -371,7 +420,12 @@ function VisitorForm() {
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>License Plate *</label>
             <input
               value={form.plate}
-              onChange={e => setForm({...form, plate: normalizePlate(e.target.value)})}
+              onChange={e => {
+                setForm({...form, plate: normalizePlate(e.target.value)})
+                // Reset warn state on plate edit — a fresh plate needs
+                // its own acknowledgement; old one no longer relevant.
+                if (warnPending || warnAcknowledged) { setWarnPending(false); setWarnAcknowledged(false) }
+              }}
               placeholder="ABC1234"
               style={{ display:'block', width:'100%', marginTop:'6px', padding:'12px', fontSize:'20px', fontFamily:'Courier New', fontWeight:'bold', letterSpacing:'0.1em', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', textAlign:'center', outline:'none', boxSizing:'border-box' }}
             />
@@ -445,6 +499,43 @@ function VisitorForm() {
             </div>
           )}
 
+          {/* Finding 3 warn — plate matches an is_active=false vehicle
+              in status (pending/declined/expired). UNIFORM copy across
+              the three states — no distinguishing text reaches the
+              client (RPC returns boolean only). Two-step: user must
+              click "Continue and issue pass" to proceed. warnPending
+              controls visibility; warnAcknowledged controls the second-
+              submit path in submitPass. Manager_note NEVER reaches
+              this surface — it's authenticated-only. */}
+          {warnPending && (
+            <div style={{ background:'#2a1e00', border:'1px solid #a16207', borderRadius:'8px', padding:'12px 14px', marginBottom:'14px' }}>
+              <p style={{ color:'#fbbf24', fontSize:'13px', fontWeight:'bold', margin:'0 0 8px', lineHeight:'1.5' }}>
+                This plate is already on record at this property.
+              </p>
+              <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 6px', lineHeight:'1.6' }}>
+                If it&apos;s your vehicle, check your resident portal or contact your property manager — a visitor pass doesn&apos;t change how your vehicle is registered.
+              </p>
+              <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 12px', lineHeight:'1.6' }}>
+                You can still issue a pass if you need to park today.
+              </p>
+              <div style={{ display:'flex', gap:'8px' }}>
+                <button
+                  onClick={() => { setWarnAcknowledged(true); setWarnPending(false); submitPass(true) }}
+                  disabled={loading}
+                  style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'6px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}
+                >
+                  Continue and issue pass
+                </button>
+                <button
+                  onClick={() => { setWarnPending(false) }}
+                  style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'6px', cursor:'pointer' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           <label style={{ display:'flex', alignItems:'flex-start', gap:'10px', marginBottom:'16px', cursor:'pointer' }}>
             <input type="checkbox" checked={tosChecked} onChange={e => setTosChecked(e.target.checked)}
               style={{ marginTop:'3px', accentColor:'#C9A227', cursor:'pointer' }} />
@@ -470,7 +561,7 @@ function VisitorForm() {
           </div>
 
           <button
-            onClick={submitPass}
+            onClick={() => submitPass()}
             disabled={loading || !form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken}
             style={{ width:'100%', padding:'14px', background: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken) ? '#555' : '#C9A227', color: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken) ? 'not-allowed' : 'pointer' }}
           >

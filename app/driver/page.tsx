@@ -2864,11 +2864,15 @@ export default function DriverPortal() {
                   <div style={{ ...inp, color: '#C9A227', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>{violation.property}</div>
 
                   {/* B71: locked decline-reason banner when the violation was
-                      opened against an authorized plate. Reason was captured
-                      in the modal; driver can't change it from here. */}
+                      opened against a protected plate. Reason was captured
+                      in the modal; driver can't change it from here.
+                      2026-08-04 — copy widened from "Authorized-plate" to
+                      "Protected plate" to match DeclineReasonModal
+                      (f4b7d28) + composite-arc override gate. Same B71
+                      audit-field semantics; copy honesty across states. */}
                   {pendingDecline && (
                     <div style={{ background: '#1e1800', border: '1px solid #C9A227', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px' }}>
-                      <p style={{ color: '#C9A227', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 4px', fontWeight: 'bold' }}>Authorized-plate override</p>
+                      <p style={{ color: '#C9A227', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 4px', fontWeight: 'bold' }}>Protected plate override</p>
                       <p style={{ color: '#fbbf24', fontSize: '12px', margin: '0', lineHeight: '1.5' }}>
                         {DECLINE_REASON_LABELS[pendingDecline.reason]}
                       </p>

@@ -4278,10 +4278,14 @@ export default function CompanyAdminPortal() {
                     <option value=''>Select property...</option>
                     {properties.map((p, i) => <option key={i} value={p.name}>{p.name}</option>)}
                   </select>
-                  {/* B71: locked decline-reason banner — symmetric to driver portal. */}
+                  {/* B71: locked decline-reason banner — symmetric to driver portal.
+                      2026-08-04 — copy widened from "Authorized-plate" to
+                      "Protected plate" per Finding 3 to match the modal
+                      (f4b7d28) + driver banner. Copy honesty across
+                      the widened override-gate states. */}
                   {pendingDecline && (
                     <div style={{ background:'#1e1800', border:'1px solid #C9A227', borderRadius:'8px', padding:'10px 12px', marginBottom:'12px' }}>
-                      <p style={{ color:'#C9A227', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>Authorized-plate override</p>
+                      <p style={{ color:'#C9A227', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>Protected plate override</p>
                       <p style={{ color:'#fbbf24', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>
                         {DECLINE_REASON_LABELS[pendingDecline.reason]}
                       </p>
