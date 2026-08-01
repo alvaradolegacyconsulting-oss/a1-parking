@@ -180,6 +180,14 @@ export default function ManagerPortal() {
   const [vehiclesPendingRefreshedAt,      setVehiclesPendingRefreshedAt]      = useState<number>(Date.now())
   const [spaceRequestsPendingRefreshedAt, setSpaceRequestsPendingRefreshedAt] = useState<number>(Date.now())
   const [residentsPendingRefreshedAt,     setResidentsPendingRefreshedAt]     = useState<number>(Date.now())
+  // Silent-read reveal (2026-08-01) — fetchResidents state so the UI can
+  // surface transport-error vs unexpectedly-empty vs ok. RLS denials
+  // return {data: [], error: null} — they FILTER, they don't ERROR —
+  // so "unexpectedly empty" is its own signal, distinct from a query
+  // error. See feedback_rls_denials_return_empty_not_error.md.
+  const [residentsFetchState, setResidentsFetchState] = useState<
+    { status: 'ok' | 'error' | 'unexpectedly_empty' | 'idle'; at: number }
+  >({ status: 'idle', at: Date.now() })
   const [, setRefreshTicker] = useState(0)
   // Per-modal target + form state — one slot per RPC, matches B214 pattern
   const [targetAdd, setTargetAdd] = useState(false)
@@ -1352,11 +1360,65 @@ export default function ManagerPortal() {
     setStats(s => ({ ...s, active_passes: data?.length || 0 }))
   }
 
-  async function fetchResidents(property: string) {
-    const { data } = await supabase.from('residents').select('*').ilike('property', property).order('unit')
-    const all = data || []
+  // Silent-read reveal (2026-08-01) — the ORIGINAL shape swallowed
+  // errors AND blanked state on empty responses. Both bugs stack:
+  //   1. `const { data }` (no error destructure) — transport / auth
+  //      / SQL errors set data=null; the `data || []` fallthrough
+  //      then nuked both lists to [].
+  //   2. Even with error captured, RLS denials return
+  //      {data: [], error: null} — they FILTER, they don't ERROR
+  //      (see feedback_rls_denials_return_empty_not_error.md).
+  //      A property-scope drift, deactivated user_roles row, or
+  //      wrong session presents as zero rows with no error at all.
+  //
+  // Reveal shape:
+  //   • Destructure {data, error}. On error: preserve prior state,
+  //     log with tag, set fetchState to 'error'.
+  //   • On empty: if prior state HAD rows, treat as suspicious
+  //     ('unexpectedly_empty' — likely RLS/scope drift); preserve
+  //     prior state; log; set fetchState. If prior state was also
+  //     empty, accept as genuinely empty and pass through.
+  //   • Always console.info the row count on every call. When
+  //     someone reports "blank," the console tells you instantly
+  //     whether the query returned nothing or the render dropped it.
+  //   • Return {ok, reason?} so callers can decide whether to
+  //     bail. Not currently used by refreshCrmData (Promise.all
+  //     doesn't inspect), but stable for future callers.
+  async function fetchResidents(
+    property: string,
+  ): Promise<{ ok: true } | { ok: false; reason: 'error' | 'unexpectedly_empty' }> {
+    const { data, error } = await supabase
+      .from('residents').select('*').ilike('property', property).order('unit')
+    if (error) {
+      console.error('[Manager fetchResidents] query failed', { property, error })
+      setResidentsFetchState({ status: 'error', at: Date.now() })
+      // Prior state PRESERVED — do NOT nuke pendingResidents/residents.
+      return { ok: false, reason: 'error' }
+    }
+    const all = data ?? []
+    console.info('[Manager fetchResidents] result', { property, count: all.length })
+    // "Unexpectedly empty" branch — closure-reads current state at fetch-call
+    // time. React closures snapshot at render, so this sees the state as it
+    // was when refreshCrmData was invoked (which is what we want — before
+    // any of the parallel Promise.all fetches mutate state).
+    const hadRowsInState = pendingResidents.length + residents.length > 0
+    if (all.length === 0 && hadRowsInState) {
+      console.warn('[Manager fetchResidents] zero rows where rows existed in state', {
+        property,
+        prev_pending: pendingResidents.length,
+        prev_active: residents.length,
+      })
+      setResidentsFetchState({ status: 'unexpectedly_empty', at: Date.now() })
+      // Prior state PRESERVED — do NOT blank the manager's last-known view
+      // on a suspicious empty. This is the load-bearing line: blanking
+      // destroys the only evidence the manager has about what USED to be
+      // visible.
+      return { ok: false, reason: 'unexpectedly_empty' }
+    }
     setPendingResidents(all.filter(r => r.status === 'pending'))
     setResidents(all.filter(r => r.status !== 'pending'))
+    setResidentsFetchState({ status: 'ok', at: Date.now() })
+    return { ok: true }
   }
 
   async function resetResidentPassword() {
@@ -1386,11 +1448,33 @@ export default function ManagerPortal() {
     // APPROVE_RESIDENT first, then APPROVE_VEHICLE per cascade row —
     // more natural chronological order. Not a regression: the summary
     // and Network gates don't depend on audit-row ordering.
-    await approveResidentWrite(supabase, {
+    // Silent-write reveal (2026-08-01) — the ORIGINAL awaited the write
+    // without checking .ok. If the RLS UPDATE denied (deactivated
+    // user_roles, property drift, session mismatch), the lib logged
+    // and returned {ok: false, error}; this surface would silently
+    // proceed to cascade + audit + refetch as if it had worked, and
+    // the manager would never know the resident stayed pending. Now
+    // we check .ok, log with tag, show a non-raw error message
+    // (raw errors never reach the user — feedback_raw_error_never_reaches_user.md),
+    // and bail before cascade. friendlyWriteError shape inlined here
+    // for now — the mobile surface's helper is not extracted per Mateo
+    // scope call.
+    const write = await approveResidentWrite(supabase, {
       resident: { id: r.id, name: r.name, unit: r.unit, email: r.email },
       property: manager.name,
       managerNote: residentNotes[r.id] || null,
     })
+    if (!write.ok) {
+      console.error('[Manager approveResident] write failed', { residentId: r.id, error: write.error })
+      const errObj = write.error as Error | undefined
+      const msg = errObj?.message || ''
+      const isNetwork = errObj instanceof TypeError
+        || /Load failed|Failed to fetch|NetworkError|network|ECONNREFUSED|timeout/i.test(msg)
+      alert(isNetwork
+        ? "Couldn't reach the server. Check your connection and try again."
+        : "Couldn't approve. Try again — if this keeps happening, contact your company administrator.")
+      return
+    }
     // Cascade vehicle approval for this resident's unit. Uses the shared
     // batch primitive (approveVehiclesBatch) — same meter-once discipline
     // as runBulkApprove phase-2, scoped to one unit. PM-only prompt lives
@@ -3525,6 +3609,29 @@ export default function ManagerPortal() {
               </div>
             )}
           </>
+        )}
+
+        {/* RESIDENTS — silent-read reveal banners (2026-08-01). See
+            fetchResidents comment block for the two-branch shape.
+            Prior state PRESERVED underneath; banners inform the
+            manager that what they're seeing may be stale so they
+            don't act on it as truth. */}
+        {activeTab === 'residents' && manager && residentsFetchState.status === 'error' && (
+          <div style={{ background:'#2a1015', border:'1px solid #7f1d1d', borderRadius:'8px', padding:'12px 14px', marginBottom:'12px' }}>
+            <p style={{ color:'#fca5a5', fontSize:'13px', margin:0, lineHeight:1.5 }}>
+              Couldn&apos;t refresh the resident list. Showing the last version — try again in a moment.
+            </p>
+          </div>
+        )}
+        {activeTab === 'residents' && manager && residentsFetchState.status === 'unexpectedly_empty' && (
+          <div style={{ background:'#2a1015', border:'1px solid #7f1d1d', borderRadius:'8px', padding:'12px 14px', marginBottom:'12px' }}>
+            <p style={{ color:'#fca5a5', fontSize:'13px', margin:'0 0 6px', lineHeight:1.5, fontWeight:600 }}>
+              No residents came back for this property.
+            </p>
+            <p style={{ color:'#fca5a5', fontSize:'12px', margin:0, lineHeight:1.5, opacity:0.85 }}>
+              You may not have access to this property, or your account may have been deactivated. Contact your company administrator. Showing the last version below.
+            </p>
+          </div>
         )}
 
         {/* RESIDENTS — PM CRM (slice 1) */}
