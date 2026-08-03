@@ -1,6 +1,7 @@
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { redirect } from 'next/navigation'
 import { displayTowReason } from '../../../lib/tow-reasons'
+import { formatTimestamp } from '../../../lib/format-time'
 
 // Property-manager authenticated tow-ticket view (price-stripped, storage kept).
 //
@@ -117,8 +118,14 @@ export default async function PmTicketPage({
 }
 
 function PmTicketView({ violation: v, photos }: { violation: PmViolation; photos: Photo[] }) {
-  const createdAt = new Date(v.created_at).toLocaleString()
-  const issuedAt = v.tow_ticket_generated_at ? new Date(v.tow_ticket_generated_at).toLocaleString() : null
+  // 2026-08-03 — pinned to PROPERTY_TIME_ZONE via formatTimestamp per
+  // Mateo lock. This page is a server component (async default export;
+  // no 'use client') rendering on Vercel Node = UTC. Bare
+  // .toLocaleString() rendered five hours off from the driver's
+  // client-generated print at Green Acres ticket 338. Same column,
+  // three sites, three formatters — now all consume the shared helper.
+  const createdAt = formatTimestamp(v.created_at)
+  const issuedAt = v.tow_ticket_generated_at ? formatTimestamp(v.tow_ticket_generated_at) : null
   const ticketNum = String(v.id).padStart(8, '0').substring(0, 8).toUpperCase()
   const vehicleParts = [v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean)
 
