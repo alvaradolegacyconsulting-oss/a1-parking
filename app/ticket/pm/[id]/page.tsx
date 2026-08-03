@@ -40,6 +40,12 @@ interface PmViolation {
   vehicle_make: string | null
   vehicle_model: string | null
   vehicle_color: string | null
+  // 2026-08-03 — vehicle_vin added to the RPC projection alongside
+  // 20260803_get_pm_ticket_summary_vin.sql. Nullable: pre-2026-06-29
+  // rows + rows where the driver skipped VIN entry both render as
+  // absent (matches driver-print behaviour at driver/page.tsx:1872 —
+  // no VIN → row entirely omitted, no em-dash).
+  vehicle_vin: string | null
   violation_type: string | null
   location: string | null
   notes: string | null
@@ -161,6 +167,15 @@ function PmTicketView({ violation: v, photos }: { violation: PmViolation; photos
           {v.vehicle_year ? <Field label="Year" value={String(v.vehicle_year)} /> : null}
           {vehicleParts.length ? (
             <Field label="Make / Model / Color" value={vehicleParts.join('  ·  ')} span2 />
+          ) : null}
+          {/* VIN — conditional per driver-print behaviour at
+              driver/page.tsx:1872 (no VIN → row omitted, no em-dash).
+              VIN is how a tow is tied to a vehicle when a plate is
+              wrong, missing, or transferred — a manager defending a
+              tow with the ticket that omits it argues from the weaker
+              of two records the system already holds. */}
+          {v.vehicle_vin ? (
+            <Field label="VIN" value={v.vehicle_vin} span2 mono />
           ) : null}
         </Section>
 
