@@ -83,6 +83,11 @@ interface Props {
   onVerify: (token: string) => void
   onError?: (error?: string) => void
   onExpire?: () => void
+  // 2026-08-03 — fires between the first refresh() timeout (15s) and
+  // the silent retry (20s). Parent uses this to show interim copy
+  // like "Taking longer than usual — retrying…" so the user isn't
+  // staring at a frozen form for 35s worst-case.
+  onRetry?: () => void
   theme?: 'auto' | 'light' | 'dark'
   size?: 'normal' | 'compact' | 'flexible'
   // Optional purpose tag passed to Cloudflare analytics ('signup', 'register', 'visitor')
@@ -112,7 +117,7 @@ const TURNSTILE_SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api
 // time, so the widget always invokes the freshest parent handler
 // without re-mounting.
 export const TurnstileWidget = memo(forwardRef<TurnstileHandle, Props>(function TurnstileWidget(
-  { onVerify, onError, onExpire, theme = 'auto', size = 'flexible', action },
+  { onVerify, onError, onExpire, onRetry, theme = 'auto', size = 'flexible', action },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -157,12 +162,14 @@ export const TurnstileWidget = memo(forwardRef<TurnstileHandle, Props>(function 
   const onVerifyRef = useRef(onVerify)
   const onErrorRef = useRef(onError)
   const onExpireRef = useRef(onExpire)
+  const onRetryRef = useRef(onRetry)
   // Keep refs in sync with the latest props on every render. Runs after
   // every render unconditionally — no dep array. Cheap (3 assignments).
   useEffect(() => {
     onVerifyRef.current = onVerify
     onErrorRef.current = onError
     onExpireRef.current = onExpire
+    onRetryRef.current = onRetry
   })
 
   useImperativeHandle(ref, () => ({
@@ -178,34 +185,61 @@ export const TurnstileWidget = memo(forwardRef<TurnstileHandle, Props>(function 
       // token even if the callback never fires (e.g. user navigates away).
       latestTokenRef.current = null
     },
-    refresh: () => new Promise<string>((resolve, reject) => {
-      if (
-        !widgetIdRef.current
-        || typeof window === 'undefined'
-        || !window.turnstile
-      ) {
-        reject(new Error('Turnstile widget not ready'))
-        return
-      }
-      const timer = setTimeout(() => {
-        // Timed out — pull our resolver out of the pending list so the
-        // next natural token doesn't accidentally resolve it, then reject.
-        const idx = pendingResolversRef.current.findIndex(r => r.resolve === resolve)
-        if (idx >= 0) pendingResolversRef.current.splice(idx, 1)
-        reject(new Error('Turnstile refresh timed out after 15s'))
-      }, 15000)
-      pendingResolversRef.current.push({ resolve, reject, timer })
-      latestTokenRef.current = null
+    refresh: async () => {
+      // 2026-08-03 — first attempt 15s (unchanged), then one silent
+      // retry with 20s + an onRetry callback between the two so the
+      // parent can show "Taking longer than usual — retrying…" copy
+      // instead of leaving the user staring at a frozen form for a
+      // total of 35s with no explanation (Mateo lock).
+      //
+      // Silent retries are only good when they're fast (15s isn't).
+      // The onRetry callback is the honesty layer — the user knows
+      // something's happening for the last 20s of the worst case.
+      //
+      // If both attempts fail, throw the existing error copy so the
+      // parent's existing error-render path is unchanged (Mateo
+      // credited that copy in the review).
+      const attemptRefresh = (timeoutMs: number, attemptLabel: string): Promise<string> =>
+        new Promise<string>((resolve, reject) => {
+          if (
+            !widgetIdRef.current
+            || typeof window === 'undefined'
+            || !window.turnstile
+          ) {
+            reject(new Error('Turnstile widget not ready'))
+            return
+          }
+          const timer = setTimeout(() => {
+            const idx = pendingResolversRef.current.findIndex(r => r.resolve === resolve)
+            if (idx >= 0) pendingResolversRef.current.splice(idx, 1)
+            reject(new Error(`Turnstile refresh timed out after ${Math.round(timeoutMs / 1000)}s (${attemptLabel})`))
+          }, timeoutMs)
+          pendingResolversRef.current.push({ resolve, reject, timer })
+          latestTokenRef.current = null
+          try {
+            window.turnstile.reset(widgetIdRef.current)
+          } catch (e) {
+            clearTimeout(timer)
+            const idx = pendingResolversRef.current.findIndex(r => r.resolve === resolve)
+            if (idx >= 0) pendingResolversRef.current.splice(idx, 1)
+            reject(new Error(`Turnstile reset failed: ${(e as Error).message}`))
+          }
+        })
+
       try {
-        window.turnstile.reset(widgetIdRef.current)
-      } catch (e) {
-        // Reset itself threw — pull our resolver back out and reject.
-        clearTimeout(timer)
-        const idx = pendingResolversRef.current.findIndex(r => r.resolve === resolve)
-        if (idx >= 0) pendingResolversRef.current.splice(idx, 1)
-        reject(new Error(`Turnstile reset failed: ${(e as Error).message}`))
+        return await attemptRefresh(15000, 'attempt 1')
+      } catch (firstErr) {
+        // First attempt failed — signal the parent so it can show
+        // interim copy, then try once more with a longer window.
+        try {
+          onRetryRef.current?.()
+        } catch {
+          // callback swallowed — the retry itself is what matters
+        }
+        console.warn('[TurnstileWidget] first refresh attempt failed; retrying with 20s timeout', firstErr)
+        return await attemptRefresh(20000, 'attempt 2')
       }
-    }),
+    },
     getCurrentToken: () => latestTokenRef.current,
   }), [])
 

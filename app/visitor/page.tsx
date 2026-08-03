@@ -560,6 +560,7 @@ function VisitorForm() {
               onVerify={setCaptchaToken}
               onExpire={() => setCaptchaToken(null)}
               onError={() => setCaptchaToken(null)}
+              onRetry={() => setPlateError('Taking longer than usual — retrying…')}
               action="visitor"
             />
           </div>
