@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { displayTowReason } from '../../../lib/tow-reasons'
 import { formatTimestamp } from '../../../lib/format-time'
+import { formatTicketNumber } from '../../../lib/format-ticket-number'
 
 // Public read-only tow-ticket view (capability URL).
 //
@@ -136,7 +137,9 @@ export default async function TicketViewPage({
 
 function TicketView({ violation: v, photos }: { violation: ViolationRow; photos: PhotoRow[] }) {
   const total = (typeof v.tow_fee === 'string' ? parseFloat(v.tow_fee) : v.tow_fee) || 0
-  const ticketNum = String(v.id).padStart(8, '0').substring(0, 8).toUpperCase()
+  // 2026-08-03 — unpadded to match /ticket/pm and the driver's paper.
+  // See app/lib/format-ticket-number.ts.
+  const ticketNum = formatTicketNumber(v.id)
   // 2026-08-03 — see /ticket/pm equivalent for rationale. Server
   // component; must pin timezone explicitly.
   const createdAt = formatTimestamp(v.created_at)

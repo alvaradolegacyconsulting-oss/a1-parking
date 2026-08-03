@@ -5,6 +5,7 @@ import { logAudit } from '../lib/audit'
 import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
+import { formatTicketNumber } from '../lib/format-ticket-number'
 import { TOW_REASONS, RESTRICTED_ON_OVERRIDE, displayTowReason, OTHER_NOTE_MIN_LENGTH, type TowReasonCode } from '../lib/tow-reasons'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
@@ -1785,7 +1786,7 @@ export default function DriverPortal() {
     const mailBody = encodeURIComponent([
       `TOW TICKET — ${driver?.company || 'A1 Wrecker, LLC'}`,
       `Date/Time: ${new Date(v.created_at).toLocaleString()}`,
-      `Ticket #: ${String(v.id).substring(0, 8).toUpperCase()}`,
+      `Ticket #: ${formatTicketNumber(v.id)}`,
       ``,
       `VEHICLE`,
       `Plate: ${v.plate}`,
@@ -1858,7 +1859,7 @@ export default function DriverPortal() {
           <div style="font-size:10px;color:#888">Date / Time</div>
           <div style="font-weight:bold">${new Date(v.created_at).toLocaleString()}</div>
           <div style="font-size:10px;color:#888;margin-top:4px">Ticket #</div>
-          <div style="font-weight:bold">${String(v.id).substring(0, 8).toUpperCase()}</div>
+          <div style="font-weight:bold">${formatTicketNumber(v.id)}</div>
         </div>
       </div>
       <div class="warn">⚠ This vehicle has been towed pursuant to Texas Occupations Code Chapter 2308. Contact the storage facility below to recover your vehicle.</div>

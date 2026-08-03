@@ -2,6 +2,7 @@ import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { redirect } from 'next/navigation'
 import { displayTowReason } from '../../../lib/tow-reasons'
 import { formatTimestamp } from '../../../lib/format-time'
+import { formatTicketNumber } from '../../../lib/format-ticket-number'
 
 // Property-manager authenticated tow-ticket view (price-stripped, storage kept).
 //
@@ -126,7 +127,11 @@ function PmTicketView({ violation: v, photos }: { violation: PmViolation; photos
   // three sites, three formatters — now all consume the shared helper.
   const createdAt = formatTimestamp(v.created_at)
   const issuedAt = v.tow_ticket_generated_at ? formatTimestamp(v.tow_ticket_generated_at) : null
-  const ticketNum = String(v.id).padStart(8, '0').substring(0, 8).toUpperCase()
+  // 2026-08-03 — unpadded to match the driver's printed ticket the
+  // vehicle owner is holding. Was `.padStart(8, '0')` here + at
+  // /ticket/view. Driver print (driver/page.tsx:1861) has never
+  // padded — the paper wins. See app/lib/format-ticket-number.ts.
+  const ticketNum = formatTicketNumber(v.id)
   const vehicleParts = [v.vehicle_make, v.vehicle_model, v.vehicle_color].filter(Boolean)
 
   return (
