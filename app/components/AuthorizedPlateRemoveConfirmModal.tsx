@@ -6,6 +6,7 @@
 // Modal copy names the consequence explicitly ("can then be cited or
 // towed like any other unregistered vehicle") — enforcement-relevant
 // action, single-click removal is the wrong affordance.
+import { formatDate } from '../lib/format-time'
 
 interface Props {
   target: { id: number; plate: string; label: string | null; added_at: string }
@@ -30,7 +31,7 @@ export default function AuthorizedPlateRemoveConfirmModal({ target, propertyName
           <p style={{ color:'#888', fontSize:'12px', fontStyle:'italic', margin:'0 0 8px', lineHeight:'1.5' }}>Label: {target.label}</p>
         )}
         <p style={{ color:'#888', fontSize:'11px', margin:'0 0 16px', lineHeight:'1.5' }}>
-          Soft-delete — the record is preserved for audit; only the active flag is removed. Added {new Date(target.added_at).toLocaleDateString()}.
+          Soft-delete — the record is preserved for audit; only the active flag is removed. Added {formatDate(target.added_at)}.
         </p>
         <div style={{ display:'flex', gap:'8px', justifyContent:'flex-end' }}>
           <button onClick={onClose}

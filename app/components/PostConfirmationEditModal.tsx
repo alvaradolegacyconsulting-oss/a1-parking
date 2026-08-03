@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import MediaRemovalDialog, { RemoverRole } from './MediaRemovalDialog'
 import ViolationVoidDialog from './ViolationVoidDialog'
 import { displayTowReason } from '../lib/tow-reasons'
+import { formatTimestamp } from '../lib/format-time'
 
 // B13/B18 Commit C2 — post-confirmation edit modal.
 // Reused by manager + CA portals. Opens with a known violationId,
@@ -222,7 +223,7 @@ export default function PostConfirmationEditModal({
                 </div>
                 <div>
                   <p style={fieldLabel}>Timestamp</p>
-                  <p style={fieldVal}>{violation.created_at ? new Date(violation.created_at).toLocaleString() : '—'}</p>
+                  <p style={fieldVal}>{formatTimestamp(violation.created_at)}</p>
                 </div>
               </div>
             </div>

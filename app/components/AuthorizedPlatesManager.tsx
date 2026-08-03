@@ -20,6 +20,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../supabase'
 import AuthorizedPlateRemoveConfirmModal from './AuthorizedPlateRemoveConfirmModal'
+import { formatDate } from '../lib/format-time'
 
 type Category = 'staff' | 'vendor' | 'other'
 type CategoryFilter = 'all' | Category
@@ -265,7 +266,7 @@ export default function AuthorizedPlatesManager({
                     {row.label && (
                       <div style={{ color:'#aaa', fontSize:'12px', fontStyle:'italic', marginTop:'3px', wordBreak:'break-word' }}>{row.label}</div>
                     )}
-                    <div style={{ color:'#555', fontSize:'10px', marginTop:'4px' }}>Added by {row.added_by} · {new Date(row.added_at).toLocaleDateString()}</div>
+                    <div style={{ color:'#555', fontSize:'10px', marginTop:'4px' }}>Added by {row.added_by} · {formatDate(row.added_at)}</div>
                   </div>
                   {!readOnly && (
                     <button onClick={() => setTargetRemove(row)}

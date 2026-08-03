@@ -6,6 +6,7 @@ import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { formatTicketNumber } from '../lib/format-ticket-number'
+import { formatTimestamp, formatDate, formatTime } from '../lib/format-time'
 import { TOW_REASONS, RESTRICTED_ON_OVERRIDE, displayTowReason, OTHER_NOTE_MIN_LENGTH, type TowReasonCode } from '../lib/tow-reasons'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
@@ -758,13 +759,14 @@ export default function DriverPortal() {
     return m > 0 ? `expired ${h}h ${m}m ago` : `expired ${h}h ago`
   }
   function fmtIssued(createdAtIso: string): string {
-    return `issued ${new Date(createdAtIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+    return `issued ${formatTime(createdAtIso)}`
   }
   function fmtGuestRange(startDateIso: string, endDateIso: string): string {
     void passesTicker
     const end = new Date(endDateIso)
     const now = new Date()
     const diffDays = Math.ceil((end.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+    // TODO: custom format — needs formatDate variant with month:short opt
     const endLabel = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     const daysLabel = diffDays <= 0 ? 'ends today'
       : diffDays === 1 ? 'ends tomorrow'
@@ -1785,7 +1787,7 @@ export default function DriverPortal() {
     const mailSubject = encodeURIComponent(`Tow Ticket - ${v.plate}`)
     const mailBody = encodeURIComponent([
       `TOW TICKET — ${driver?.company || 'A1 Wrecker, LLC'}`,
-      `Date/Time: ${new Date(v.created_at).toLocaleString()}`,
+      `Date/Time: ${formatTimestamp(v.created_at)}`,
       `Ticket #: ${formatTicketNumber(v.id)}`,
       ``,
       `VEHICLE`,
@@ -1857,7 +1859,7 @@ export default function DriverPortal() {
         </div>
         <div style="margin-left:auto;text-align:right">
           <div style="font-size:10px;color:#888">Date / Time</div>
-          <div style="font-weight:bold">${new Date(v.created_at).toLocaleString()}</div>
+          <div style="font-weight:bold">${formatTimestamp(v.created_at)}</div>
           <div style="font-size:10px;color:#888;margin-top:4px">Ticket #</div>
           <div style="font-weight:bold">${formatTicketNumber(v.id)}</div>
         </div>
@@ -1919,7 +1921,7 @@ export default function DriverPortal() {
         <div><div class="sig-line">Operator Signature</div></div>
         <div><div class="sig-line">Date</div></div>
       </div>
-      <div class="ftr">${driver?.company || localStorage.getItem('company_name') || 'A1 Wrecker, LLC'} &middot; ${localStorage.getItem('company_support_website') || localStorage.getItem('company_support_phone') || ''}<br>Generated ${new Date().toLocaleString()}</div>
+      <div class="ftr">${driver?.company || localStorage.getItem('company_name') || 'A1 Wrecker, LLC'} &middot; ${localStorage.getItem('company_support_website') || localStorage.getItem('company_support_phone') || ''}<br>Generated ${formatTimestamp(new Date())}</div>
       <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
         <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
         <a href="mailto:${storageEmail}?subject=${mailSubject}&body=${mailBody}" style="padding:11px 22px;background:#1e3a5f;color:#fff;font-weight:bold;font-size:13px;border-radius:7px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center">Email Ticket</a>
@@ -2417,7 +2419,7 @@ export default function DriverPortal() {
                             <span style={{ fontFamily: 'Courier New' }}>{result.data._pending_plate_change.old_plate}</span>
                             {' → '}
                             <span style={{ fontFamily: 'Courier New', fontWeight: 'bold' }}>{result.data._pending_plate_change.new_plate}</span>
-                            <span style={{ color: '#aaa', marginLeft: '8px' }}>· submitted {new Date(result.data._pending_plate_change.submitted_at).toLocaleDateString()}</span>
+                            <span style={{ color: '#aaa', marginLeft: '8px' }}>· submitted {formatDate(result.data._pending_plate_change.submitted_at)}</span>
                           </p>
                         </div>
                       )}
@@ -2520,7 +2522,7 @@ export default function DriverPortal() {
                             <span style={{ color: '#fbbf24', fontFamily: 'Courier New', fontSize: '14px', fontWeight: 'bold' }}>{result.data.new_plate}</span>
                           </div>
                         </div>
-                        <p style={{ color: '#888', fontSize: '11px', margin: '8px 0 0' }}>Submitted {new Date(result.data.submitted_at).toLocaleDateString()}</p>
+                        <p style={{ color: '#888', fontSize: '11px', margin: '8px 0 0' }}>Submitted {formatDate(result.data.submitted_at)}</p>
                       </div>
                     </>
                   )}
@@ -2677,7 +2679,7 @@ export default function DriverPortal() {
                       <p style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '16px', margin: '0 0 12px' }}>✓ VISITOR PASS ACTIVE</p>
                       <div style={{ marginBottom: '14px' }}>
                         <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>Expires</span><br />
-                        <span style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '13px' }}>{new Date(result.data.expires_at).toLocaleString()}</span>
+                        <span style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '13px' }}>{formatTimestamp(result.data.expires_at)}</span>
                       </div>
                       <p style={{ color: '#f59e0b', fontSize: '11px', margin: '0 0 12px', fontWeight: 'bold' }}>Do not tow for unauthorized status — active visitor pass.</p>
                       {/* B71: visitor passes are an "authorized" state per spec;
@@ -3272,7 +3274,7 @@ export default function DriverPortal() {
                     <span style={{ fontSize:'14px' }}>🚫</span>
                     <span style={{ color:'#f44336', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em' }}>VOIDED</span>
                     <span style={{ color:'#888', fontSize:'10px', marginLeft:'auto' }}>
-                      {new Date(v.voided_at as string).toLocaleDateString()}
+                      {formatDate(v.voided_at as string)}
                       {v.void_reason ? ` · ${v.void_reason}` : ''}
                     </span>
                   </div>
@@ -3283,8 +3285,8 @@ export default function DriverPortal() {
                     <p style={{ color: '#aaa', fontSize: '11px', margin: '3px 0 0' }}>{displayTowReason(v.violation_type)}</p>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <p style={{ color: '#555', fontSize: '11px', margin: '0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
-                    <p style={{ color: '#444', fontSize: '10px', margin: '2px 0 0' }}>{new Date(v.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</p>
+                    <p style={{ color: '#555', fontSize: '11px', margin: '0' }}>{formatDate(v.created_at)}</p>
+                    <p style={{ color: '#444', fontSize: '10px', margin: '2px 0 0' }}>{formatTime(v.created_at)}</p>
                   </div>
                 </div>
 

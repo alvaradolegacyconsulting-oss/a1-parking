@@ -326,6 +326,7 @@ function VisitorForm() {
   function formatExpiry(hours: string) {
     const d = new Date()
     d.setHours(d.getHours() + parseInt(hours))
+    // TODO: custom format — visitor pass expiry short display (HH:MM · Aug 5); needs formatTime + formatDate variants with month:short opt
     return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) +
            ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }

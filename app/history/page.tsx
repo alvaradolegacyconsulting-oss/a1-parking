@@ -84,6 +84,7 @@ export default function History() {
     const headers = ['Date','Time','Plate','State','Year','Color','Make','Model','Violation Type','Location','Property','Storage Facility','Storage Address','Storage Phone','Tow Fee','Driver Name','Driver License','Notes']
     const rows = towRecords.map(v => {
       const d = new Date(v.created_at)
+      // TODO: custom format — CSV export cells must match spreadsheet spec (MM/DD/YYYY + 2-digit time); needs formatDate/formatTime variants
       const date = d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' })
       const time = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12: true })
       return [
@@ -106,6 +107,7 @@ export default function History() {
 
   function formatDate(dateStr: string) {
     const d = new Date(dateStr)
+    // TODO: custom format — short "Aug 5 · 03:15 PM" combined label; needs formatDate variant with month:short + time
     return d.toLocaleDateString('en-US', {
       month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit'

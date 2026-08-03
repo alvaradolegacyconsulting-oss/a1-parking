@@ -87,6 +87,27 @@ export function formatDate(value: string | Date | null | undefined): string {
 }
 
 /**
+ * Long date (short month name + day + year).
+ *
+ * Renders: "Aug 5, 2026"
+ *
+ * For contexts where the mm/dd/yyyy numeric form reads awkwardly
+ * (billing dates, code-expiry notes, "registered on" copy). Same
+ * timezone pinning as formatDate; different display shape.
+ */
+export function formatDateLong(value: string | Date | null | undefined): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString('en-US', {
+    timeZone: PROPERTY_TIME_ZONE,
+    year:  'numeric',
+    month: 'short',
+    day:   'numeric',
+  })
+}
+
+/**
  * Time-only (HH:MM AM/PM).
  *
  * Renders: "7:11 PM"

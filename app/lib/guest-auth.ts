@@ -85,6 +85,7 @@ export function spanDays(startDate: string, endDate: string): number {
 /** Short display of an ISO date, e.g. "Aug 5". */
 export function formatShortDate(isoDate: string): string {
   const d = new Date(isoDate + 'T00:00:00')
+  // TODO: custom format — guest-auth window short display ("Aug 5"); needs formatDate variant with month:short opt
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 

@@ -24,6 +24,7 @@
 //      retry") for the post-mutation cases
 
 import { useEffect, useState } from 'react'
+import { formatDateLong } from '../lib/format-time'
 
 const GOLD = '#C9A227'
 
@@ -68,7 +69,7 @@ function fmtMoney(cents: number, currency: string): string {
 function fmtDate(unixSeconds: number): string {
   if (!unixSeconds) return 'next billing date'
   try {
-    return new Date(unixSeconds * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    return formatDateLong(new Date(unixSeconds * 1000))
   } catch {
     return 'next billing date'
   }

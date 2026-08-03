@@ -17,6 +17,7 @@ import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId } from '../lib/tier'
+import { formatTimestamp, formatDate, formatDateLong, formatTime } from '../lib/format-time'
 
 // B147 3b.1 — client-side wrapper for the server-only syncOnAdd helper.
 // Calls /api/billing/sync-on-add which enforces auth + ownership server-
@@ -3145,6 +3146,7 @@ export default function CompanyAdminPortal() {
     const headers = ['Date','Time','Plate','State','Year','Color','Make','Model','Violation Type','Location','Property','Storage Facility','Storage Address','Storage Phone','Tow Fee','Driver Name','Driver License','Notes']
     const rows = towRecords.map((v: any) => {
       const d = new Date(v.created_at)
+      // TODO: custom format — CSV export cells must match spreadsheet spec (MM/DD/YYYY + 2-digit time); needs formatDate/formatTime variants
       const date = d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' })
       const time = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12: true })
       return [
@@ -3259,6 +3261,7 @@ export default function CompanyAdminPortal() {
     const monthLabels: { label: string; key: string }[] = []
     for (let i = numMonths - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      // TODO: custom format — chart month-short label; needs formatDate variant with month:short only
       monthLabels.push({ label: d.toLocaleString('en-US', { month: 'short' }), key: mk(d) })
     }
 
@@ -3383,7 +3386,7 @@ export default function CompanyAdminPortal() {
     const mailSubject = encodeURIComponent(`Tow Ticket - ${v.plate}`)
     const mailBody = encodeURIComponent([
       `TOW TICKET — ${role?.company || ''}`,
-      `Date/Time: ${new Date(v.created_at).toLocaleString()}`,
+      `Date/Time: ${formatTimestamp(v.created_at)}`,
       `Ticket #: ${String(v.id).substring(0, 8).toUpperCase()}`,
       ``,`VEHICLE`,`Plate: ${v.plate}`,
       // B78: Family-2 source + graceful omission, matches the HTML template
@@ -3428,7 +3431,7 @@ export default function CompanyAdminPortal() {
         </div>
         <div style="margin-left:auto;text-align:right">
           <div style="font-size:10px;color:#888">Date / Time</div>
-          <div style="font-weight:bold">${new Date(v.created_at).toLocaleString()}</div>
+          <div style="font-weight:bold">${formatTimestamp(v.created_at)}</div>
           <div style="font-size:10px;color:#888;margin-top:4px">Ticket #</div>
           <div style="font-weight:bold">${String(v.id).substring(0, 8).toUpperCase()}</div>
         </div>
@@ -3468,7 +3471,7 @@ export default function CompanyAdminPortal() {
       </div></div>` : ''}
       ${photosHtml}
       <div class="sig-wrap"><div><div class="sig-line">Authorized Signature</div></div><div><div class="sig-line">Date</div></div></div>
-      <div class="ftr">${role?.company || ''}<br>Generated ${new Date().toLocaleString()}</div>
+      <div class="ftr">${role?.company || ''}<br>Generated ${formatTimestamp(new Date())}</div>
       <div class="no-print" style="margin-top:20px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
         <button onclick="window.print()" style="padding:11px 22px;background:#C9A227;color:#0f1117;font-weight:bold;font-size:13px;border:none;border-radius:7px;cursor:pointer">Print Ticket</button>
         <a href="mailto:${storageEmail}?subject=${mailSubject}&body=${mailBody}" style="padding:11px 22px;background:#1e3a5f;color:#fff;font-weight:bold;font-size:13px;border-radius:7px;text-decoration:none;display:inline-flex;align-items:center">Email Ticket</a>
@@ -4008,7 +4011,7 @@ export default function CompanyAdminPortal() {
                   <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
                     <span style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'13px', fontWeight:'bold' }}>{v.plate}</span>
                     <span style={{ color:'#aaa', fontSize:'12px' }}>{displayTowReason(v.violation_type)}</span>
-                    <span style={{ color:'#555', fontSize:'11px' }}>{new Date(v.created_at).toLocaleDateString()}</span>
+                    <span style={{ color:'#555', fontSize:'11px' }}>{formatDate(v.created_at)}</span>
                   </div>
                 ))
               }
@@ -4021,7 +4024,7 @@ export default function CompanyAdminPortal() {
                   <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
                     <span style={{ color:'#f59e0b', fontFamily:'Courier New', fontSize:'13px', fontWeight:'bold' }}>{p.plate}</span>
                     <span style={{ color:'#aaa', fontSize:'12px' }}>{p.visiting_unit}</span>
-                    <span style={{ color:'#4caf50', fontSize:'11px' }}>Exp {new Date(p.expires_at).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}</span>
+                    <span style={{ color:'#4caf50', fontSize:'11px' }}>Exp {formatTime(p.expires_at)}</span>
                   </div>
                 ))
               }
@@ -4176,7 +4179,7 @@ export default function CompanyAdminPortal() {
                           </div>
                         </div>
                         {result.data.submitted_at && (
-                          <p style={{ color:'#888', fontSize:'11px', margin:'8px 0 0' }}>Submitted {new Date(result.data.submitted_at).toLocaleDateString()}</p>
+                          <p style={{ color:'#888', fontSize:'11px', margin:'8px 0 0' }}>Submitted {formatDate(result.data.submitted_at)}</p>
                         )}
                       </div>
                     </>
@@ -4220,7 +4223,7 @@ export default function CompanyAdminPortal() {
                       <p style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'16px', margin:'0 0 12px' }}>✓ VISITOR PASS ACTIVE</p>
                       <div style={{ marginBottom:'14px' }}>
                         <span style={{ color:'#555', fontSize:'10px', textTransform:'uppercase' }}>Expires</span><br />
-                        <span style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'13px' }}>{new Date(result.data.expires_at).toLocaleString()}</span>
+                        <span style={{ color:'#f59e0b', fontWeight:'bold', fontSize:'13px' }}>{formatTimestamp(result.data.expires_at)}</span>
                       </div>
                       <p style={{ color:'#f59e0b', fontSize:'11px', margin:'0 0 12px', fontWeight:'bold' }}>Do not tow for unauthorized status — active visitor pass.</p>
                       {/* B71: location/manner override on active visitor pass. */}
@@ -4520,7 +4523,7 @@ export default function CompanyAdminPortal() {
                     <span style={{ fontSize:'14px' }}>🚫</span>
                     <span style={{ color:'#f44336', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em' }}>VOIDED</span>
                     <span style={{ color:'#888', fontSize:'10px', marginLeft:'auto' }}>
-                      {new Date(v.voided_at as string).toLocaleDateString()}
+                      {formatDate(v.voided_at as string)}
                       {v.void_reason ? ` · ${v.void_reason}` : ''}
                     </span>
                   </div>
@@ -4532,8 +4535,8 @@ export default function CompanyAdminPortal() {
                   </div>
                   <div style={{ textAlign:'right', display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'6px' }}>
                     <div>
-                      <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
-                      <p style={{ color:'#444', fontSize:'10px', margin:'2px 0 0' }}>{new Date(v.created_at).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}</p>
+                      <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{formatDate(v.created_at)}</p>
+                      <p style={{ color:'#444', fontSize:'10px', margin:'2px 0 0' }}>{formatTime(v.created_at)}</p>
                     </div>
                     {/* B219 Layer 2a status control. NOT rendered on voided
                         rows — the VOIDED badge above already overrides
@@ -4659,7 +4662,7 @@ export default function CompanyAdminPortal() {
                   <div><span style={{ color:'#555' }}>Visitor</span><br /><span style={{ color:'#aaa' }}>{p.visitor_name || '—'}</span></div>
                   <div><span style={{ color:'#555' }}>Vehicle</span><br /><span style={{ color:'#aaa' }}>{p.vehicle_desc || '—'}</span></div>
                   <div><span style={{ color:'#555' }}>Duration</span><br /><span style={{ color:'#aaa' }}>{p.duration_hours} hours</span></div>
-                  <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Expires</span><br /><span style={{ color:'#f59e0b' }}>{new Date(p.expires_at).toLocaleString()}</span></div>
+                  <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Expires</span><br /><span style={{ color:'#f59e0b' }}>{formatTimestamp(p.expires_at)}</span></div>
                 </div>
               </div>
             ))}
@@ -7323,7 +7326,7 @@ export default function CompanyAdminPortal() {
                       <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'8px' }}>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
                           <span style={{ background:'#1e1800', color:'#C9A227', padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
-                          <span style={{ color:'#888', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
+                          <span style={{ color:'#888', fontSize:'10px' }}>{formatTimestamp(log.created_at)}</span>
                         </div>
                         <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>{log.user_email}</p>
                         {vals && <p style={{ color:'#888', fontSize:'11px', margin:'0', fontFamily:'Courier New', wordBreak:'break-all' }}>{vals}</p>}
@@ -8124,7 +8127,7 @@ export default function CompanyAdminPortal() {
                     <span style={{ color: '#64748b' }}>Next billing:</span>
                     <span style={{ color: '#e2e8f0' }}>
                       {billingData.current_period_end
-                        ? new Date(billingData.current_period_end).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                        ? formatDateLong(billingData.current_period_end)
                         : <span style={{ color: '#64748b' }}>—</span>}
                     </span>
                     <span style={{ color: '#64748b' }}>Cancel scheduled:</span>
@@ -8158,7 +8161,7 @@ export default function CompanyAdminPortal() {
                       <p style={{ color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 4px', fontWeight: 700 }}>What impacts your next invoice</p>
                       <p style={{ color: '#64748b', fontSize: 11, margin: '0 0 12px' }}>
                         {cycleStart
-                          ? `Since your cycle started (~${cycleStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
+                          ? `Since your cycle started (~${formatDateLong(cycleStart)})`
                           : 'This cycle'}
                       </p>
                       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 16, rowGap: 8, fontSize: 13 }}>

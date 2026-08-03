@@ -14,6 +14,7 @@ import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { displayTowReason } from '../lib/tow-reasons'
 import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
 import { guestAuthDisplayStatus } from '../lib/guest-auth'
+import { formatTimestamp, formatDate } from '../lib/format-time'
 // B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
 import { evaluatePortalGate } from '../lib/portal-account-gate'
 import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBanner'
@@ -1198,7 +1199,7 @@ export default function ResidentPortal() {
                     { label: 'Property',       value: resident.property },
                     { label: assignedSpaces.length > 1 ? 'Assigned Spaces' : 'Assigned Space', value: spaceLabel },
                     ...(approvedPlates.length > 0 ? [{ label: 'Approved plates', value: approvedPlates.join(', ') }] : []),
-                    { label: 'Lease End',      value: resident.lease_end ? new Date(resident.lease_end).toLocaleDateString() : '—' },
+                    { label: 'Lease End',      value: formatDate(resident.lease_end) },
                   ].map((item, i) => (
                     <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
                       <span style={{ color:'#555', fontSize:'12px' }}>{item.label}</span>
@@ -1385,7 +1386,7 @@ export default function ResidentPortal() {
                             <div><span style={{ color:'#555' }}>Vehicle</span><br/><span style={{ color:'#aaa' }}>{[v.color, v.make, v.model, v.year].filter(Boolean).join(' ') || '—'}</span></div>
                             <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span>{v._space_notes && <span style={{ color:'#555', fontSize:'10px' }}> · {v._space_notes}</span>}</div>
                             <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state || '—'}</span></div>
-                            <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
+                            <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{formatDate(v.permit_expiry)}</span></div>
                           </div>
                           {(v.status === 'pending' || v.status === 'declined') && v.manager_note && (
                             <div style={{ background: v.status === 'declined' ? '#3a1a1a' : '#1e2535', border:`1px solid ${v.status === 'declined' ? '#b71c1c' : '#3a4055'}`, borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
@@ -1544,7 +1545,7 @@ export default function ResidentPortal() {
                       <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{displayTowReason(v.violation_type)}</p>
                     </div>
                     <div style={{ textAlign:'right' }}>
-                      <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
+                      <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{formatDate(v.created_at)}</p>
                       {v.tow_ticket_generated && (
                         <span style={{ display:'inline-block', marginTop:'4px', background:'#1a1500', border:'1px solid #C9A227', color:'#C9A227', fontSize:'9px', fontWeight:'bold', padding:'2px 6px', borderRadius:'4px', letterSpacing:'0.05em' }}>🎫 TOW TICKET ISSUED</span>
                       )}
@@ -1678,7 +1679,7 @@ export default function ResidentPortal() {
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px' }}>
                     <div><span style={{ color:'#555' }}>Visitor</span><br/><span style={{ color:'#aaa' }}>{p.visitor_name || '—'}</span></div>
                     <div><span style={{ color:'#555' }}>Duration</span><br/><span style={{ color:'#aaa' }}>{p.duration_hours} hours</span></div>
-                    <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Expires</span><br/><span style={{ color:'#f59e0b' }}>{new Date(p.expires_at).toLocaleString()}</span></div>
+                    <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Expires</span><br/><span style={{ color:'#f59e0b' }}>{formatTimestamp(p.expires_at)}</span></div>
                   </div>
                 </div>
               ))

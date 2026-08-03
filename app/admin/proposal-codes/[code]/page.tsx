@@ -8,6 +8,7 @@ import { FEATURE_FLAGS, isNumericFlag, FeatureFlag } from '../../../lib/feature-
 // executor (proposal-code-stripe.ts) so the confirm-dialog preview
 // count/shape can't drift from what actually runs on Issue.
 import { lineItemsForCode } from '../../../lib/proposal-code-line-items'
+import { formatTimestamp } from '../../../lib/format-time'
 
 type Status = 'draft' | 'issued' | 'redeemed' | 'expired' | 'revoked'
 
@@ -419,7 +420,7 @@ export default function ProposalCodeDetail() {
           <div>
             <h1 style={{ color: '#C9A227', fontSize: '22px', fontWeight: 'bold', margin: 0, fontFamily: 'Courier New' }}>{row.code}</h1>
             <p style={{ color: '#888', fontSize: '12px', margin: '4px 0 0' }}>
-              {row.client_name || '—'} · created {row.generated_at ? new Date(row.generated_at).toLocaleString() : '—'}
+              {row.client_name || '—'} · created {formatTimestamp(row.generated_at)}
             </p>
           </div>
           <span style={{ background: badge.bg, color: badge.fg, border: `1px solid ${badge.border}`, padding: '4px 12px', borderRadius: '14px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
@@ -539,7 +540,7 @@ export default function ProposalCodeDetail() {
               </p>
 
               <label style={lbl}>Expires</label>
-              <p style={ro}>{row.expires_at ? new Date(row.expires_at).toLocaleString() : '—'}</p>
+              <p style={ro}>{formatTimestamp(row.expires_at)}</p>
 
               <label style={lbl}>Custom Pricing</label>
               <p style={ro}>
@@ -597,10 +598,10 @@ export default function ProposalCodeDetail() {
               {(status === 'issued' || status === 'redeemed' || status === 'expired' || status === 'revoked') && (<>
                 <label style={lbl}>Lifecycle</label>
                 <p style={{ ...ro, color: '#888', fontSize: '11px' }}>
-                  Drafted by {row.generated_by || '—'} · {row.generated_at ? new Date(row.generated_at).toLocaleString() : '—'}<br />
-                  {row.issued_at && <>Issued by {row.issued_by || '—'} · {new Date(row.issued_at).toLocaleString()}<br /></>}
-                  {row.redeemed_at && <>Redeemed · {new Date(row.redeemed_at).toLocaleString()}<br /></>}
-                  {row.revoked_at && <>Revoked · {new Date(row.revoked_at).toLocaleString()}<br /></>}
+                  Drafted by {row.generated_by || '—'} · {formatTimestamp(row.generated_at)}<br />
+                  {row.issued_at && <>Issued by {row.issued_by || '—'} · {formatTimestamp(row.issued_at)}<br /></>}
+                  {row.redeemed_at && <>Redeemed · {formatTimestamp(row.redeemed_at)}<br /></>}
+                  {row.revoked_at && <>Revoked · {formatTimestamp(row.revoked_at)}<br /></>}
                 </p>
               </>)}
 

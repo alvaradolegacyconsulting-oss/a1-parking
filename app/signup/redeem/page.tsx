@@ -14,6 +14,7 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../../supabase'
 import { TurnstileWidget, type TurnstileHandle } from '../../components/TurnstileWidget'
+import { formatDateLong } from '../../lib/format-time'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -319,7 +320,7 @@ function RedeemInner() {
               )}
               {validation.expires_at && (
                 <p style={{ color: MUTED, fontSize: 12, margin: '8px 0 0' }}>
-                  Code valid until {new Date(validation.expires_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                  Code valid until {formatDateLong(validation.expires_at)}
                 </p>
               )}
             </div>

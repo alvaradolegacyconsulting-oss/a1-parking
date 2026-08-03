@@ -16,6 +16,7 @@ import {
   downloadCsv,
   buildExportFilename,
 } from '@/app/lib/residents-export'
+import { formatDate, formatDateLong } from '@/app/lib/format-time'
 
 type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
 
@@ -575,9 +576,7 @@ function FactsStrip({ resident }: { resident: CrmResident }) {
     resident.vehicleCounts.pending && `${resident.vehicleCounts.pending} pending`,
     resident.vehicleCounts.underReview && `${resident.vehicleCounts.underReview} under review`,
   ].filter(Boolean).join(' · ') || 'none on file'
-  const regDate = resident.created_at ? new Date(resident.created_at).toLocaleDateString(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric',
-  }) : '—'
+  const regDate = formatDateLong(resident.created_at)
   return (
     <div style={{
       display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1px', background: C.border,
@@ -988,7 +987,7 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
                 <span style={{ color: C.amber, fontWeight: 800, fontSize: '18px' }}>→</span>
                 <div style={{ ...plateChipStyle, fontSize: '13px' }}>{pc.new_plate}</div>
                 <span style={{ color: C.faint, fontSize: '11px' }}>
-                  submitted {new Date(pc.submitted_at).toLocaleDateString()}
+                  submitted {formatDate(pc.submitted_at)}
                 </span>
               </div>
             </div>
@@ -1201,7 +1200,7 @@ function SpaceRequestCard({ req, isReadOnly, availableSpaces, onAssignSpaceReque
         Space request from resident
       </div>
       <div style={{ color: C.muted, fontSize: '12px', marginTop: '2px' }}>
-        Requested {new Date(req.requested_at).toLocaleDateString()} · awaiting decision
+        Requested {formatDate(req.requested_at)} · awaiting decision
       </div>
       {req.note && (
         <div style={{ color: C.muted, fontSize: '12px', marginTop: '6px', fontStyle: 'italic' }}>

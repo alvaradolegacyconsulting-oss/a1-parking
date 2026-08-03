@@ -18,6 +18,7 @@ import { initialVehicleState } from '../lib/vehicle-state'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
+import { formatTimestamp, formatDate, formatTime } from '../lib/format-time'
 import { buildBulkApproveSummary } from '../lib/bulk-approve-summary'
 import {
   callSyncOnAdd,
@@ -2578,6 +2579,7 @@ export default function ManagerPortal() {
     const monthLabels: { label: string; key: string }[] = []
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      // TODO: custom format — chart month-short label; needs formatDate variant with month:short only
       monthLabels.push({ label: d.toLocaleString('en-US', { month: 'short' }), key: mk(d) })
     }
     const byMonth: Record<string, number> = {}
@@ -2786,7 +2788,7 @@ export default function ManagerPortal() {
                 <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
                   <span style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'13px', fontWeight:'bold' }}>{v.plate}</span>
                   <span style={{ color:'#aaa', fontSize:'12px' }}>{displayTowReason(v.violation_type)}</span>
-                  <span style={{ color:'#555', fontSize:'11px' }}>{new Date(v.created_at).toLocaleDateString()}</span>
+                  <span style={{ color:'#555', fontSize:'11px' }}>{formatDate(v.created_at)}</span>
                 </div>
               ))}
             </div>
@@ -2797,7 +2799,7 @@ export default function ManagerPortal() {
                 <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid #1e2535' }}>
                   <span style={{ color:'#f59e0b', fontFamily:'Courier New', fontSize:'13px', fontWeight:'bold' }}>{p.plate}</span>
                   <span style={{ color:'#aaa', fontSize:'12px' }}>{p.visiting_unit}</span>
-                  <span style={{ color:'#4caf50', fontSize:'11px' }}>Expires {new Date(p.expires_at).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}</span>
+                  <span style={{ color:'#4caf50', fontSize:'11px' }}>Expires {formatTime(p.expires_at)}</span>
                 </div>
               ))}
             </div>
@@ -2967,7 +2969,7 @@ export default function ManagerPortal() {
                             {resident?.name || req.resident_email}
                             {resident?.unit && <span style={{ color:'#888', fontWeight:'normal', fontSize:'12px' }}> · Unit {resident.unit}</span>}
                           </p>
-                          <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>Requested {new Date(req.requested_at).toLocaleString()}</p>
+                          <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>Requested {formatTimestamp(req.requested_at)}</p>
                         </div>
                         <span style={{ background:'#2a1e00', color:'#C9A227', border:'1px solid #C9A227', padding:'2px 7px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold' }}>Pending</span>
                       </div>
@@ -3106,7 +3108,7 @@ export default function ManagerPortal() {
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px', fontSize:'11px' }}>
                   <div><span style={{ color:'#555' }}>Unit</span><br/><span style={{ color:'#aaa' }}>{v.unit}</span></div>
                   <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
-                  <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
+                  <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{formatDate(v.permit_expiry)}</span></div>
                 </div>
               </div>
             ))}
@@ -3944,7 +3946,7 @@ export default function ManagerPortal() {
                         <div className="pm-drawer-grid" style={{ fontSize:'11px', marginBottom:'8px' }}>
                           <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{v.space || '—'}</span></div>
                           <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state}</span></div>
-                          <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{v.permit_expiry ? new Date(v.permit_expiry).toLocaleDateString() : '—'}</span></div>
+                          <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{formatDate(v.permit_expiry)}</span></div>
                         </div>
                         <div style={{ display:'flex', gap:'6px' }}>
                           <button onClick={async () => { const space = prompt('Update space:', v.space || ''); if (space === null) return; await supabase.from('vehicles').update({ space }).eq('id', v.id); fetchVehicles(manager.name) }}
@@ -3980,7 +3982,7 @@ export default function ManagerPortal() {
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px', fontSize:'11px', marginBottom:'10px' }}>
                   <div><span style={{ color:'#555' }}>Phone</span><br/><span style={{ color:'#aaa' }}>{r.phone || '—'}</span></div>
                   <div><span style={{ color:'#555' }}>Space</span><br/><span style={{ color:'#aaa' }}>{r.space || '—'}</span></div>
-                  <div><span style={{ color:'#555' }}>Lease End</span><br/><span style={{ color:'#aaa' }}>{r.lease_end ? new Date(r.lease_end).toLocaleDateString() : '—'}</span></div>
+                  <div><span style={{ color:'#555' }}>Lease End</span><br/><span style={{ color:'#aaa' }}>{formatDate(r.lease_end)}</span></div>
                 </div>
                 <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' }}>
                   {!isReadOnly && (
@@ -4049,14 +4051,14 @@ export default function ManagerPortal() {
                       <span style={{ fontSize:'14px' }}>🚫</span>
                       <span style={{ color:'#f44336', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.06em' }}>VOIDED</span>
                       <span style={{ color:'#888', fontSize:'10px', marginLeft:'auto' }}>
-                        {new Date(v.voided_at as string).toLocaleDateString()}
+                        {formatDate(v.voided_at as string)}
                         {v.void_reason ? ` · ${v.void_reason}` : ''}
                       </span>
                     </div>
                   )}
                   <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'8px' }}>
                     <p style={{ color:'#f44336', fontFamily:'Courier New', fontSize:'18px', fontWeight:'bold', margin:'0' }}>{v.plate}</p>
-                    <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{new Date(v.created_at).toLocaleDateString()}</p>
+                    <p style={{ color:'#555', fontSize:'11px', margin:'0' }}>{formatDate(v.created_at)}</p>
                   </div>
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px', fontSize:'12px' }}>
                     <div><span style={{ color:'#555' }}>Type</span><br/><span style={{ color:'#aaa' }}>{displayTowReason(v.violation_type)}</span></div>
@@ -4308,7 +4310,7 @@ export default function ManagerPortal() {
                   <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'8px' }}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
                       <span style={{ background:'#1e1800', color:'#C9A227', padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
-                      <span style={{ color:'#888', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
+                      <span style={{ color:'#888', fontSize:'10px' }}>{formatTimestamp(log.created_at)}</span>
                     </div>
                     <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>{log.user_email}</p>
                     {vals && <p style={{ color:'#888', fontSize:'11px', margin:'0', fontFamily:'Courier New' }}>{vals}</p>}
@@ -4427,7 +4429,7 @@ export default function ManagerPortal() {
                     <p style={{ color:'#7ab1ff', fontSize:'14px', fontWeight:'bold', margin:'0' }}>Authorized guest</p>
                     {lookupResult.valid_through && (
                       <p style={{ color:'#cbd5e1', fontSize:'13px', margin:'2px 0 0' }}>
-                        Valid through <strong>{new Date(lookupResult.valid_through).toLocaleDateString()}</strong>
+                        Valid through <strong>{formatDate(lookupResult.valid_through)}</strong>
                       </p>
                     )}
                   </div>
@@ -4533,7 +4535,7 @@ export default function ManagerPortal() {
                     <div><span style={{ color:'#555' }}>Visitor</span><br/><span style={{ color:'#aaa' }}>{p.visitor_name || '—'}</span></div>
                     <div><span style={{ color:'#555' }}>Vehicle</span><br/><span style={{ color:'#aaa' }}>{p.vehicle_desc || '—'}</span></div>
                     <div><span style={{ color:'#555' }}>Duration</span><br/><span style={{ color:'#aaa' }}>{p.duration_hours} hours</span></div>
-                    <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Expires</span><br/><span style={{ color:'#f59e0b' }}>{new Date(p.expires_at).toLocaleString()}</span></div>
+                    <div style={{ gridColumn:'span 2' }}><span style={{ color:'#555' }}>Expires</span><br/><span style={{ color:'#f59e0b' }}>{formatTimestamp(p.expires_at)}</span></div>
                   </div>
                 </div>
               ))

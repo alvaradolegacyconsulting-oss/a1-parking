@@ -34,6 +34,7 @@ function fmtUsd(n: number | null | undefined): string {
 function fmtDate(iso: string | null): string {
   if (!iso) return '—'
   try {
+    // TODO: custom format — proposal PDF requires spelled-out month ("August 5, 2026"); needs formatDate variant with month:long opt
     return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
   } catch { return iso }
 }

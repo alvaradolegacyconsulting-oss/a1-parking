@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../supabase'
+import { formatDate } from '../../lib/format-time'
 
 type Status = 'draft' | 'issued' | 'redeemed' | 'expired' | 'revoked'
 type Tab = 'all' | Status
@@ -138,7 +139,7 @@ export default function ProposalCodesList() {
               const tierLabel = r.base_tier_type && r.base_tier
                 ? `${r.base_tier_type === 'enforcement' ? 'Enf' : 'PM'} · ${TIER_LABEL[r.base_tier] || r.base_tier}`
                 : '—'
-              const expiresStr = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : '—'
+              const expiresStr = formatDate(r.expires_at)
               return (
                 <div key={r.id}
                   onClick={() => router.push(`/admin/proposal-codes/${r.code}`)}
@@ -154,7 +155,7 @@ export default function ProposalCodesList() {
                   <div>
                     <p style={{ color: '#C9A227', fontFamily: 'Courier New', fontSize: '13px', fontWeight: 'bold', margin: 0 }}>{r.code}</p>
                     <p style={{ color: '#555', fontSize: '10px', margin: '2px 0 0' }}>
-                      created {new Date(r.created_at).toLocaleDateString()}
+                      created {formatDate(r.created_at)}
                     </p>
                   </div>
                   <div>

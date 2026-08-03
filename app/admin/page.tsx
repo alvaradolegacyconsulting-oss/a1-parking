@@ -9,6 +9,7 @@ import { escapeIlikeValue } from '../lib/supabase-query-escape'
 import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
 import CredentialsModal from '../components/CredentialsModal'
 import { generateTempPassword } from '../lib/temp-password'
+import { formatTimestamp } from '../lib/format-time'
 
 // Permit-tier helpers (Slice 1 Commit 2 Part B).
 //
@@ -201,6 +202,7 @@ export default function AdminPortal() {
     const monthLabels: { label: string; key: string }[] = []
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      // TODO: custom format — chart month-short label; needs formatDate variant with month:short only
       monthLabels.push({ label: d.toLocaleString('en-US', { month: 'short' }), key: mk(d) })
     }
     const byMonth: Record<string, number> = {}
@@ -1768,7 +1770,7 @@ export default function AdminPortal() {
                   <div key={i} style={card}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
                       <span style={{ background:'#1e1800', color:'#C9A227', padding:'2px 8px', borderRadius:'8px', fontSize:'10px', fontWeight:'bold', letterSpacing:'0.04em' }}>{log.action}</span>
-                      <span style={{ color:'#888', fontSize:'10px' }}>{new Date(log.created_at).toLocaleString()}</span>
+                      <span style={{ color:'#888', fontSize:'10px' }}>{formatTimestamp(log.created_at)}</span>
                     </div>
                     <p style={{ color:'#aaa', fontSize:'11px', margin:'0 0 2px' }}>{log.user_email} <span style={{ color:'#cccccc' }}>· {log.table_name}</span></p>
                     {log.record_id && <p style={{ color:'#555', fontSize:'10px', margin:'0 0 2px', fontFamily:'Courier New' }}>id: {log.record_id}</p>}
@@ -2081,7 +2083,7 @@ export default function AdminPortal() {
             </div>
 
             {platformSettings.updated_at && (
-              <p style={{ color:'#555', fontSize:'10px', textAlign:'center', margin:'8px 0 0' }}>Last updated: {new Date(platformSettings.updated_at).toLocaleString()}</p>
+              <p style={{ color:'#555', fontSize:'10px', textAlign:'center', margin:'8px 0 0' }}>Last updated: {formatTimestamp(platformSettings.updated_at)}</p>
             )}
           </div>
         )}
