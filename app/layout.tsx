@@ -8,6 +8,11 @@ import NavBar from "./components/NavBar";
 // landings aren't disturbed. Runs before portal loadX() → composes
 // with evaluatePortalGate cleanly.
 import InactivityWatcher from "./components/InactivityWatcher";
+// 2026-08-03 — central 401/429 handler; consumes events dispatched by
+// app/lib/supabase-fetch-interceptor.ts. Routes on expired session
+// (via /login?reason=expired), renders modal countdown on refresh
+// rate-limit (NO redirect — redirecting triggers another refresh).
+import AuthExpiredBanner from "./components/AuthExpiredBanner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -48,6 +53,7 @@ export default function RootLayout({
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
         <InactivityWatcher />
+        <AuthExpiredBanner />
         <NavBar />
         {children}
       </body>

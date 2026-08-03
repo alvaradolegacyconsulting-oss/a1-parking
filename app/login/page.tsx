@@ -28,11 +28,37 @@ import { bootstrapCompanyContext, CompanyBootstrapRow } from '../lib/company-boo
 // .ilike().single() pattern that silently degrades on 0/2+-rows (B76 class).
 import { resolveCompanyByName } from '../lib/company-resolve'
 
+// 2026-08-03 — read ?reason= param for honest post-signout copy.
+// Set by AuthExpiredBanner when the fetch interceptor detects a 401
+// on data endpoints (session expired mid-action). Values:
+//   'expired'      → session ran out; sign in again
+//   'rate-limited' → banner-side; not usually reached here (banner
+//                    stays on the failing surface until countdown
+//                    elapses), but supported for direct-URL cases
+function reasonCopy(reason: string | null): string | null {
+  if (reason === 'expired') {
+    return 'Your session expired. Please sign in again.'
+  }
+  if (reason === 'rate-limited') {
+    return 'Too many recent sign-in attempts. Wait a few minutes before trying again.'
+  }
+  return null
+}
+
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Read ?reason= at mount only. If the user starts typing, they've
+  // engaged — don't keep the sticky post-signout copy on top of
+  // their new interaction (the `error` state is separate for that).
+  const [postSignoutMsg, setPostSignoutMsg] = useState<string | null>(null)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    setPostSignoutMsg(reasonCopy(params.get('reason')))
+  }, [])
   const [logoFailed, setLogoFailed] = useState(false)
   const [companyLogo, setCompanyLogo] = useState<string | null>(null)
   const [companyName, setCompanyName] = useState<string | null>(null)
@@ -311,6 +337,12 @@ export default function Login() {
         </div>
 
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'12px', padding:'28px' }}>
+
+          {postSignoutMsg && !error && (
+            <div style={{ background:'#2a1e00', border:'1px solid #a16207', borderRadius:'8px', padding:'10px 14px', marginBottom:'16px' }}>
+              <p style={{ color:'#fbbf24', fontSize:'13px', margin:'0', lineHeight:'1.5' }}>{postSignoutMsg}</p>
+            </div>
+          )}
 
           {error && (
             <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'10px 14px', marginBottom:'16px' }}>
