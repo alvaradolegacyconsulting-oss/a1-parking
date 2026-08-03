@@ -97,6 +97,27 @@ function VisitorForm() {
   // Token is single-use; reset on failure so the user can re-challenge.
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<TurnstileHandle>(null)
+  // Option C (2026-08-03 Mateo review) — refresh only when the token
+  // is actually stale, not before every submit. useRef (not useState)
+  // because it's read in the same tick it may have been written from
+  // the onVerify callback; React batching would give a stale value.
+  // Third instance of this class rule this weekend (after 7fdbcf9's
+  // fetchResidentsToken and Finding 3's warnAcknowledged bug).
+  //
+  // 3.5 min TTL sits inside /siteverify's ~5 min effective window
+  // with a safety margin — a submit issued just under 3.5min after
+  // token issue still has ~1.5min to reach /siteverify.
+  //
+  // Refresh call is the failing path on Safari (iframe recreated →
+  // postMessage handshake blocked). Age-gating removes the vast
+  // majority of refreshes without dropping Bug 1 Option B's dwell
+  // protection: a genuine 4+ min dwell still triggers refresh.
+  const tokenIssuedAt = useRef<number>(0)
+  const TOKEN_MAX_AGE_MS = 3.5 * 60 * 1000
+  // Copy fix bundled — retry-interim message renders amber ABOVE the
+  // red plateError block instead of hijacking the error slot.
+  // "Still working" reading as "failed" was Mateo's flag.
+  const [interimMsg, setInterimMsg] = useState<string | null>(null)
   // Finding 3 (2026-08-04): two-step warn when the plate matches an
   // on-record inactive vehicle (pending/declined/expired). First
   // submit runs the precheck; on match, sets warnPending=true and
@@ -141,30 +162,44 @@ function VisitorForm() {
     }
     setLoading(true)
     setPlateError('')
+    setInterimMsg(null)
 
-    // Bug 1 Option B (2026-07-14) — refresh CAPTCHA token immediately
-    // before submit. Turnstile tokens are single-use and time-bounded
-    // (~5min effective /siteverify accept window); a visitor who solved
-    // the challenge on page-load and then dwelt on the form for 6+ min
-    // hits invalid-input-response at /siteverify and gets stranded.
-    // Refreshing at submit shrinks the token→submit gap to <1s.
-    // In Managed mode this is transparent (~500ms checkbox re-issue).
-    // Failure surface: refresh() rejects on 15s timeout or error-callback
-    // — we surface a friendly error and let the widget re-challenge.
+    // Bug 1 Option B (2026-07-14) — refresh CAPTCHA token when it's
+    // actually stale. Original unconditional pre-submit refresh
+    // protected the 6+ min dwell case (invalid-input-response at
+    // /siteverify), but destroyed and recreated the iframe on every
+    // submit — which Safari blocks on the postMessage handshake
+    // (Mateo diagnostic 2026-08-03).
+    //
+    // Option C (2026-08-03) — age-gated refresh. Skip when the token
+    // is fresh (< TOKEN_MAX_AGE_MS = 3.5 min); refresh only for
+    // genuine dwellers. Precheck RPCs (check_resident_plate,
+    // check_plate_on_record_inactive_at_property) do NOT consume the
+    // token — only /siteverify does — so on the Continue re-submit
+    // the token from the first attempt is genuinely still valid and
+    // can be reused. Reset-on-consumption paths (:reset() calls in
+    // catch blocks below) stay unchanged.
     let freshToken: string
-    try {
-      const t = await turnstileRef.current?.refresh()
-      if (!t) throw new Error('refresh returned no token')
-      freshToken = t
-    } catch (refreshErr) {
-      setLoading(false)
-      setCaptchaToken(null)
-      turnstileRef.current?.reset()
-      setPlateError(
-        `CAPTCHA challenge failed to refresh (${(refreshErr as Error).message}). ` +
-        `Please solve the CAPTCHA below and try again.`,
-      )
-      return
+    if (Date.now() - tokenIssuedAt.current > TOKEN_MAX_AGE_MS) {
+      try {
+        const t = await turnstileRef.current?.refresh()
+        if (!t) throw new Error('refresh returned no token')
+        freshToken = t
+      } catch (refreshErr) {
+        setLoading(false)
+        setCaptchaToken(null)
+        setInterimMsg(null)
+        turnstileRef.current?.reset()
+        setPlateError(
+          `CAPTCHA challenge failed to refresh (${(refreshErr as Error).message}). ` +
+          `Please solve the CAPTCHA below and try again.`,
+        )
+        return
+      }
+    } else {
+      // Token still fresh — reuse as-is. captchaToken is guaranteed
+      // non-null (button disabled otherwise; explicit check above).
+      freshToken = captchaToken
     }
 
     const plate = normalizePlate(form.plate)
@@ -493,6 +528,19 @@ function VisitorForm() {
             </select>
           </div>
 
+          {/* Interim (amber) — progress messages that AREN'T failures.
+              Renders ABOVE the red plateError block so a "still
+              working" message doesn't sit in the error slot reading
+              as a failure (Mateo lock 2026-08-03). Currently used by
+              Turnstile's onRetry callback ("Taking longer than usual
+              — retrying…"). Cleared on the next state transition
+              (submit success, hard error, or fresh onVerify). */}
+          {interimMsg && !plateError && (
+            <div style={{ background:'#2a1e00', border:'1px solid #a16207', borderRadius:'8px', padding:'10px 12px', marginBottom:'14px' }}>
+              <p style={{ color:'#fbbf24', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>{interimMsg}</p>
+            </div>
+          )}
+
           {plateError && (
             <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'10px 12px', marginBottom:'14px' }}>
               <p style={{ color:'#f44336', fontSize:'12px', margin:'0', lineHeight:'1.5' }}>{plateError}</p>
@@ -557,10 +605,20 @@ function VisitorForm() {
             <p style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>Confirm you&apos;re human</p>
             <TurnstileWidget
               ref={turnstileRef}
-              onVerify={setCaptchaToken}
+              onVerify={(token) => {
+                // Option C — record issuance time so submitPass can
+                // decide whether to refresh (age-based). Fires on
+                // both initial mount AND post-refresh callbacks.
+                setCaptchaToken(token)
+                tokenIssuedAt.current = Date.now()
+                // Clear any lingering interim message on successful
+                // verify — the retry completed.
+                setInterimMsg(null)
+              }}
               onExpire={() => setCaptchaToken(null)}
               onError={() => setCaptchaToken(null)}
-              onRetry={() => setPlateError('Taking longer than usual — retrying…')}
+              // Copy fix — amber interim, NOT red error slot.
+              onRetry={() => setInterimMsg('Taking longer than usual — retrying…')}
               action="visitor"
             />
           </div>
