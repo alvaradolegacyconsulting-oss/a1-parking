@@ -9,6 +9,8 @@
 import { useMemo, useState } from 'react'
 import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus } from '@/app/lib/pm-crm'
 import { computeInsights, filterCrmRows, initials, residentDisplayStatus } from '@/app/lib/pm-crm'
+import type { UnitOccupancyMap, UnitOccupancy } from '@/app/lib/unit-occupancy'
+import { getUnitOccupancy, hasOtherActiveResidents, sumResidentPlates } from '@/app/lib/unit-occupancy'
 import {
   CSV_HEADERS,
   flattenResidentsForExport,
@@ -28,6 +30,15 @@ interface Props {
   // pending space requests. Sourced from crmSpacesAtProperty filtered
   // client-side to status='available' + is_active.
   availableSpaces: Array<Pick<CrmSpace, 'id' | 'label' | 'type'>>
+  // 2026-08-04 — unit occupancy batch payload (single source of truth
+  // for the four surfaces below + audit stamp on approvals). Feeds:
+  //   1. ListRow red flag when unit has ≥1 OTHER active resident
+  //   2. OverviewPane amber-callout occupancy line
+  //   3. VehicleCard neutral context line (always shown on pending)
+  //   4. Bulk lane pre-loop aggregate
+  // Fail-quiet: null = fetch failed OR not yet loaded → render NOTHING
+  // (no badge, no line, no zero). See app/lib/unit-occupancy.ts.
+  unitOccupancy: UnitOccupancyMap | null
   // Slice 2 — permission gate (mirrors legacy 4 approve-affordance sites)
   // + read-only mode for leasing_agent (Decline stays visible regardless
   // per legacy).
@@ -150,7 +161,7 @@ const plateChipStyle: React.CSSProperties = {
 }
 
 export default function PmResidentCrm({
-  crmResidents, propertyName, availableSpaces,
+  crmResidents, propertyName, availableSpaces, unitOccupancy,
   canApproveVehicles, isReadOnly,
   onApproveVehicle, onDeclineVehicle,
   onApproveResident, onDeclineResident,
@@ -294,6 +305,22 @@ export default function PmResidentCrm({
             }}>
               <div style={{ fontSize: '12.5px', color: C.gold, flex: 1, minWidth: '200px' }}>
                 <div><b>{insights.needApproval}</b> residents with pending items</div>
+                {/* 2026-08-04 unit-occupancy aggregate — fail-quiet: hidden
+                    entirely when unitOccupancy is null OR the count is 0.
+                    Counts pending residents whose unit already holds at
+                    least one OTHER active resident. */}
+                {(() => {
+                  if (!unitOccupancy) return null
+                  const joining = needsApprovalResidents.filter(r =>
+                    r.status === 'pending' && hasOtherActiveResidents(unitOccupancy, r.unit, r.email)
+                  ).length
+                  if (joining === 0) return null
+                  return (
+                    <div style={{ fontSize: '11.5px', color: C.text, marginTop: '4px', lineHeight: '1.4' }}>
+                      <b>{joining}</b> of these {needsApprovalResidents.length} would join units that already have active residents.
+                    </div>
+                  )
+                })()}
                 <div style={{ fontSize: '11px', color: C.muted, marginTop: '4px', lineHeight: '1.4' }}>
                   Bulk approves pending <b>residents &amp; vehicles</b>. Plate changes, guest passes, and space requests are approved individually per row.
                 </div>
@@ -320,6 +347,7 @@ export default function PmResidentCrm({
                 resident={r}
                 selected={r.email.toLowerCase() === (selectedEmail ?? '').toLowerCase()}
                 onClick={() => { setSelectedEmail(r.email); setSubTab('overview') }}
+                unitOccupancy={unitOccupancy}
               />
             ))}
           </div>
@@ -355,6 +383,7 @@ export default function PmResidentCrm({
                     onDeclineResident={onDeclineResident}
                     onJumpToGuests={() => setSubTab('guests')}
                     onEditResident={onEditResident}
+                    unitOccupancy={unitOccupancy}
                   />
                 )}
                 {subTab === 'vehicles' && (
@@ -369,6 +398,7 @@ export default function PmResidentCrm({
                     onDeactivateVehicle={onDeactivateVehicle}
                     onReactivateVehicle={onReactivateVehicle}
                     onEditVehicle={onEditVehicle}
+                    unitOccupancy={unitOccupancy}
                   />
                 )}
                 {subTab === 'spaces' && (
@@ -423,7 +453,7 @@ function InsightCard({ n, label, color, subtitle }: { n: number; label: React.Re
   )
 }
 
-function ListRow({ resident, selected, onClick }: { resident: CrmResident; selected: boolean; onClick: () => void }) {
+function ListRow({ resident, selected, onClick, unitOccupancy }: { resident: CrmResident; selected: boolean; onClick: () => void; unitOccupancy: UnitOccupancyMap | null }) {
   const { approved, pending, underReview } = resident.vehicleCounts
   const badges: React.ReactNode[] = []
   if (approved) badges.push(<Badge key="ok" color={C.green} bg={C.greenSoft}>✓ {approved}</Badge>)
@@ -432,6 +462,17 @@ function ListRow({ resident, selected, onClick }: { resident: CrmResident; selec
   if (resident.spaceRequest) badges.push(<Badge key="sq" color={C.blue} bg={C.blueSoft}>◇ space req</Badge>)
   if (!approved && !pending && !underReview && !resident.spaceRequest) {
     badges.push(<Badge key="nv" color={C.faint} bg="transparent">no vehicles</Badge>)
+  }
+  // 2026-08-04 unit-occupancy flag — fires when the unit already holds
+  // ≥1 OTHER active resident (excluding this row's own email). Fail-
+  // quiet: nothing renders when unitOccupancy is null (RPC error / not
+  // yet loaded) OR when the unit is absent from the batch response —
+  // absence must look like absence, never a "clean unit" claim.
+  const otherOcc = unitOccupancy ? getUnitOccupancy(unitOccupancy, resident.unit, resident.email) : null
+  if (otherOcc && otherOcc.total_active_residents > 0) {
+    badges.push(
+      <Badge key="occ" color={C.red} bg={C.redSoft}>⚑ {otherOcc.total_active_residents} active in unit</Badge>
+    )
   }
   return (
     <div
@@ -645,7 +686,7 @@ function SubTabBar({ tab, setTab, resident }: { tab: SubTab; setTab: (t: SubTab)
 
 // ── Sub-tab panes ────────────────────────────────────────────────────
 
-function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onJumpToGuests, onEditResident }: {
+function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onJumpToGuests, onEditResident, unitOccupancy }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -653,6 +694,7 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
   onDeclineResident: (r: CrmResident) => Promise<void>
   onJumpToGuests: () => void
   onEditResident: (id: string | number, patch: Record<string, any>) => Promise<void>
+  unitOccupancy: UnitOccupancyMap | null
 }) {
   // Slice 6 — resident cosmetic edit (phone / lease_end / manager_note).
   // Tags deferred to a later iteration (needs multi-value input UI).
@@ -697,6 +739,40 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
             {underReview > 0 && `${underReview} plate${underReview === 1 ? '' : 's'} under review. `}
             {resident.pendingGuestRequests.length > 0 && `${resident.pendingGuestRequests.length} guest request${resident.pendingGuestRequests.length === 1 ? '' : 's'}.`}
           </div>
+          {/* 2026-08-04 unit-occupancy line — fail-quiet: hidden when
+              unitOccupancy is null OR the unit is absent from the batch
+              OR the unit has 0 other active residents. Excludes THIS
+              resident's own row from the count so a solo-active pending
+              approval doesn't self-flag. Copy per Mateo lock 2026-08-04
+              ("N plates currently authorized" — enforcement matches
+              plate+property, unit attribution is display fidelity). */}
+          {(() => {
+            const occ = getUnitOccupancy(unitOccupancy, resident.unit, resident.email)
+            if (!occ || occ.total_active_residents === 0) return null
+            const sumPer = sumResidentPlates(occ)
+            const orphan = Math.max(0, occ.total_active_plates - sumPer)
+            const residentLabels = occ.residents.map(r => {
+              const displayName = (r.name && r.name.trim()) || r.email
+              return `${displayName} (${r.plate_count})`
+            }).join(' · ')
+            return (
+              <div style={{
+                marginTop: '8px', paddingTop: '8px',
+                borderTop: `1px dashed ${C.goldLine}`,
+                fontSize: '12.5px', color: C.text, lineHeight: '1.45',
+              }}>
+                <b>Unit {resident.unit} — {occ.total_active_residents} active resident{occ.total_active_residents === 1 ? '' : 's'} · {occ.total_active_plates} authorized plate{occ.total_active_plates === 1 ? '' : 's'}</b>
+                {orphan > 0 && (
+                  <span style={{ color: C.muted, fontWeight: 400 }}>{' '}({orphan} not linked to a resident)</span>
+                )}
+                {residentLabels && (
+                  <div style={{ color: C.muted, fontSize: '11.5px', marginTop: '3px' }}>
+                    {residentLabels}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
           {(showApproveResident || showDeclineResident) && (
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {showApproveResident && (
@@ -815,7 +891,7 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
   )
 }
 
-function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle }: {
+function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -826,6 +902,7 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
   onDeactivateVehicle: (id: string | number) => Promise<void>
   onReactivateVehicle: (id: string | number) => Promise<void>
   onEditVehicle: (id: string | number, patch: Record<string, any>) => Promise<void>
+  unitOccupancy: UnitOccupancyMap | null
 }) {
   if (resident.vehicles.length === 0) {
     return (
@@ -849,13 +926,14 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
           onDeactivateVehicle={onDeactivateVehicle}
           onReactivateVehicle={onReactivateVehicle}
           onEditVehicle={onEditVehicle}
+          unitOccupancy={unitOccupancy}
         />
       ))}
     </>
   )
 }
 
-function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle }: {
+function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy }: {
   v: any
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -866,6 +944,7 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   onDeactivateVehicle: (id: string | number) => Promise<void>
   onReactivateVehicle: (id: string | number) => Promise<void>
   onEditVehicle: (id: string | number, patch: Record<string, any>) => Promise<void>
+  unitOccupancy: UnitOccupancyMap | null
 }) {
   // Slice 6 — inline edit mode + form state. Plate is DELIBERATELY NOT
   // in the form — it's read-only on the plate chip. If the resident
@@ -947,6 +1026,27 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
           color: stat.color, background: stat.bg, border: `1px solid ${stat.border}`, whiteSpace: 'nowrap',
         }}>{stat.text}</span>
       </div>
+      {/* 2026-08-04 unit-occupancy context — NEUTRAL, ALWAYS SHOWN,
+          NEVER colored. Per Mateo lock 2026-08-04 the vehicle-approval
+          affordance always gets the context line (whether or not the
+          unit is occupied by other residents) because there's no per-
+          unit vehicle ceiling to color-code against. Reads the same
+          batch payload the badge/panel do. Fail-quiet: renders nothing
+          when unitOccupancy is null OR the unit is absent. Does NOT
+          exclude the vehicle's own resident_email from the count —
+          this is a decision surface for a plate, not for a person, so
+          the reader wants the full unit picture. */}
+      {(() => {
+        const occ = getUnitOccupancy(unitOccupancy, v.unit)
+        if (!occ) return null
+        return (
+          <div style={{
+            marginTop: '10px', fontSize: '12px', color: C.muted, lineHeight: '1.4',
+          }}>
+            Unit {v.unit} — {occ.total_active_plates} authorized plate{occ.total_active_plates === 1 ? '' : 's'} across {occ.total_active_residents} active resident{occ.total_active_residents === 1 ? '' : 's'}
+          </div>
+        )
+      })()}
       {(showApprove || showDecline) && (
         <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
           {showApprove && (

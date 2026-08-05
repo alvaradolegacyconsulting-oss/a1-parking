@@ -78,6 +78,7 @@ import CredentialsModal from '../components/CredentialsModal'
 // render below (kept intact for rollback until slice 2 retires it).
 import PmResidentCrm from '../components/PmResidentCrm'
 import { buildCrmResidents, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
+import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '../lib/unit-occupancy'
 
 const PM_CRM_ENABLED = true
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
@@ -292,6 +293,13 @@ export default function ManagerPortal() {
   const [auditSearch, setAuditSearch] = useState('')
   const [auditLoaded, setAuditLoaded] = useState(false)
   const [pendingResidents, setPendingResidents] = useState<any[]>([])
+  // Unit occupancy batch payload — single source of truth for the four
+  // PmResidentCrm surfaces (list-row badge, amber panel line, vehicle
+  // context, bulk aggregate) AND the audit stamp on approvals. Fetched
+  // on refresh via useEffect once residents/vehicles state settles.
+  // Null = fetch failed OR not yet loaded; UI renders NOTHING on null
+  // (fail-quiet contract; see app/lib/unit-occupancy.ts).
+  const [unitOccupancy, setUnitOccupancy] = useState<UnitOccupancyMap | null>(null)
   const [residentNotes, setResidentNotes] = useState<Record<string, string>>({})
   // PM Resident CRM slice 1 — property-scoped batch loads. Grouped
   // client-side in buildCrmResidents (app/lib/pm-crm.ts). Zero per-
@@ -403,6 +411,28 @@ export default function ManagerPortal() {
       setExemptPlates(manager.exempt_plates || [])
     }
   }, [manager])
+
+  // Unit occupancy — single-batch fetch keyed on the loaded residents +
+  // vehicles state for the current property. One RPC round trip feeds
+  // all four PmResidentCrm surfaces + the audit stamp. Fires on
+  // refreshCrmData settling, on property switch via manager.name, and
+  // any downstream mutation that updates residents/vehicles state.
+  // Fail-quiet: null on error, UI renders nothing. Cancellation guard
+  // prevents a slow response from a prior property blanking the new
+  // one.
+  useEffect(() => {
+    if (!manager?.name) { setUnitOccupancy(null); return }
+    const units = new Set<string>()
+    for (const r of residents)         if (r?.unit != null) units.add(String(r.unit))
+    for (const r of pendingResidents)  if (r?.unit != null) units.add(String(r.unit))
+    for (const v of vehicles)          if (v?.unit != null) units.add(String(v.unit))
+    for (const v of pendingVehicles)   if (v?.unit != null) units.add(String(v.unit))
+    let cancelled = false
+    fetchUnitOccupancy(supabase, manager.name, Array.from(units)).then(map => {
+      if (!cancelled) setUnitOccupancy(map)
+    })
+    return () => { cancelled = true }
+  }, [manager?.name, residents, pendingResidents, vehicles, pendingVehicles])
 
   async function loadManager() {
     setLoading(true)
@@ -1155,11 +1185,19 @@ export default function ManagerPortal() {
     // (per-row semantics — one sync per approve). Bulk BYPASSES this
     // wrapper via runBulkApprove / approveVehiclesBatch to meter once
     // per batch instead of N times.
+    // 2026-08-04 — occupancy stamp read from state at click time; the
+    // manager sees the same figure the audit records. Look up the
+    // vehicle's unit from pending / active vehicle state; buildOccupancyStamp
+    // returns null when the map or unit is missing, and the writer
+    // then omits the key rather than writing zeros.
+    const vRow = [...pendingVehicles, ...vehicles].find((row: any) => String(row.id) === String(id))
+    const vUnit: string | null = vRow?.unit ?? null
     const result = await approveVehicleWrite(supabase, {
       vehicleId: id,
       property: manager.name,
       managerNote: pendingNotes[id] || null,
       companyIdForSync,
+      occupancyStamp: buildOccupancyStamp(unitOccupancy, vUnit),
     })
     if (!result.ok) return
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
@@ -1487,6 +1525,7 @@ export default function ManagerPortal() {
       resident: { id: r.id, name: r.name, unit: r.unit, email: r.email },
       property: manager.name,
       managerNote: residentNotes[r.id] || null,
+      occupancyStamp: buildOccupancyStamp(unitOccupancy, r.unit ?? null),
     })
     if (!write.ok) {
       console.error('[Manager approveResident] write failed', { residentId: r.id, error: write.error })
@@ -1515,10 +1554,11 @@ export default function ManagerPortal() {
     }
     if (shouldCascade) {
       await approveVehiclesBatch(supabase, {
-        vehicles: pendingCascade.map(v => ({ id: v.id, plate: v.plate })),
+        vehicles: pendingCascade.map(v => ({ id: v.id, plate: v.plate, unit: (v as any).unit ?? r.unit ?? null })),
         property: manager.name,
         companyIdForSync,
         logSite: 'approveResident-cascade',
+        unitOccupancy,
       })
     }
     // Spaces v1 commit 4 — OPTIONAL assign-space step. Manager picked a
@@ -1562,13 +1602,15 @@ export default function ManagerPortal() {
   async function approveAllPendingCrm(pendingResidentsForBulk: any[]) {
     if (!manager?.name) return
 
-    // Widened SELECT (id + plate + resident_email) so failures can be
-    // named by plate in the summary and the phase-2 eligibility gate
-    // can match resident_email against the active-resident allow set.
-    // Surface fetches this once for the confirmation dialog count and
-    // passes it to runBulkApprove (avoids double-query).
+    // Widened SELECT (id + plate + resident_email + unit) so failures
+    // can be named by plate in the summary, the phase-2 eligibility gate
+    // can match resident_email against the active-resident allow set,
+    // AND the phase-2 audit can attach occupancy_at_decision keyed by
+    // the vehicle's own unit (2026-08-04). Surface fetches this once
+    // for the confirmation dialog count and passes it to runBulkApprove
+    // (avoids double-query).
     const { data: allPendingVehicles, error: vehListErr } = await supabase
-      .from('vehicles').select('id, plate, resident_email')
+      .from('vehicles').select('id, plate, resident_email, unit')
       .ilike('property', manager.name).eq('status', 'pending')
     if (vehListErr) {
       console.error('[Manager approveAllPendingCrm] pending-vehicles list fetch failed', vehListErr)
@@ -1591,11 +1633,16 @@ export default function ManagerPortal() {
 
     // Delegate all phases to the lib. Returns the summary input shape
     // for buildBulkApproveSummary (Phase A helper); surface renders alert.
+    // 2026-08-04 — unitOccupancy is threaded through so both phase-1
+    // residents and phase-2 vehicles get the occupancy_at_decision
+    // stamp from the same batch payload the UI showed. Fail-quiet:
+    // null map means no stamps written (audit falls back to base shape).
     const result = await runBulkApprove(supabase, {
       property: manager.name,
       companyIdForSync,
       pendingResidentsForBulk,
       allPendingVehicles: allPendingVehicles ?? [],
+      unitOccupancy,
     })
     if (!result.ok) {
       alert(`Bulk approve failed: ${(result.error as any)?.message ?? String(result.error)}\n\nSome approvals may have partially completed. Refresh to see current state.`)
@@ -3682,6 +3729,7 @@ export default function ManagerPortal() {
             propertyName={manager.name}
             managerEmail={managerEmail}
             availableSpaces={crmSpacesAtProperty.filter(s => s.status === 'available' && s.is_active).map(s => ({ id: s.id, label: s.label, type: s.type }))}
+            unitOccupancy={unitOccupancy}
             canApproveVehicles={canApproveVehicles}
             isReadOnly={isReadOnly}
             onApproveVehicle={(id) => approveVehicle(String(id))}

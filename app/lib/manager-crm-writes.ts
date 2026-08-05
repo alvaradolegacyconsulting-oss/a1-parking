@@ -40,6 +40,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { logAudit } from './audit'
 import { escapeIlikeValue } from './supabase-query-escape'
 import type { BulkApproveSummaryInput } from './bulk-approve-summary'
+import type { OccupancyStamp, UnitOccupancyMap } from './unit-occupancy'
+import { buildOccupancyStamp } from './unit-occupancy'
 
 // ══════════════════════════════════════════════════════════════════════
 // Shared machinery
@@ -179,13 +181,19 @@ export async function listPendingVehiclesForUnit(
 // Batch primitive — the shared meter-once shape
 // ══════════════════════════════════════════════════════════════════════
 
-export type VehicleForBatch = { id: string; plate?: string | null }
+export type VehicleForBatch = { id: string; plate?: string | null; unit?: string | null }
 
 // One loop, ONE post-batch sync. B147 meter-once discipline in exactly
 // one place. Both runBulkApprove's phase-2 AND per-row cascade compose
 // this — do NOT reintroduce per-item callSyncOnAdd; the whole point is
 // one sync per batch (permit count is ABSOLUTE, not delta; N syncs
 // would be redundant Stripe calls for the same final quantity).
+//
+// 2026-08-04 — unitOccupancy passed IN once (cheap map lookup per row),
+// NOT called per row. The bulk lane is the "one payload feeds all"
+// site: same map that drove the pre-loop aggregate now stamps each
+// row's audit. Fail-quiet: null map means no stamps written — audits
+// fall back to their existing shape.
 export async function approveVehiclesBatch(
   supabase: SupabaseClient,
   args: {
@@ -194,6 +202,7 @@ export async function approveVehiclesBatch(
     companyIdForSync: number | null
     logSite?: string  // caller identifier for [approve_vehicle] logs
     managerNote?: string | null  // per-row cascade currently passes null; bulk passes null
+    unitOccupancy?: UnitOccupancyMap | null
   },
 ): Promise<{
   // RPC returned r.ok (includes action='approved' AND action='noop_already_active')
@@ -208,7 +217,7 @@ export async function approveVehiclesBatch(
   failed: { id: string; plate?: string | null; error: unknown }[]
   syncFired: boolean
 }> {
-  const { vehicles, property, companyIdForSync, logSite = 'approveVehiclesBatch', managerNote = null } = args
+  const { vehicles, property, companyIdForSync, logSite = 'approveVehiclesBatch', managerNote = null, unitOccupancy = null } = args
   const succeeded: string[] = []
   const approved: string[] = []
   const failed: { id: string; plate?: string | null; error: unknown }[] = []
@@ -225,7 +234,18 @@ export async function approveVehiclesBatch(
     const r = data as { ok?: boolean; action?: string; error?: string; hint?: string } | null
     if (r?.ok) {
       console.info('[approve_vehicle]', { site: logSite, vehicleId: v.id, plate: v.plate, action: r.action })
-      await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: v.id, new_values: { status: 'active', property, batch: logSite } })
+      const stamp = buildOccupancyStamp(unitOccupancy, v.unit ?? null)
+      await logAudit({
+        action: 'APPROVE_VEHICLE',
+        table_name: 'vehicles',
+        record_id: v.id,
+        new_values: {
+          status: 'active',
+          property,
+          batch: logSite,
+          ...(stamp ? { occupancy_at_decision: stamp } : {}),
+        },
+      })
       succeeded.push(v.id)
       if (r.action === 'approved') approved.push(v.id)
       return
@@ -258,9 +278,14 @@ export async function approveResidentWrite(
     resident: { id: string; name?: string | null; unit?: string | null; email?: string | null }
     property: string
     managerNote?: string | null
+    // 2026-08-04 — unit occupancy at click time (see unit-occupancy.ts).
+    // Recorded in new_values.occupancy_at_decision so a later dispute
+    // sees what the manager was shown when they decided. Fail-quiet:
+    // null omits the key entirely rather than writing zeros.
+    occupancyStamp?: OccupancyStamp | null
   },
 ): Promise<{ ok: boolean; emailSent: boolean; messageId: string | null; error?: unknown }> {
-  const { resident, property, managerNote = null } = args
+  const { resident, property, managerNote = null, occupancyStamp = null } = args
   const { error: updErr } = await supabase.from('residents')
     .update({ is_active: true, status: 'active', manager_note: managerNote })
     .eq('id', resident.id)
@@ -279,6 +304,7 @@ export async function approveResidentWrite(
       property,
       email_sent: emailResult.ok,
       message_id: emailResult.message_id,
+      ...(occupancyStamp ? { occupancy_at_decision: occupancyStamp } : {}),
     },
   })
   return { ok: true, emailSent: emailResult.ok, messageId: emailResult.message_id }
@@ -294,6 +320,8 @@ export async function approveVehicleWrite(
     property: string
     managerNote?: string | null
     companyIdForSync: number | null
+    // 2026-08-04 — see approveResidentWrite's occupancyStamp comment.
+    occupancyStamp?: OccupancyStamp | null
   },
 ): Promise<{
   ok: boolean
@@ -301,7 +329,7 @@ export async function approveVehicleWrite(
   syncFired: boolean
   error?: unknown
 }> {
-  const { vehicleId, property, managerNote = null, companyIdForSync } = args
+  const { vehicleId, property, managerNote = null, companyIdForSync, occupancyStamp = null } = args
   const { data: rpcResult, error: rpcErr } = await supabase.rpc('approve_vehicle', {
     p_vehicle_id: vehicleId,
     p_manager_note: managerNote,
@@ -316,7 +344,16 @@ export async function approveVehicleWrite(
     return { ok: false, action: null, syncFired: false, error: result?.error ?? 'rpc_returned_not_ok' }
   }
   console.info('[approve_vehicle]', { site: 'approveVehicleWrite', vehicleId, action: result.action })
-  await logAudit({ action: 'APPROVE_VEHICLE', table_name: 'vehicles', record_id: vehicleId, new_values: { status: 'active', property } })
+  await logAudit({
+    action: 'APPROVE_VEHICLE',
+    table_name: 'vehicles',
+    record_id: vehicleId,
+    new_values: {
+      status: 'active',
+      property,
+      ...(occupancyStamp ? { occupancy_at_decision: occupancyStamp } : {}),
+    },
+  })
   let syncFired = false
   if (result.action === 'approved' && companyIdForSync) {
     const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
@@ -438,10 +475,15 @@ export async function runBulkApprove(
     property: string
     companyIdForSync: number | null
     pendingResidentsForBulk: { id: string; name?: string | null; email?: string | null; unit?: string | null }[]
-    allPendingVehicles: { id: string; plate: string | null; resident_email: string | null }[]
+    allPendingVehicles: { id: string; plate: string | null; resident_email: string | null; unit?: string | null }[]
+    // 2026-08-04 — unit occupancy at click time; stamped onto every
+    // row's audit in both phase-1 (residents) and phase-2 (vehicles).
+    // Same map that drove the pre-loop bulk-lane aggregate. Fail-quiet:
+    // null map → no stamps written, audits fall back to base shape.
+    unitOccupancy?: UnitOccupancyMap | null
   },
 ): Promise<{ ok: true; summary: BulkApproveSummaryInput } | { ok: false; error: unknown }> {
-  const { property, companyIdForSync, pendingResidentsForBulk, allPendingVehicles } = args
+  const { property, companyIdForSync, pendingResidentsForBulk, allPendingVehicles, unitOccupancy = null } = args
 
   // Active-residents snapshot for the allow-list. Feeds phase-2 eligibility
   // alongside phase-1's succeeded residents. Without this, a vehicle whose
@@ -478,6 +520,7 @@ export async function runBulkApprove(
         return { r, ok: false }
       }
       const emailResult = await notifyResidentDecision({ residentId: String(r.id), decision: 'approved', note: null })
+      const stamp = buildOccupancyStamp(unitOccupancy, r.unit ?? null)
       await logAudit({
         action: 'APPROVE_RESIDENT',
         table_name: 'residents',
@@ -487,6 +530,7 @@ export async function runBulkApprove(
           batch: 'crm_bulk',
           email_sent: emailResult.ok,
           message_id: emailResult.message_id,
+          ...(stamp ? { occupancy_at_decision: stamp } : {}),
         },
       })
       return { r, ok: true }
@@ -537,11 +581,14 @@ export async function runBulkApprove(
   })
 
   // Delegate the phase-2 loop-and-meter-once to the shared batch primitive.
+  // unit is passed through so approveVehiclesBatch can attach the
+  // occupancy_at_decision stamp per row using the same batch map.
   const batchResult = await approveVehiclesBatch(supabase, {
-    vehicles: eligibleVehicles.map(v => ({ id: v.id, plate: v.plate })),
+    vehicles: eligibleVehicles.map(v => ({ id: v.id, plate: v.plate, unit: v.unit ?? null })),
     property,
     companyIdForSync,
     logSite: 'runBulkApprove',
+    unitOccupancy,
   })
 
   // Map batch failed ids back to the vehicle rows so the summary can
