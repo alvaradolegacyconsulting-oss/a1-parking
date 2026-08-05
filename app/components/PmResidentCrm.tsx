@@ -1005,9 +1005,26 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   const pc = v.pendingPlateChange
   const showApprovePlateChange = isUnderReview && !!pc && canApproveVehicles && !isReadOnly
   const showDeclinePlateChange = isUnderReview && !!pc && !isReadOnly
-  // Slice 5 — deactivate/reactivate. Deactivate role-only; Reactivate
-  // permit-granting → can_approve_vehicles gate.
-  const showDeactivate = isActive && !isReadOnly
+  // Slice 5 — deactivate/reactivate. Both permit-granting.
+  //
+  // Slice 5's original lock (superseded 2026-08-05): "Deactivate is
+  // subtractive, so role-only; Reactivate is additive, so
+  // permit-gated." Reversed because the framing had risk backwards —
+  // deactivating a plate is the action that gets a car towed
+  // (subtractive removes protection → wrongful tow), while approving
+  // grants a permit whose worst case is an unauthorized car parking.
+  // Treating the subtractive action as needing LESS authority
+  // inverted the actual harm. Second reason: the old gate let a
+  // manager take an action they could not undo — deactivate without
+  // approve authority, then no way to reactivate.
+  //
+  // ⚠ RENDER-SIDE ONLY. deactivateVehicleCrm writes via direct
+  // Supabase update, not through a DEFINER RPC, and RLS on vehicles
+  // does not check can_approve_vehicles. A crafted request from a
+  // read-only manager still gets through. Server-side gate lands with
+  // the deactivateVehicleWrite extraction (deactivation Task 3
+  // Commit 3, Aug 5 spec).
+  const showDeactivate = isActive && canApproveVehicles && !isReadOnly
   const showReactivate = isDeactivated && canApproveVehicles && !isReadOnly
   return (
     <div style={{
