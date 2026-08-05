@@ -6,7 +6,7 @@ kickoff.** Read it first; it is the source of truth for where things stand.
 **Should live in the repo** (`docs/CURRENT_STATE.md`) so Mateo can read and maintain it. Jose
 uploads the current copy to project knowledge when starting a new chat.
 
-*Last updated: July 30, 2026 — bulk approve (ordered) + manager mobile approvals, both verified*
+*Last updated: August 4, 2026 — tier gates retired · timezone arc shipped · unit-occupancy end-to-end (`5f92557`)*
 
 ---
 
@@ -20,6 +20,149 @@ portal** — he uses Test-LEGACY. **A1 checks must be SQL.**
 
 **Tenant IDs:** Test-PM 87 · Test-ENF 88 · Test-LEGACY 89 · Demo 90 · **A1 Wrecker llc 91**
 (production).
+
+---
+
+## SHIPPED — August 3–4
+
+**`1d45c02` — retired tier gates.** Two triggers dropped from `visitor_passes`
+(`visitor_pass_monthly_limit_check`, `visitor_pass_duration_check`); four `RAISE` strings stripped of
+`support@shieldmylot.com` and "Upgrade tier"; `COMMENT ON` added to each of the four `get_company_*`
+functions. VQ.SUPPORT_ADDRESS_ZERO caught two orphaned bodies on the first pass — widened, not narrowed —
+resolved in the `_copy_followup` migration bundled into the same commit.
+
+**`20260804_get_unit_occupancy_summaries.sql`** — applied and verified green in prod. `STABLE`
+`SECURITY DEFINER`, `REVOKE ALL FROM PUBLIC` + `REVOKE FROM anon` + `GRANT TO authenticated`.
+
+**`5f92557` — unit occupancy client commit.** One batch call on `refreshCrmData` feeds four surfaces
+(ListRow red flag, amber-panel occupancy line, VehicleCard neutral context, bulk-lane aggregate) plus
+the `occupancy_at_decision` audit stamp on `APPROVE_RESIDENT` + `APPROVE_VEHICLE`. Fail-quiet contract:
+RPC error / missing payload / absent unit renders NOTHING. New file `app/lib/unit-occupancy.ts` owns
+the type + fetcher + audit-stamp builder; `PmResidentCrm.tsx` receives one prop; three writer
+signatures in `manager-crm-writes.ts` accept optional occupancy input.
+
+**August 3 timezone arc.** Four commits closing the Green Acres 5-hour-gap incident (same tow rendered
+5 hours apart on driver print vs manager view):
+- `04a76ac` (1a) — `formatTimestamp` helper + two server-component ticket pages pinned to `America/Chicago`.
+- `3ac4103` (2) — `formatTicketNumber` helper + 4 sites unified on unpadded form (paper wins).
+- `441096a` (1b) — ~40-site `.toLocale*` sweep onto shared `format-time.ts`; `formatDateLong` added for
+  the 5 UX-visible collapses that would have shortened "Aug 5, 2026" → "8/5/2026".
+- `1bf94f3` (3) — `get_pm_ticket_summary` RPC + PmViolation type + Field render for VIN on PM tow ticket.
+
+Root cause: two server components calling bare `.toLocaleString()` in Vercel's UTC Node runtime. All twelve
+timestamp columns are `timestamptz` — storage was never wrong.
+
+---
+
+## FINDINGS — August 3–4
+
+### 🔴 `vehicles` carries three predicates simultaneously
+
+| Predicate | Represents | Principal sites |
+|---|---|---|
+| `is_active` alone | **ENFORCEMENT** | `check_resident_plate`; `pm_plate_lookup` resident branch; CA `total_vehicles`; `complianceRate`; `trimDepartedResidentVehicles` (writes); `removeVehicle` (writes) |
+| `status` alone | user-facing counts | `countVehicles`; `insights.approvedPermits`; every CRM badge/subtab; `listPendingVehiclesForUnit`; `fetchVehicles` split |
+| `is_active AND status='active'` | billing meter | `countActiveRecords.permits`; CA Plan-tile `approvedPermitCount`; space `authorizedPlates` |
+
+**No RLS enforces the invariant.** The old anon `public_read_active_vehicles USING (is_active=true)` was
+dropped in B74; `is_active` no longer gates row visibility for any authenticated portal role — only DEFINER
+RPCs enforce it. The model is convention-only.
+
+**🔴 Direction correction to the existing `trimDepartedResidentVehicles` note.** The prior note concluded
+*"enforcement is safe."* That is accurate and it is the wrong half. Measured 2026-08-04:
+
+| Property | `is_active` | `status='active'` | joint | `is_active AND status='pending'` |
+|---|---|---|---|---|
+| Green Acres | 59 | **66** | 59 | **0** |
+| Test Legacy Property | 13 | 13 | 12 | **0** |
+
+The predicted class (`is_active=TRUE, status='pending'` — enforcement authorizes, portal hides) **does not
+exist.** The live class is its mirror: **8 rows are `status='active'` with `is_active=FALSE`.** Portal shows
+them approved; enforcement will not authorize them. Staff answer residents from the display, so this is the
+direction that ends in a tow. Test Legacy tile reads 13 (`status='active'`) while enforcement authorizes 12
+(`joint`).
+
+Disposition: 6 of 8 resolved as inactive-resident display clutter (Green Acres `149`, `15`, `150`; Test
+Legacy `117`). **`Apt 136` (2 rows) remains OPEN**, entangled with the `residents`-duplicate item below. All
+eight created inside a **48-hour window on July 27–28** — one event, not gradual drift; root-cause in the
+fix commit. Filed: `docs/backlog/vehicles-status-is_active-divergence.md`.
+
+### 🔴 Unit values are free text; collisions are live at Green Acres
+
+`residents.unit` and `vehicles.unit` are both `TEXT`. No FK, no constraint that they agree, no normalization
+trigger. Confirmed variants at Green Acres: **`136` and `Apt 136`**, **`#67`** alongside bare numerics.
+`lower(trim())` does not reconcile them.
+
+Consumers affected today:
+- `get_unit_occupancy_summaries` — **fails open by design.** A missed match renders no flag and the manager
+  is not told anything was withheld. Recorded in the migration header.
+- Guest-auth hosting-resident picker (`manager:4622-4646`) uses `r.unit === u` — case-sensitive, no trim.
+  **Already wrong today** for any variant mismatch.
+
+Decision recorded: fuzzy or prefix-stripping unit matching is rejected. It trades silent absence for a
+confident wrong answer, and a red flag pointing at the wrong household is worse than no flag. Ship the blind
+spot, name it. Filed: `docs/backlog/unit-value-normalization-green-acres.md`.
+
+### 🔴 `residents` has no uniqueness on email
+
+`natalielop08@gmail.com` holds two rows at Green Acres (one `is_active=true`, one `false`).
+`user_roles_lower_email_uidx` exists and protects `user_roles` only; `residents` is unprotected — a resident
+can hold two rows at one property, which double-counts any per-unit or per-property aggregate.
+
+`get_unit_occupancy_summaries` de-duplicates defensively (`DISTINCT ON (lower(r.email))` +
+`COUNT(DISTINCT lower(r.email))`), asserted by `VQ.BODY_RESIDENTS_DEDUP`. **It is the first consumer to do
+so — others do not.** Filed: `docs/backlog/residents-duplicate-row-uniqueness.md`.
+
+### Schema and convention facts established
+
+- **`user_roles.property` is `TEXT[]`** — one row per user carrying an array of properties. `get_my_properties()`'s
+  `LIMIT 1` returns that row's **full array**; it does not truncate a multi-property manager to one property.
+  49 callers use `unnest(...)` or `= ANY (...)`.
+- **`user_roles_lower_email_uidx` — CONFIRMED PRESENT August 4.** `20260704`'s "apply only after pre-launch
+  wipe" gate has been satisfied. Path B in `get_unit_occupancy_summaries` is now belt-and-braces rather than
+  load-bearing (kept because a function whose correctness is invariant-independent is worth more than one
+  whose isn't).
+- **No per-unit vehicle/plate/permit ceiling exists anywhere** — exhaustive grep confirmed. Any per-unit
+  ceiling would be net-new property policy.
+- **Approval audit rows are client-written** via `logAudit()` → `audit_logs.insert()`. `approve_vehicle`
+  DEFINER RPC writes none. `new_values` is free-form; **`occupancy_at_decision` (unit-occupancy client
+  commit) is the codebase's first "context at decision" key.**
+- **Three property-matching conventions in tree:** `name =`, `ILIKE`, `lower(trim(...))`.
+  `get_unit_occupancy_summaries` rides the `check_authorized_plate` manager-branch convention (strictest),
+  commented as deliberate so nobody later "aligns" it in the name of consistency.
+
+### `enforcement_insights` heatmap and `guest_authorizations` `CURRENT_DATE` — surveyed, not shipped
+
+Six-pattern SQL date-boundary audit ran 2026-08-04. Zero hits on `::date`, `now()::date`, direct date-string
+comparisons, or `AT TIME ZONE` (nothing pinned today). Rolling `now() - interval` windows all TZ-safe.
+
+Hits:
+- **Heatmap `EXTRACT(DOW/HOUR FROM created_at)`** at `20260628_enforcement_insights_layer_4:437-445` —
+  UTC-session bucketing. Live customer-facing defect: A1's peak-times widget mislabels by 5-6 hours. Fix
+  spec: CTE-once `AT TIME ZONE 'America/Chicago'`, CDT + CST probes, `get_enforcement_insights` recomputes
+  live so no backfill.
+- **`guest_authorizations` `CURRENT_DATE`** — 8 sites across 7 RPCs. Guest denied enforcement authorization
+  at 7pm Central on the last day of their window (UTC has rolled over). Zero occurrences only because A1
+  hasn't used the feature at Green Acres. Fix spec: one `current_date_central()` STABLE helper, not eight
+  inline copies.
+- **`enforce_visitor_pass_monthly_limit`'s `date_trunc('month', now())`** — same class, boundary lenience
+  direction (5 extra hours of allowance at month rollover). Trigger DROPPED by `1d45c02`; concern retired.
+
+Neither the heatmap nor the guest-auth fix has shipped yet.
+
+---
+
+## DESIGNED — August 3–4
+
+- **Resident deactivation notification email** — spec written. Residents only; drivers/managers/CAs get
+  nothing. **Rule: we send email when the consequence lands outside the product.** A deactivated manager
+  finds out at login; a deactivated resident's car becomes towable in a parking lot whether or not they ever
+  open the app. Constraints: no `support@shieldmylot.com` in the footer (B2B boundary); property-scoped copy
+  (multi-residency makes an unscoped claim false); cascade suppression via a `notify` flag on the shared
+  function so admin property/company cascades don't blast seed residents; Central-pinned timestamp off
+  `format-time.ts`; null-email guard; fire-and-log so a send failure can never roll back the deactivation
+  write. **Blocked on Mateo findings A–F** — chiefly whether one shared resident-deactivation path exists to
+  hook. If it doesn't, consolidation is a prerequisite commit, not a workaround.
 
 ---
 
@@ -486,6 +629,21 @@ live the moment `public_signup_open` flips. Fix shape:
     or FOR ALL policy silently for days until someone exercises the surface. Root case: the
     July 22 pass omitted UPDATE on `user_roles`, leaving `company_admin_update_users`
     unreachable — surfaced on A1's go-live day (5 days later, 42501/HTTP 403 on CA saves).
+11. **Source-inspection VQs must strip comments before matching.** `pg_get_functiondef()` returns
+    the header and in-body comments along with the code. A VQ asserting "the body does not call
+    X" will match the comment explaining *why* the body does not call X. Strip `--[^\n]*` first,
+    then assert. *(This is discipline #3 restated with the mechanism, because #3 alone did not
+    prevent it — VQ.BODY_PATH_B_SCOPING re-caught the class on 2026-08-04.)*
+12. **A failing VQ must quote what it saw.** A `RAISE` that names the rule but not the offending
+    line makes the reviewer re-derive the evidence, and false positives become indistinguishable
+    from real defects. Grep the raw functiondef in the RAISE arguments and interpolate the
+    matched line.
+13. **A negative control must assert it reached the guarded path.** *(Carried forward from
+    July 28.)* A test that cannot fail is worse than no test, because it gets recorded as
+    evidence. Rolling-30 probe on 2026-08-03 shipped with three distinct plates — count was 0
+    for every insert and the trigger correctly stayed silent, which the assertion mistook for
+    "gate broken". Same-plate + `RAISE NOTICE` printing the count-before-insert fixed it and
+    codified the pattern.
 
 ### From the Green Acers rename (2026-07-28)
 
@@ -580,3 +738,43 @@ assess** · **do NOT bump `TOS_/PRIVACY_/SAAS_VERSION`** · `FOR_MATEO_*` files 
 knowledge — relay and let go · **SQL sent to Jose is always a complete standalone statement;
 fragments for Mateo's files are labelled as such** · **diff reports paste code verbatim, not
 summaries** — three false alarms in one session came from reviewing shorthand instead of source.
+
+### Added August 3–4
+
+- **Never re-key retired tier strings** (`essential` / `professional` / `enterprise`). They return
+  `-1` because the strings stopped matching, not because anyone disabled them. `COMMENT ON` says
+  so on each function.
+- 🔴 **`get_company_driver_limit`'s PM branch is not mis-keyed.** `tier_type = 'property_management'
+  → 0` is deliberate policy and it fires today — there is already one `pm_only` company in the
+  system.
+
+## Class rules
+
+### Added August 3–4
+
+- 🔴 **An asymmetric write is safe in the direction you audited and unsafe in the one you didn't.**
+  Audit both. The `trimDepartedResidentVehicles` note was correct that enforcement is safe and
+  never asked what the display does.
+- 🔴 **Enforcement-safe is not display-safe.** Staff answer residents from the display. A portal
+  that overstates authorization produces the same tow as a broken gate.
+- **Out-of-scope must not be indistinguishable from empty.** Returning zeros alongside an error
+  lets a client render "0 residents in this unit" — a positive claim manufactured from a permission
+  failure. `RAISE`, or return the error key alone; and the client renders nothing rather than
+  inventing a zero.
+- **Fuzzy matching over dirty data trades silent absence for a confident wrong answer.** Prefer
+  the blind spot and name it in the header.
+- **`timeZone` is orthogonal to format options.** "Fixed format" is never a reason to skip pinning
+  the zone.
+- **A shared lib has no runtime of its own** — it inherits its callers. Audits of it expire on the
+  next import.
+- **Retired entitlement gates go inert by string mis-key, not by decision. Inert ≠ disabled.**
+  Never "repair" tier strings without checking what it arms.
+- **A failed property lookup fails open.** `v_limit IS NULL → RETURN NEW` — the gate vanishes
+  silently.
+- **A gate that can never go green is not a gate.** Declare exceptions with markers; don't let the
+  count drift.
+- **Probes must distinguish setup failure from assertion failure**, and print what the code saw.
+- **Keep assertions slightly stricter than the commit that motivated them.**
+- **`RAISE EXCEPTION` is right for a limit and wrong for a boundary.** If the feature isn't on the
+  plan, don't show the affordance.
+- **No hardcoded offsets, ever.** A fixed 5 or 6 hours tests clean in August and breaks in November.
