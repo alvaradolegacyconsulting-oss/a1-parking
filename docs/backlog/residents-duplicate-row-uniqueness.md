@@ -10,6 +10,20 @@ Jose's 2026-08-04 vehicles probe surfaced a LEFT JOIN fan-out on Green Acres `Ap
 
 The 2026-07-04 `UNIQUE(lower(email))` index (`user_roles_lower_email_uidx`) is on `user_roles` — **it does not protect `residents`.** No CHECK, UNIQUE, or trigger on `residents.email` prevents this state.
 
+## 🔴 Reachable path 2026-08-06 — deactivate → re-register → reactivate
+
+Jose walked the sequence at Test Legacy Property today. `/register`'s duplicate-block check only considers **ACTIVE** rows (a resident whose current row is `is_active=false` can re-register — that's why the Aug 2 Natalie sequence succeeded). But reactivation performs no duplicate check either. Concrete sequence:
+
+1. Manager deactivates a resident (row A: `is_active=false`)
+2. Resident re-registers via `/register` — permitted because the check only looks for active rows (creates row B: `is_active=true`)
+3. Manager reactivates row A — flips `is_active=true` on the original, **no duplicate warning**
+
+Result: **two simultaneously-active `residents` rows for the same email at the same property.** No error, no warning at any step. This is the state the trim-guard (shipped 32dca25 / c3d2012) now defends against, but the duplicate itself is unprevented.
+
+**Plausible in the wild** — "deactivate by mistake, resident re-registers, manager undoes the mistake" is not exotic. Add this path to the constraint scoping: `UNIQUE(lower(email), property)` (or however it's shaped) would block step 3 and force the manager to reconcile.
+
+**Also** — `/register`'s duplicate check fires at step 3 of 3 (after password, name, phone, unit, and vehicle entry). Should fire on email blur at step 1. Small UX fix, worth folding into this arc when we're in that file.
+
 ## 🔴 Reframe 2026-08-06 — the real shape at Green Acres is broader
 
 Jose ran the orphan diagnostic (Query 1 Variant A) again 2026-08-05 and found a second class of case at unit 144 and unit 76 that this backlog's proposed `UNIQUE(lower(email))` would NOT catch:
