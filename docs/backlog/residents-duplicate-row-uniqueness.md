@@ -10,6 +10,25 @@ Jose's 2026-08-04 vehicles probe surfaced a LEFT JOIN fan-out on Green Acres `Ap
 
 The 2026-07-04 `UNIQUE(lower(email))` index (`user_roles_lower_email_uidx`) is on `user_roles` — **it does not protect `residents`.** No CHECK, UNIQUE, or trigger on `residents.email` prevents this state.
 
+## 🔴 Reframe 2026-08-06 — the real shape at Green Acres is broader
+
+Jose ran the orphan diagnostic (Query 1 Variant A) again 2026-08-05 and found a second class of case at unit 144 and unit 76 that this backlog's proposed `UNIQUE(lower(email))` would NOT catch:
+
+```
+694  arelycruz9617@gmail.com   "José Alexander casco"  144  active
+695  bibifuentes571@gmail.com  "Arely Cruz"            144  declined
+678  cjjack100@gmail.com       "Courtney Jackson"       76  active
+697  spadivah1@gmail.com       "Arkadina Taylor"        76  declined
+```
+
+At unit 144 the names and emails are CROSSED — "Arely Cruz" is the *name* on 695, but `arelycruz9617@` is the *email* on 694. One person filled the form for another and the pairing scrambled. Each row has a distinct email; the uniqueness constraint would leave both rows in place.
+
+The real-world shape at Green Acres is **multiple partial identities per unit**, not one email with two rows. Natalie 690 is a legitimate `UNIQUE(lower(email))` case; unit 144 / 76 are a different class the constraint doesn't address.
+
+**Keep the constraint work** — it's still the right fix for the Natalie shape — but narrow the entry's claim about "the failure mode." The unit-144 shape is a **data-entry collision** that a uniqueness constraint cannot resolve; it needs manual reconciliation with the property (Jose is emailing A1 for 144). Filing this here so the next reader doesn't over-attribute.
+
+The upcoming "no-authorized-vehicle" manager panel (2026-08-06 preflight, ahead of Commit 3) is the surface that would let a manager NOTICE these dead-end residents without a SQL query.
+
 ## 🔴 Live instance surfaced 2026-08-05 — resident 690 at Green Acres
 
 The deactivation-cascade orphan diagnostic (2026-08-05, `20260805_deactivation_cascade_orphan_diagnostic.sql`) returned ONE row:
