@@ -454,7 +454,7 @@ export function residentDisplayStatus(r: Pick<CrmResident, 'status' | 'is_active
 
 // ── List filter + search (client-side)
 
-export type CrmFilter = 'all' | 'active' | 'needs' | 'review'
+export type CrmFilter = 'all' | 'active' | 'needs' | 'review' | 'no-authorized'
 
 export function filterCrmRows(rows: CrmResident[], filter: CrmFilter, search: string): CrmResident[] {
   const q = search.trim().toLowerCase()
@@ -462,10 +462,152 @@ export function filterCrmRows(rows: CrmResident[], filter: CrmFilter, search: st
     if (filter === 'active' && residentDisplayStatus(r) !== 'active') return false
     if (filter === 'needs' && !r.needsApproval) return false
     if (filter === 'review' && r.vehicleCounts.underReview === 0) return false
+    if (filter === 'no-authorized' && noAuthorizedBucket(r) === null) return false
     if (!q) return true
     const hay = [r.name, r.email, r.unit, ...r.vehicles.map((v: any) => v.plate)].join(' ').toLowerCase()
     return hay.includes(q)
   })
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// No-authorized-vehicle panel (2026-08-06)
+// ══════════════════════════════════════════════════════════════════════
+//
+// Bucket function for the "No authorized vehicle" filter chip on the
+// Residents tab. Population: active residents (is_active=TRUE +
+// status='active') whose vehicles exist but NONE are is_active=TRUE.
+//
+// 🔴 PREDICATE — READS v.is_active + v.status DIRECTLY.
+//
+// Uses per-vehicle `v.is_active` (enforcement predicate — matches
+// check_resident_plate 20260524:139). Does NOT read
+// `r.vehicleCounts` — that comes from countVehicles() which reads
+// `status` ALONE and disagrees with enforcement (see
+// docs/backlog/vehicles-status-is_active-divergence.md). The
+// tempting-wrong line inside this fn is `r.vehicleCounts.approved
+// === 0` — DO NOT use it.
+//
+// The `=== true` check for F excludes NULL rows, matching SQL
+// `is_active = TRUE`. Other client sites use `!== false` which treats
+// NULL as active — that's inconsistent but not this file's problem
+// to fix. Confirm vehicles.is_active is NOT NULL via
+// information_schema; if it's nullable, the client-side inconsistency
+// is its own finding.
+//
+// ── BUCKETS ───────────────────────────────────────────────────────────
+//
+// C_orphaned      — any vehicle with is_active=false AND status='active'
+//                   (silent divergence: was authorized, then trimmed)
+// B_all_declined  — every vehicle status='declined'
+// A_all_pending   — every vehicle status='pending'
+// E_deactivated   — every vehicle is_active=false AND status='deactivated'
+//                   (deliberate manager action, not a defect — panel it
+//                   for visibility, badge neutral not red)
+// D_mixed         — anything else (mix of pending + declined, or
+//                   under_review, expired, or unanticipated
+//                   combinations)
+// null            — not in panel (has ≥1 is_active=true vehicle OR
+//                   zero vehicles at all)
+//
+// ── EVALUATION ORDER (first-match) ────────────────────────────────────
+//
+// C → B → A → E_deact → D. Pure single-status buckets checked in
+// urgency order; D is the fallback for anything mixed. A resident's
+// bucket is the FIRST matching classification, so a resident with
+// orphans + declined lands in C (not B or D).
+//
+// ── DISPLAY SORT ORDER (SEPARATE from evaluation) ────────────────────
+//
+// C → B → D → A → E_deact. Anything containing a declined plate ranks
+// above a pure pending queue (pending resolves as the manager works
+// the queue; declined does not). E_deact last — deliberate manager
+// action, lowest urgency in the panel.
+//
+// ── DO NOT ────────────────────────────────────────────────────────────
+//
+// - DO NOT merge evaluation and display orders (Mateo Aug 6 lock).
+// - DO NOT use `!== false` for the F check — enforcement uses
+//   `is_active = TRUE` which excludes NULL.
+// - DO NOT read vehicleCounts anywhere in this fn.
+// - DO NOT swap E_deact and D — E_deact is a pure single-status
+//   classification (like A and B); D is the fallback for mixed.
+// - DO NOT add an age threshold on A speculatively — the Aug 6
+//   diagnostic showed 1 A-resident total; revisit past ~10.
+// ══════════════════════════════════════════════════════════════════════
+
+export type NoAuthorizedBucket =
+  | 'C_orphaned'
+  | 'B_all_declined'
+  | 'A_all_pending'
+  | 'E_deactivated'
+  | 'D_mixed'
+
+// First-match evaluation. C → B → A → E_deact → D. See header.
+export const NO_AUTHORIZED_EVALUATION_ORDER: readonly NoAuthorizedBucket[] = [
+  'C_orphaned', 'B_all_declined', 'A_all_pending', 'E_deactivated', 'D_mixed',
+] as const
+
+// Display sort. C → B → D → A → E_deact. Different from evaluation
+// on purpose — see header.
+export const NO_AUTHORIZED_DISPLAY_SORT_ORDER: readonly NoAuthorizedBucket[] = [
+  'C_orphaned', 'B_all_declined', 'D_mixed', 'A_all_pending', 'E_deactivated',
+] as const
+
+// Per-resident bucket classification. Returns null when the resident
+// does not belong in the panel (has an authorized vehicle OR has no
+// vehicles at all).
+export function noAuthorizedBucket(r: CrmResident): NoAuthorizedBucket | null {
+  const vs: any[] = r.vehicles ?? []
+  if (vs.length === 0) return null
+  // F: any authorized vehicle → not in panel.
+  if (vs.some((v: any) => v.is_active === true)) return null
+  // C: has any orphaned (was approved, is_active flipped without status update)
+  if (vs.some((v: any) => v.is_active === false && v.status === 'active')) return 'C_orphaned'
+  // Pure single-status buckets, in urgency order
+  if (vs.every((v: any) => v.status === 'declined'))    return 'B_all_declined'
+  if (vs.every((v: any) => v.status === 'pending'))     return 'A_all_pending'
+  if (vs.every((v: any) => v.status === 'deactivated')) return 'E_deactivated'
+  // Fallback
+  return 'D_mixed'
+}
+
+// Badge text builder — enumerates statuses actually present on the
+// resident's vehicles rather than assuming pending + declined. An
+// unanticipated combination (e.g., 1 under_review + 1 expired)
+// degrades to something true rather than to zeros. Kept in this
+// module (not the component) so it's testable pure logic.
+export function noAuthorizedBadgeText(r: CrmResident, bucket: NoAuthorizedBucket): string {
+  const vs: any[] = r.vehicles ?? []
+  const count = (status: string) => vs.filter((v: any) => v.status === status).length
+  const orphaned = vs.filter((v: any) => v.is_active === false && v.status === 'active').length
+
+  switch (bucket) {
+    case 'C_orphaned':
+      return `${orphaned} orphaned plate${orphaned === 1 ? '' : 's'}`
+    case 'B_all_declined':
+      return `${count('declined')} declined plate${count('declined') === 1 ? '' : 's'}`
+    case 'A_all_pending':
+      return `${count('pending')} pending plate${count('pending') === 1 ? '' : 's'}`
+    case 'E_deactivated':
+      return `${count('deactivated')} deactivated plate${count('deactivated') === 1 ? '' : 's'}`
+    case 'D_mixed': {
+      const parts: string[] = []
+      const pending      = count('pending')
+      const declined     = count('declined')
+      const underReview  = count('under_review')
+      const expired      = count('expired')
+      const deactivated  = count('deactivated')
+      if (pending)     parts.push(`${pending} pending`)
+      if (declined)    parts.push(`${declined} declined`)
+      if (underReview) parts.push(`${underReview} under review`)
+      if (expired)     parts.push(`${expired} expired`)
+      if (deactivated) parts.push(`${deactivated} deactivated`)
+      // Fallback for unanticipated status combinations — degrade to
+      // something true rather than to zeros.
+      if (parts.length === 0) parts.push(`${vs.length} unknown status`)
+      return parts.join(' · ')
+    }
+  }
 }
 
 export function initials(name: string): string {

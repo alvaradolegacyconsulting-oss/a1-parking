@@ -7,8 +7,11 @@
 // from the parent. Zero DB access here; grouping done in app/lib/pm-crm.ts.
 
 import { useMemo, useState } from 'react'
-import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus } from '@/app/lib/pm-crm'
-import { computeInsights, filterCrmRows, initials, residentDisplayStatus } from '@/app/lib/pm-crm'
+import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus, NoAuthorizedBucket } from '@/app/lib/pm-crm'
+import {
+  computeInsights, filterCrmRows, initials, residentDisplayStatus,
+  noAuthorizedBucket, noAuthorizedBadgeText, NO_AUTHORIZED_DISPLAY_SORT_ORDER,
+} from '@/app/lib/pm-crm'
 import type { UnitOccupancyMap, UnitOccupancy } from '@/app/lib/unit-occupancy'
 import { getUnitOccupancy, hasOtherActiveResidents, sumResidentPlates } from '@/app/lib/unit-occupancy'
 import {
@@ -188,7 +191,29 @@ export default function PmResidentCrm({
   const [subTab, setSubTab] = useState<SubTab>('overview')
 
   const insights = useMemo(() => computeInsights(crmResidents), [crmResidents])
-  const filtered = useMemo(() => filterCrmRows(crmResidents, filter, search), [crmResidents, filter, search])
+  const filtered = useMemo(() => {
+    const base = filterCrmRows(crmResidents, filter, search)
+    // For the 'no-authorized' chip, override sort with the bucket
+    // display order (C → B → D → A → E_deact per Aug 6 lock in
+    // pm-crm.ts NO_AUTHORIZED_DISPLAY_SORT_ORDER). Anything containing
+    // a declined plate ranks above a pure pending queue — pending
+    // resolves as the manager works the queue; declined does not.
+    if (filter === 'no-authorized') {
+      const rank = (r: CrmResident): number => {
+        const b = noAuthorizedBucket(r)
+        return b === null ? 999 : NO_AUTHORIZED_DISPLAY_SORT_ORDER.indexOf(b)
+      }
+      return [...base].sort((a, b) => {
+        const dr = rank(a) - rank(b)
+        if (dr !== 0) return dr
+        // Within a bucket, sort by unit then name for stable output.
+        const du = (a.unit || '').localeCompare(b.unit || '')
+        if (du !== 0) return du
+        return (a.name || '').localeCompare(b.name || '')
+      })
+    }
+    return base
+  }, [crmResidents, filter, search])
   const selected = useMemo(
     () => crmResidents.find(r => r.email.toLowerCase() === (selectedEmail ?? '').toLowerCase()) ?? null,
     [crmResidents, selectedEmail]
@@ -281,15 +306,33 @@ export default function PmResidentCrm({
               }}
             />
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' }}>
-              {(['all', 'active', 'needs', 'review'] as CrmFilter[]).map(f => (
-                <div key={f} onClick={() => setFilter(f)} style={filter === f ? chipOn : chipBase}>
-                  {f === 'needs' && <span style={{
-                    display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%',
-                    background: C.amber, marginRight: '5px',
-                  }} />}
-                  {f === 'all' ? 'All' : f === 'active' ? 'Active' : f === 'needs' ? 'Needs approval' : 'Plate under review'}
-                </div>
-              ))}
+              {(['all', 'active', 'needs', 'review', 'no-authorized'] as CrmFilter[]).map(f => {
+                // 'no-authorized' shows a count when non-zero — makes the
+                // panel discoverable without clicking. See pm-crm.ts
+                // noAuthorizedBucket header for population + predicate.
+                const noAuthCount = f === 'no-authorized'
+                  ? crmResidents.filter(r => noAuthorizedBucket(r) !== null).length
+                  : 0
+                const label =
+                  f === 'all' ? 'All' :
+                  f === 'active' ? 'Active' :
+                  f === 'needs' ? 'Needs approval' :
+                  f === 'review' ? 'Plate under review' :
+                  (noAuthCount > 0 ? `No authorized vehicle (${noAuthCount})` : 'No authorized vehicle')
+                return (
+                  <div key={f} onClick={() => setFilter(f)} style={filter === f ? chipOn : chipBase}>
+                    {f === 'needs' && <span style={{
+                      display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%',
+                      background: C.amber, marginRight: '5px',
+                    }} />}
+                    {f === 'no-authorized' && noAuthCount > 0 && <span style={{
+                      display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%',
+                      background: C.red, marginRight: '5px',
+                    }} />}
+                    {label}
+                  </div>
+                )
+              })}
             </div>
           </div>
 
@@ -466,6 +509,25 @@ function ListRow({ resident, selected, onClick, unitOccupancy }: { resident: Crm
   if (pending) badges.push(<Badge key="pn" color={C.gold} bg={C.goldSoft}>• {pending} pending</Badge>)
   if (underReview) badges.push(<Badge key="rv" color={C.amber} bg={C.amberSoft}>⚠ {underReview} review</Badge>)
   if (resident.spaceRequest) badges.push(<Badge key="sq" color={C.blue} bg={C.blueSoft}>◇ space req</Badge>)
+  // No-authorized-vehicle badge (2026-08-06). Rendered on the default
+  // 'all' view too so a manager scrolling all residents sees the flag
+  // even without clicking the chip. Bucket colors:
+  //   C_orphaned / B_all_declined → red (silent-serious / dead-end)
+  //   A_all_pending / D_mixed     → gold (queue / needs review)
+  //   E_deactivated               → faint neutral (deliberate action)
+  const noAuthBucket = noAuthorizedBucket(resident)
+  if (noAuthBucket) {
+    const label = noAuthorizedBadgeText(resident, noAuthBucket)
+    const bucketStyle: { color: string; bg: string } =
+      noAuthBucket === 'C_orphaned'      ? { color: C.red,   bg: C.redSoft }   :
+      noAuthBucket === 'B_all_declined'  ? { color: C.red,   bg: C.redSoft }   :
+      noAuthBucket === 'A_all_pending'   ? { color: C.gold,  bg: C.goldSoft }  :
+      noAuthBucket === 'D_mixed'         ? { color: C.gold,  bg: C.goldSoft }  :
+      /* E_deactivated */                  { color: C.faint, bg: 'transparent' }
+    badges.push(
+      <Badge key="noauth" color={bucketStyle.color} bg={bucketStyle.bg}>⚑ {label}</Badge>
+    )
+  }
   if (!approved && !pending && !underReview && !resident.spaceRequest) {
     badges.push(<Badge key="nv" color={C.faint} bg="transparent">no vehicles</Badge>)
   }
