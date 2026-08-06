@@ -24,6 +24,42 @@
 import type { CrmResident } from './pm-crm'
 import { residentDisplayStatus } from './pm-crm'
 
+// 🔴 CRM-INTERNAL FIELDS ARE EXCLUDED FROM EXPORT AT THE TYPE LEVEL.
+//
+// deactivation_reason / deactivation_note / deactivated_by /
+// deactivated_at are on CrmResident (populated 2026-08-05) but MUST
+// NOT appear in the CSV. A leasing_agent can download this export;
+// deactivation_note contains free-text a manager wrote for internal
+// reasoning, not a message meant for a spreadsheet handed to third
+// parties. Same data-minimization rule as B225 (driver_email removal).
+// See COMMENT ON residents.deactivation_note in
+// 20260805_deactivation_reason_columns.sql.
+//
+// The comment above documents WHY. The type below ENFORCES. Reading
+// `r.deactivation_note` inside flattenResidentsForExport fails to
+// COMPILE — Pick<CrmResident, ExportableResidentField> narrows the
+// row-builder's view so a future refactor that spreads or iterates
+// the resident object can't accidentally leak the field. Extending
+// the exclusion list means adding a code here; comment drift alone
+// cannot open the door.
+//
+// If a future export needs a deactivation column, land it as a
+// SEPARATE "audit" export with its own permissions gate — not by
+// widening this identity-track export.
+export type NonExportableResidentField =
+  | 'deactivation_reason'
+  | 'deactivation_note'
+  | 'deactivated_by'
+  | 'deactivated_at'
+
+export type ExportableResidentField = Exclude<keyof CrmResident, NonExportableResidentField>
+
+// The row-builder view. A field access outside this key set will not
+// compile. CSV_HEADERS is an explicit literal (human strings like
+// 'Resident Name', not derived from keys), so the leak surface is the
+// identity[] array below, and this type gates it.
+export type ExportableResident = Pick<CrmResident, ExportableResidentField>
+
 export const CSV_HEADERS = [
   'Resident Name', 'Unit', 'Email', 'Phone', 'Status', 'Registered',
   'Assigned Space', 'Plate', 'State', 'Make', 'Model', 'Year', 'Color', 'Vehicle Status',
@@ -35,10 +71,14 @@ export interface FlattenResult {
   vehicleCount: number
 }
 
-export function flattenResidentsForExport(residents: CrmResident[]): FlattenResult {
+export function flattenResidentsForExport(residents: ExportableResident[]): FlattenResult {
   const rows: string[][] = []
   let vehicleCount = 0
   for (const r of residents) {
+    // r is typed Pick<CrmResident, ExportableResidentField>. Accessing
+    // r.deactivation_note (or any other non-exportable field) here
+    // fails to compile — the leak fix is enforced by the type, not by
+    // the comment above CSV_HEADERS.
     const identity: string[] = [
       r.name || '',
       r.unit || '',
@@ -113,7 +153,7 @@ function formatDateMDY(iso: string | null): string {
   return `${mm}/${dd}/${d.getFullYear()}`
 }
 
-function residentDisplayStatusLabel(r: CrmResident): string {
+function residentDisplayStatusLabel(r: Pick<CrmResident, 'status' | 'is_active'>): string {
   switch (residentDisplayStatus(r)) {
     case 'pending':     return 'Pending Approval'
     case 'declined':    return 'Declined'

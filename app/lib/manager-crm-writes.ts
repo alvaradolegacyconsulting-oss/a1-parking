@@ -42,6 +42,11 @@ import { escapeIlikeValue } from './supabase-query-escape'
 import type { BulkApproveSummaryInput } from './bulk-approve-summary'
 import type { OccupancyStamp, UnitOccupancyMap } from './unit-occupancy'
 import { buildOccupancyStamp } from './unit-occupancy'
+import {
+  isValidResidentReason,
+  reasonRequiresNote,
+  DEACTIVATION_NOTE_MAX_LENGTH,
+} from './deactivation-reasons'
 
 // ══════════════════════════════════════════════════════════════════════
 // Shared machinery
@@ -95,18 +100,80 @@ export async function notifyResidentDecision(args: {
 // (and by DEACTIVATE_RESIDENT handler in the surface — that call site
 // prepends supabase, keeps the rest of its positional args, matches the
 // pre-extraction shape verbatim).
+//
+// 🔴 OWNERSHIP GUARD (added 2026-08-05 after Green Acres resident 690):
+// Before trimming, check whether the email owns an OTHER active residency
+// at the same property (regardless of unit spelling). If yes, this is a
+// duplicate-identity case — the surviving row still needs those vehicles.
+// Skip the trim entirely and log it. The log line is the deliverable —
+// tells a human that duplicate identity blocked a cascade, which is
+// exactly the signal the residents-duplicate-row-uniqueness backlog needs.
+//
+// The guard keys on (email, property) — NEVER on unit. Unit values are
+// free-text with confirmed variance (`136` / `Apt 136` / `#67`); a guard
+// keyed on unit would have the same blind spot as the cascade it protects.
+//
+// 🔴 EXPLICIT excludeResidentId (Mateo Aug 5): the guard would silently
+// disable itself if trim were ever called from a path where the target
+// resident is still is_active=TRUE — the guard would count that row as
+// its own active sibling and skip every time, logging
+// B166_OWNER_TRIM_SKIPPED while looking like it's working. Pass the
+// deactivating resident's id here and the guard filters it out of the
+// sibling count. Correct regardless of call ordering.
 export async function trimDepartedResidentVehicles(
   supabase: SupabaseClient,
   rawEmail: string | null | undefined,
   rawUnit: string | null | undefined,
   rawProperty: string | null | undefined,
   sourceAction: string,
+  excludeResidentId?: string | number | null,
 ): Promise<void> {
   if (!rawEmail || !rawUnit || !rawProperty) return
   const email = rawEmail.trim().toLowerCase()
   const unit = rawUnit.trim()
   const property = rawProperty.trim()
   if (!email || !unit || !property) return
+
+  // Ownership guard — count ACTIVE residents at this property with the
+  // same lowered email, EXCLUDING the resident being deactivated (see
+  // header). Any hit = duplicate identity, another row of this person
+  // still needs their vehicles. Skip the trim.
+  let guardQuery = supabase
+    .from('residents')
+    .select('id', { count: 'exact', head: true })
+    .eq('email', email)
+    .ilike('property', escapeIlikeValue(property))
+    .eq('is_active', true)
+  if (excludeResidentId !== undefined && excludeResidentId !== null && excludeResidentId !== '') {
+    guardQuery = guardQuery.neq('id', excludeResidentId)
+  }
+  const { count: siblingActive, error: guardErr } = await guardQuery
+  if (guardErr) {
+    console.error('[B166-owner-trim-guard-failed]', { sourceAction, email, property, error: guardErr.message })
+    return
+  }
+  if ((siblingActive ?? 0) > 0) {
+    console.warn('[B166-owner-trim-skipped-duplicate-identity]', {
+      sourceAction, email, property, unit,
+      sibling_active_residents: siblingActive,
+      excluded_resident_id: excludeResidentId ?? null,
+      reason: 'Owner still has an OTHER active residency at this property (possibly under a different unit spelling). Vehicles left untouched. See docs/backlog/residents-duplicate-row-uniqueness.md.',
+    })
+    await logAudit({
+      action: 'B166_OWNER_TRIM_SKIPPED',
+      table_name: 'vehicles',
+      new_values: {
+        source: sourceAction,
+        reason: 'duplicate_identity_still_active',
+        email,
+        property,
+        unit_of_deactivated_row: unit,
+        excluded_resident_id: excludeResidentId ?? null,
+        sibling_active_residents: siblingActive,
+      },
+    })
+    return
+  }
   // Email: .eq() on the lowercased value — forward stamps are all lowercase;
   // historical mixed-case rows wiped pre-launch; .eq() avoids ILIKE wildcard
   // injection (underscores in email local-parts would over-match on a
@@ -608,4 +675,145 @@ export async function runBulkApprove(
     skippedResidentNotApprovedLabels: skippedResidentNotApproved.map(v => v.plate || `(id ${v.id})`),
   }
   return { ok: true, summary }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// deactivateResidentWrite — Task 3 Commit 2 (Mateo Aug 5 spec)
+// ══════════════════════════════════════════════════════════════════════
+//
+// Replaces the inline residents.update() at manager/page.tsx:2316. The
+// old shape did not check {error} — on failure, logAudit + all four
+// cascades ran anyway, producing an active resident with all vehicles
+// trimmed to is_active=false. Green Acres resident 690 is the live
+// instance (via a different vector — see docs/backlog/residents-
+// duplicate-row-uniqueness.md).
+//
+// This write core enforces the ordering the old inline code did not:
+//   1. residents.update() → check the error
+//   2. On failure: return { ok: false, error }. Caller does NOT run
+//      audit, does NOT run cascades. Nothing happened.
+//   3. On success: logAudit → return the row shape needed for cascades
+//      → caller runs the cascades (which have their own guards now,
+//      added in this commit alongside).
+//
+// Required reason (validated against RESIDENT_DEACTIVATION_REASONS).
+// Note required when reason='other'. Note capped at
+// DEACTIVATION_NOTE_MAX_LENGTH. Actor email required for the
+// deactivated_by column (display-convenience, spoofable — see column
+// COMMENT for why the trustworthy record is audit_logs).
+export interface DeactivateResidentInput {
+  supabase: SupabaseClient
+  residentId: string | number
+  reason:    string        // resident-reason code (validated below)
+  note:      string | null
+  actor:     string        // deactivating manager's email (for deactivated_by)
+  property:  string        // for audit new_values shape parity with APPROVE_RESIDENT
+}
+
+export interface DeactivateResidentResult {
+  ok:       boolean
+  error?:   unknown
+  reason?:  'validation' | 'read_failed' | 'update_failed'
+  message?: string
+  // On success, echo the fields the caller needs for the cascades
+  // (trimDepartedResidentVehicles + cascadeVehiclesIfUnitVacant).
+  // Read once here — the caller does not need a follow-up SELECT.
+  residentSnapshot?: {
+    email:    string | null
+    unit:     string | null
+    property: string | null
+    name:     string | null
+  }
+}
+
+export async function deactivateResidentWrite(
+  args: DeactivateResidentInput,
+): Promise<DeactivateResidentResult> {
+  const { supabase, residentId, reason, note, actor, property } = args
+
+  // ── Validation ─────────────────────────────────────────────────────
+  if (!isValidResidentReason(reason)) {
+    return { ok: false, reason: 'validation', message: `Invalid deactivation reason code: ${reason}` }
+  }
+  if (reasonRequiresNote(reason)) {
+    if (!note || note.trim().length === 0) {
+      return { ok: false, reason: 'validation', message: 'A note is required when the reason is "Other".' }
+    }
+  }
+  const cleanNote = (note ?? '').slice(0, DEACTIVATION_NOTE_MAX_LENGTH).trim() || null
+
+  // ── Read the resident snapshot BEFORE the write, so the caller can
+  //    cascade even after a successful update (the update wouldn't
+  //    change email/unit/property, but reading first also gives the
+  //    ancillary fields the caller needs). ─────────────────────────
+  const { data: snapshot, error: readErr } = await supabase
+    .from('residents')
+    .select('email, unit, property, name')
+    .eq('id', residentId)
+    .maybeSingle()
+  if (readErr) {
+    console.error('[deactivateResidentWrite] snapshot SELECT failed', { residentId, error: readErr })
+    return { ok: false, reason: 'read_failed', error: readErr, message: readErr.message ?? 'Failed to read resident before deactivation.' }
+  }
+
+  // ── The write — CHECK the error ────────────────────────────────────
+  // deactivated_at is a CLIENT clock (new Date().toISOString()). Same
+  // display-vs-evidence rule as deactivated_by: a skewed laptop writes
+  // a wrong timestamp onto a Chapter 2308-adjacent record. Column
+  // COMMENT documents this — cite audit_logs.created_at (server clock)
+  // as the trustworthy record of WHEN, and cite audit_logs.user_email
+  // (RLS-attributed) for WHO. This field exists so the CRM can render
+  // "deactivated on <date>" without joining to audit_logs on every row.
+  const { error: updErr } = await supabase
+    .from('residents')
+    .update({
+      is_active:           false,
+      deactivation_reason: reason,
+      deactivation_note:   cleanNote,
+      deactivated_by:      actor,
+      deactivated_at:      new Date().toISOString(),
+    })
+    .eq('id', residentId)
+
+  if (updErr) {
+    console.error('[deactivateResidentWrite] residents UPDATE failed', { residentId, error: updErr })
+    // Deliberately do NOT logAudit here. The old inline shape wrote
+    // DEACTIVATE_RESIDENT even on failure, producing an audit row
+    // asserting "someone deactivated this" against a row that never
+    // moved. That's the intent-vs-outcome split — audit is written
+    // ONLY on success. See docs/backlog/ca-msgbox-severity-derived-
+    // from-text.md class rule.
+    return { ok: false, reason: 'update_failed', error: updErr, message: updErr.message ?? 'The database rejected the deactivation.' }
+  }
+
+  // ── Success — write the audit row, extended shape ─────────────────
+  // Extends the historically-thin DEACTIVATE_RESIDENT shape (which
+  // carried only {is_active, property}) to parity with APPROVE_RESIDENT
+  // plus the new deactivation fields. This is the June 17 follow-up #2
+  // delivery vehicle.
+  await logAudit({
+    action:     'DEACTIVATE_RESIDENT',
+    table_name: 'residents',
+    record_id:  residentId,
+    new_values: {
+      is_active:           false,
+      property,
+      name:                snapshot?.name ?? null,
+      unit:                snapshot?.unit ?? null,
+      deactivation_reason: reason,
+      deactivation_note:   cleanNote,
+      deactivated_by:      actor,
+    },
+  })
+
+  return {
+    ok: true,
+    residentSnapshot: {
+      email:    snapshot?.email ?? null,
+      unit:     snapshot?.unit ?? null,
+      property: snapshot?.property ?? null,
+      name:     snapshot?.name ?? null,
+    },
+  }
 }

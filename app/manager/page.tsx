@@ -30,6 +30,7 @@ import {
   declineResidentWrite,
   declineVehicleWrite,
   runBulkApprove,
+  deactivateResidentWrite,
 } from '../lib/manager-crm-writes'
 import SupportContact from '../components/SupportContact'
 // AP-MANAGE-CLIENT (2026-07-23): standing authorization per-property manager.
@@ -2311,21 +2312,41 @@ export default function ManagerPortal() {
   // the residents_deactivate_free_spaces DB trigger which handles space-tie
   // cleanup atomically; the client only handles vehicle owner-trim + the
   // B150 unit-vacancy cascade as it did before v1.1.
-  async function runOneDeactivate(residentId: string) {
-    const { data: r } = await supabase.from('residents').select('email, unit, property').eq('id', residentId).maybeSingle()
-    await supabase.from('residents').update({ is_active: false }).eq('id', residentId)
-    await logAudit({ action: 'DEACTIVATE_RESIDENT', table_name: 'residents', record_id: residentId, new_values: { is_active: false, property: manager.name } })
-    // B166 owner-trim + B150 cascade (unchanged from pre-v1.1).
-    // Space-tie cleanup is now DB-trigger-driven (commit-1 migration);
-    // no free_space client call needed.
-    await trimDepartedResidentVehicles(supabase, r?.email, r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
-    await cascadeVehiclesIfUnitVacant(r?.unit, r?.property, 'DEACTIVATE_RESIDENT')
+  //
+  // 🔴 2026-08-05 rewrite (Task 3 Commit 2): the old inline shape did not
+  // check {error} on residents.update, so all four cascades ran even
+  // when the update silently failed. Route through deactivateResidentWrite
+  // which enforces error-check → audit → cascade ordering. On failure,
+  // NOTHING runs after — no audit, no cascades, no space-request/guest-
+  // auth declines. Returns { ok, error? } so the batch driver can stop
+  // on first fail and surface which residents were already committed.
+  async function runOneDeactivate(residentId: string, reason: string, note: string | null): Promise<{ ok: boolean; error?: string; residentLabel?: string }> {
+    const result = await deactivateResidentWrite({
+      supabase, residentId,
+      reason, note,
+      actor: managerEmail,
+      property: manager.name,
+    })
+    if (!result.ok) {
+      const label = result.message ?? 'The database rejected the deactivation.'
+      console.error('[runOneDeactivate] deactivateResidentWrite failed', { residentId, reason: result.reason, error: result.error })
+      return { ok: false, error: label }
+    }
+    const snap = result.residentSnapshot!  // ok=true guarantees snapshot
+    const residentLabel = snap.name || snap.email || `resident ${residentId}`
+    // B166 owner-trim + B150 cascade — now run only AFTER a successful
+    // write. Trim carries excludeResidentId=residentId so the ownership
+    // guard filters the just-deactivated row out of the sibling count
+    // regardless of ordering (was implicit-via-flip before; now explicit).
+    // Space-tie cleanup is DB-trigger-driven (residents_deactivate_free_spaces).
+    await trimDepartedResidentVehicles(supabase, snap.email, snap.unit, snap.property, 'DEACTIVATE_RESIDENT', residentId)
+    await cascadeVehiclesIfUnitVacant(snap.unit, snap.property, 'DEACTIVATE_RESIDENT')
     // RT-D — F2/F3 cascade: cancel this resident's PENDING space_requests
     // and PENDING guest_authorizations so nothing dangles under an
     // inactive resident. Auto-declined requests are terminal and NOT
     // auto-restored on reactivate (same class as B150 unit-cascade
     // casualties — reactivated resident must re-submit).
-    const lowerEmail = (r?.email ?? '').toLowerCase()
+    const lowerEmail = (snap.email ?? '').toLowerCase()
     if (lowerEmail) {
       // space_requests_decided_consistency_chk requires decided_by_email
       // + decided_at on any pending → decided transition. Stamp both.
@@ -2363,22 +2384,57 @@ export default function ManagerPortal() {
         })
       }
     }
+    return { ok: true, residentLabel }
   }
 
   // Orchestrates: target + any opted-in co-residents. Sequential (a manager
   // rarely cascades more than 2-3) so individual failures are isolated and
   // the trigger fires once per call. After all done, refetch + close modal.
-  async function runDeactivateBatch(alsoEmails: string[]) {
+  //
+  // 🔴 Stop-on-first-fail (Mateo Aug 5): at a typical batch of 2-3, a
+  // mid-batch failure almost certainly means something systemic (RLS,
+  // network) that the next row will hit too. Better mental model:
+  // "the batch stopped at step 2, here's what's already committed."
+  // Reason applies to the whole batch (co-residents move out for the
+  // same reason as the target — stated in modal copy).
+  async function runDeactivateBatch(args: { reason: string; note: string | null; alsoEmails: string[] }) {
     if (!targetDeactivate) return
+    const { reason, note, alsoEmails } = args
     setDeactivateBusy(true)
+    const deactivated: string[] = []  // labels of residents already committed
     try {
       // 1. Target first.
-      await runOneDeactivate(targetDeactivate.id)
-      // 2. Each opted-in co-resident — look up their id by email to call runOneDeactivate.
-      for (const email of alsoEmails) {
+      const targetResult = await runOneDeactivate(targetDeactivate.id, reason, note)
+      if (!targetResult.ok) {
+        alert(`Deactivation failed for ${targetDeactivate.name || targetDeactivate.email}. ${targetResult.error ?? ''} Nothing was changed.`)
+        return
+      }
+      deactivated.push(targetResult.residentLabel ?? (targetDeactivate.name || targetDeactivate.email))
+      // 2. Each opted-in co-resident — stop on first failure so the
+      //    manager knows the exact partial state to reconcile.
+      const remainingEmails = [...alsoEmails]
+      while (remainingEmails.length > 0) {
+        const email = remainingEmails.shift()!
         const { data: co } = await supabase.from('residents')
-          .select('id').eq('email', email).eq('is_active', true).maybeSingle()
-        if (co?.id) await runOneDeactivate(co.id)
+          .select('id, name, email').eq('email', email).eq('is_active', true).maybeSingle()
+        if (!co?.id) {
+          // Silently skip a co-resident that flipped inactive between
+          // modal open and batch — nothing to deactivate.
+          continue
+        }
+        const coResult = await runOneDeactivate(co.id, reason, note)
+        if (!coResult.ok) {
+          const alreadyDone = deactivated.join(', ')
+          const notAttempted = remainingEmails.length
+          alert(
+            `Deactivation stopped mid-batch.\n\n` +
+            `Committed: ${alreadyDone}.\n` +
+            `Failed on ${co.name || co.email}: ${coResult.error ?? 'database rejected the deactivation'}.\n` +
+            (notAttempted > 0 ? `${notAttempted} other${notAttempted === 1 ? '' : 's'} not attempted.` : '')
+          )
+          return
+        }
+        deactivated.push(coResult.residentLabel ?? (co.name || co.email))
       }
     } finally {
       setTargetDeactivate(null)
@@ -2507,14 +2563,25 @@ export default function ManagerPortal() {
   // No schema change — flips vehicles.is_active=false, which the resident-
   // portal fetchVehicles filter (now explicit .eq('is_active', true))
   // honors, hiding archived vehicles from the next resident at the unit.
+  //
+  // 🔴 PER-VEHICLE OWNERSHIP GUARD (added 2026-08-05 after resident 690):
+  // Before archiving, gather each candidate vehicle's resident_email and
+  // check whether that email still owns an ACTIVE residency at the same
+  // property (regardless of unit spelling). Skip the vehicles whose owner
+  // is still active elsewhere at that property. Same reasoning as the
+  // trim guard — keyed on (email, property), never on unit, because unit
+  // is unreliable text (`136` / `Apt 136` / `#67`).
+  //
+  // 🔴 NULL email = UNKNOWN ownership = SKIP and log. Do NOT treat NULL
+  // as "orphan and archive." Orphan plates exist (manager-entered per
+  // b167, plates whose resident row was hard-deleted). Ownership is
+  // unknowable, not absent. Archiving is destructive and its failure
+  // mode is a towed car, so unknown ownership must fail toward LEAVING
+  // THE PLATE AUTHORIZED. Do NOT "complete" this by adding a
+  // NULL-is-orphan branch — that repeats the class of bug this guard
+  // was written to prevent.
   async function cascadeVehiclesIfUnitVacant(unit: string | null | undefined, property: string | null | undefined, sourceAction: string) {
     if (!unit || !property) return
-    // B166 escape bundle — apply the same ILIKE wildcard escape used by
-    // trimDepartedResidentVehicles. The vehicles UPDATE arm below is
-    // destructive (is_active=false) so embedded %/_ in unit/property
-    // values must be treated as literals, not wildcards. The residents
-    // count arm is non-destructive but escaped for consistency so the
-    // gate-check counts the right tuple.
     const escUnit = escapeIlikeValue(unit)
     const escProperty = escapeIlikeValue(property)
     const { count: othersStillActive } = await supabase
@@ -2524,11 +2591,111 @@ export default function ManagerPortal() {
       .ilike('property', escProperty)
       .eq('is_active', true)
     if (othersStillActive !== 0) return  // roommate still occupies unit
+
+    // Gather candidates BEFORE the destructive UPDATE so we can gate
+    // per-vehicle by ownership.
+    const { data: candidates, error: candidatesErr } = await supabase
+      .from('vehicles')
+      .select('id, plate, resident_email')
+      .ilike('unit', escUnit)
+      .ilike('property', escProperty)
+      .eq('is_active', true)
+    if (candidatesErr) {
+      console.error('[cascade-vehicles-fetch-failed]', { sourceAction, unit, property, error: candidatesErr.message })
+      return
+    }
+    if (!candidates || candidates.length === 0) return
+
+    // Bucket by ownership.
+    //   NULL email → unknown ownership → skip (safe fail toward
+    //     leaving the plate authorized).
+    //   Non-NULL AND still-active-at-property → duplicate-identity case,
+    //     skip (owner still needs their car under the other residency).
+    //   Non-NULL AND NOT still-active-at-property → archive-eligible.
+    // The third bucket is NOT called "orphan" — that name would invite
+    // treating NULL as orphan, which is the exact class of bug this
+    // guard was written to prevent.
+    const unknownOwnership: typeof candidates = []
+    const stillOwned:       typeof candidates = []
+    const archiveEligible:  typeof candidates = []
+
+    // Distinct non-null emails to check
+    const emails = Array.from(new Set(
+      candidates
+        .filter(v => v.resident_email && v.resident_email.trim().length > 0)
+        .map(v => (v.resident_email as string).trim().toLowerCase())
+    ))
+    // Ownership map — { lowered_email → true if still-active-at-property }
+    const stillActiveByEmail = new Map<string, boolean>()
+    if (emails.length > 0) {
+      const { data: activeRows, error: ownersErr } = await supabase
+        .from('residents')
+        .select('email')
+        .in('email', emails)
+        .ilike('property', escProperty)
+        .eq('is_active', true)
+      if (ownersErr) {
+        console.error('[cascade-vehicles-owners-fetch-failed]', { sourceAction, unit, property, error: ownersErr.message })
+        return  // Fail safe — don't archive if we can't verify ownership
+      }
+      for (const row of activeRows ?? []) {
+        const em = (row.email as string ?? '').trim().toLowerCase()
+        if (em) stillActiveByEmail.set(em, true)
+      }
+    }
+    for (const v of candidates) {
+      const em = (v.resident_email ?? '').trim().toLowerCase()
+      if (!em) {
+        unknownOwnership.push(v)
+      } else if (stillActiveByEmail.get(em)) {
+        stillOwned.push(v)
+      } else {
+        archiveEligible.push(v)
+      }
+    }
+
+    if (unknownOwnership.length > 0) {
+      console.warn('[cascade-vehicles-skipped-unknown-owner]', {
+        sourceAction, unit, property,
+        skipped_plates: unknownOwnership.map(v => v.plate),
+        reason: 'resident_email IS NULL — ownership unknowable, not absent. Not archived. Manager can retire manually via Vehicles tab if truly orphaned.',
+      })
+      await logAudit({
+        action: 'CASCADE_DEACTIVATE_VEHICLES_SKIPPED',
+        table_name: 'vehicles',
+        new_values: {
+          source: sourceAction,
+          reason: 'unknown_ownership_null_email',
+          unit, property,
+          skipped_count: unknownOwnership.length,
+          plates: unknownOwnership.map(v => v.plate),
+        },
+      })
+    }
+    if (stillOwned.length > 0) {
+      console.warn('[cascade-vehicles-skipped-duplicate-identity]', {
+        sourceAction, unit, property,
+        skipped_plates: stillOwned.map(v => v.plate),
+        reason: 'Vehicle owner still has an active residency at this property (possibly under a different unit spelling). Not archived.',
+      })
+      await logAudit({
+        action: 'CASCADE_DEACTIVATE_VEHICLES_SKIPPED',
+        table_name: 'vehicles',
+        new_values: {
+          source: sourceAction,
+          reason: 'owner_still_active_at_property',
+          unit, property,
+          skipped_count: stillOwned.length,
+          plates: stillOwned.map(v => v.plate),
+        },
+      })
+    }
+    if (archiveEligible.length === 0) return
+
     const { data: archived } = await supabase
       .from('vehicles')
       .update({ is_active: false })
-      .ilike('unit', escUnit)
-      .ilike('property', escProperty)
+      .in('id', archiveEligible.map(v => v.id))
       .eq('is_active', true)
       .select('id, plate')
     if (archived && archived.length > 0) {
@@ -5053,7 +5220,7 @@ export default function ManagerPortal() {
           coResidents={targetDeactivate.coResidents}
           isBusy={deactivateBusy}
           onCancel={() => setTargetDeactivate(null)}
-          onConfirm={(alsoEmails) => runDeactivateBatch(alsoEmails)}
+          onConfirm={({ reason, note, alsoEmails }) => runDeactivateBatch({ reason, note, alsoEmails })}
         />
       )}
     </main>

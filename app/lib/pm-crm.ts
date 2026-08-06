@@ -90,6 +90,17 @@ export interface CrmResident {
   lease_end: string | null
   created_at: string | null
   manager_note: string | null
+  // 2026-08-05 Task 3 Commit 2 — deactivation fields.
+  // 🔴 INTERNAL-ONLY. These render in the manager CRM detail when
+  // is_active=false. They MUST NOT be added to residents-export.ts
+  // (a leasing_agent could download deactivation_note in a CSV).
+  // Not shown in resident portal, driver surfaces, or any email.
+  // Same data-minimization rule as B225. See COMMENT ON the columns
+  // in 20260805_deactivation_reason_columns.sql.
+  deactivation_reason: string | null
+  deactivation_note: string | null
+  deactivated_by: string | null
+  deactivated_at: string | null
   // Grouped derivations:
   vehicles: any[]
   vehicleCounts: { approved: number; pending: number; underReview: number }
@@ -294,6 +305,10 @@ export function buildCrmResidents(input: {
       lease_end: r.lease_end ?? null,
       created_at: r.created_at ?? null,
       manager_note: r.manager_note ?? null,
+      deactivation_reason: r.deactivation_reason ?? null,
+      deactivation_note:   r.deactivation_note   ?? null,
+      deactivated_by:      r.deactivated_by      ?? null,
+      deactivated_at:      r.deactivated_at      ?? null,
       vehicles: vs,
       vehicleCounts: counts,
       // Placeholder — Phase 2 replaces with CrmResidentSpace[] with per-space

@@ -19,6 +19,12 @@ import {
   buildExportFilename,
 } from '@/app/lib/residents-export'
 import { formatDate, formatDateLong } from '@/app/lib/format-time'
+import { reasonLabel } from '@/app/lib/deactivation-reasons'
+
+// Convenience wrapper — the reason column on residents stores a
+// resident-scoped code, so the lookup is always entity='resident' from
+// this file. Kept local to avoid a per-call-site scope arg.
+const reasonLabelForResident = (code: string | null | undefined) => reasonLabel('resident', code)
 
 type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
 
@@ -606,6 +612,50 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
           </div>
         )}
       </div>
+
+      {/* Deactivation info (2026-08-05 Task 3 Commit 2)
+          Gate is `is_active === false` ALONE — a reactivated resident
+          returns is_active=true and this panel disappears (stale reason
+          columns are populated but the guard suppresses them).
+          Pre-migration deactivated rows carry NULL for all four fields;
+          they still show the panel with "No reason recorded" copy per
+          the honesty rule — do NOT invent history.
+          Manager-CRM-only display — per the deactivation-reasons module
+          design lock, these fields are internal-only and are NOT
+          exposed to residents, drivers, or the CSV export
+          (residents-export.ts enforces the exclusion at the type
+          level via Pick<CrmResident, ExportableResidentField>). */}
+      {resident.is_active === false && (
+        <div style={{
+          marginTop: '12px', padding: '10px 12px',
+          background: 'rgba(180,64,64,0.10)', border: `1px solid ${C.redLine}`,
+          borderRadius: '8px',
+        }}>
+          <div style={{ fontSize: '11px', color: C.red, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: '4px' }}>
+            Deactivated
+          </div>
+          <div style={{ fontSize: '12.5px', color: C.text, lineHeight: '1.5' }}>
+            {resident.deactivation_reason
+              ? (reasonLabelForResident(resident.deactivation_reason) ?? <span style={{ color: C.faint }}>No reason recorded.</span>)
+              : <span style={{ color: C.faint }}>No reason recorded.</span>}
+            {resident.deactivated_at && (
+              <span style={{ color: C.muted }}>
+                {' '} · {formatDateLong(resident.deactivated_at)}
+              </span>
+            )}
+            {resident.deactivated_by && (
+              <span style={{ color: C.muted }}>
+                {' '} · by {resident.deactivated_by}
+              </span>
+            )}
+          </div>
+          {resident.deactivation_note && (
+            <div style={{ fontSize: '12px', color: C.muted, marginTop: '5px', fontStyle: 'italic', lineHeight: '1.5' }}>
+              &ldquo;{resident.deactivation_note}&rdquo;
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
