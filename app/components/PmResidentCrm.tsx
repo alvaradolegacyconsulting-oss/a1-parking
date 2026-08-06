@@ -624,8 +624,18 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
           design lock, these fields are internal-only and are NOT
           exposed to residents, drivers, or the CSV export
           (residents-export.ts enforces the exclusion at the type
-          level via Pick<CrmResident, ExportableResidentField>). */}
-      {resident.is_active === false && (
+          level via Pick<CrmResident, ExportableResidentField>).
+
+          🔴 GATE ON residentDisplayStatus, NOT `!is_active`. Pending
+          residents ARE is_active=false — that's how pending is encoded
+          (pm-crm.ts:418-436 documents this exact overlap and exists
+          precisely to disambiguate). Gating on `!is_active` alone
+          rendered a red "DEACTIVATED — No reason recorded" panel on
+          every pending registration awaiting approval, which shipped
+          live to Green Acres 2026-08-06. residentDisplayStatus returns
+          'pending' | 'active' | 'declined' | 'deactivated' as distinct
+          values — use it. */}
+      {residentDisplayStatus(resident) === 'deactivated' && (
         <div style={{
           marginTop: '12px', padding: '10px 12px',
           background: 'rgba(180,64,64,0.10)', border: `1px solid ${C.redLine}`,
