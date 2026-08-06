@@ -12,6 +12,19 @@ Green Acres has multiple text spellings for what appear to be the same physical 
 
 Surfaced during Jose's 2026-08-04 residents + vehicles probes for the unit-occupancy preflight. Not exhaustive — the collision detector query below should be run to enumerate the full set.
 
+## 🔴 Live harm surfaced 2026-08-05 — resident 690 at Green Acres
+
+The deactivation-cascade orphan diagnostic (2026-08-05) revealed that this variance is **actively causing wrongful-tow exposure at Green Acres today**, jointly with [residents-duplicate-row-uniqueness.md](./residents-duplicate-row-uniqueness.md):
+
+- Resident **690** — `natalielop08@gmail.com`, Natalie — holds two `residents` rows: one at unit `136` (active), one at `Apt 136` (deactivated)
+- Her vehicles `HBK8088` and `WFY2571` were registered under the `Apt 136` spelling
+- `trimDepartedResidentVehicles` matches on (email, property, unit); deactivating the `Apt 136` duplicate trimmed vehicles at that unit-string — which happened to be **her** vehicles that the surviving `136` row still owns
+- Both plates scan unauthorized at Green Acres RIGHT NOW while the CRM shows Natalie as an active resident with vehicles
+
+**Both defects had to be present** for the harm to land. Neither alone is sufficient. Fixing either closes this specific case, but both should ship for defense in depth.
+
+Jose is restoring the vehicles in the meantime.
+
 **Two consumers today are affected, and a third is about to arrive:**
 
 1. **`get_unit_occupancy_summaries` (2026-08-04, shipped as-designed).** Matches unit with `lower(trim(...))`. `Apt 136` and `136` are distinct keys — the occupancy flag will show "1 active resident here" when the physical unit has three. **This is a documented fail-open** — the RPC header notes it and does NOT paper over it (a flag firing confidently against the wrong household is worse than no flag). Data hygiene resolves it upstream.

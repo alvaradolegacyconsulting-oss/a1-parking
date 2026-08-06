@@ -10,6 +10,19 @@ Jose's 2026-08-04 vehicles probe surfaced a LEFT JOIN fan-out on Green Acres `Ap
 
 The 2026-07-04 `UNIQUE(lower(email))` index (`user_roles_lower_email_uidx`) is on `user_roles` — **it does not protect `residents`.** No CHECK, UNIQUE, or trigger on `residents.email` prevents this state.
 
+## 🔴 Live instance surfaced 2026-08-05 — resident 690 at Green Acres
+
+The deactivation-cascade orphan diagnostic (2026-08-05, `20260805_deactivation_cascade_orphan_diagnostic.sql`) returned ONE row:
+
+- Resident **690** — `natalielop08@gmail.com`, Natalie, at Green Acres (LIVE ENFORCEMENT)
+- `residents.is_active = TRUE` (surviving row at unit `136`)
+- Both vehicles `HBK8088` and `WFY2571` under this email at Green Acres have `is_active = FALSE`
+- **Both plates scan unauthorized while the CRM shows her as an active resident with vehicles**
+
+Root cause: this issue and [unit-value-normalization-green-acres.md](./unit-value-normalization-green-acres.md) **firing jointly**. Natalie has two residents rows — one at unit `136` (surviving active), one at `Apt 136` (deactivated). Her vehicles were registered under the `Apt 136` spelling. `trimDepartedResidentVehicles` matches on (email, property, unit) — so deactivating the duplicate at `Apt 136` trimmed the vehicles at that unit-string. The cascade did exactly what it was told; both this defect and the unit-value defect had to be present for the harm to land. Neither alone is sufficient.
+
+Jose is reconciling with A1 and restoring the vehicles in the meantime — wrongly authorizing is recoverable; wrongly towing is a Chapter 2308 record.
+
 ## Two questions to settle before scoping the fix
 
 **1. Is it a duplicate, or is it the collision with the unit-normalization item?**
