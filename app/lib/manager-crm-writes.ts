@@ -795,7 +795,7 @@ export async function deactivateResidentWrite(
   await logAudit({
     action:     'DEACTIVATE_RESIDENT',
     table_name: 'residents',
-    record_id:  residentId,
+    record_id:  String(residentId),
     new_values: {
       is_active:           false,
       property,
