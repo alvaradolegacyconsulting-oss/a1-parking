@@ -2492,8 +2492,15 @@ export default function ManagerPortal() {
     const willRestore = ownerStampedCount ?? 0
     const wontRestore = Math.max(0, (totalInactiveOnUnit ?? 0) - willRestore)
 
+    // 🔴 Copy honesty (Mateo Aug 6): the old wording attributed
+    // wontRestore vehicles to "a unit-vacancy cascade" without
+    // checking the audit log. What the code actually knows is that
+    // those rows are currently inactive on this unit — the CAUSE
+    // (cascade / owner-trim / manual removal / a mix) is unknowable
+    // from a simple count. Say what's known, not what's presumed.
+    // Same discipline as not returning zeros for out-of-scope.
     const confirmMsg = wontRestore > 0
-      ? `Reactivate this resident? Their own previously-deactivated vehicle${willRestore === 1 ? '' : 's'} (${willRestore}) will be reactivated. ${wontRestore} other vehicle${wontRestore === 1 ? '' : 's'} on this unit ${wontRestore === 1 ? 'was' : 'were'} removed by a unit-vacancy cascade and will NOT be auto-restored — review the Vehicles tab if needed.`
+      ? `Reactivate this resident? Their own previously-deactivated vehicle${willRestore === 1 ? '' : 's'} (${willRestore}) will be reactivated. ${wontRestore} other vehicle${wontRestore === 1 ? '' : 's'} on this unit ${wontRestore === 1 ? 'is' : 'are'} currently inactive and will NOT be restored — review the Vehicles tab if needed.`
       : `Reactivate this resident? Their own previously-deactivated vehicle${willRestore === 1 ? '' : 's'} (${willRestore}) will be reactivated.`
     if (!confirm(confirmMsg)) return
 

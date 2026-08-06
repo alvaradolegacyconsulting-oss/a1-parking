@@ -328,7 +328,7 @@ function RegisterForm() {
             const failedPlates = submittableVehicles.map(v => normalizePlate(v.plate))
             console.error('[B209-route-error]', { status: res.status })
             setVehicleGapMessage(
-              `⚠ Your vehicle${failedPlates.length === 1 ? '' : 's'} (${failedPlates.join(', ')}) ${failedPlates.length === 1 ? 'is' : 'are'} NOT yet registered and could be towed if parked at your property. Sign in to your resident portal now and submit ${failedPlates.length === 1 ? 'it' : 'each'} through "Request a Vehicle" — it only takes a minute and you'll see status updates as your manager approves.`
+              `⚠ We didn't receive your vehicle${failedPlates.length === 1 ? '' : 's'} (${failedPlates.join(', ')}). Sign in and submit ${failedPlates.length === 1 ? 'it' : 'each'} through "Request a Vehicle" so your manager can review. Until a plate is approved by your manager, it is not authorized to park at this property and could be towed.`
             )
           } else {
             const body = await res.json().catch(() => ({}))
@@ -339,7 +339,7 @@ function RegisterForm() {
           const failedPlates = submittableVehicles.map(v => normalizePlate(v.plate))
           console.error('[B209-route-fetch-failed]', { error: (fetchErr as Error).message })
           setVehicleGapMessage(
-            `⚠ Your vehicle${failedPlates.length === 1 ? '' : 's'} (${failedPlates.join(', ')}) ${failedPlates.length === 1 ? 'is' : 'are'} NOT yet registered and could be towed if parked at your property. Sign in to your resident portal now and submit ${failedPlates.length === 1 ? 'it' : 'each'} through "Request a Vehicle" — it only takes a minute and you'll see status updates as your manager approves.`
+            `⚠ We didn't receive your vehicle${failedPlates.length === 1 ? '' : 's'} (${failedPlates.join(', ')}). Sign in and submit ${failedPlates.length === 1 ? 'it' : 'each'} through "Request a Vehicle" so your manager can review. Until a plate is approved by your manager, it is not authorized to park at this property and could be towed.`
           )
         }
       }

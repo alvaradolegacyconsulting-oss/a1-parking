@@ -119,10 +119,18 @@ function normalizePlate(raw: string): string {
 function buildGapMessage(failedPlates: string[]): string {
   const n = failedPlates.length
   const plateList = failedPlates.join(', ')
+  // Mateo lock 2026-08-06 (step 1 of 3):
+  //   1. NOW — reword so the banner doesn't promise authorization
+  //      the resident cannot obtain (only a manager can approve a plate)
+  //   2. THEN — fix B209 so the vehicle insert actually happens
+  //   3. THEN — make the banner conditional on the insert genuinely
+  //      failing rather than shown to everyone
+  // Do NOT remove the banner before step 2 — without it, a resident
+  // walks away believing they registered a car they didn't.
   if (n === 1) {
-    return `⚠ Your vehicle ${plateList} is NOT yet registered and could be towed if parked at your property. Sign in to your resident portal now and submit it through "Request a Vehicle" — it only takes a minute and you'll see status updates as your manager approves.`
+    return `⚠ We didn't receive your vehicle ${plateList}. Sign in and submit it through "Request a Vehicle" so your manager can review. Until a plate is approved by your manager, it is not authorized to park at this property and could be towed.`
   }
-  return `⚠ ${n} of your vehicles (${plateList}) are NOT yet registered and could be towed if parked at your property. Sign in to your resident portal now and submit each through "Request a Vehicle" — it only takes a minute and you'll see status updates as your manager approves.`
+  return `⚠ We didn't receive your vehicles (${plateList}). Sign in and submit each through "Request a Vehicle" so your manager can review. Until a plate is approved by your manager, it is not authorized to park at this property and could be towed.`
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse<SuccessResponse | ErrorResponse>> {
