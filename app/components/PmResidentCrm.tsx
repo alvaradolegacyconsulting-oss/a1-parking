@@ -10,6 +10,7 @@ import { useMemo, useState } from 'react'
 import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus, NoAuthorizedBucket } from '@/app/lib/pm-crm'
 import {
   computeInsights, filterCrmRows, initials, residentDisplayStatus,
+  vehicleDisplayStatus,
   noAuthorizedBucket, noAuthorizedBadgeText, NO_AUTHORIZED_DISPLAY_SORT_ORDER,
 } from '@/app/lib/pm-crm'
 import type { UnitOccupancyMap, UnitOccupancy } from '@/app/lib/unit-occupancy'
@@ -28,6 +29,11 @@ import { reasonLabel } from '@/app/lib/deactivation-reasons'
 // resident-scoped code, so the lookup is always entity='resident' from
 // this file. Kept local to avoid a per-call-site scope arg.
 const reasonLabelForResident = (code: string | null | undefined) => reasonLabel('resident', code)
+
+// Same for vehicles. See app/lib/deactivation-reasons.ts for the
+// entity-scoped design lock — shared codes may render different
+// labels on resident vs vehicle surfaces.
+const vehicleReasonLabelForDisplay = (code: string | null | undefined) => reasonLabel('vehicle', code)
 
 type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
 
@@ -82,7 +88,12 @@ interface Props {
   // gates on canApproveVehicles + !isReadOnly — routes through
   // approve_vehicle wrapper which fires callSyncOnAdd → noop_within_floor
   // same-cycle (net-zero on the meter by ratchet + reconcile design).
-  onDeactivateVehicle: (vehicleId: string | number) => Promise<void>
+  // Task 3 Commit 3 (2026-08-06) — signature widened from
+  // (vehicleId) → (v) so the parent can open DeactivateVehicleModal
+  // with plate + ymm + resident context without a fetch round-trip.
+  // Return type changed to void — the modal opens synchronously; the
+  // async write happens after the manager selects a reason.
+  onDeactivateVehicle: (v: any) => void
   onReactivateVehicle: (vehicleId: string | number) => Promise<void>
   // Slice 6 — inline edit + audit. Cosmetic fields only:
   //   vehicles:  color / make / model / year / state
@@ -1021,7 +1032,7 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
   onDeclineVehicle: (id: string | number) => Promise<void>
   onApprovePlateChange: (changeId: number) => Promise<void>
   onDeclinePlateChange: (changeId: number) => Promise<void>
-  onDeactivateVehicle: (id: string | number) => Promise<void>
+  onDeactivateVehicle: (v: any) => void
   onReactivateVehicle: (id: string | number) => Promise<void>
   onEditVehicle: (id: string | number, patch: Record<string, any>) => Promise<void>
   unitOccupancy: UnitOccupancyMap | null
@@ -1063,7 +1074,7 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   onDeclineVehicle: (id: string | number) => Promise<void>
   onApprovePlateChange: (changeId: number) => Promise<void>
   onDeclinePlateChange: (changeId: number) => Promise<void>
-  onDeactivateVehicle: (id: string | number) => Promise<void>
+  onDeactivateVehicle: (v: any) => void
   onReactivateVehicle: (id: string | number) => Promise<void>
   onEditVehicle: (id: string | number, patch: Record<string, any>) => Promise<void>
   unitOccupancy: UnitOccupancyMap | null
@@ -1097,22 +1108,35 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
     setEditing(false)
   }
   const cancelEdit = () => setEditing(false)
-  const s = (v.status ?? '').toLowerCase()
-  const stat = s === 'under_review'
+  // Task 3 Commit 3 (2026-08-06): stat pill reads vehicleDisplayStatus
+  // rather than raw v.status.toLowerCase(). Same source of truth as
+  // the display gates below.
+  const _displayStatus = vehicleDisplayStatus(v)
+  const stat = _displayStatus === 'under_review'
     ? { color: C.amber, bg: C.amberSoft, border: '#a16207', text: 'Plate under review' }
-    : s === 'pending'
+    : _displayStatus === 'pending'
       ? { color: C.gold, bg: C.goldSoft, border: C.goldLine, text: 'Pending approval' }
-      : s === 'active' || s === 'approved'
+      : _displayStatus === 'active'
         ? { color: C.green, bg: C.greenSoft, border: C.greenLine, text: 'Approved' }
-        : s === 'deactivated'
+        : _displayStatus === 'deactivated'
           ? { color: C.faint, bg: 'transparent', border: C.border2, text: 'Deactivated' }
-          : { color: C.faint, bg: 'transparent', border: C.border, text: (v.status || 'unknown') }
+          : _displayStatus === 'declined'
+            ? { color: C.red, bg: C.redSoft, border: C.redLine, text: 'Declined' }
+            : _displayStatus === 'expired'
+              ? { color: C.faint, bg: 'transparent', border: C.border2, text: 'Expired' }
+              : { color: C.faint, bg: 'transparent', border: C.border, text: (v.status || 'unknown') }
   const ymm = [v.year, v.make, v.model].filter(Boolean).join(' ') || '—'
-  const status = (v.status ?? '').toLowerCase()
-  const isPending = status === 'pending'
-  const isUnderReview = status === 'under_review'
-  const isActive = status === 'active' || status === 'approved'
-  const isDeactivated = status === 'deactivated'
+  // Task 3 Commit 3 (2026-08-06): migrate inline status computation
+  // onto vehicleDisplayStatus per Aug 6 finding — the same raw-status
+  // trap that shipped a red DEACTIVATED banner onto pending residents
+  // in Commit 2. Single source of truth for vehicle display state;
+  // any future gate on this card must read the helper, not raw
+  // v.is_active or v.status.
+  const displayStatus = vehicleDisplayStatus(v)
+  const isPending      = displayStatus === 'pending'
+  const isUnderReview  = displayStatus === 'under_review'
+  const isActive       = displayStatus === 'active'
+  const isDeactivated  = displayStatus === 'deactivated'
   const showApprove = isPending && canApproveVehicles && !isReadOnly
   const showDecline = isPending && !isReadOnly
   // Slice 6 — edit gate: role only (+ !isReadOnly). No permit granted;
@@ -1140,12 +1164,13 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   // manager take an action they could not undo — deactivate without
   // approve authority, then no way to reactivate.
   //
-  // ⚠ RENDER-SIDE ONLY. deactivateVehicleCrm writes via direct
-  // Supabase update, not through a DEFINER RPC, and RLS on vehicles
-  // does not check can_approve_vehicles. A crafted request from a
-  // read-only manager still gets through. Server-side gate lands with
-  // the deactivateVehicleWrite extraction (deactivation Task 3
-  // Commit 3, Aug 5 spec).
+  // ✅ Server-side gate now enforced (Task 3 Commit 3, 2026-08-06).
+  // deactivateVehicleWrite routes through deactivate_vehicle DEFINER
+  // RPC (migrations/20260806_deactivate_vehicle_rpc.sql) which checks
+  // user_roles.can_approve_vehicles for managers. A crafted request
+  // from a read-only manager is rejected with 'authority_not_granted'.
+  // This client-side gate is now belt (fast-fail before round-trip)
+  // rather than the load-bearing enforcement.
   const showDeactivate = isActive && canApproveVehicles && !isReadOnly
   const showReactivate = isDeactivated && canApproveVehicles && !isReadOnly
   return (
@@ -1165,6 +1190,49 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
           color: stat.color, background: stat.bg, border: `1px solid ${stat.border}`, whiteSpace: 'nowrap',
         }}>{stat.text}</span>
       </div>
+      {/* Task 3 Commit 3 (2026-08-06) — deactivation panel on
+          vehicles. Gated on vehicleDisplayStatus (isDeactivated), NOT
+          raw v.is_active — pending vehicles are ALSO is_active=false,
+          same trap that shipped the red DEACTIVATED banner onto
+          pending residents in Commit 2 (6269fdf fix). Panel renders
+          only for truly-deactivated vehicles.
+
+          🔴 INTERNAL-ONLY. deactivation_note MUST NOT appear on the
+          resident portal (v.manager_note is rendered there at
+          resident/page.tsx:1391-1394 for pending/declined; do NOT
+          conflate). Not shown in CSV export. residents-export.ts
+          type-level Pick already excludes the fields. */}
+      {isDeactivated && (v.deactivation_reason || v.deactivated_at) && (
+        <div style={{
+          marginTop: '12px', padding: '10px 12px',
+          background: 'rgba(139,145,158,0.10)', border: `1px solid ${C.border2}`,
+          borderRadius: '8px',
+        }}>
+          <div style={{ fontSize: '11px', color: C.faint, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: '4px' }}>
+            Deactivated
+          </div>
+          <div style={{ fontSize: '12.5px', color: C.text, lineHeight: '1.5' }}>
+            {v.deactivation_reason
+              ? (vehicleReasonLabelForDisplay(v.deactivation_reason) ?? `code: ${v.deactivation_reason}`)
+              : <span style={{ color: C.faint }}>No reason recorded.</span>}
+            {v.deactivated_at && (
+              <span style={{ color: C.muted }}>
+                {' '} · {formatDateLong(v.deactivated_at)}
+              </span>
+            )}
+            {v.deactivated_by && (
+              <span style={{ color: C.muted }}>
+                {' '} · by {v.deactivated_by}
+              </span>
+            )}
+          </div>
+          {v.deactivation_note && (
+            <div style={{ fontSize: '12px', color: C.muted, marginTop: '5px', fontStyle: 'italic', lineHeight: '1.5' }}>
+              &ldquo;{v.deactivation_note}&rdquo;
+            </div>
+          )}
+        </div>
+      )}
       {/* 2026-08-04 unit-occupancy context — NEUTRAL, ALWAYS SHOWN,
           NEVER colored. Per Mateo lock 2026-08-04 the vehicle-approval
           affordance always gets the context line (whether or not the
@@ -1296,7 +1364,7 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
         </div>
       )}
       {showDeactivate && !editing && (
-        <button onClick={() => onDeactivateVehicle(v.id)} title="Drops the plate out of the approved / do-not-tow set. Record is kept — you can Reactivate later (routes through approval)." style={{
+        <button onClick={() => onDeactivateVehicle(v)} title="Drops the plate out of the approved / do-not-tow set. Record is kept — you can Reactivate later (routes through approval)." style={{
           marginTop: '12px', width: '100%', padding: '8px', background: 'transparent', color: C.faint,
           border: `1px solid ${C.border2}`, borderRadius: '6px',
           cursor: 'pointer', fontSize: '11.5px', fontWeight: 700, fontFamily: 'inherit',

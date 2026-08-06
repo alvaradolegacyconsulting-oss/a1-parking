@@ -44,6 +44,7 @@ import type { OccupancyStamp, UnitOccupancyMap } from './unit-occupancy'
 import { buildOccupancyStamp } from './unit-occupancy'
 import {
   isValidResidentReason,
+  isValidVehicleReason,
   reasonRequiresNote,
   DEACTIVATION_NOTE_MAX_LENGTH,
 } from './deactivation-reasons'
@@ -814,6 +815,128 @@ export async function deactivateResidentWrite(
       unit:     snapshot?.unit ?? null,
       property: snapshot?.property ?? null,
       name:     snapshot?.name ?? null,
+    },
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// deactivateVehicleWrite — Task 3 Commit 3 (2026-08-06)
+// ══════════════════════════════════════════════════════════════════════
+//
+// Routes through the deactivate_vehicle DEFINER RPC (20260806) which
+// carries role + authority + scope + reason validation on the SERVER.
+// Closes the render-side-only gap from Task 1 (1c1ce5a) — a manager
+// without can_approve_vehicles is now rejected by the RPC, not only
+// the button.
+//
+// Client-side responsibilities are minimal:
+//   - Validate reason against isValidVehicleReason (fast-fail before
+//     round-trip; the RPC re-validates for real)
+//   - Cap note at 256 chars
+//   - Call the RPC
+//   - Write the audit row on success (RPC does not write audit)
+//
+// RPC returns `{ok:true, action, vehicle}` on success or
+// `{error, hint?}` on failure. Failure surface treated as a
+// user-friendly error message; no audit row is written on failure
+// (consistent with the audit-after-unchecked-write discipline).
+//
+// Vehicle deactivation cascades NONE (confirmed 2026-08-06 §1c
+// report). No trim, no space-tie cleanup, no guest-auth cascade.
+// Success returns snapshot for the CRM refresh path.
+// ══════════════════════════════════════════════════════════════════════
+
+export interface DeactivateVehicleInput {
+  supabase:  SupabaseClient
+  vehicleId: string | number
+  reason:    string      // vehicle-reason code (validated + re-validated at RPC)
+  note:      string | null
+  actor:     string      // deactivating manager's email (for audit + client-side deactivated_by echo)
+  property:  string      // for audit new_values shape parity with APPROVE_VEHICLE
+}
+
+export interface DeactivateVehicleResult {
+  ok:       boolean
+  error?:   unknown
+  reason?:  'validation' | 'rpc_error'
+  message?: string
+  // On success, echo the fields the caller may want for a refresh
+  // context (plate, unit, resident_email).
+  vehicleSnapshot?: {
+    plate:          string | null
+    unit:           string | null
+    resident_email: string | null
+    property:       string | null
+  }
+}
+
+export async function deactivateVehicleWrite(
+  args: DeactivateVehicleInput,
+): Promise<DeactivateVehicleResult> {
+  const { supabase, vehicleId, reason, note, actor, property } = args
+
+  // ── Client-side fast-fail (RPC re-validates for real) ──────────────
+  if (!isValidVehicleReason(reason)) {
+    return { ok: false, reason: 'validation', message: `Invalid vehicle deactivation reason code: ${reason}` }
+  }
+  if (reasonRequiresNote(reason)) {
+    if (!note || note.trim().length === 0) {
+      return { ok: false, reason: 'validation', message: 'A note is required when the reason is "Other".' }
+    }
+  }
+  const cleanNote = (note ?? '').slice(0, DEACTIVATION_NOTE_MAX_LENGTH).trim() || null
+
+  // ── Call the DEFINER RPC ───────────────────────────────────────────
+  const { data, error: rpcErr } = await supabase.rpc('deactivate_vehicle', {
+    p_vehicle_id: vehicleId,
+    p_reason:     reason,
+    p_note:       cleanNote,
+  })
+  if (rpcErr) {
+    console.error('[deactivateVehicleWrite] rpc call failed', { vehicleId, error: rpcErr })
+    return { ok: false, reason: 'rpc_error', error: rpcErr, message: rpcErr.message ?? 'The database rejected the deactivation.' }
+  }
+  // The RPC returns jsonb; supabase-js unwraps to a plain object.
+  const result = data as { ok?: boolean; error?: string; hint?: string; action?: string; vehicle?: any } | null
+  if (!result || result.error) {
+    const errMsg = result?.hint ?? result?.error ?? 'The database rejected the deactivation.'
+    console.error('[deactivateVehicleWrite] rpc returned error', { vehicleId, result })
+    return { ok: false, reason: 'rpc_error', error: result?.error ?? 'unknown', message: errMsg }
+  }
+
+  const v = result.vehicle ?? {}
+
+  // ── Audit — extended shape (Task 3 Commit 3) ──────────────────────
+  // Prior shape: {is_active, status, property, meter_fired, note}.
+  // Adds: plate, unit, deactivation_reason, deactivation_note,
+  // deactivated_by. Keeps meter_fired (still false — deactivate does
+  // not fire callSyncOnAdd; count decrements at cycle close via
+  // reconcileAtRenewal). RPC did the write; this row records
+  // manager-initiated intent + outcome.
+  await logAudit({
+    action:     'DEACTIVATE_VEHICLE',
+    table_name: 'vehicles',
+    record_id:  String(vehicleId),
+    new_values: {
+      is_active:           false,
+      status:              'deactivated',
+      property,
+      meter_fired:         false,
+      plate:               v.plate ?? null,
+      unit:                v.unit ?? null,
+      deactivation_reason: reason,
+      deactivation_note:   cleanNote,
+      deactivated_by:      actor,
+    },
+  })
+
+  return {
+    ok: true,
+    vehicleSnapshot: {
+      plate:          v.plate ?? null,
+      unit:           v.unit ?? null,
+      resident_email: v.resident_email ?? null,
+      property:       v.property ?? null,
     },
   }
 }

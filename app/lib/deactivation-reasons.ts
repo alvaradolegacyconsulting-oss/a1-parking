@@ -85,11 +85,27 @@ export const RESIDENT_DEACTIVATION_REASONS: readonly DeactivationReason<Resident
   { code: 'other',                 label: 'Other — note required',                            notifies: true  },
 ]
 
-// ── Vehicle-facing reasons (populated by Commit 3) ───────────────────
-// Placeholder today — do not surface a vehicle dropdown from Commit 2.
-// Commit 3 populates + wires deactivateVehicleWrite. Kept EMPTY (not
-// omitted) so the module-load assertion below still runs against it.
-export const VEHICLE_DEACTIVATION_REASONS: readonly DeactivationReason<VehicleReasonCode>[] = []
+// ── Vehicle-facing reasons (Commit 3, 2026-08-06) ────────────────────
+// SHARED CODES WITH RESIDENT LIST — DIFFERENT LABELS:
+//   moved_out           resident: "Moved out / lease ended"
+//                       vehicle:  "Resident moved out / lease ended"
+//   registered_in_error resident: "Registered in error"
+//                       vehicle:  "Registered in error / duplicate"
+//   other               resident: "Other — note required"
+//                       vehicle:  "Other — note required"
+// Both `notifies` values MUST match across shared codes; module-load
+// assertion below throws at import if they diverge. This commit is
+// the first time that assertion does real work — verify it passes.
+export const VEHICLE_DEACTIVATION_REASONS: readonly DeactivationReason<VehicleReasonCode>[] = [
+  { code: 'moved_out',           label: 'Resident moved out / lease ended',           notifies: true  },
+  { code: 'vehicle_sold',        label: 'Vehicle sold or no longer owned',            notifies: true  },
+  { code: 'plate_superseded',    label: 'Plate changed — superseded by new registration', notifies: false },
+  { code: 'registered_in_error', label: 'Registered in error / duplicate',            notifies: false },
+  { code: 'not_permitted',       label: 'Not permitted under property rules',         notifies: true  },
+  { code: 'exceeds_allowance',   label: 'Exceeds unit vehicle allowance',             notifies: true  },
+  { code: 'violation',           label: 'Lease or parking violation',                 notifies: true  },
+  { code: 'other',               label: 'Other — note required',                      notifies: true  },
+]
 
 // ── System reasons (NEVER manager-selectable) ─────────────────────────
 export const SYSTEM_DEACTIVATION_REASONS: readonly DeactivationReason<SystemReasonCode>[] = [

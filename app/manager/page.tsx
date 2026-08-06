@@ -31,6 +31,7 @@ import {
   declineVehicleWrite,
   runBulkApprove,
   deactivateResidentWrite,
+  deactivateVehicleWrite,
 } from '../lib/manager-crm-writes'
 import SupportContact from '../components/SupportContact'
 // AP-MANAGE-CLIENT (2026-07-23): standing authorization per-property manager.
@@ -71,6 +72,7 @@ import {
 } from '../lib/spaces'
 import SearchableResidentPicker, { type SearchableResidentPickerResult } from '../components/SearchableResidentPicker'
 import DeactivateResidentModal, { type CoResident } from '../components/DeactivateResidentModal'
+import DeactivateVehicleModal from '../components/DeactivateVehicleModal'
 import SpaceDetailModal from '../components/SpaceDetailModal'
 import CredentialsModal from '../components/CredentialsModal'
 // PM Resident CRM (slice 1) — replaces the Residents tab with a unified
@@ -226,6 +228,19 @@ export default function ManagerPortal() {
     coResidents: CoResident[]
   } | null>(null)
   const [deactivateBusy, setDeactivateBusy] = useState(false)
+  // Task 3 Commit 3 (2026-08-06): vehicle-deactivate modal state.
+  // Replaces the native window.confirm() at deactivateVehicleCrm entry.
+  // Context (plate/ymm/resident) captured at click time from the
+  // VehicleCard's vehicle object — no fetch round-trip needed.
+  const [targetDeactivateVehicle, setTargetDeactivateVehicle] = useState<{
+    id:            string | number
+    plate:         string
+    ymm?:          string
+    residentName?: string
+    residentUnit?: string
+    property:      string   // for audit new_values shape
+  } | null>(null)
+  const [deactivateVehicleBusy, setDeactivateVehicleBusy] = useState(false)
   const [targetDecommission, setTargetDecommission] = useState<Space | null>(null)
   // v1.1 commit 6 — SpaceDetailModal opens via the "View" affordance on each
   // space row. The modal handles its own data loading, mutations, and busy
@@ -1798,25 +1813,58 @@ export default function ManagerPortal() {
   //   Same-cycle deactivate+reactivate = noop_within_floor (item.quantity
   //   was never decremented at the meter — decrement happens at cycle
   //   close via reconcileAtRenewal). Net-zero, guaranteed by ratchet.
-  async function deactivateVehicleCrm(id: string | number) {
+  // Task 3 Commit 3 (2026-08-06). Opens DeactivateVehicleModal — the
+  // native window.confirm() had no place to collect a structured
+  // reason + note. Actual write routes through
+  // deactivateVehicleWrite → deactivate_vehicle DEFINER RPC, which
+  // closes the render-side-only authority gap from Task 1 (1c1ce5a).
+  //
+  // Context passed in from the VehicleCard so the modal can render
+  // plate + ymm + resident + unit without a fetch round-trip.
+  function deactivateVehicleCrm(v: any) {
     if (!manager?.name) return
-    if (!window.confirm('Deactivate this vehicle?\n\nThe plate will no longer be authorized — driver plate lookups will return "not authorized." The record stays for audit. You can Reactivate later (routes through approval).')) return
-    const { error } = await supabase.from('vehicles')
-      .update({ is_active: false, status: 'deactivated' })
-      .eq('id', id)
-    if (error) {
-      alert(`Deactivate failed: ${error.message}`)
-      console.error('[deactivate_vehicle]', error)
-      return
-    }
-    await logAudit({
-      action: 'DEACTIVATE_VEHICLE',
-      table_name: 'vehicles',
-      record_id: String(id),
-      new_values: { is_active: false, status: 'deactivated', property: manager.name, meter_fired: false, note: 'record kept; count decrements at cycle close via reconcileAtRenewal' },
+    if (!v?.id) return
+    // Look up owning resident for display context (from already-loaded
+    // residents state; no fetch round-trip).
+    const ownerEmail = (v.resident_email ?? '').toLowerCase()
+    const owner = residents.find((r: any) => (r.email ?? '').toLowerCase() === ownerEmail)
+    const ymmParts = [v.year, v.make, v.model].filter(Boolean).join(' ')
+    setTargetDeactivateVehicle({
+      id:            v.id,
+      plate:         v.plate ?? '',
+      ymm:           ymmParts || undefined,
+      residentName:  owner?.name,
+      residentUnit:  v.unit ?? owner?.unit,
+      property:      manager.name,
     })
-    console.info('[deactivate_vehicle]', { site: 'crm', vehicleId: id, meter_fired: false })
-    await refreshCrmData()
+  }
+
+  // Called when the modal's Deactivate button is clicked. Runs the
+  // write core → shows friendly error on failure → refreshes on success.
+  async function runOneDeactivateVehicle(args: { reason: string; note: string | null }) {
+    if (!targetDeactivateVehicle) return
+    const { id, property } = targetDeactivateVehicle
+    setDeactivateVehicleBusy(true)
+    try {
+      const result = await deactivateVehicleWrite({
+        supabase,
+        vehicleId: id,
+        reason:    args.reason,
+        note:      args.note,
+        actor:     managerEmail,
+        property,
+      })
+      if (!result.ok) {
+        alert(`Deactivate failed: ${result.message ?? 'The database rejected the deactivation.'}`)
+        console.error('[deactivateVehicleWrite]', result)
+        return
+      }
+      console.info('[deactivate_vehicle]', { site: 'crm', vehicleId: id, reason: args.reason, meter_fired: false })
+    } finally {
+      setTargetDeactivateVehicle(null)
+      setDeactivateVehicleBusy(false)
+      await refreshCrmData()
+    }
   }
 
   async function reactivateVehicleCrm(id: string | number) {
@@ -5228,6 +5276,17 @@ export default function ManagerPortal() {
           isBusy={deactivateBusy}
           onCancel={() => setTargetDeactivate(null)}
           onConfirm={({ reason, note, alsoEmails }) => runDeactivateBatch({ reason, note, alsoEmails })}
+        />
+      )}
+      {targetDeactivateVehicle && (
+        <DeactivateVehicleModal
+          vehiclePlate={targetDeactivateVehicle.plate}
+          vehicleYmm={targetDeactivateVehicle.ymm}
+          residentName={targetDeactivateVehicle.residentName}
+          residentUnit={targetDeactivateVehicle.residentUnit}
+          isBusy={deactivateVehicleBusy}
+          onCancel={() => setTargetDeactivateVehicle(null)}
+          onConfirm={({ reason, note }) => runOneDeactivateVehicle({ reason, note })}
         />
       )}
     </main>

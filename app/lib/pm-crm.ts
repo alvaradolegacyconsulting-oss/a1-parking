@@ -452,6 +452,72 @@ export function residentDisplayStatus(r: Pick<CrmResident, 'status' | 'is_active
   return 'active'
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// vehicleDisplayStatus — symmetric to residentDisplayStatus
+// ══════════════════════════════════════════════════════════════════════
+//
+// Consumers of vehicles.status + is_active MUST NOT read the raw
+// columns for display-gate decisions. A pending vehicle is
+// is_active=FALSE — same trap that shipped a red DEACTIVATED banner
+// onto pending residents 2026-08-06 (fixed in 6269fdf). Use this
+// helper so display code can disambiguate cleanly.
+//
+// Status vocabulary from plate-status.ts (project canon):
+//   'pending' | 'active' | 'under_review' | 'declined' | 'expired' |
+//   'deactivated'
+//
+// This function collapses (status, is_active) into a single display
+// state. The panel gate on VehicleCard MUST use it, not raw is_active.
+//
+// ── SITES THAT COMPUTE VEHICLE STATUS TODAY ──────────────────────────
+//
+// Commit 3 (2026-08-06) migrated VehicleCard's inline computation
+// (was at PmResidentCrm.tsx:1030-1043) onto this helper. Other
+// consumers still doing their own thing:
+//
+//   - residents-export.ts:vehicleStatusLabel — maps to human labels
+//     for CSV; should call this helper internally in a follow-up so
+//     the classification lives in one place. Deferred to avoid
+//     dragging CSV-shape risk into this commit.
+//   - vehicle-state.ts (if it still exists) — check + fold in the
+//     same follow-up.
+//
+// DO NOT add a fourth copy of this classification. Route through the
+// helper.
+// ══════════════════════════════════════════════════════════════════════
+
+export type VehicleDisplayStatus =
+  | 'pending'
+  | 'active'
+  | 'under_review'
+  | 'declined'
+  | 'expired'
+  | 'deactivated'
+  | 'unknown'
+
+export function vehicleDisplayStatus(v: { status?: string | null; is_active?: boolean | null }): VehicleDisplayStatus {
+  const raw = (v.status ?? '').toLowerCase()
+  // Status ladder: check explicit lifecycle values first, is_active
+  // last (so a manager-deactivated vehicle whose status='deactivated'
+  // reads as 'deactivated' regardless of is_active). 'approved' is a
+  // legacy alias for 'active'.
+  if (raw === 'pending')      return 'pending'
+  if (raw === 'under_review') return 'under_review'
+  if (raw === 'declined')     return 'declined'
+  if (raw === 'expired')      return 'expired'
+  if (raw === 'deactivated')  return 'deactivated'
+  if (raw === 'active' || raw === 'approved') {
+    // A vehicle marked status='active' but is_active=FALSE is the
+    // C_orphaned case from noAuthorizedBucket (silent divergence).
+    // For DISPLAY purposes, show 'active' — the manager needs the
+    // signal that the row still carries the approved status. Panel
+    // classification is what surfaces the divergence, not this
+    // helper.
+    return 'active'
+  }
+  return 'unknown'
+}
+
 // ── List filter + search (client-side)
 
 export type CrmFilter = 'all' | 'active' | 'needs' | 'review' | 'no-authorized'
