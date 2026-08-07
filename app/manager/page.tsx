@@ -73,6 +73,7 @@ import {
 import SearchableResidentPicker, { type SearchableResidentPickerResult } from '../components/SearchableResidentPicker'
 import DeactivateResidentModal, { type CoResident } from '../components/DeactivateResidentModal'
 import DeactivateVehicleModal from '../components/DeactivateVehicleModal'
+import ReapprovalOrphansModal, { type OrphanPlate, type ReapprovalOrphansConfirmArgs } from '../components/ReapprovalOrphansModal'
 import SpaceDetailModal from '../components/SpaceDetailModal'
 import CredentialsModal from '../components/CredentialsModal'
 // PM Resident CRM (slice 1) — replaces the Residents tab with a unified
@@ -80,7 +81,7 @@ import CredentialsModal from '../components/CredentialsModal'
 // 2–6. Toggle: flip PM_CRM_ENABLED to false to fall back to the legacy
 // render below (kept intact for rollback until slice 2 retires it).
 import PmResidentCrm from '../components/PmResidentCrm'
-import { buildCrmResidents, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
+import { buildCrmResidents, isVehicleUnauthorizedForRestore, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
 import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '../lib/unit-occupancy'
 
 const PM_CRM_ENABLED = true
@@ -241,6 +242,17 @@ export default function ManagerPortal() {
     property:      string   // for audit new_values shape
   } | null>(null)
   const [deactivateVehicleBusy, setDeactivateVehicleBusy] = useState(false)
+  // 2026-08-07 reapproval-orphans intercept state. When approveResident
+  // finds unauthorized plates on file for the resident's email at the
+  // property, we set this and open ReapprovalOrphansModal. The
+  // pendingApproveResident callback holds the resident so we can
+  // resume the approve after the manager makes their choice (restore
+  // some / approve without restoring / cancel).
+  const [reapprovalOrphans, setReapprovalOrphans] = useState<{
+    resident:      any                    // CrmResident from approve caller
+    orphans:       OrphanPlate[]
+  } | null>(null)
+  const [reapprovalBusy, setReapprovalBusy] = useState(false)
   const [targetDecommission, setTargetDecommission] = useState<Space | null>(null)
   // v1.1 commit 6 — SpaceDetailModal opens via the "View" affordance on each
   // space row. The modal handles its own data loading, mutations, and busy
@@ -1520,28 +1532,62 @@ export default function ManagerPortal() {
   // — same pure-fetch shape, imported at top of file. Callers unchanged.
 
   async function approveResident(r: any) {
-    // Write core owns: residents UPDATE + notify + audit. Original inline
-    // shape logged APPROVE_VEHICLE audits BEFORE APPROVE_RESIDENT (cascade
-    // ran between the UPDATE and the audit); this rewire logs
-    // APPROVE_RESIDENT first, then APPROVE_VEHICLE per cascade row —
-    // more natural chronological order. Not a regression: the summary
-    // and Network gates don't depend on audit-row ordering.
-    // Silent-write reveal (2026-08-01) — the ORIGINAL awaited the write
-    // without checking .ok. If the RLS UPDATE denied (deactivated
-    // user_roles, property drift, session mismatch), the lib logged
-    // and returned {ok: false, error}; this surface would silently
-    // proceed to cascade + audit + refetch as if it had worked, and
-    // the manager would never know the resident stayed pending. Now
-    // we check .ok, log with tag, show a non-raw error message
-    // (raw errors never reach the user — feedback_raw_error_never_reaches_user.md),
-    // and bail before cascade. friendlyWriteError shape inlined here
-    // for now — the mobile surface's helper is not extracted per Mateo
-    // scope call.
+    // 2026-08-07 reapproval-orphans intercept. Before firing the write,
+    // check whether this resident has plates on file that aren't
+    // currently authorized — deactivated, declined, expired, etc.
+    // (isVehicleUnauthorizedForRestore excludes pending, which is in
+    // the approval queue with its own surface). If any, open the
+    // ReapprovalOrphansModal and let the manager decide restore /
+    // approve-without-restoring / cancel. On approve-with-restore,
+    // the modal handler routes restores through approveVehiclesBatch
+    // (meter-once) then falls through to runApproveResident.
+    //
+    // Fail-quiet: if r.vehicles is missing, absent, or unreadable,
+    // treat as "no orphans" and approve as today. Never invent zeros
+    // to reassure — same rule as the unit-occupancy panel.
+    const vehiclesOnFile: any[] = Array.isArray(r?.vehicles) ? r.vehicles : []
+    const orphans: OrphanPlate[] = vehiclesOnFile
+      .filter(v => isVehicleUnauthorizedForRestore(v))
+      .map(v => ({
+        id:                  v.id,
+        plate:               v.plate ?? '',
+        ymm:                 [v.year, v.make, v.model].filter(Boolean).join(' ') || null,
+        status:              v.status ?? null,
+        deactivation_reason: v.deactivation_reason ?? null,
+        deactivation_note:   v.deactivation_note ?? null,
+        deactivated_at:      v.deactivated_at ?? null,
+      }))
+
+    if (orphans.length > 0) {
+      // Open modal; resume via handleReapprovalOrphansConfirm below.
+      setReapprovalOrphans({ resident: r, orphans })
+      return
+    }
+    // No orphans → approve as today, no intercept.
+    await runApproveResident(r, null)
+  }
+
+  // The actual approve — extracted from approveResident so both the
+  // no-orphans direct path AND the modal-confirmed path can call it.
+  // reapprovalOrphansDecision is threaded into the audit when the
+  // modal was surfaced (null when there were no orphans to show).
+  async function runApproveResident(
+    r: any,
+    reapprovalOrphansDecision: {
+      shownPlateIds:    Array<string | number>
+      restoredPlateIds: Array<string | number>
+      skippedPlateIds:  Array<string | number>
+    } | null,
+  ) {
+    // Write core owns: residents UPDATE + notify + audit. See historical
+    // header comment (silent-write reveal 2026-08-01, ordering rewire,
+    // friendlyWriteError inline) for context.
     const write = await approveResidentWrite(supabase, {
       resident: { id: r.id, name: r.name, unit: r.unit, email: r.email },
       property: manager.name,
       managerNote: residentNotes[r.id] || null,
       occupancyStamp: buildOccupancyStamp(unitOccupancy, r.unit ?? null),
+      reapprovalOrphansDecision,
     })
     if (!write.ok) {
       console.error('[Manager approveResident] write failed', { residentId: r.id, error: write.error })
@@ -1607,6 +1653,61 @@ export default function ManagerPortal() {
     // Refresh spaces dashboard + available-pool so the freshly-assigned
     // space disappears from the assign dropdowns for other pending rows.
     if (pickedSpaceId) await refetchSpacesDashboard()
+  }
+
+  // 2026-08-07 — handles the ReapprovalOrphansModal's confirm event.
+  // Three shapes:
+  //   - choice='restore', restorePlateIds.length > 0:
+  //       restore the checked plates via approveVehiclesBatch (one
+  //       sync per batch — snapshot semantics; see 2026-08-07 §1
+  //       report to Mateo), then fire runApproveResident with the
+  //       decision recorded in the audit.
+  //   - choice='approve_without_restore':
+  //       approve the resident, record all shown plates as skipped.
+  //       Plates stay unauthorized.
+  //   - The audit thread carries shown/restored/skipped so the
+  //     evidentiary record shows what the manager was shown AND
+  //     what they chose. Skipped is the more interesting fact in a
+  //     later dispute.
+  //
+  // Cancel closes the modal without approving. Manager can click
+  // Approve again — same intercept fires. No state is lost.
+  async function handleReapprovalOrphansConfirm(args: ReapprovalOrphansConfirmArgs) {
+    if (!reapprovalOrphans) return
+    const { resident } = reapprovalOrphans
+    setReapprovalBusy(true)
+    try {
+      if (args.choice === 'restore' && args.restorePlateIds.length > 0) {
+        // Route restore through approveVehiclesBatch — meter-once
+        // discipline. Idempotent on already-active (noop_already_active
+        // return). Failures per-plate are surfaced in the batch result
+        // but not fatal to the resident approve.
+        const restoreVehicles = reapprovalOrphans.orphans
+          .filter(o => args.restorePlateIds.some(id => String(id) === String(o.id)))
+          .map(o => ({ id: String(o.id), plate: o.plate, unit: resident.unit ?? null }))
+        const batchResult = await approveVehiclesBatch(supabase, {
+          vehicles: restoreVehicles,
+          property: manager.name,
+          companyIdForSync,
+          logSite: 'reapproval-orphans-restore',
+          managerNote: null,
+          unitOccupancy,
+        })
+        if (batchResult.failed.length > 0) {
+          console.warn('[reapproval-orphans] some restores failed', { failed: batchResult.failed })
+          // Non-fatal — proceed with resident approve. Manager sees the
+          // per-plate failures in the CRM refresh (still is_active=false).
+        }
+      }
+      await runApproveResident(resident, {
+        shownPlateIds:    args.shownPlateIds,
+        restoredPlateIds: args.restorePlateIds,
+        skippedPlateIds:  args.skippedPlateIds,
+      })
+    } finally {
+      setReapprovalOrphans(null)
+      setReapprovalBusy(false)
+    }
   }
 
   // Bulk approve is orchestrated by runBulkApprove in
@@ -5287,6 +5388,17 @@ export default function ManagerPortal() {
           isBusy={deactivateVehicleBusy}
           onCancel={() => setTargetDeactivateVehicle(null)}
           onConfirm={({ reason, note }) => runOneDeactivateVehicle({ reason, note })}
+        />
+      )}
+      {reapprovalOrphans && (
+        <ReapprovalOrphansModal
+          residentName={reapprovalOrphans.resident.name ?? ''}
+          residentEmail={reapprovalOrphans.resident.email ?? ''}
+          residentUnit={reapprovalOrphans.resident.unit ?? ''}
+          orphans={reapprovalOrphans.orphans}
+          isBusy={reapprovalBusy}
+          onCancel={() => setReapprovalOrphans(null)}
+          onConfirm={handleReapprovalOrphansConfirm}
         />
       )}
     </main>

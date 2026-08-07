@@ -637,6 +637,39 @@ export function noAuthorizedBucket(r: CrmResident): NoAuthorizedBucket | null {
   return 'D_mixed'
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Reapproval-orphans predicate (2026-08-07)
+// ══════════════════════════════════════════════════════════════════════
+//
+// Per-vehicle predicate for the reapproval orphans panel — fires when
+// a manager approves a resident who has plates on file that aren't
+// currently authorized. Same philosophy as noAuthorizedBucket
+// (enforcement predicate = v.is_active) but different granularity:
+// noAuthorizedBucket classifies a RESIDENT into a bucket, this
+// classifies each VEHICLE for the panel's per-plate checkboxes.
+// Kept as its own helper rather than forcing reuse (Mateo Aug 7:
+// "if the shapes don't line up cleanly, say so rather than forcing
+// it") because bucket-per-resident and predicate-per-vehicle are
+// genuinely different questions.
+//
+// A vehicle is a "reapproval orphan" if:
+//   - is_active === false          (matches enforcement — not currently authorized)
+//   - status !== 'pending'         (pending is in the approval queue with its own surface)
+//
+// Excludes:
+//   - is_active === true → already authorized, nothing to restore
+//   - status === 'pending' → already in the approval queue, restore would collide
+//
+// Includes any deactivated, declined, expired, or under_review plate.
+// The panel shows the reason (if populated via Task 3 Commit 3's
+// deactivation_reason column) so the manager can distinguish
+// vehicle_sold from moved_out from admin_cascade.
+export function isVehicleUnauthorizedForRestore(v: { is_active?: boolean | null; status?: string | null }): boolean {
+  if (v.is_active === true) return false
+  if ((v.status ?? '').toLowerCase() === 'pending') return false
+  return true
+}
+
 // Badge text builder — enumerates statuses actually present on the
 // resident's vehicles rather than assuming pending + declined. An
 // unanticipated combination (e.g., 1 under_review + 1 expired)

@@ -351,9 +351,23 @@ export async function approveResidentWrite(
     // sees what the manager was shown when they decided. Fail-quiet:
     // null omits the key entirely rather than writing zeros.
     occupancyStamp?: OccupancyStamp | null
+    // 2026-08-07 — reapproval-orphans decision at click time. Populated
+    // by manager/page.tsx approveResident intercept when the resident
+    // had plates on file that weren't currently authorized. Fields:
+    //   shownPlateIds:   plates surfaced to the manager
+    //   restoredPlateIds: plates the manager chose to restore
+    //   skippedPlateIds:  shown BUT NOT chosen (the more interesting
+    //                     fact in a later dispute — the manager saw
+    //                     these and decided against restoring)
+    // Omitted from audit when no orphans were surfaced.
+    reapprovalOrphansDecision?: {
+      shownPlateIds:    Array<string | number>
+      restoredPlateIds: Array<string | number>
+      skippedPlateIds:  Array<string | number>
+    } | null
   },
 ): Promise<{ ok: boolean; emailSent: boolean; messageId: string | null; error?: unknown }> {
-  const { resident, property, managerNote = null, occupancyStamp = null } = args
+  const { resident, property, managerNote = null, occupancyStamp = null, reapprovalOrphansDecision = null } = args
   const { error: updErr } = await supabase.from('residents')
     .update({ is_active: true, status: 'active', manager_note: managerNote })
     .eq('id', resident.id)
@@ -373,6 +387,7 @@ export async function approveResidentWrite(
       email_sent: emailResult.ok,
       message_id: emailResult.message_id,
       ...(occupancyStamp ? { occupancy_at_decision: occupancyStamp } : {}),
+      ...(reapprovalOrphansDecision ? { reapproval_orphans_decision: reapprovalOrphansDecision } : {}),
     },
   })
   return { ok: true, emailSent: emailResult.ok, messageId: emailResult.message_id }
