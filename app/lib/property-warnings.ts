@@ -36,7 +36,7 @@
 // Within amber: by created_at descending (recency), then unit.
 // ══════════════════════════════════════════════════════════════════════
 
-import { noAuthorizedBucket, type CrmResident } from './pm-crm'
+import { noAuthorizedBucket, residentDisplayStatus, type CrmResident } from './pm-crm'
 
 // Threshold for warning #5 "pending vehicles aging" (Jose 2026-08-08).
 // 7 days catches genuine neglect without flagging normal review cycle.
@@ -139,11 +139,26 @@ export function computePropertyWarnings(input: WarningInput): PropertyWarning[] 
   }
 
   // ── #2 — Duplicate resident registration ───────────────────────────
-  // Same lowered email, 2+ rows at the property. Portal-lockout cause.
-  // Row appears once per group (not per row) — the manager needs to
-  // resolve the group, not read the same warning twice.
+  // Same lowered email, 2+ LIVE rows at the property.
+  //
+  // Aug 8 fixes (Mateo relay #):
+  //   1. Count only rows where residentDisplayStatus !== 'deactivated'.
+  //      A deactivated duplicate is history, not a live problem.
+  //   2. NAME EVERY DISTINCT UNIT the resident is registered under —
+  //      when the units differ (Sayra: "117", "#117", "Apt 117"),
+  //      the different spellings ARE the problem, and picking one to
+  //      display hides that. When all live rows share one unit
+  //      spelling (Test Twice · Unit 222), the row reads "twice at
+  //      Unit 222" without variant enumeration.
+  //   3. Restate the harm. Portal-lockout was the pre-cc3bc4d
+  //      symptom; cc3bc4d fixed it (get_my_effective_active picks the
+  //      best row by precedence). Real live consequence now is that
+  //      VEHICLES AND RECORDS SPLIT across entries — Natalie's
+  //      trimmed plates + dropped re-registration vehicle came from
+  //      exactly this.
   const byEmail = new Map<string, CrmResident[]>()
   for (const r of crmResidents) {
+    if (residentDisplayStatus(r) === 'deactivated') continue
     const key = (r.email || '').toLowerCase()
     if (!key) continue
     const bucket = byEmail.get(key)
@@ -152,21 +167,33 @@ export function computePropertyWarnings(input: WarningInput): PropertyWarning[] 
   }
   for (const [email, group] of byEmail) {
     if (group.length < 2) continue
-    // Sort group by created_at asc so the "oldest" reads naturally in
-    // any future extension; for the row today, we just pick the first
-    // active-shape resident for the display name.
     const displayResident = group.find(r => r.status === 'active') ?? group[0]
     const timestamp = group.reduce((latest: string | undefined, r) => {
       if (!r.created_at) return latest
       if (!latest) return r.created_at
       return r.created_at > latest ? r.created_at : latest
     }, undefined)
+    const rawUnits = Array.from(new Set(group.map(r => (r.unit || '').trim()).filter(u => u.length > 0))).sort()
+    const unitPhrase = rawUnits.length === 0
+      ? 'no unit on file'
+      : rawUnits.length === 1
+        ? `at Unit ${rawUnits[0]}`
+        : `under Unit ${rawUnits.map(u => `"${u}"`).join(', Unit ')}`
+    const displayName = displayResident.name || displayResident.email
     warnings.push({
       id:        `duplicate_resident_registration:${email}`,
       kind:      'duplicate_resident_registration',
       severity:  'amber',
-      title:     `${displayResident.name || displayResident.email} · Unit ${displayResident.unit || '—'}`,
-      body:      `this resident is registered ${group.length} times. They may have trouble signing in.`,
+      // Title omits the unit for multi-unit groups (the units go in
+      // the body where they can be enumerated). Single-unit groups
+      // keep the "· Unit X" title shape for consistency with other
+      // rows.
+      title:     rawUnits.length > 1
+        ? displayName
+        : `${displayName} · Unit ${displayResident.unit || '—'}`,
+      body:      rawUnits.length > 1
+        ? `registered ${group.length} times at this property, ${unitPhrase}. Their vehicles and records are split across the ${group.length} entries.`
+        : `registered ${group.length} times at this property, ${unitPhrase}. Their vehicles and records are split across the ${group.length} entries.`,
       remedy:    'Deactivate the duplicate entry, keeping the one with their vehicles.',
       timestamp,
       sortAnchor: displayResident.unit || '',
@@ -235,25 +262,36 @@ export function computePropertyWarnings(input: WarningInput): PropertyWarning[] 
   // collision. Considers residents' units AND vehicles' units — a
   // vehicle at "136" with no resident there but a resident at "Apt
   // 136" is the same class.
-  const rawUnitsByNormalized = new Map<string, Set<string>>()
-  for (const r of crmResidents) {
-    const raw = (r.unit || '').trim()
-    if (!raw) continue
-    const norm = normalizeUnit(raw)
-    if (!norm) continue
-    const bucket = rawUnitsByNormalized.get(norm)
-    if (bucket) bucket.add(raw)
-    else rawUnitsByNormalized.set(norm, new Set([raw]))
+  //
+  // Aug 8 fixes (Mateo relay #):
+  //   - LIVE-only. Deactivated residents are history; if a collision
+  //     only exists via a deactivated row it's not a live problem.
+  //   - Track contributing resident emails per normalized unit so
+  //     the post-processing subsumption step can drop collisions
+  //     fully explained by a single resident's duplicate rows
+  //     (already covered by warning #2). Collisions across DIFFERENT
+  //     residents survive — those are the ones a manager can't
+  //     otherwise see.
+  const rawUnitsByNormalized      = new Map<string, Set<string>>()
+  const emailsByNormalizedUnit    = new Map<string, Set<string>>()
+  const trackUnit = (raw: string | null | undefined, email: string | null | undefined) => {
+    const cleaned = (raw || '').trim()
+    if (!cleaned) return
+    const norm = normalizeUnit(cleaned)
+    if (!norm) return
+    const raws = rawUnitsByNormalized.get(norm)
+    if (raws) raws.add(cleaned); else rawUnitsByNormalized.set(norm, new Set([cleaned]))
+    const emailKey = (email || '').toLowerCase().trim()
+    if (emailKey) {
+      const emails = emailsByNormalizedUnit.get(norm)
+      if (emails) emails.add(emailKey); else emailsByNormalizedUnit.set(norm, new Set([emailKey]))
+    }
   }
   for (const r of crmResidents) {
+    if (residentDisplayStatus(r) === 'deactivated') continue
+    trackUnit(r.unit, r.email)
     for (const v of (r.vehicles ?? [])) {
-      const raw = (v.unit || '').trim()
-      if (!raw) continue
-      const norm = normalizeUnit(raw)
-      if (!norm) continue
-      const bucket = rawUnitsByNormalized.get(norm)
-      if (bucket) bucket.add(raw)
-      else rawUnitsByNormalized.set(norm, new Set([raw]))
+      trackUnit(v.unit, v.resident_email ?? r.email)
     }
   }
   for (const [norm, rawVariants] of rawUnitsByNormalized) {
@@ -268,6 +306,92 @@ export function computePropertyWarnings(input: WarningInput): PropertyWarning[] 
       remedy:    'Edit one resident’s unit so both match.',
       sortAnchor: variants[0],
     })
+  }
+
+  // ── POST-PROCESS: dedup red rows by (kind, normalized plate) ──────
+  //
+  // Aug 8 fix (Mateo relay #): a single physical vehicle can appear
+  // in the vehicles table under multiple unit spellings (BULKAPPROVE
+  // at "205" AND "apt 205"). Both fired warning #5 twice — the same
+  // problem rendered twice in front of a customer. Merge red rows
+  // that share (kind, normalized plate) into one row that names all
+  // unit spellings. Amber aging-pending for the same plate is a
+  // different warning and stays separate.
+  {
+    const normalizePlate = (p: string | null | undefined): string =>
+      (p || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    // Extract the plate from a red row's title (shape:
+    // "Unit X · PLATE"). Alternative would be widening PropertyWarning
+    // with a plateKey field; extracting here keeps the type surface
+    // stable for V1.
+    const platefromTitle = (title: string): string => {
+      const idx = title.lastIndexOf(' · ')
+      return idx === -1 ? '' : normalizePlate(title.slice(idx + 3))
+    }
+    const groups = new Map<string, PropertyWarning[]>()
+    const survivors: PropertyWarning[] = []
+    for (const w of warnings) {
+      if (w.severity !== 'red') { survivors.push(w); continue }
+      const plate = platefromTitle(w.title)
+      if (!plate) { survivors.push(w); continue }
+      const key = `${w.kind}:${plate}`
+      const bucket = groups.get(key)
+      if (bucket) bucket.push(w)
+      else groups.set(key, [w])
+    }
+    for (const bucket of groups.values()) {
+      if (bucket.length === 1) { survivors.push(bucket[0]); continue }
+      // Merge: collect distinct unit spellings from the title prefix
+      // "Unit X ".
+      const units = Array.from(new Set(bucket.map(w => {
+        // "Unit X · PLATE" → "X"
+        const m = w.title.match(/^Unit (.+?) · /)
+        return m ? m[1] : ''
+      }).filter(u => u.length > 0))).sort()
+      const first = bucket[0]
+      const plate = platefromTitle(first.title)
+      const unitPhrase = units.length > 1
+        ? `Units ${units.map(u => `"${u}"`).join(' and ')}`
+        : `Unit ${units[0] || '—'}`
+      survivors.push({
+        ...first,
+        id:    `${first.kind}:${plate}`,  // stable across the group
+        title: `${unitPhrase} · ${plate}`,
+        body:  first.body + ` (same plate registered under ${units.length} unit spellings — resolve the collision first.)`,
+        // Keep the earliest sortAnchor for consistent placement.
+        sortAnchor: bucket.reduce((s, w) => w.sortAnchor < s ? w.sortAnchor : s, first.sortAnchor),
+      })
+    }
+    warnings.length = 0
+    warnings.push(...survivors)
+  }
+
+  // ── POST-PROCESS: suppress collision rows subsumed by dupe-resident ──
+  //
+  // Aug 8 fix (Mateo relay #): if a unit-spelling collision is fully
+  // explained by ONE resident registered under multiple unit
+  // spellings (Sayra: same person at "117", "#117", "Apt 117"), the
+  // duplicate-resident row already surfaces the same problem with a
+  // human name attached. Rendering both is one problem, two
+  // warnings.
+  //
+  // Suppress when: every raw variant in the collision comes from
+  // rows belonging to a SINGLE resident email (the emails set for
+  // that normalized unit has size 1). Preserve when different
+  // residents contribute — that's the case a manager can't see from
+  // the duplicate-resident view.
+  {
+    const survivors: PropertyWarning[] = []
+    for (const w of warnings) {
+      if (w.kind !== 'unit_spelling_collision') { survivors.push(w); continue }
+      // Extract normalized unit from the ID (shape "unit_spelling_collision:<norm>").
+      const norm = w.id.slice('unit_spelling_collision:'.length)
+      const emails = emailsByNormalizedUnit.get(norm) ?? new Set<string>()
+      if (emails.size <= 1) continue  // fully explained by the resident's dupe row
+      survivors.push(w)
+    }
+    warnings.length = 0
+    warnings.push(...survivors)
   }
 
   // ── Sort: red above amber; recency within amber; unit within red ──
