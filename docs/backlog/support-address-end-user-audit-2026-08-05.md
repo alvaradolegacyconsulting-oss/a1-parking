@@ -51,6 +51,22 @@ Any of:
 3. A second real-world end-user email to support (indicates the leak is recurring, worth its own commit)
 4. `app/auth/accept/page.tsx` is next touched for any reason (ride-along fix)
 
+## 🔴 ADDENDUM 2026-08-08 — audit was scoped too narrowly
+
+Jose's `/deactivated` screenshot during the §1 probe shows:
+
+> *"If you need help reaching your CA, contact **hello@shieldmylot.com**."*
+
+That is a **fourth** support address, on an end-user-facing surface, that this audit missed. The Aug 5 sweep grepped for `support@shieldmylot.com` only. Any address on `@shieldmylot.com` that isn't a subscriber inbox is the same class of leak; the negative result of the audit was scoped to one string, not the problem.
+
+### Follow-on tasks
+
+- **Re-run the audit** against `@shieldmylot.com` (not just `support@`). Enumerate every distinct local-part on `@shieldmylot.com` that appears in `app/`, `docs/help/`, `public/`, Supabase email-template docs, and the JSX-rendered surfaces.
+- **Confirm / fix `/deactivated`** — the file is `app/deactivated/page.tsx` (or wherever the copy lives; grep `hello@shieldmylot`). End-user surface: reached by residents/drivers whose accounts were deactivated. Same fix shape as the audit's Item 1 (invite-expired branch) — route by role, not to a shared inbox.
+- **The general discipline:** an audit answers what it queries. When the queried string is *"support@..."* and the class is *"end-user-facing shieldmylot.com address"*, a negative result on the first is not a negative result on the second. Widen queries to the class boundary, not the first known instance.
+
+Discovered during the toggleDriverActive probe pass — see `docs/backlog/ca-msgbox-severity-derived-from-text.md`'s SECOND ESCALATION block for the surrounding arc.
+
 ## Replacement copy sketch (when built)
 
 - **Generic:** "Please contact your property management office."

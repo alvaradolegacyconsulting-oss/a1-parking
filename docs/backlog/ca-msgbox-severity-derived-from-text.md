@@ -31,8 +31,44 @@ Now in memory as `feedback_severity_from_text_hides_downstream_failures.md`.
 
 ### What's next (2026-08-08 arc)
 
-- **Handler fix** — Jose to paste `deactivate_user` case from Supabase dashboard; leading hypothesis is unpaginated `auth.admin.listUsers()` (default page size 50) which explains why it broke silently as tenant count grew.
+- **Handler fix** — Jose to paste `deactivate_user` case from Supabase dashboard. Pagination hypothesis is DEAD: Jose's rank query returned 12, 29, 34 — all failing accounts sit inside the first page of 50, so `auth.admin.listUsers()` pagination doesn't explain the miss. Leading candidates now: wrong client (anon key or user JWT instead of service role), wrong project URL, or `auth.users` accessed through PostgREST. All three fail for everyone always, which matches every observation — no success has been seen at any rank.
 - **Full sweep of `set*Msg` call sites** in `app/company_admin/page.tsx` — 94 msg/msgBox touchpoints per grep. `driverActionResult` pattern from `1d08135` is the shape to apply.
+
+## 🔴 SECOND ESCALATION — 2026-08-08 (load-bearing was WRONG)
+
+Jose asked: if swift-handler is universally broken, how does resident deactivation work?
+
+Answer: **it doesn't use swift-handler.** `deactivateResidentWrite` writes `residents.is_active = false` through supabase-js. Portal mount reads it via `get_my_effective_active`. Residents are gated by a column read, not an auth ban.
+
+Same mechanism has been silently gating managers, leasing agents, and drivers this entire time:
+
+- OLD `toggleUserActive`: swift-handler ban → **failed silently** → `user_roles.is_active = false` write → **succeeded** → audit row → `get_my_effective_active` reads the column → portal mount redirects.
+- The user was locked out of the portal — not by the ban, by the column.
+- The comment at [`company_admin/page.tsx:2508-2511`](../../app/company_admin/page.tsx#L2508-L2511) says the ban is load-bearing and the column write is best-effort. **The evidence says the reverse.** The ban has never been the control; the column has. The ban's practical contribution is closing the window between authentication and portal mount, since login checks neither column (see relay #6 trace).
+
+### The `activate_user` corollary
+
+Reactivation runs through the same handler and has the same shape. So for the entire life of the product, **user deactivation and reactivation have been column-only operations that reported themselves as auth-level ones.** The reporter lied about both what happened AND what should have happened.
+
+### `1d08135` + `db0107a` are a functional regression
+
+Both commits inherited the wrong load-bearing comment and applied ban-first ordering: ban fails → return early → no column writes, no audit. Under that shape, deactivation does nothing at all — where the old (dishonest) code at least revoked access via the column.
+
+**We traded dishonest-and-partially-working for honest-and-completely-broken.** The honesty is a real gain — it's how the handler bug was found — but the regression is live at Test Legacy right now.
+
+### Correct ordering, pending Jose's `user_roles.is_active` probe
+
+If Jose confirms column-only revocation works by setting `user_roles.is_active = false` by hand and watching the driver portal redirect to `/deactivated`, then:
+
+1. **Reorder both handlers** — write the column first, attempt the ban after, report each outcome honestly.
+2. **Three-state severity** — full success (green), **partial: access revoked, login block not applied** (amber), and failure: nothing changed (red). `driverActionResult` / `userActionResult` types grow a third value.
+3. **Audit `ban_applied: false`** alongside the column outcomes so a later reader can distinguish fully-revoked from portal-blocked users. That distinction becomes the record of which users were deactivated during the broken-handler window.
+4. **Fix the comment at `:2508-2511`.** Say what's actually load-bearing and what the evidence was.
+5. **Same fix covers `activate_user`** — the reactivation path has had the same broken shape all along.
+
+### `admin/page.tsx` cascade at :461
+
+Under the corrected model, the cascade's per-user `Promise.all` bans are also non-load-bearing — the column write at [:471-474](../../app/admin/page.tsx#L471-L474) is what actually locks the affected PMs out. Cascade's aggregate-outcome design (deferred to a separate commit per relay #12) needs to reflect this: the bans are supplementary; the column write is the gate.
 
 ## The class
 
