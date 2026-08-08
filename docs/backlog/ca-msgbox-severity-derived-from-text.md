@@ -2,7 +2,37 @@
 
 **Filed:** 2026-08-05 during deactivation Task 2 diagnostic (FOR MATEO thread).
 **Scope:** CA-portal contained. Verified across four axes 2026-08-05 — no shared code with any other portal.
-**Priority:** MEDIUM. Live buggy today; contained enough to defer past the current arc, urgent enough to fix before the next CA UI work.
+**Priority: 🔴 RED (promoted 2026-08-08).** Was MEDIUM as "hygiene." **Actually concealed the total failure of user deactivation across three roles (manager, leasing agent, driver) for the life of the product.**
+
+## 🔴 Escalation — 2026-08-08
+
+`1d08135` (§1 driver deactivation with EXPLICIT severity) proved the mechanism when Jose clicked Deactivate on a Test Legacy driver:
+
+- Red banner. Handler's response text verbatim: **`"User not found"`** (auth id `1d102989-...`, `last_sign_in_at 2026-08-08 19:18:07` — the user demonstrably exists).
+- No column writes. No audit row. Ban-first ordering held.
+
+Jose then clicked Deactivate on `legacy-leasing@test.shieldmylot.com` through the existing manager/LA path (which goes through `toggleUserActive` → `msgBox` sniffer):
+
+- **GREEN banner** reading `"User not found"`.
+- Same handler. Same failure. `banned_until` still `null`.
+- One screenshot shows both banners simultaneously — green above red, same text, opposite colors.
+
+### The consequence — not "a mislabeled banner"
+
+- **Manager, leasing-agent, and property-cascade deactivation have never worked.** The auth ban is the load-bearing control ([:2508-2511](../../app/company_admin/page.tsx#L2508-L2511)); it has never landed.
+- **Nobody knew because of this bug.** `"User not found"` matches neither `startsWith('Error')` nor `.includes('failed')`, so it renders green. Every deactivation attempt for the life of the product returned green on total failure.
+- **The reference implementation we modelled §1 on was itself broken.** §1 only surfaced the underlying handler bug because it was built to bypass the sniffer.
+
+### The general rule with teeth
+
+> **A UI that derives severity from message text will eventually show green on failure — and when it does, it hides the failure of whatever it reports on.** The cost isn't a mislabeled banner; it's every defect downstream of that banner going unobserved.
+
+Now in memory as `feedback_severity_from_text_hides_downstream_failures.md`.
+
+### What's next (2026-08-08 arc)
+
+- **Handler fix** — Jose to paste `deactivate_user` case from Supabase dashboard; leading hypothesis is unpaginated `auth.admin.listUsers()` (default page size 50) which explains why it broke silently as tenant count grew.
+- **Full sweep of `set*Msg` call sites** in `app/company_admin/page.tsx` — 94 msg/msgBox touchpoints per grep. `driverActionResult` pattern from `1d08135` is the shape to apply.
 
 ## The class
 

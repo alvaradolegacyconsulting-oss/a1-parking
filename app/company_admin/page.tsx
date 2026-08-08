@@ -324,6 +324,14 @@ export default function CompanyAdminPortal() {
     name: '', email: '', role: 'manager', properties: []
   })
   const [userMsg, setUserMsg] = useState('')
+  // 2026-08-08 §6 Option B — explicit-severity companion to userMsg.
+  // Bypasses msgBox at :3775 whose sniffer concealed swift-handler's
+  // "User not found" as GREEN for the life of the product (three
+  // roles: mgr, LA, and — via createUser rollback — resident). Same
+  // pattern as driverActionResult from 1d08135. See
+  // docs/backlog/ca-msgbox-severity-derived-from-text.md (RED 08-08).
+  const [userActionResult, setUserActionResult] =
+    useState<{ text: string; severity: 'ok' | 'error' } | null>(null)
   const [togglingUser, setTogglingUser] = useState<string | null>(null)
   // Permit-Door Piece 1 §4 — manager-creation REQUIRED yes/no for
   // can_approve_vehicles authority. null = unchosen (must be picked
@@ -1867,7 +1875,26 @@ export default function CompanyAdminPortal() {
             }
           }
         }
-        setUserMsg('Could not complete resident setup: ' + msg + '. Login account deactivated.')
+        // 2026-08-08 §6 — EXPLICIT-severity route. Was setUserMsg,
+        // which msgBox at :3775 sniffs — 'Could not' matches neither
+        // startsWith('Error') nor includes('failed'), so this
+        // rendered GREEN. CA saw a success color over a failed
+        // resident setup. Same class as toggleUserActive's "User not
+        // found" concealment.
+        //
+        // Copy honesty note: "Login account deactivated" asserts the
+        // rollback (swift-handler deactivate_user fetch just above at
+        // ~:1816) succeeded. That fetch is .catch(() => {}) —
+        // response never inspected. If swift-handler is broken (see
+        // Aug 8 arc), the rollback silently no-ops and the auth.users
+        // row survives orphaned. That's a separate follow-on: the
+        // rollback needs the same explicit-outcome discipline this
+        // commit is applying to the primary path. Not fixed here to
+        // keep §6 scope tight.
+        setUserActionResult({
+          severity: 'error',
+          text: 'Could not complete resident setup: ' + msg + '. Login account deactivated.',
+        })
         return
       }
 
@@ -2642,6 +2669,7 @@ export default function CompanyAdminPortal() {
 
   async function toggleUserActive(email: string, activate: boolean) {
     setTogglingUser(email)
+    setUserActionResult(null)
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
     const { data: { session } } = await supabase.auth.getSession()
     // ── Step 1: swift-handler auth ban/unban (LOAD-BEARING) ────────
@@ -2656,7 +2684,21 @@ export default function CompanyAdminPortal() {
     })
     const json = await res.json().catch(() => ({}))
     if (!res.ok) {
-      setUserMsg(json.error || json.message || 'Failed to update user status.')
+      // 2026-08-08 §6 — route failure through EXPLICIT-severity state,
+      // NOT setUserMsg (which msgBox at :3775 sniffs for text and
+      // returned green for "User not found" — the mechanism that
+      // concealed total mgr/LA deactivation failure for the life of
+      // the product). Handler's actual response text is surfaced so a
+      // future Shape-B rejection is readable off the screen. Ban-first
+      // ordering: no column writes, no audit — deactivation did not
+      // happen. Mirrors toggleDriverActive (1d08135).
+      const handlerMessage = json?.error || json?.message || `HTTP ${res.status}`
+      setUserActionResult({
+        severity: 'error',
+        text: activate
+          ? `Could not reactivate user: ${handlerMessage}. No changes made.`
+          : `Could not deactivate user: ${handlerMessage}. No changes made.`,
+      })
       setTogglingUser(null)
       return
     }
@@ -2667,8 +2709,6 @@ export default function CompanyAdminPortal() {
     // the real control; this column drives the derived-access chain.
     // Best-effort: if this fails, the auth ban is still in place
     // (load-bearing), and the engineer-side log captures the gap.
-    // Don't surface the column-write failure to the operator (the
-    // intent was already executed at the auth layer).
     const { error: urErr } = await supabase
       .from('user_roles')
       .update({ is_active: activate })
@@ -2692,6 +2732,20 @@ export default function CompanyAdminPortal() {
     })
     setCompanyUsers(prev => prev.map(u => u.email === email ? { ...u, is_active: activate } : u))
     setTogglingUser(null)
+    // 2026-08-08 §6 — explicit success surface. Partial-state (ban ok +
+    // column write failed) is NOT green: access WAS revoked but the
+    // record didn't fully update, and a green banner would hide the
+    // gap. Same discipline as toggleDriverActive (1d08135).
+    setUserActionResult({
+      severity: urErr ? 'error' : 'ok',
+      text: activate
+        ? (urErr
+            ? `User access restored, but the record didn't fully update.`
+            : `User reactivated.`)
+        : (urErr
+            ? `User access revoked, but the record didn't fully update. Access is still blocked.`
+            : `User deactivated.`),
+    })
   }
 
   async function resetUserPassword() {
@@ -3772,6 +3826,51 @@ export default function CompanyAdminPortal() {
     color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em'
   }
 
+  // ⚠ DEPRECATED 2026-08-08 — do NOT route new failure messages here.
+  //
+  // WHAT THE SNIFFER CONCEALED
+  //   `isErr = msg.startsWith('Error') || msg.includes('failed')` is
+  //   text sniffing. It rendered swift-handler's "User not found"
+  //   response as GREEN for the life of the product — hiding TOTAL
+  //   failure of user deactivation across three roles (mgr, LA, and
+  //   via createUser rollback: resident). The auth ban never landed;
+  //   the CA UI said it did. The bug was invisible to development,
+  //   support, and every subscriber, and was only surfaced when
+  //   toggleDriverActive (1d08135) was built with explicit severity
+  //   and immediately raised RED "User not found" on the same
+  //   handler-code the sniffer had been calling green.
+  //
+  // WHAT TO USE INSTEAD
+  //   The `driverActionResult` / `userActionResult` pattern:
+  //     const [xActionResult, setXActionResult] =
+  //       useState<{ text: string; severity: 'ok' | 'error' } | null>(null)
+  //   Rendered with color set explicitly from `severity`. Never a
+  //   substring match on `text`. The CALLER passes the severity
+  //   because only the caller knows what happened.
+  //
+  //   Pattern reference:
+  //     - 1d08135 (toggleDriverActive) — first honest reporter
+  //     - Aug 8 §6 Commit A — toggleUserActive + createUser rollback
+  //
+  // ACCEPTABLE USE
+  //   Info-only, cannot-fail status text ("Loading…", "Saving…",
+  //   informational counts). Never the outcome of a handler call
+  //   that has a failure path.
+  //
+  // MIGRATION
+  //   Remaining `setUserMsg` / `setDriverMsg` / `setFacilityMsg` /
+  //   `setResetPwMsg` call sites are being swept per Option B —
+  //   pair each family's msg state with an ActionResult state,
+  //   route outcomes through the ActionResult banner, keep msgBox
+  //   only for status text. See
+  //   docs/backlog/ca-msgbox-severity-derived-from-text.md (RED).
+  //
+  // GENERAL RULE (memory: feedback_severity_from_text_hides_downstream_failures)
+  //   "A UI that derives severity from message text will eventually
+  //    show green on failure — and when it does, it hides the
+  //    failure of whatever it reports on. The cost isn't a
+  //    mislabeled banner; it's every defect downstream of that
+  //    banner going unobserved."
   const msgBox = (msg: string) => {
     const isErr = msg.startsWith('Error') || msg.includes('failed')
     return (
@@ -6589,7 +6688,29 @@ export default function CompanyAdminPortal() {
                       </p>
                     </div>
                   )}
-                  {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg(''); setDriverMsg(''); setDriverActionResult(null) })}
+                  {/* 2026-08-08 §6 Commit A — userActionResult banner.
+                      Same discipline as driverActionResult (1d08135):
+                      color from severity, never sniffed from text.
+                      Fires for toggleUserActive (mgr/LA deactivate +
+                      reactivate) and createUser resident-rollback
+                      failures. Was the surface that concealed
+                      swift-handler "User not found" as GREEN. */}
+                  {userActionResult && (
+                    <div style={{
+                      background: userActionResult.severity === 'error' ? '#3a1a1a' : '#0d1f0d',
+                      border: `1px solid ${userActionResult.severity === 'error' ? '#b71c1c' : '#2e7d32'}`,
+                      borderRadius: '8px', padding: '10px 14px',
+                      marginTop: '8px', marginBottom: '8px',
+                    }}>
+                      <p style={{
+                        color: userActionResult.severity === 'error' ? '#f44336' : '#4caf50',
+                        fontSize: '13px', margin: 0, fontWeight: 'bold',
+                      }}>
+                        {userActionResult.severity === 'error' ? '⚠ ' : '✓ '}{userActionResult.text}
+                      </p>
+                    </div>
+                  )}
+                  {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg(''); setDriverMsg(''); setDriverActionResult(null); setUserActionResult(null) })}
                   {/* Round 2 Item A — consolidated Add User form.
                       Role-aware: Manager shows approve-permit field;
                       Driver shows phone + operator_license (used on tow
@@ -6843,7 +6964,28 @@ export default function CompanyAdminPortal() {
             {manageSection === 'users' && !CA_CRM_REDESIGN && (
               <div>
                 {userMsg && msgBox(userMsg)}
-                {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg('') })}
+                {/* 2026-08-08 §6 — userActionResult banner (legacy tab
+                    mirror). Same state as the redesigned People tab;
+                    either surface may be mounted depending on
+                    CA_CRM_REDESIGN, and both need to render the
+                    explicit-severity outcome when toggleUserActive
+                    or createUser rollback fires. */}
+                {userActionResult && (
+                  <div style={{
+                    background: userActionResult.severity === 'error' ? '#3a1a1a' : '#0d1f0d',
+                    border: `1px solid ${userActionResult.severity === 'error' ? '#b71c1c' : '#2e7d32'}`,
+                    borderRadius: '8px', padding: '10px 14px',
+                    marginTop: '8px', marginBottom: '8px',
+                  }}>
+                    <p style={{
+                      color: userActionResult.severity === 'error' ? '#f44336' : '#4caf50',
+                      fontSize: '13px', margin: 0, fontWeight: 'bold',
+                    }}>
+                      {userActionResult.severity === 'error' ? '⚠ ' : '✓ '}{userActionResult.text}
+                    </p>
+                  </div>
+                )}
+                {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg(''); setUserActionResult(null) })}
 
                 {showAddUser && isCA && (
                   <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
