@@ -132,6 +132,31 @@ export default function ManagerPortal() {
   const [vehicles, setVehicles] = useState<any[]>([])
   const [violations, setViolations] = useState<any[]>([])
   const [passes, setPasses] = useState<any[]>([])
+  // 2026-08-08 — visitor-pass at-cap V1 (read-only). Populated by
+  // fetchAtCapData; null when the property has no visitor_pass_limit
+  // configured (render nothing at all in the Visitors tab). Non-null
+  // with empty `entries` = limit set but no plates at cap (render
+  // nothing — minimal). Non-null with entries = render list. See the
+  // fetchAtCapData comment for the predicate contract (mirrors the
+  // enforce_visitor_pass_limit trigger exactly).
+  type AtCapPass = {
+    plate: string
+    visiting_unit: string | null
+    visitor_name: string | null
+    is_active: boolean
+    created_at: string
+    expires_at: string
+  }
+  type AtCapEntry = {
+    normalizedPlate: string
+    displayPlate: string
+    count: number
+    limit: number
+    eligibleAt: string  // ISO timestamp
+    passes: AtCapPass[] // oldest-first
+  }
+  const [atCapList, setAtCapList] = useState<{ limit: number; entries: AtCapEntry[] } | null>(null)
+  const [expandedAtCapPlate, setExpandedAtCapPlate] = useState<string | null>(null)
   const [residents, setResidents] = useState<any[]>([])
   const [stats, setStats] = useState({ total_vehicles: 0, active_passes: 0, violations_today: 0, violations_week: 0 })
   const [showAddVehicle, setShowAddVehicle] = useState(false)
@@ -591,6 +616,7 @@ export default function ManagerPortal() {
     fetchVehicles(property)
     fetchViolations(property)
     fetchPasses(property)
+    fetchAtCapData(property)  // 2026-08-08 — visitor-pass at-cap V1
     fetchResidents(property)
     fetchPendingSpaceRequests(property)
     // Spaces fixes 2026-06-28 — load-on-manager-load for Bug 1 + Bug 2.
@@ -1433,6 +1459,106 @@ export default function ManagerPortal() {
       .order('created_at', { ascending: false })
     setPasses(data || [])
     setStats(s => ({ ...s, active_passes: data?.length || 0 }))
+  }
+
+  // ── Visitor-pass at-cap V1 (2026-08-08) ──────────────────────────────
+  //
+  // Mirrors the enforce_visitor_pass_limit trigger EXACTLY. Diverging
+  // means the manager reads a count on this page that disagrees with
+  // the error text the visitor sees at the QR:
+  //
+  //   "This vehicle has already been issued % visitor passes at this
+  //    property in the last 30 days."
+  //
+  // Predicate contract — from migrations/20260729_visitor_pass_rolling_30_semantics.sql:
+  //   - property match: EXACT (=) — trigger uses `WHERE property = NEW.property`
+  //   - time window:    created_at > now() - interval '30 days'
+  //   - is_active:      NOT READ (count-everything-issued; revoked passes count)
+  //   - plate:          UPPER(regexp_replace(plate, '[^A-Z0-9]', '', 'gi'))
+  //   - exempt list:    matched with the SAME plate normalization; exempt
+  //                     plates NEVER appear at cap (trigger short-circuits
+  //                     before the count runs). Excluded here entirely.
+  //   - "at cap":       count >= limit (>=, not >)
+  //
+  // Eligible-again formula (general form for over-cap cases):
+  //   With N passes against limit L (N >= L), sorted oldest-first,
+  //   count drops below L when the (N - L + 1)th oldest ages out.
+  //   → eligible_at = passes[N - L].created_at + 30 days (0-indexed).
+  //   N = L exactly → oldest + 30d (naive case).
+  //   N > L (limit was lowered, or plate un-exempted) → later pass than
+  //     the oldest. `min() + 30d` would be wrong; use the general form.
+  //
+  // Property source of truth: fetched fresh from `properties` here
+  // (not read from stale `manager` state), so a limit change reflects
+  // on next data refresh without needing a full manager re-fetch.
+  async function fetchAtCapData(property: string) {
+    // Read limit + exempt list fresh from properties (avoid stale
+    // manager-state race).
+    const { data: propRow } = await supabase
+      .from('properties')
+      .select('visitor_pass_limit, exempt_plates')
+      .eq('name', property)
+      .maybeSingle()
+
+    // No limit configured → no enforcement → render nothing at all
+    // in the Visitors tab. This is not "0 plates at cap" — it's
+    // "the trigger is not enforcing anything here."
+    if (!propRow || propRow.visitor_pass_limit == null) {
+      setAtCapList(null)
+      return
+    }
+    const L = propRow.visitor_pass_limit as number
+
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const { data: passesInWindow } = await supabase
+      .from('visitor_passes')
+      .select('plate, visiting_unit, visitor_name, is_active, created_at, expires_at')
+      .eq('property', property)          // EXACT — mirrors trigger
+      .gte('created_at', cutoff)         // rolling-30
+      .order('created_at', { ascending: true })  // oldest-first — feeds eligible-at calc
+
+    const normalize = (s: string | null | undefined): string =>
+      (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    const exemptSet = new Set(
+      ((propRow.exempt_plates as string[] | null) || []).map(p => normalize(p))
+    )
+
+    // Group by normalized plate; exclude exempt entirely.
+    const byPlate = new Map<string, AtCapPass[]>()
+    for (const p of (passesInWindow as AtCapPass[] | null) || []) {
+      const n = normalize(p.plate)
+      if (!n || exemptSet.has(n)) continue
+      let bucket = byPlate.get(n)
+      if (!bucket) { bucket = []; byPlate.set(n, bucket) }
+      bucket.push(p)
+    }
+
+    // Filter to at-cap and compute eligible-at.
+    const entries: AtCapEntry[] = []
+    for (const [normalizedPlate, rows] of byPlate) {
+      if (rows.length < L) continue
+      const N = rows.length
+      const kIndex = N - L  // 0-indexed position of the (N - L + 1)th oldest
+      const eligibleMs = new Date(rows[kIndex].created_at).getTime() + 30 * 24 * 60 * 60 * 1000
+      entries.push({
+        normalizedPlate,
+        // Display the most recent pass's plate string (case/formatting
+        // as issued). Underlying identity is normalizedPlate.
+        displayPlate: rows[N - 1].plate,
+        count: N,
+        limit: L,
+        eligibleAt: new Date(eligibleMs).toISOString(),
+        passes: rows,
+      })
+    }
+    // Sort: highest count first (surfaces worst abuse); tiebreaker by
+    // soonest-eligible (most actionable). Empty list stays empty.
+    entries.sort((a, b) =>
+      (b.count - a.count) ||
+      (new Date(a.eligibleAt).getTime() - new Date(b.eligibleAt).getTime())
+    )
+
+    setAtCapList({ limit: L, entries })
   }
 
   // Silent-read reveal (2026-08-01) — the ORIGINAL shape swallowed
@@ -4893,6 +5019,74 @@ export default function ManagerPortal() {
         {/* VISITORS */}
         {activeTab === 'visitors' && (
           <div>
+            {/* 2026-08-08 — Visitor-pass at-cap V1 (read-only).
+                Rendered ONLY when the property has a visitor_pass_limit
+                configured AND at least one plate is at cap. Zero-state
+                (limit set but no plates at cap) and no-limit-set both
+                render nothing — the manager only sees this section when
+                there's something to look at. The trigger's short-circuit
+                on exempt plates is mirrored in fetchAtCapData; a plate
+                the trigger will let through is never surfaced here. */}
+            {atCapList && atCapList.entries.length > 0 && (
+              <div style={{ background:'#161b26', border:'1px solid #a16207', borderRadius:'10px', padding:'14px', marginBottom:'14px' }}>
+                <p style={{ color:'#fbbf24', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>
+                  Plates at visitor pass cap
+                </p>
+                <p style={{ color:'#aaa', fontSize:'12px', margin:'0 0 12px', lineHeight:'1.5' }}>
+                  Limit: <strong style={{ color:'#fbbf24' }}>{atCapList.limit}</strong> passes per plate per 30 days at {manager?.name}.
+                  Visitors on these plates see: <em>&ldquo;This vehicle has already been issued N visitor passes at this property in the last 30 days. Contact the property manager if you need access.&rdquo;</em>
+                </p>
+                {atCapList.entries.map(e => {
+                  const isExpanded = expandedAtCapPlate === e.normalizedPlate
+                  const overCap = e.count > e.limit
+                  return (
+                    <div key={e.normalizedPlate} style={{ background:'#0f1620', border:'1px solid #2a2f3d', borderRadius:'8px', marginBottom:'8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedAtCapPlate(isExpanded ? null : e.normalizedPlate)}
+                        style={{ width:'100%', textAlign:'left', background:'transparent', border:'none', color:'inherit', cursor:'pointer', padding:'12px 14px', fontFamily:'Arial', display:'block' }}
+                      >
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px' }}>
+                          <p style={{ color:'#fbbf24', fontFamily:'Courier New', fontSize:'17px', fontWeight:'bold', margin:'0', letterSpacing:'0.08em' }}>{e.displayPlate}</p>
+                          <span style={{ color:'#888', fontSize:'11px' }}>{isExpanded ? '▼' : '▸'}</span>
+                        </div>
+                        <p style={{ color:'#aaa', fontSize:'12px', margin:'0' }}>
+                          <strong style={{ color:'white' }}>{e.count} of {e.limit}</strong>
+                          {overCap && <span style={{ color:'#f59e0b', marginLeft:'6px' }}>· over the limit</span>}
+                          <span style={{ color:'#555', margin:'0 6px' }}>·</span>
+                          Eligible again <strong style={{ color:'#4caf50' }}>{formatDate(e.eligibleAt)}</strong>
+                        </p>
+                      </button>
+                      {isExpanded && (
+                        <div style={{ borderTop:'1px solid #2a2f3d', padding:'10px 14px' }}>
+                          <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>
+                            Passes in the last 30 days · oldest first
+                          </p>
+                          {e.passes.map((p, i) => (
+                            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'6px 0', borderBottom: i === e.passes.length - 1 ? 'none' : '1px solid #1e2535' }}>
+                              <div style={{ minWidth:0, flex:1 }}>
+                                <p style={{ color:'white', fontSize:'12px', margin:'0' }}>
+                                  {formatTimestamp(p.created_at)}
+                                  {!p.is_active && <span style={{ color:'#888', marginLeft:'8px', fontStyle:'italic' }}>(revoked)</span>}
+                                </p>
+                                <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>
+                                  Unit: <span style={{ color:'#aaa' }}>{p.visiting_unit || '—'}</span>
+                                  {p.visitor_name && <><span style={{ color:'#555', margin:'0 6px' }}>·</span>Visitor: <span style={{ color:'#aaa' }}>{p.visitor_name}</span></>}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+                <p style={{ color:'#555', fontSize:'11px', margin:'12px 0 0', lineHeight:'1.5', fontStyle:'italic' }}>
+                  To grant additional visits sooner, add the plate to your Visitor Pass Quota Exemptions in Settings.
+                  Exemptions are <strong>permanent and uncounted</strong> — a plate you exempt once is exempt from all future cap enforcement at this property. A per-conversation reset is planned for a future release.
+                </p>
+              </div>
+            )}
             {passes.length === 0
               ? <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'32px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No active visitor passes</p></div>
               : passes.map((p,i) => (
