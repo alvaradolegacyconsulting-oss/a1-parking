@@ -4,9 +4,9 @@
 //
 // One place, one formula. Used by the manager at-cap view
 // (fetchAtCapData in manager/page.tsx) and the resident portal's
-// pass-limit message. Same formula, same DST behavior, same
-// oldest-first contract — divergence would produce a manager and a
-// resident being told different dates for the same cap.
+// pass-limit message. Same formula, same trigger-matching arithmetic,
+// same oldest-first contract — divergence would produce a manager and
+// a resident being told different dates for the same cap.
 //
 // ── ELIGIBLE-AGAIN FORMULA ───────────────────────────────────────────
 //
@@ -21,71 +21,59 @@
 //                   tell the operator a date they'd STILL be blocked
 //                   on. General form prevents that.
 //
-// ── 🔴 CALENDAR ARITHMETIC (DST-AWARE), NOT FIXED MILLISECONDS ────────
+// ── ARITHMETIC — FIXED 30 × 86,400,000 ms (verified 2026-08-08) ───────
 //
-// A pass created between midnight and 1 AM CDT during the ~14 days
-// before the fall-back transition can be off by a full calendar day
-// under fixed-ms arithmetic:
-//
-//   Pass created:  Nov 1, 2026 00:30 CDT  = 2026-11-01T05:30:00Z
-//   + 30 * 86400000 ms →                    2026-12-01T05:30:00Z
-//   In America/Chicago (CST, UTC-6) →       2026-11-30 23:30 CST
-//   Displayed date:                         "Nov 30, 2026"  ❌
-//
-//   Trigger with interval '30 days' releases at:
-//     2026-12-01 00:30 CST → date "Dec 1, 2026"  ✓
-//
-// Off by one day. Manager tells visitor Nov 30; trigger releases
-// Dec 1. Third timezone finding this week in the same shape
-// (see app/lib/format-time.ts header for the tow-time arc).
-//
-// This helper uses Intl.DateTimeFormat to extract the wall-clock
-// Y-M-D in PROPERTY_TIME_ZONE, then adds days via Date's UTC calendar
-// rollover (Date.UTC accepts day overflow like 32 → next month), and
-// returns a Date anchored at noon UTC on the resulting Y-M-D. Noon UTC
-// is 6-7 AM in Chicago on the target date — safely inside the same
-// calendar day when rendered by formatDate() under PROPERTY_TIME_ZONE.
-//
-// ── 🔴 DIVERGENCE RISK — VERIFY BEFORE RELYING (Mateo 2026-08-08) ─────
-//
-// This helper does CHICAGO-CALENDAR arithmetic. Whether the Postgres
-// trigger agrees depends on the session `TimeZone`, which the trigger
-// does NOT set (it sets search_path only):
-//
-//   Session TimeZone = 'America/Chicago' → interval '30 days' is
-//     calendar-aware (wall-clock preserving) → THIS HELPER MATCHES
-//     the trigger.
-//   Session TimeZone = 'UTC' (common Supabase default) → interval
-//     '30 days' is exactly 720 hours (UTC has no DST) → THIS HELPER
-//     DISAGREES with the trigger, in the OPPOSITE direction from the
-//     fixed-ms bug above.
-//
-// To verify at any time (Supabase SQL Editor):
+// The Postgres trigger uses `created_at > now() - interval '30 days'`.
+// Interval arithmetic on `timestamptz` depends on the session
+// `TimeZone`, which the trigger does NOT set (only `search_path`).
+// The Supabase project's session TimeZone was verified 2026-08-08 by
+// Jose running the boundary query below:
 //
 //   SHOW timezone;
 //
-//   -- Direct fall-back-boundary test:
 //   SELECT ('2026-12-01 00:30:00-06'::timestamptz - interval '30 days')
 //            AT TIME ZONE 'America/Chicago' AS thirty_days_before_local;
-//   -- '2026-11-01 00:30' means wall-clock-preserving (calendar).
-//   -- '2026-11-01 01:30' means fixed 720 hours.
 //
-// If the answer is UTC/720-hours, swap the helper body to fixed
-// arithmetic (`getTime() + 30*86400000`) and update this header
-// accordingly.
+//   Result:  2026-11-01 01:30:00
 //
-// A JS reimplementation of Postgres interval arithmetic is a second
-// implementation by definition — the class this codebase has spent
-// the week eliminating. The durable fix is to compute the date
-// server-side where the semantics are the trigger's by construction.
-// Not done here because the exposure is a one-hour window on passes
-// created near midnight, twice a year, and the anon-side RPC
-// extension for /visitor was ruled out on visit-enumeration grounds.
-// If a manager ever reports an off-by-one date, this header is the
-// answer.
+// `01:30` means the trigger's `interval '30 days'` is a FIXED 720
+// hours (session TimeZone is UTC-equivalent, no DST). So the helper
+// below matches the trigger by using `getTime() + 30 * 86400000`.
+//
+// ── ADR ──────────────────────────────────────────────────────────────
+//
+// The first implementation of this helper used calendar-aware
+// arithmetic in `PROPERTY_TIME_ZONE` on the assumption that the
+// trigger did the same. That assumption was WRONG in the direction
+// opposite to the naive fixed-ms bug the guard was written against.
+// The verification query in this header was the check that caught
+// the miss inside an hour — the pattern (write the assumption AND
+// the query that would refute it) worked; the miss is what got
+// recorded rather than the escape.
+//
+// NEITHER shape is durable. Both are JS reimplementations of Postgres
+// interval semantics, which is the class this codebase has spent the
+// week eliminating (see the resident_row_precedence + trigger-mirror
+// discipline in the at-cap V1 arc). The durable fix is server-side
+// compute — an RPC that returns `eligible_at` directly. Not built:
+//
+//   - Anon `/visitor` cannot receive `eligible_at` — publishing it
+//     creates a visit-enumeration oracle (eligible_at − 30 days = the
+//     exact created_at of a specific past pass). Ruled out per the
+//     August 8 preflight; withheld from `/visitor` + `/api/visitor/
+//     create-pass` by deliberate trade.
+//   - Authenticated resident + manager COULD compute server-side; a
+//     small RPC that returns `eligible_at` per (property, plate) with
+//     RLS-gated `SELECT visitor_passes` would remove the divergence
+//     risk entirely. Deferred: the exposure this fixed-ms shape
+//     retains is a session-TimeZone change on the Supabase side —
+//     unlikely, but if the session flips to `America/Chicago` this
+//     helper drifts by an hour twice a year for late-night passes.
+//
+// If the session TimeZone ever changes, re-run the boundary query
+// above and swap this body accordingly. The state of that assumption
+// belongs in this file, not in anyone's head.
 // ══════════════════════════════════════════════════════════════════════
-
-import { PROPERTY_TIME_ZONE } from './format-time'
 
 export function eligibleAgainAt(
   passesOldestFirst: Array<{ created_at: string }>,
@@ -94,18 +82,13 @@ export function eligibleAgainAt(
   const N = passesOldestFirst.length
   if (N < limit) return null
   const kIndex = N - limit
-  return addCalendarDaysInTz(new Date(passesOldestFirst[kIndex].created_at), 30, PROPERTY_TIME_ZONE)
+  return addFixedDays(new Date(passesOldestFirst[kIndex].created_at), 30)
 }
 
-function addCalendarDaysInTz(source: Date, days: number, tz: string): Date {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    year:  'numeric',
-    month: '2-digit',
-    day:   '2-digit',
-  }).formatToParts(source)
-  const y = parseInt(parts.find(p => p.type === 'year')!.value,  10)
-  const m = parseInt(parts.find(p => p.type === 'month')!.value, 10)
-  const d = parseInt(parts.find(p => p.type === 'day')!.value,   10)
-  return new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0))
+// Fixed-days addition — matches Postgres `interval '30 days'` when the
+// session TimeZone is UTC-equivalent (verified 2026-08-08). See file
+// header for the verification query and the swap path if that ever
+// changes.
+function addFixedDays(source: Date, days: number): Date {
+  return new Date(source.getTime() + days * 86_400_000)
 }
