@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
 import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { printQRSign } from '../lib/qr-print'
@@ -76,6 +76,8 @@ import DeactivateResidentModal, { type CoResident } from '../components/Deactiva
 import DeactivateVehicleModal from '../components/DeactivateVehicleModal'
 import ReapprovalOrphansModal, { type OrphanPlate, type ReapprovalOrphansConfirmArgs } from '../components/ReapprovalOrphansModal'
 import AddVehicleForResidentModal, { type AddVehiclePayload, type AddVehicleSubmitResult } from '../components/AddVehicleForResidentModal'
+import PropertyWarningsPanel from '../components/PropertyWarningsPanel'
+import { computePropertyWarnings } from '../lib/property-warnings'
 import SpaceDetailModal from '../components/SpaceDetailModal'
 import CredentialsModal from '../components/CredentialsModal'
 // PM Resident CRM (slice 1) — replaces the Residents tab with a unified
@@ -377,6 +379,33 @@ export default function ManagerPortal() {
   // scoped rows via RLS (manager_own_plate_changes). Attached onto each
   // vehicle via buildCrmResidents's Phase-3 enrichment.
   const [crmPendingPlateChanges, setCrmPendingPlateChanges] = useState<CrmPendingPlateChange[]>([])
+  // 2026-08-08 — Property warnings (V1: manager-portal only). Memoized
+  // so the Insights tab badge (count) and the panel body (list) share
+  // one compute pass. Rebuild only when the composing state changes.
+  // Six predicates in app/lib/property-warnings.ts. Empty array when
+  // the manager hasn't loaded yet — badge renders no number, panel
+  // renders nothing (silence, not "all clear").
+  const propertyWarnings = useMemo(() => {
+    if (!manager) return []
+    const crmResidentsForWarnings = buildCrmResidents({
+      residents,
+      pendingResidents,
+      vehicles: [...vehicles, ...pendingVehicles],
+      spaces: crmSpacesAtProperty,
+      spaceResidentTies: crmSpaceResidentTies,
+      guestAuths: crmGuestAuthsAtProperty,
+      spaceRequests: crmSpaceRequestsAtProperty,
+      pendingPlateChanges: crmPendingPlateChanges,
+      pendingGuestRequests: crmPendingGuestRequestsAtProperty,
+    })
+    return computePropertyWarnings({ crmResidents: crmResidentsForWarnings })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- manager.id is the identity anchor; the state arrays are the real deps
+  }, [
+    manager,
+    residents, pendingResidents, vehicles, pendingVehicles,
+    crmSpacesAtProperty, crmSpaceResidentTies, crmGuestAuthsAtProperty,
+    crmSpaceRequestsAtProperty, crmPendingPlateChanges, crmPendingGuestRequestsAtProperty,
+  ])
   // B70: Plate Lookup tab state. Distinct name from the Spaces-tab
   // `plateQuery` further down to avoid the variable collision.
   const [lookupPlate, setLookupPlate] = useState('')
@@ -3429,7 +3458,27 @@ export default function ManagerPortal() {
           )}
           <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
           {/* B210 (2026-06-24): Disputes tab button removed */}
-          <button style={tabStyle('insights')} onClick={() => setActiveTab('insights')}>Insights</button>
+          <button style={tabStyle('insights')} onClick={() => setActiveTab('insights')}>
+            Insights
+            {propertyWarnings.length > 0 && (
+              // 2026-08-08 — Warnings count. Separate from pendCount
+              // (pending approvals are queued work; warnings are
+              // exceptions — one number can't mean both, per Mateo).
+              <span style={{
+                display: 'inline-block',
+                marginLeft: '6px',
+                padding: '1px 6px',
+                background: propertyWarnings.some(w => w.severity === 'red') ? '#b71c1c' : '#a16207',
+                color: 'white',
+                borderRadius: '10px',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                fontFamily: 'Arial',
+              }}>
+                {propertyWarnings.length}
+              </span>
+            )}
+          </button>
           <button style={tabStyle('activity')} onClick={() => setActiveTab('activity')}>Activity</button>
         </div>
 
@@ -5621,6 +5670,28 @@ export default function ManagerPortal() {
 
         {activeTab === 'insights' && (
           <div>
+            {/* 2026-08-08 — Warnings panel (V1: manager portal only).
+                Detection predicates + copy live in
+                app/lib/property-warnings.ts. Empty state = silence
+                (no "all clear" — panel becomes furniture if it
+                always renders).
+                Uses the memoized propertyWarnings (also drives the
+                tab badge above).
+                CA-portal parity is V2 — CA has no per-property
+                residents/vehicles state today (aggregate-only), and
+                doubling the fetch shape here would recreate the
+                divergence class this panel exists to detect. */}
+            <PropertyWarningsPanel
+              warnings={propertyWarnings}
+              onOpenAddVehicle={(r) => setAddVehicleFor(r)}
+              onScrollToPending={(_unit) => setActiveTab('residents')}
+            />
+            {/* Scroll-to-pending remedy: V1 just switches to the
+                Residents tab. The warning row's unit tells the
+                manager where to look; scrolling to a specific
+                resident within the CRM would require exposing a
+                scroll target from PmResidentCrm — deferred to V2 if
+                Jose asks for it. */}
             {!insightsLoaded ? (
               <p style={{ color:'#555', textAlign:'center', padding:'40px' }}>Loading insights...</p>
             ) : !mgAnalytics ? null : (
