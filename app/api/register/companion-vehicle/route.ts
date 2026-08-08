@@ -116,17 +116,18 @@ function normalizePlate(raw: string): string {
 // Match urgency to stakes — explicit "NOT REGISTERED" + tow-eligible
 // language + concrete next action. /register's UI renders this in a
 // prominent warning band, not a footnote.
+//
+// 2026-08-08 — 3-step Mateo lock CLOSED. Step 1 (word so the copy
+// doesn't over-promise) shipped 2026-08-06 in a715275. Step 2 (proxy
+// no longer 500s on multi-row residents) + step 3 (banner conditional
+// on genuine failure, not shown to every multi-row resident) ship
+// together in this commit — the resident-row lookup now uses the
+// service-role DEFINER RPC get_residents_row_by_precedence, so the
+// multi-row case picks the canonical row instead of 500-ing, and
+// gap_message stays null on the happy path.
 function buildGapMessage(failedPlates: string[]): string {
   const n = failedPlates.length
   const plateList = failedPlates.join(', ')
-  // Mateo lock 2026-08-06 (step 1 of 3):
-  //   1. NOW — reword so the banner doesn't promise authorization
-  //      the resident cannot obtain (only a manager can approve a plate)
-  //   2. THEN — fix B209 so the vehicle insert actually happens
-  //   3. THEN — make the banner conditional on the insert genuinely
-  //      failing rather than shown to everyone
-  // Do NOT remove the banner before step 2 — without it, a resident
-  // walks away believing they registered a car they didn't.
   if (n === 1) {
     return `⚠ We didn't receive your vehicle ${plateList}. Sign in and submit it through "Request a Vehicle" so your manager can review. Until a plate is approved by your manager, it is not authorized to park at this property and could be towed.`
   }
@@ -205,12 +206,25 @@ export async function POST(req: NextRequest): Promise<NextResponse<SuccessRespon
   // ── 4. Server-side residents-row lookup (scope source of truth) ──
   // Service-role client; bypasses RLS. We are deriving authorization
   // scope from THIS user's residents row, not trusting the request.
+  //
+  // 2026-08-08 — was a .maybeSingle() against .from('residents'), which
+  // errored 500 on residents with 2+ rows for one lowered email (Aug 8
+  // arc — /register step 4 unconditionally INSERTs a residents row, so
+  // any resident who registered twice at the same property had two
+  // rows). Every companion-vehicle attempt from a multi-row resident
+  // dropped the vehicle AND spuriously fired the tow-risk banner.
+  //
+  // Now routed through the shared resident_row_precedence helper via a
+  // service-role-only DEFINER RPC. get_my_effective_active (portal gate)
+  // uses the same helper — one place, two call sites. If a third
+  // service-side caller needs a resident's canonical row, GRANT the
+  // RPC — do NOT re-express the precedence.
   const admin = createSupabaseServiceClient()
-  const { data: residentRow, error: rErr } = await admin
-    .from('residents')
-    .select('email, unit, property')
-    .ilike('email', callerEmail)
-    .maybeSingle()
+  const { data: residentRows, error: rErr } = await admin
+    .rpc('get_residents_row_by_precedence', { p_email: callerEmail })
+  const residentRow = Array.isArray(residentRows) && residentRows.length > 0
+    ? residentRows[0] as { email: string; unit: string | null; property: string | null }
+    : null
 
   if (rErr) {
     console.error('[B209-residents-lookup-failed]', { caller_email: callerEmail, error: rErr.message })

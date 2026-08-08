@@ -304,6 +304,17 @@ function RegisterForm() {
       // success screen — tow-stakes copy, NOT a generic save-failure
       // footnote (the resident's car is otherwise tow-eligible until
       // they add it via the portal).
+      //
+      // 2026-08-08 — banner is now conditional on GENUINE failure. The
+      // route's residents-row lookup previously used .maybeSingle(),
+      // which errored 500 on residents with 2+ rows (Aug 8 arc) →
+      // !res.ok → client-side fallback fired the tow-risk banner for
+      // every multi-row resident regardless of whether the vehicle
+      // actually landed. Route now routes through
+      // get_residents_row_by_precedence — happy path returns
+      // gap_message=null → banner stays hidden. Fallbacks below still
+      // fire on legitimate route-error / network-error cases (the
+      // vehicles genuinely didn't land in those paths).
       const submittableVehicles = vehicles
         .filter((v: any) => typeof v.plate === 'string' && v.plate.trim().length > 0)
         .map((v: any) => ({
