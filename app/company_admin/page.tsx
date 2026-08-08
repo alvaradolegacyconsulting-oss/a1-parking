@@ -344,6 +344,14 @@ export default function CompanyAdminPortal() {
   const [editingDriver, setEditingDriver] = useState<any>(null)
   const [newDriver, setNewDriver] = useState({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] as string[] })
   const [driverMsg, setDriverMsg] = useState('')
+  // 2026-08-08 §1 — dedicated result surface for toggleDriverActive.
+  // Rendered with explicit severity (not through msgBox's text-sniff
+  // heuristic at :3635 which returns green for "Failed..." with capital
+  // F — see docs/backlog/ca-msgbox-severity-derived-from-text.md).
+  // A swift-handler rejection rendering green would be the exact
+  // false-promise this commit exists to remove.
+  const [driverActionResult, setDriverActionResult] =
+    useState<{ text: string; severity: 'ok' | 'error' } | null>(null)
 
   const [allFacilities, setAllFacilities] = useState<any[]>([])
   const [showAddFacility, setShowAddFacility] = useState(false)
@@ -2251,8 +2259,52 @@ export default function CompanyAdminPortal() {
     )
   }
 
-  async function toggleDriverActive(driver: any) {
+  //
+  // ── toggleDriverActive — Aug 8 §1 rewrite ──────────────────────────
+  // First implementation, not a repair. Previous version wrote only
+  // drivers.is_active — a column no gate reads (no login check, no
+  // portal-mount gate — see relay #6). Result: today's Deactivate
+  // button (rendered only under !CA_CRM_REDESIGN) was cosmetic;
+  // deactivated drivers kept scanning plates.
+  //
+  // Mirrors toggleUserActive's shape (:2517-current-line-range):
+  //   1. swift-handler auth ban/unban — LOAD-BEARING; must succeed
+  //      before any column write or audit row fires. A rejected ban
+  //      with columns flipped is the exact false-promise state this
+  //      commit exists to remove.
+  //   2. user_roles.is_active write — drives get_my_effective_active
+  //      gate (the portal-mount check). Best-effort; ban is real
+  //      control.
+  //   3. drivers.is_active write — KEPT for billing/property-guard/CA
+  //      filter consumers (stripe-mutations.ts:200 metering,
+  //      deactivate-property-guard.ts:80 count, CA "Active only"
+  //      filter at :6224). Best-effort.
+  //   4. audit row — SCREAMING_SNAKE per Mateo relay #8:
+  //      DEACTIVATE_DRIVER / ACTIVATE_DRIVER are NEW actions (no
+  //      precedent in prod audit_logs — deviates from file convention
+  //      by design, since there's no existing precedent to match).
+  //
+  // Error surface — dedicated driverActionResult state with EXPLICIT
+  // severity. Does not route through msgBox's text-sniff heuristic
+  // (see driverActionResult declaration above). Handler's actual
+  // response text is included so a role-scoped rejection (R1 Shape B)
+  // is readable off the screen without opening devtools.
+  //
+  // R1 verification: first click IS the answer. 200 + banned_until set
+  // → Shape A. 4xx mentioning role → Shape B, edge-function edit
+  // needed. R2 verified when Jose reactivates (activate_user is
+  // symmetric — same call, opposite action).
+  //
+  // Argument shape: expects { id, email, is_active } where id is
+  // drivers.id (drivers-table primary key) and is_active is the
+  // UI-visible active state (== the label the button is showing).
+  // Legacy call site at :7082-7085 passes a full drivers row which
+  // has all three; PeopleRow call site (redesigned) constructs the
+  // same shape from the augmented composite (see DriverRow +
+  // __drivers_id below).
+  async function toggleDriverActive(driver: { id: number | string; email: string; is_active: boolean }) {
     const wasActive = driver.is_active
+    const email = String(driver.email || '').toLowerCase()
 
     // B147 3b — tier-gate reactivation symmetrically with createDriver
     // (admin-bypass preserved). Same exploit class as togglePropertyActive
@@ -2265,19 +2317,105 @@ export default function CompanyAdminPortal() {
           const limit = getLimit(FEATURE_FLAGS.MAX_DRIVERS, ctx)
           const opened = offerForcedUpgrade(
             `You're at your ${limit}-driver limit. Upgrade to reactivate this driver.`,
-            () => { setDriverMsg(''); toggleDriverActive(driver) },
+            () => { setDriverActionResult(null); toggleDriverActive(driver) },
           )
           if (!opened) {
-            setDriverMsg(`Driver limit reached (${limit}). Contact support to expand your account.`)
+            setDriverActionResult({
+              severity: 'error',
+              text: `Driver limit reached (${limit}). Contact support to expand your account.`,
+            })
           }
           return
         }
       }
     }
 
-    const { error: updErr } = await supabase.from('drivers').update({ is_active: !wasActive }).eq('id', driver.id)
-    if (updErr) { setDriverMsg('Error: ' + updErr.message); return }
-    await auditLog(wasActive ? 'deactivate_driver' : 'activate_driver', 'drivers', driver.id, { is_active: !wasActive })
+    setTogglingUser(email)
+    setDriverActionResult(null)
+
+    // ── Step 1: swift-handler auth ban/unban (LOAD-BEARING) ────────
+    // Ban must succeed BEFORE any column write or audit fires. On
+    // rejection: surface handler's actual response text with EXPLICIT
+    // error severity, then return WITHOUT touching columns or writing
+    // an audit row. A rejected ban with flipped columns is the exact
+    // false-promise this commit exists to remove.
+    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
+    const { data: { session } } = await supabase.auth.getSession()
+    const res = await fetch(fnBase + '/swift-handler', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ action: wasActive ? 'deactivate_user' : 'activate_user', email }),
+    })
+    const json: any = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const handlerMessage = json?.error || json?.message || `HTTP ${res.status}`
+      setDriverActionResult({
+        severity: 'error',
+        text: wasActive
+          ? `Could not deactivate driver: ${handlerMessage}. No changes made.`
+          : `Could not reactivate driver: ${handlerMessage}. No changes made.`,
+      })
+      setTogglingUser(null)
+      return
+    }
+
+    // ── Step 2: user_roles.is_active (best-effort — drives the gate) ──
+    // Follows toggleUserActive's discipline: auth ban is load-bearing,
+    // this column drives the derived-access chain via
+    // get_my_effective_active. If it fails, the ban stands.
+    const { error: urErr } = await supabase
+      .from('user_roles')
+      .update({ is_active: !wasActive })
+      .ilike('email', email)
+    if (urErr) {
+      console.error('[toggleDriverActive] user_roles.is_active write failed (auth ban remains intact):', urErr.message, { email, wasActive })
+    }
+
+    // ── Step 3: drivers.is_active (best-effort — billing/filter/guard) ──
+    // Kept explicitly for the three consumers documented at the top
+    // of this function.
+    const { error: drvErr } = await supabase
+      .from('drivers')
+      .update({ is_active: !wasActive })
+      .eq('id', driver.id)
+    if (drvErr) {
+      console.error('[toggleDriverActive] drivers.is_active write failed (auth ban remains intact):', drvErr.message, { email, driverId: driver.id, wasActive })
+    }
+
+    // ── Step 4: audit ─────────────────────────────────────────────
+    // DEACTIVATE_DRIVER / ACTIVATE_DRIVER — new actions. Records the
+    // outcome of each column write so a partial-state audit can be
+    // read after the fact (matches toggleUserActive's
+    // column_write_failed field pattern).
+    await auditLog(
+      wasActive ? 'DEACTIVATE_DRIVER' : 'ACTIVATE_DRIVER',
+      'user_roles',
+      email,
+      {
+        email,
+        is_active: !wasActive,
+        driver_id: driver.id,
+        user_roles_column_write_failed: !!urErr,
+        drivers_column_write_failed: !!drvErr,
+      },
+    )
+
+    // Success surface — explicit severity. Partial-state (column
+    // write failed after successful ban) is NOT green: access WAS
+    // revoked but the record didn't fully update, and a green banner
+    // saying "everything worked" hides that.
+    const anyColumnFailed = !!(urErr || drvErr)
+    const okText = wasActive
+      ? (anyColumnFailed
+          ? `Driver access revoked, but the record didn't fully update. Access is still blocked.`
+          : `Driver deactivated.`)
+      : (anyColumnFailed
+          ? `Driver access restored, but the record didn't fully update.`
+          : `Driver reactivated.`)
+    setDriverActionResult({
+      severity: anyColumnFailed ? 'error' : 'ok',
+      text: okText,
+    })
 
     // B147 3b — sync ONLY on reactivation. Same rationale as
     // ⚠ Slice 1 Commit 4b — DRIVER-SYNC GATE (matches createDriver site).
@@ -2291,7 +2429,9 @@ export default function CompanyAdminPortal() {
       })
     }
 
+    setTogglingUser(null)
     fetchCompanyDrivers()
+    fetchCompanyUsers()
   }
 
   async function createFacility() {
@@ -6347,6 +6487,23 @@ export default function CompanyAdminPortal() {
                           : <button onClick={() => toggleUserActive(u.email, true)} disabled={togglingUser === u.email}
                               style={{ padding:'4px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'5px', cursor:'pointer', fontSize:'11px' }}>Activate</button>
                       )}
+                      {/* 2026-08-08 §1 — Deactivate/Activate for drivers.
+                          Handler mirrors toggleUserActive's swift-handler
+                          shape (auth ban is load-bearing; column writes
+                          best-effort; explicit severity in result banner).
+                          `active` follows u.is_active which is base.is_active,
+                          i.e. user_roles.is_active when the roleRow lookup
+                          succeeds — the state get_my_effective_active
+                          reads at portal mount. u.__drivers_id is the
+                          drivers-table primary key needed by step 3's
+                          drivers.update(...).eq('id', ...) target. */}
+                      {isDriver && (
+                        active
+                          ? <button onClick={() => toggleDriverActive({ id: u.__drivers_id, email: u.email, is_active: true })} disabled={togglingUser === u.email}
+                              style={{ padding:'4px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'5px', cursor:'pointer', fontSize:'11px' }}>Deactivate</button>
+                          : <button onClick={() => toggleDriverActive({ id: u.__drivers_id, email: u.email, is_active: false })} disabled={togglingUser === u.email}
+                              style={{ padding:'4px 10px', background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'5px', cursor:'pointer', fontSize:'11px' }}>Activate</button>
+                      )}
                       {/* B234 L3 — grant/revoke driver regenerate-tow-ticket
                           permission. RPC live since 20260627; button pattern
                           + colors mirror the legacy Drivers-section variant
@@ -6387,17 +6544,52 @@ export default function CompanyAdminPortal() {
                 // roleRow is somehow missing (edge case; every driver
                 // should have a user_roles row in practice).
                 const roleRow = (companyUsers as any[]).find(u => String(u.email).toLowerCase() === String(d.email).toLowerCase())
-                const u = roleRow || { email: d.email, role: 'driver', name: d.name,
+                const base = roleRow || { email: d.email, role: 'driver', name: d.name,
                   can_approve_vehicles: undefined, is_active: d.is_active,
                   phone: d.phone, operator_license: d.operator_license,
                   can_regenerate_tow_ticket: d.can_regenerate_tow_ticket === true }
+                // 2026-08-08 §1 — carry drivers-table id onto the composite
+                // so PeopleRow's Deactivate button can pass the drivers
+                // row shape to toggleDriverActive. base.id (when roleRow
+                // wins) is user_roles.id — NOT the same, and would miss
+                // the drivers.update(...).eq('id', ...) target. Distinct
+                // key __drivers_id preserves that separation. Divergence
+                // between user_roles.is_active (base.is_active for
+                // roleRow) and drivers.is_active is captured too — the
+                // active label in PeopleRow follows base.is_active, and
+                // toggleDriverActive writes both tables to !wasActive on
+                // click so any historical drift heals to a consistent
+                // state on the next toggle.
+                const u = { ...base, __drivers_id: d.id }
                 return <PeopleRow u={u} />
               }
 
               return (
                 <div>
                   {(userMsg || driverMsg) && msgBox(userMsg || driverMsg)}
-                  {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg(''); setDriverMsg('') })}
+                  {/* 2026-08-08 §1 — driverActionResult banner. Explicit
+                      severity from state, NOT sniffed from text. A
+                      swift-handler failure MUST render red or the
+                      commit reintroduces its own bug via the success
+                      indicator. Do not merge this render with the
+                      msgBox line above — that helper's isErr heuristic
+                      returns green for "Failed..." (capital F). */}
+                  {driverActionResult && (
+                    <div style={{
+                      background: driverActionResult.severity === 'error' ? '#3a1a1a' : '#0d1f0d',
+                      border: `1px solid ${driverActionResult.severity === 'error' ? '#b71c1c' : '#2e7d32'}`,
+                      borderRadius: '8px', padding: '10px 14px',
+                      marginTop: '8px', marginBottom: '8px',
+                    }}>
+                      <p style={{
+                        color: driverActionResult.severity === 'error' ? '#f44336' : '#4caf50',
+                        fontSize: '13px', margin: 0, fontWeight: 'bold',
+                      }}>
+                        {driverActionResult.severity === 'error' ? '⚠ ' : '✓ '}{driverActionResult.text}
+                      </p>
+                    </div>
+                  )}
+                  {isCA && addBtn('+ Add User', () => { setShowAddUser(true); setUserMsg(''); setDriverMsg(''); setDriverActionResult(null) })}
                   {/* Round 2 Item A — consolidated Add User form.
                       Role-aware: Manager shows approve-permit field;
                       Driver shows phone + operator_license (used on tow
