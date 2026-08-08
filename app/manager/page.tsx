@@ -15,6 +15,7 @@ import { hasFeature, getCompanyContext } from '../lib/tier'
 // (PM-Only → pending → approval is the metering chokepoint; all other
 // tiers → active, preserving today's behavior).
 import { initialVehicleState } from '../lib/vehicle-state'
+import { eligibleAgainAt } from '../lib/visitor-pass-cap'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 import { escapeIlikeValue } from '../lib/supabase-query-escape'
@@ -74,6 +75,7 @@ import SearchableResidentPicker, { type SearchableResidentPickerResult } from '.
 import DeactivateResidentModal, { type CoResident } from '../components/DeactivateResidentModal'
 import DeactivateVehicleModal from '../components/DeactivateVehicleModal'
 import ReapprovalOrphansModal, { type OrphanPlate, type ReapprovalOrphansConfirmArgs } from '../components/ReapprovalOrphansModal'
+import AddVehicleForResidentModal, { type AddVehiclePayload, type AddVehicleSubmitResult } from '../components/AddVehicleForResidentModal'
 import SpaceDetailModal from '../components/SpaceDetailModal'
 import CredentialsModal from '../components/CredentialsModal'
 // PM Resident CRM (slice 1) — replaces the Residents tab with a unified
@@ -81,7 +83,7 @@ import CredentialsModal from '../components/CredentialsModal'
 // 2–6. Toggle: flip PM_CRM_ENABLED to false to fall back to the legacy
 // render below (kept intact for rollback until slice 2 retires it).
 import PmResidentCrm from '../components/PmResidentCrm'
-import { buildCrmResidents, isVehicleUnauthorizedForRestore, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
+import { buildCrmResidents, isVehicleUnauthorizedForRestore, type CrmResident, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
 import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '../lib/unit-occupancy'
 
 const PM_CRM_ENABLED = true
@@ -278,6 +280,11 @@ export default function ManagerPortal() {
     orphans:       OrphanPlate[]
   } | null>(null)
   const [reapprovalBusy, setReapprovalBusy] = useState(false)
+  // 2026-08-08 — Manager Add Vehicle for an existing resident.
+  // State holds the resident being added-to (null = modal closed).
+  // Opened via PmResidentCrm's onOpenAddVehicle prop; closed by the
+  // modal's onCancel or by handleAddVehicleSubmit on success.
+  const [addVehicleFor, setAddVehicleFor] = useState<CrmResident | null>(null)
   const [targetDecommission, setTargetDecommission] = useState<Space | null>(null)
   // v1.1 commit 6 — SpaceDetailModal opens via the "View" affordance on each
   // space row. The modal handles its own data loading, mutations, and busy
@@ -1534,12 +1541,22 @@ export default function ManagerPortal() {
     }
 
     // Filter to at-cap and compute eligible-at.
+    // 2026-08-08 — eligible-at computation extracted to
+    // app/lib/visitor-pass-cap.ts (eligibleAgainAt). Same formula the
+    // resident portal uses for the pass-limit message — one place, one
+    // implementation. Note: helper uses CALENDAR arithmetic in
+    // PROPERTY_TIME_ZONE (not fixed 30*86400000 ms) to avoid an
+    // off-by-one-day error near the fall-back DST transition. See the
+    // helper's header for the divergence-risk note.
+    //
+    // Probe 8 (Mateo relay): ATCAP03 must still read 8/17 after this
+    // refactor — anchor regression test.
     const entries: AtCapEntry[] = []
     for (const [normalizedPlate, rows] of byPlate) {
       if (rows.length < L) continue
       const N = rows.length
-      const kIndex = N - L  // 0-indexed position of the (N - L + 1)th oldest
-      const eligibleMs = new Date(rows[kIndex].created_at).getTime() + 30 * 24 * 60 * 60 * 1000
+      const eligibleAt = eligibleAgainAt(rows, L)
+      if (!eligibleAt) continue  // defensive; N >= L guaranteed by the check above
       entries.push({
         normalizedPlate,
         // Display the most recent pass's plate string (case/formatting
@@ -1547,7 +1564,7 @@ export default function ManagerPortal() {
         displayPlate: rows[N - 1].plate,
         count: N,
         limit: L,
-        eligibleAt: new Date(eligibleMs).toISOString(),
+        eligibleAt: eligibleAt.toISOString(),
         passes: rows,
       })
     }
@@ -2308,6 +2325,148 @@ export default function ManagerPortal() {
     } finally {
       setAddVehicleSubmitting(false)
     }
+  }
+
+  // ── Manager Add Vehicle for existing resident (2026-08-08) ──────────
+  //
+  // Closes the "second vehicle" dead end: Add Resident takes exactly
+  // one vehicle, so a manager adding a second car for the same resident
+  // has had no move today. Also usable when the pre-e5369f8 companion-
+  // vehicle proxy dropped a car and the plate needs to land now.
+  //
+  // ── Shape (mirrors legacy addVehicle at :2260 ± tier discipline) ──
+  //   1. Collision — assertPlateUniqueAtProperty; enhanced 2026-08-08
+  //      to name the owning resident + unit (per-property scope makes
+  //      it safe within the manager's RLS reach)
+  //   2. Insert — status/is_active from initialVehicleState(tier).
+  //      PM-Only → pending; Enforcement/Legacy → active. Unit from the
+  //      DETAIL-VIEW resident row (never re-queried — same class as
+  //      the resident_row_precedence lock)
+  //   3. If PM-Only: call approveVehicleWrite inline to fire
+  //      approve_vehicle → callSyncOnAdd('permit'). One manager click,
+  //      right billing. The RPC server-side gates on can_approve_vehicles
+  //      per 20260628_permit_door_piece1_manager_approve_authority
+  //      (my earlier report cited a superseded migration; corrected
+  //      by grep across all CREATE OR REPLACE sites — recorded as an
+  //      extension in feedback_reading_vs_looking.md).
+  //   4. Audit — MANAGER_ADD_VEHICLE_FOR_RESIDENT (new action) with
+  //      tier_at_creation, auto_approved, approve_action so a later
+  //      billing question is answerable.
+  //
+  // ── Partial-state note ──
+  //   If insert succeeds but the PM-Only inline approve fails, the row
+  //   is a benign PENDING vehicle in the approval queue — visible to
+  //   the manager, one click to finish. Contrast with the deactivation
+  //   cascades where a partial state produced a towable car; no
+  //   ordering ceremony needed on this path.
+  //
+  // ── Client gate (defense-in-depth) ──
+  //   PmResidentCrm's VehiclesPane already gates the button on
+  //   canApproveVehicles && residentDisplayStatus(resident) === 'active'.
+  //   This handler assumes the caller passed those gates but does not
+  //   re-check — a crafted call from a compromised client would still
+  //   land at the server-side approve_vehicle gate (for PM-Only) and
+  //   the RLS on vehicles INSERT (for both tiers). Same defense-in-
+  //   depth pattern as approveVehicleWrite's caller sites.
+  async function handleAddVehicleSubmit(
+    resident: CrmResident,
+    payload: AddVehiclePayload,
+  ): Promise<AddVehicleSubmitResult> {
+    if (!manager?.name) {
+      return { ok: false, friendlyMessage: 'Property context missing. Refresh and try again.' }
+    }
+    const propertyName = manager.name
+    const residentEmail = resident.email.toLowerCase()
+    const residentUnit = resident.unit  // detail-view attribution; NEVER re-query
+
+    // 1. Collision check (per-property, friendly message names owner)
+    const collisionErr = await assertPlateUniqueAtProperty(supabase, payload.plate, propertyName)
+    if (collisionErr) {
+      return { ok: false, friendlyMessage: collisionErr }
+    }
+
+    // 2. Determine initial state from tier
+    const ctx = getCompanyContext()
+    const initState = initialVehicleState(ctx.tier)
+
+    // 3. Insert vehicle
+    const { data: insertData, error: insertErr } = await supabase
+      .from('vehicles')
+      .insert([{
+        plate:          payload.plate,
+        state:          payload.state,
+        make:           payload.make,
+        model:          payload.model,
+        year:           payload.year,
+        color:          payload.color,
+        unit:           residentUnit,
+        property:       propertyName,
+        resident_email: residentEmail,
+        status:         initState.status,
+        is_active:      initState.is_active,
+      }])
+      .select('id')
+      .single()
+
+    if (insertErr || !insertData?.id) {
+      console.error('[MANAGER_ADD_VEHICLE_FOR_RESIDENT] insert failed:', insertErr?.message, { propertyName, residentEmail, plate: payload.plate })
+      return { ok: false, friendlyMessage: `Could not add vehicle: ${insertErr?.message ?? 'unknown error'}` }
+    }
+    const vehicleId = String(insertData.id)
+
+    // 4. PM-Only: auto-approve inline so the permit meter fires
+    let approveAction: string | null = null
+    if (initState.status === 'pending') {
+      const companyIdForSync = await (async () => {
+        const { data } = await supabase.from('companies').select('id').ilike('name', managerCompany || '').maybeSingle()
+        return (data?.id as number | undefined) ?? null
+      })()
+      const approve = await approveVehicleWrite(supabase, {
+        vehicleId,
+        property: propertyName,
+        managerNote: null,
+        companyIdForSync,
+      })
+      approveAction = approve.action
+      if (!approve.ok) {
+        // Partial state — insert landed, approve failed. Vehicle is a
+        // benign PENDING row in the approval queue. Audit the intent
+        // (below) with auto_approved=false; UI surfaces success with
+        // a note the manager can finish the approval manually.
+        console.warn('[MANAGER_ADD_VEHICLE_FOR_RESIDENT] inline approve failed; vehicle left pending', {
+          vehicleId, propertyName, residentEmail, plate: payload.plate,
+          approveError: approve.error,
+        })
+      }
+    }
+
+    // 5. Audit
+    await logAudit({
+      action: 'MANAGER_ADD_VEHICLE_FOR_RESIDENT',
+      table_name: 'vehicles',
+      record_id: vehicleId,
+      new_values: {
+        plate:              payload.plate,
+        state:              payload.state,
+        make:               payload.make,
+        model:              payload.model,
+        year:               payload.year,
+        color:              payload.color,
+        unit:               residentUnit,
+        property:           propertyName,
+        resident_id:        resident.id,
+        resident_email:     residentEmail,
+        tier_at_creation:   ctx.tier,
+        initial_status:     initState.status,
+        auto_approved:      initState.status === 'pending' && approveAction === 'approved',
+        approve_action:     approveAction,
+      },
+    })
+
+    // 6. Close modal + refresh
+    setAddVehicleFor(null)
+    await refreshCrmData()
+    return { ok: true }
   }
 
   async function removeVehicle(id: string) {
@@ -4199,6 +4358,7 @@ export default function ManagerPortal() {
             onDeclineGuestAuthRequest={(id, reason) => declineGuestAuthRequestCrm(id, reason)}
             onDeactivateResident={(r) => deactivateResident(String(r.id))}
             onReactivateResident={(r) => reactivateResident(String(r.id))}
+            onOpenAddVehicle={(r) => setAddVehicleFor(r)}
             onExportLogged={async ({ propertyName, residentCount, vehicleCount, filterUsed, searchUsed }) => {
               // 2026-07-29 — resident+vehicle CSV export audit trail.
               // The CSV contains resident PII (name/email/phone/plates)
@@ -5593,6 +5753,16 @@ export default function ManagerPortal() {
           isBusy={reapprovalBusy}
           onCancel={() => setReapprovalOrphans(null)}
           onConfirm={handleReapprovalOrphansConfirm}
+        />
+      )}
+      {addVehicleFor && manager?.name && (
+        <AddVehicleForResidentModal
+          residentName={addVehicleFor.name ?? ''}
+          residentEmail={addVehicleFor.email ?? ''}
+          residentUnit={addVehicleFor.unit ?? ''}
+          propertyName={manager.name}
+          onCancel={() => setAddVehicleFor(null)}
+          onSubmit={(payload) => handleAddVehicleSubmit(addVehicleFor, payload)}
         />
       )}
     </main>

@@ -40,16 +40,26 @@ export async function assertPlateUniqueAtProperty(
 ): Promise<string | null> {
   const normalized = normalizePlate(plate)
   if (!normalized || !property) return null
+  // 2026-08-08 — SELECT widened to include unit + resident_email so
+  // the collision message can name the owning row within the manager's
+  // scope. Safe: the partial unique index
+  // (upper(plate), property) WHERE is_active AND status IN ('active','under_review')
+  // is PER-PROPERTY, so any collision surfaced here is at the CALLER's
+  // property — the caller already has RLS SELECT on those rows. No
+  // cross-company or cross-property leak.
   const { data } = await supabase
     .from('vehicles')
-    .select('id, plate')
+    .select('id, plate, unit, resident_email')
     .ilike('property', property)
     .ilike('plate', normalized)
     .eq('is_active', true)
     .in('status', ['active', 'under_review'])
   const dupes = (data ?? []).filter((v: any) => String(v.id) !== String(excludeVehicleId))
   if (dupes.length > 0) {
-    return `Plate ${normalized} is already authorized on another vehicle at ${property}. It can't be authorized on two vehicles at once at the same property.`
+    const d = dupes[0] as { unit: string | null; resident_email: string | null }
+    const unit  = (d.unit && d.unit.trim().length > 0) ? d.unit : '—'
+    const email = (d.resident_email && d.resident_email.trim().length > 0) ? d.resident_email : 'unit-level (no owner on file)'
+    return `Plate ${normalized} is already authorized at ${property} · Unit ${unit} · ${email}. It can't be authorized on two vehicles at once at the same property.`
   }
   return null
 }

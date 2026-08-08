@@ -13,6 +13,7 @@ import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { displayTowReason } from '../lib/tow-reasons'
 import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
+import { eligibleAgainAt } from '../lib/visitor-pass-cap'
 import { guestAuthDisplayStatus } from '../lib/guest-auth'
 import { formatTimestamp, formatDate } from '../lib/format-time'
 // B66.5 commit 4.3: account-state gate (past_due banner + suspended/cancelled redirects).
@@ -103,6 +104,18 @@ export default function ResidentPortal() {
   const [showVisitorForm, setShowVisitorForm] = useState(false)
   const [visitorForm, setVisitorForm] = useState({ plate: '', name: '', vehicle_desc: '', duration: '4' })
   const [limitStatus, setLimitStatus] = useState<PlateLimitStatus | null>(null)
+  // 2026-08-08 — Eligible-again date for the at-limit message.
+  // Computed client-side via the shared helper in
+  // app/lib/visitor-pass-cap.ts. DELIBERATE TRADE: this date is
+  // rendered here but WITHHELD from /visitor and
+  // /api/visitor/create-pass. Reason: eligible_at − 30 days = the
+  // exact created_at of a specific past pass; publishing to anon
+  // would create a visit-enumeration oracle at any property's QR
+  // (same class as get_plate_pass_status's count-stripping at
+  // :180-184 of migrations/20260729_visitor_pass_rolling_30_semantics.sql).
+  // Authenticated resident on their own property is a known party;
+  // the marginal disclosure is worth the usefulness.
+  const [eligibleAgainStr, setEligibleAgainStr] = useState<string | null>(null)
   const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null)
   const [editingVehicle, setEditingVehicle] = useState<any>({})
   // Slice 4 — resident's own pending plate changes, indexed by vehicle_id.
@@ -171,11 +184,48 @@ export default function ResidentPortal() {
   // debounce). Drives the badge under the plate input + the submit button
   // disabled state.
   useEffect(() => {
-    if (!visitorForm.plate || !resident?.property) { setLimitStatus(null); return }
+    if (!visitorForm.plate || !resident?.property) {
+      setLimitStatus(null)
+      setEligibleAgainStr(null)
+      return
+    }
     let cancelled = false
     const timer = setTimeout(async () => {
       const result = await getPlateLimitStatus(resident.property, visitorForm.plate)
-      if (!cancelled) setLimitStatus(result)
+      if (cancelled) return
+      setLimitStatus(result)
+      // 2026-08-08 — On at_limit, fetch the plate's passes in window
+      // and compute the eligible-again date via the shared helper.
+      // Same formula the manager's at-cap view uses; over-cap
+      // (limit lowered mid-window) handled identically. Predicate
+      // mirrors the trigger: exact property match, 30-day window,
+      // is_active NOT read (revoked passes count under rolling-30).
+      // Resident's RLS on visitor_passes admits their own unit's
+      // passes.
+      if (result?.state !== 'at_limit') {
+        setEligibleAgainStr(null)
+        return
+      }
+      const normalized = normalizePlate(visitorForm.plate)
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+      const { data: passesInWindow } = await supabase
+        .from('visitor_passes')
+        .select('created_at, plate')
+        .eq('property', resident.property)
+        .gte('created_at', cutoff)
+        .order('created_at', { ascending: true })
+      if (cancelled) return
+      // Client-side plate normalization filter — mirrors the trigger's
+      // UPPER(regexp_replace(plate, '[^A-Z0-9]', '', 'gi')) predicate.
+      const forThisPlate = ((passesInWindow ?? []) as Array<{ created_at: string; plate: string }>)
+        .filter(p => normalizePlate(p.plate) === normalized)
+      // limit is optional in the TS union because the RPC strips counts
+      // for anon (20260729 §10). On the authenticated resident portal
+      // it is always populated when state='at_limit'; defensive coerce
+      // to skip the render if it isn't.
+      if (typeof result.limit !== 'number') { setEligibleAgainStr(null); return }
+      const at = eligibleAgainAt(forThisPlate, result.limit)
+      setEligibleAgainStr(at ? formatDate(at) : null)
     }, 400)
     return () => { cancelled = true; clearTimeout(timer) }
   }, [visitorForm.plate, resident?.property])
@@ -1614,10 +1664,40 @@ export default function ResidentPortal() {
                   <p style={{ color:'#4caf50', fontSize:'11px', margin:'0 0 12px' }}>✓ Exempt plate — no limit</p>
                 )}
                 {limitStatus?.state === 'within' && (
-                  <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px' }}>{limitStatus.used} of {limitStatus.limit} active passes used.</p>
+                  // 2026-08-08 — Rolling-30 semantics: drop "active" (the
+                  // trigger's count reads every pass issued in the last
+                  // 30 days, INCLUDING revoked ones). Same reason as the
+                  // at_limit branch below.
+                  <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px' }}>{limitStatus.used} of {limitStatus.limit} passes in the last 30 days.</p>
                 )}
                 {limitStatus?.state === 'at_limit' && (
-                  <p style={{ color:'#f44336', fontSize:'11px', margin:'0 0 12px', lineHeight:'1.5' }}>Limit reached: {limitStatus.used} of {limitStatus.limit} active passes. Wait for existing passes to expire or contact your property manager.</p>
+                  // 2026-08-08 — Rolling-30 message rewrite:
+                  //   1. Drop "active" — trigger reads every issued pass
+                  //      in the window, revoked included (is_active NOT
+                  //      part of the predicate at
+                  //      migrations/20260729_visitor_pass_rolling_30_semantics.sql:98).
+                  //   2. Drop "Wait for existing passes to expire" —
+                  //      expiry is irrelevant under rolling-30; only the
+                  //      30-day window aging out releases the cap. The
+                  //      trigger comment explicitly warns against
+                  //      re-adding is_active or expires_at to the
+                  //      predicate.
+                  //   3. Add "eligible again on <date>" — the manager's
+                  //      at-cap view shows this exact value (via the
+                  //      same shared helper); the resident and the
+                  //      manager now read the same date for the same
+                  //      cap.
+                  //
+                  // Deliberate trade recorded at the eligibleAgainStr
+                  // state declaration: this date is authenticated-only
+                  // here; anon /visitor and /api/visitor/create-pass
+                  // keep generic copy without the date (visit-oracle
+                  // avoidance).
+                  <p style={{ color:'#f44336', fontSize:'11px', margin:'0 0 12px', lineHeight:'1.5' }}>
+                    Limit reached: {limitStatus.used} of {limitStatus.limit} passes in the last 30 days.
+                    {eligibleAgainStr && <> This plate is eligible again on <strong>{eligibleAgainStr}</strong>.</>}
+                    {' '}Contact your property manager if you need access sooner.
+                  </p>
                 )}
                 {!limitStatus && <div style={{ marginBottom:'12px' }} />}
                 <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Visitor Name</label>

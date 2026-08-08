@@ -120,6 +120,14 @@ interface Props {
   // the affordance + gates.
   onDeactivateResident: (r: CrmResident) => Promise<void>
   onReactivateResident: (r: CrmResident) => Promise<void>
+  // 2026-08-08 — Manager Add Vehicle for an existing resident. Opens
+  // AddVehicleForResidentModal at the parent level. Callback signature
+  // is trigger-only (no payload); the parent owns the modal state +
+  // knows which resident to attribute the add to. Rendered inside
+  // VehiclesPane; gated on canApproveVehicles+active-resident client-
+  // side (approve_vehicle RPC also gates on can_approve_vehicles
+  // server-side per 20260628_permit_door_piece1_manager_approve_authority).
+  onOpenAddVehicle: (resident: CrmResident) => void
   // 2026-07-29 — resident+vehicle CSV export. Optional callback so the
   // parent can log the export (EXPORT_RESIDENT_LIST audit row); the
   // download itself is done inline via lib/residents-export helpers.
@@ -192,6 +200,7 @@ export default function PmResidentCrm({
   onEditVehicle, onEditResident,
   onApproveGuestAuthRequest, onDeclineGuestAuthRequest,
   onDeactivateResident, onReactivateResident,
+  onOpenAddVehicle,
   onExportLogged,
 }: Props) {
   const [filter, setFilter] = useState<CrmFilter>('all')
@@ -459,6 +468,7 @@ export default function PmResidentCrm({
                     onReactivateVehicle={onReactivateVehicle}
                     onEditVehicle={onEditVehicle}
                     unitOccupancy={unitOccupancy}
+                    onOpenAddVehicle={onOpenAddVehicle}
                   />
                 )}
                 {subTab === 'spaces' && (
@@ -1024,7 +1034,7 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
   )
 }
 
-function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy }: {
+function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, onOpenAddVehicle }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -1036,17 +1046,49 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
   onReactivateVehicle: (id: string | number) => Promise<void>
   onEditVehicle: (id: string | number, patch: Record<string, any>) => Promise<void>
   unitOccupancy: UnitOccupancyMap | null
+  onOpenAddVehicle: (resident: CrmResident) => void
 }) {
+  // 2026-08-08 — Add Vehicle affordance. Gated on the aggregate
+  // residentDisplayStatus (matches the pattern at :721 for the
+  // deactivated banner) so pending / declined / deactivated residents
+  // never see the button. can_approve_vehicles gate matches every
+  // other permit-granting surface in the CRM (approve, reactivate) —
+  // add is a permit grant too. Server-side backstop:
+  // approve_vehicle RPC also gates on can_approve_vehicles per
+  // 20260628_permit_door_piece1_manager_approve_authority.
+  const canAddVehicle = residentDisplayStatus(resident) === 'active' && canApproveVehicles && !isReadOnly
+
+  const AddVehicleButton = canAddVehicle ? (
+    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+      <button
+        onClick={() => onOpenAddVehicle(resident)}
+        style={{
+          padding: '7px 14px', background: C.gold, color: '#0f1117',
+          border: 'none', borderRadius: '6px', cursor: 'pointer',
+          fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+        }}
+      >
+        + Add Vehicle
+      </button>
+    </div>
+  ) : null
+
   if (resident.vehicles.length === 0) {
     return (
-      <div style={{ padding: '44px 20px', textAlign: 'center', color: C.faint }}>
-        <div style={{ fontSize: '15px', color: C.muted, marginBottom: '5px' }}>No vehicles on file</div>
-        This resident hasn't submitted a vehicle yet.
-      </div>
+      <>
+        {AddVehicleButton}
+        <div style={{ padding: '44px 20px', textAlign: 'center', color: C.faint }}>
+          <div style={{ fontSize: '15px', color: C.muted, marginBottom: '5px' }}>No vehicles on file</div>
+          {canAddVehicle
+            ? 'Add one on the resident’s behalf.'
+            : 'This resident hasn’t submitted a vehicle yet.'}
+        </div>
+      </>
     )
   }
   return (
     <>
+      {AddVehicleButton}
       {resident.vehicles.map(v => (
         <VehicleCard
           key={v.id} v={v}
