@@ -2503,7 +2503,17 @@ export default function DriverPortal() {
                           body is the AUTHORIZATION determination (vehicle is
                           authorized under its current plate), not a bare
                           status. App voice = authorization; the human owns
-                          the enforcement call. */}
+                          the enforcement call.
+
+                          2026-08-08 (Mateo A2) — "DO NOT TOW" stays here.
+                          Rule: the phrase belongs where the SCAN RESULT and
+                          the CORRECT ACTION disagree. The driver scanned
+                          new_plate (which is NOT authorized — old_plate is);
+                          every other cue on the panel reads "unregistered
+                          plate," and the phrase is the only thing preventing
+                          a wrongful tow on a pending plate change. Removed
+                          from guest_authorized where the status line already
+                          agrees with the correct action. */}
                       <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '17px', margin: '0 0 8px' }}>⚠ DO NOT TOW — plate change under review</p>
                       <p style={{ color: '#fef3c7', fontSize: '13px', margin: '0 0 4px', lineHeight: '1.5' }}>
                         Vehicle is <b>authorized</b> under its current plate ({result.data.old_plate}).
@@ -2531,11 +2541,22 @@ export default function DriverPortal() {
                     <>
                       {/* B214: vetted multi-week guest authorization (manager-
                           created via /api/.../create-guest-authorization RPC).
-                          LOUD "DO NOT TOW" banner is load-bearing — this is
-                          the newest status with no driver muscle memory; the
-                          unambiguous-beats-subtle directive (Jose 2026-06-20)
-                          is to prevent tow-by-default when a driver sees an
-                          unfamiliar panel.
+
+                          "DO NOT TOW" phrase removed 2026-08-08 (Mateo A2).
+                          Rule (record here so future edits don't drift):
+                          the phrase belongs where the SCAN RESULT and the
+                          CORRECT ACTION disagree. Here they agree — the
+                          headline "✓ AUTHORIZED GUEST" in green + the
+                          valid-through date are the status line; adding "DO
+                          NOT TOW" restates what the status already says.
+                          Kept elsewhere (plate_under_review) where the scan
+                          would read as unauthorized but the vehicle IS
+                          authorized under its current plate — the phrase is
+                          the only thing preventing a wrongful tow there.
+
+                          Attribution band retained (Manager-authorized guest
+                          + valid-through) — Mateo's ask: keep the window and
+                          the manager-authorized attribution.
 
                           Issue Violation button is the gold-outline B71-parity
                           override (NOT the red tow button) — a vetted guest
@@ -2543,7 +2564,6 @@ export default function DriverPortal() {
                           but it routes through the decline-reason modal first. */}
                       <p style={{ color: '#3b82f6', fontWeight: 'bold', fontSize: '17px', margin: '0 0 8px' }}>✓ AUTHORIZED GUEST</p>
                       <div style={{ background: '#1e3a5f', borderLeft: '4px solid #3b82f6', padding: '12px 14px', borderRadius: '6px', marginBottom: '14px' }}>
-                        <p style={{ color: 'white', fontSize: '16px', fontWeight: 'bold', margin: '0 0 4px', letterSpacing: '0.02em' }}>DO NOT TOW</p>
                         <p style={{ color: '#bfdbfe', fontSize: '12px', margin: '0', lineHeight: '1.5' }}>Manager-authorized guest. Valid through <strong style={{ color: 'white' }}>{result.data.end_date}</strong>.</p>
                       </div>
                       {/* Spaces v1 PII sweep (Jose 2026-06-21, STRICT):
