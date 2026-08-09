@@ -57,6 +57,26 @@
 --
 -- APPLY: Test Legacy first via SQL Editor, verify with the paired
 -- verification migration, then production.
+--
+-- 🔴 SIGNATURE PRESERVATION (Mateo Aug 9)
+-- CREATE OR REPLACE FUNCTION replaces the ENTIRE function definition,
+-- including parameter DEFAULTS. Production's deactivate_vehicle has
+-- `p_note TEXT DEFAULT NULL::text` — the 20260806 install carried
+-- that default (visible in pg_get_function_arguments) and any caller
+-- passing only two args relies on it. If a re-definition drops the
+-- default, two-arg callers break silently at call time with
+-- 42883 "function deactivate_vehicle(bigint, text) does not exist".
+-- Preserved below with `p_note TEXT DEFAULT NULL`.
+--
+-- Rule for every future re-definition of any DEFINER RPC in this tree:
+--   1. Query `pg_get_function_arguments(<oid>)` on production FIRST
+--      to capture the exact args-with-defaults string.
+--   2. Copy that shape verbatim into the CREATE OR REPLACE signature.
+--   3. Use CREATE OR REPLACE (grants preserved), NOT DROP + CREATE.
+--   4. If DROP is ever genuinely unavoidable (return-type change,
+--      arg-type change), the migration MUST re-issue REVOKE ALL FROM
+--      PUBLIC + REVOKE ALL FROM anon + GRANT EXECUTE TO authenticated
+--      in the same transaction. Then re-run the verification file.
 -- ══════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -64,7 +84,7 @@ BEGIN;
 CREATE OR REPLACE FUNCTION public.deactivate_vehicle(
   p_vehicle_id BIGINT,
   p_reason     TEXT,
-  p_note       TEXT
+  p_note       TEXT DEFAULT NULL   -- preserved from 20260806 install; see header
 )
 RETURNS jsonb
 LANGUAGE plpgsql
