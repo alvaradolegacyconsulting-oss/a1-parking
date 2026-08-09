@@ -1243,16 +1243,30 @@ export async function deactivateVehicleWrite(
 
   const v = result.vehicle ?? {}
 
-  // ── Email decision (Commit D) ────────────────────────────────────
+  // ── Email decision (Commit D + D-8 fix) ──────────────────────────
   // Six outcomes at the writer per Mateo Aug 9. Same order and
   // vocabulary as deactivateResidentWrite (:915-945).
   //
   // Order:
   //   notify=false                             → suppressed-by-cascade
   //   !reasonNotifies('vehicle', reason)       → suppressed-by-reason
-  //   !snapshot.resident_email                 → no-email-on-file
+  //   !v.resident_email                        → no-email-on-file
   //   else                                     → call notify route
   //                                              → outcome from route
+  //
+  // 🔴 D-8 FIX (Mateo Aug 9): resident_email is read from `v` (the
+  // RPC's post-UPDATE row) NOT from `snapshot`. The snapshot is a
+  // session-scoped SELECT; when RLS hides the row from the caller
+  // (e.g. NULL property → property-scoped RLS predicate returns NULL
+  // → row filtered), `snapshot` is `null` and `snapshot?.resident_email`
+  // evaluates to `undefined`, which `!` then coerces to true — a
+  // silent mislabel as `no-email-on-file` for a row that actually has
+  // a perfectly valid email. `v` comes from the SECURITY DEFINER
+  // deactivate_vehicle RPC's `RETURNING *`, which bypasses RLS and
+  // gives the true row state. Same rationale for `v.property`
+  // downstream: the route re-reads via service-role and applies the
+  // `!v.property → failed` branch correctly, which the pre-fix code
+  // could not reach.
   //
   // Reason split for vehicles (from VEHICLE_DEACTIVATION_REASONS):
   //   SEND    moved_out · vehicle_sold · not_permitted ·
@@ -1266,7 +1280,7 @@ export async function deactivateVehicleWrite(
     emailDecision = 'suppressed-by-cascade'
   } else if (!reasonNotifies('vehicle', reason)) {
     emailDecision = 'suppressed-by-reason'
-  } else if (!snapshot?.resident_email) {
+  } else if (!v.resident_email) {
     emailDecision = 'no-email-on-file'
   } else {
     const sendResult = await notifyVehicleDeactivation({ vehicleId: String(vehicleId) })

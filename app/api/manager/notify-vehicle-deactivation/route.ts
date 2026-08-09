@@ -53,13 +53,17 @@ import { sendCompanyScopedEmail } from '../../../lib/company-scoped-email'
 //   - No retention policy, rights statement, or ToS paraphrase
 //
 // DEFENSIVE BRANCHES — dispositions:
-//   - `!v.property` (malformed anchor): kept as `failed` per Mateo
-//     Aug 9 correction #2. Under the current schema `vehicles.property`
-//     is expected NOT NULL — every INSERT path populates it from the
-//     manager session's `manager.name`, and every read filters on it.
-//     If D-8's UPDATE attempt confirms NOT NULL, this branch is
-//     unreachable via the write path but retained as a correctly-
-//     labelled schema-drift guard.
+//   - `!v.property` (malformed anchor): returns `failed` per Mateo
+//     Aug 9 correction #2. `vehicles.property` is NULLABLE and the
+//     branch is REACHABLE — confirmed empirically 2026-08-09 (D-8
+//     UPDATE `SET property = NULL` succeeded against plate PD0004,
+//     no constraint violation). The prior header line claiming
+//     "unreachable under current schema" was incorrect and has been
+//     removed; populated-by-every-writer is a convention, not a
+//     constraint. See docs/backlog/vehicles-property-nullability-
+//     and-rpc-scope-bypass.md for the follow-up decision on whether
+//     to add NOT NULL (and the separate RPC scope-gate defect that
+//     lets NULL-property vehicles bypass the manager scope check).
 //   - Dedup precondition (deactivation_notified_at gate):
 //     STRUCTURAL VERIFICATION ONLY. Cannot be hand-driven by Jose
 //     — the route is cookie-authenticated session-scoped, and probe
@@ -132,18 +136,9 @@ export async function POST(req: NextRequest) {
     // Mateo Aug 9 correction #2: this is NOT no-email-on-file. A
     // vehicle missing its property may still have a perfectly good
     // resident_email — the anchor is what's malformed, not the
-    // recipient. `no-email-on-file` means one specific thing;
-    // conflating the two collapses a structural data problem into a
-    // routine suppression class.
-    //
-    // Whether vehicles.property is NOT NULL at the DB level is not
-    // verifiable from this write path; every INSERT path in the code
-    // populates it from the manager session's `manager.name`, and the
-    // enforcement + CRM reads all key on `.ilike('property', ...)` —
-    // so a NULL-property row is invisible to the surfaces that would
-    // otherwise surface the schema drift. Hard-fail here surfaces it
-    // loudly. The writer maps ok:false to emailDecision:'failed' with
-    // the malformed-anchor reason in email_error.
+    // recipient. Reachable (empirical, 2026-08-09 D-8 probe). Writer
+    // maps ok:false → emailDecision:'failed' with the malformed-
+    // anchor string in email_error.
     console.error('[notify-vehicle-deactivation] vehicle has no property — malformed anchor', { vehicleId: body.vehicleId, resident_email: v.resident_email })
     return NextResponse.json(
       { ok: false, outcome: 'failed', error: 'vehicle has no property (malformed anchor)', message_id: null },
