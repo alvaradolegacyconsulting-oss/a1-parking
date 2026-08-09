@@ -2569,6 +2569,27 @@ export default function ManagerPortal() {
         space:     newResident.space || null,
         lease_end: newResident.lease_end || null,
         property:  manager.name,
+        // 2026-08-09 — Was missing. Every resident created via this path
+        // shipped with residents.company = NULL, discovered when two
+        // Test Legacy seed rows (627, 628 — Jose's July 27 throwaways)
+        // classified as `anchor-missed` under the deactivation-email
+        // gate. Zero A1 exposure (sweep query returned NULL rows only
+        // at Test Legacy; A1 residents arrive via bulk-invite + /register
+        // which both set company). Latent bug — would have bitten the
+        // moment any A1 manager used Add Resident.
+        //
+        // The B197 explicit-enumeration discipline (see comment above)
+        // enumerates cosmetic fields; company was omitted from that
+        // enumeration. The `:2510-2517` guard prevents managerCompany
+        // from being empty at call time, so passing it here can't write
+        // NULL under normal operation.
+        //
+        // Companion vehicle insert at :2618 does NOT need this — the
+        // `vehicles` table has no `company` column (documented at
+        // app/api/billing/bulk-invite/route.ts:319-320: "B203 — `company`
+        // column does NOT exist on `vehicles`; ownership scope is via
+        // (property, unit) + resident_email").
+        company:   managerCompany,
         is_active: true,
       }])
       if (rErr) throw new Error('residents INSERT failed: ' + rErr.message)
