@@ -36,7 +36,14 @@ After the constraint lands: delete the route's `!v.property → failed`
 branch. It becomes genuinely unreachable and the correctly-labeled
 schema-drift guard is no longer needed.
 
-## 2. 🔴 `deactivate_vehicle` RPC scope-gate silently passes NULL property
+## 2. 🔴 `deactivate_vehicle` RPC scope-gate silently passes NULL property — **SHIPPING NOW**
+
+**Status:** 2026-08-09 — being fixed in its own commit alongside this
+backlog note per Mateo Aug 9 review ("filing a P1 authority bypass
+behind a backlog file when the fix is a `COALESCE` is the wrong
+trade"). This section stays as the diagnosis record; enumeration of
+sibling DEFINER RPCs follows below.
+
 
 Discovered during D-8 diagnosis. The RPC at
 [migrations/20260806_deactivate_vehicle_rpc.sql:138](../../migrations/20260806_deactivate_vehicle_rpc.sql#L138):
@@ -99,46 +106,24 @@ has the same pattern.
   — same class: absence of denial is not permission
 - [feedback_platform_states_facts_not_permissions.md](../../../.claude/projects/-Users-ALC-a1-parking/memory/feedback_platform_states_facts_not_permissions.md)
 
-## 3. 🔴 NULL-`resident_email` vehicles are invisible in the manager portal
+## 3. NULL-`resident_email` vehicles are invisible in the manager portal — **RESOLVED**
 
-**Filed:** Follow-up 1 from Mateo Aug 9 D-8 review.
+**Status:** 2026-08-09 CLOSED by Jose audit + Mateo confirmation.
 
-The manager CRM nests vehicles under residents. A vehicle with
-`resident_email IS NULL` has no resident to nest under, so it is
-**invisible and unmanageable** — a manager cannot see it, cannot
-deactivate it, cannot tell it exists.
+- Audit query returned ZERO NULL-`resident_email` rows across all
+  properties.
+- Legacy manager Add-Vehicle path (with the "Unit-level / shared"
+  owner-picker option) has been **discontinued**; live users are on
+  the CRM path, which requires an email.
+- Historical NULL rows had been cleaned up in a prior sweep.
 
-Jose's read: registration requires an email, so this shouldn't happen.
-True for `/register`, but the legacy manager `addVehicle` owner-picker
-has an intentional "Unit-level / shared" option that stores NULL
-`resident_email`. Even if the CRM path no longer creates them, rows
-can exist historically.
+No invisible vehicles exist and no current producer creates them.
+The `vehicles.resident_email` column remains nullable at the schema
+level, but the concern that active enforceable vehicles could be
+unmanageable is resolved.
 
-### Audit query for Jose
-
-```sql
-SELECT v.id, v.plate, v.unit, v.property, v.status, v.is_active, v.created_at
-FROM public.vehicles v
-WHERE v.resident_email IS NULL
-ORDER BY v.property, v.created_at;
-```
-
-Same query also surfaces NULL-property rows (join on `v.property IS NULL`
-if needed).
-
-### Dispositions
-
-- **Zero rows** → theoretical, note and close.
-- **Rows at any A1 property** → active, enforceable, unmanageable
-  vehicles. Filing per-property findings; likely needs a "shared
-  vehicle" bucket in the CRM or a bulk retire step.
-
-### For Mateo
-
-Confirm whether the legacy "Unit-level / shared" owner-picker option
-is still reachable in the shipped CRM, or whether it went away with
-the redesign. If gone, the nullable `resident_email` column is legacy
-surface area with no current producer — worth knowing.
+Kept in this file as a resolution record; if `vehicles.resident_email`
+is ever made NOT NULL as a hardening step, cite this closure.
 
 ## Related
 

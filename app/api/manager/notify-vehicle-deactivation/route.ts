@@ -232,6 +232,24 @@ export async function POST(req: NextRequest) {
 // UPDATE never surfaces either — property-facing detail belongs with
 // the property manager, not the resident-facing email). "No longer
 // authorized to park at <property>" is the fact; details on request.
+//
+// GREETING ASYMMETRY (Mateo Aug 9 Follow-up 2 — closed as deliberate)
+// This template opens `Hi there,`, not `Hi <name>,`. The asymmetry
+// with notify-resident-deactivation (`Hi <name>,`) is intentional
+// and load-bearing:
+//   - The resident-side anchor is `resident_id` — exactly one row
+//     by construction, so there is one name to greet.
+//   - The vehicle-side anchor is `(resident_email, property)` —
+//     the divergence branch (probe D-5, sendCompanyScopedEmail's
+//     multiplicity resolver) explicitly resolves to MULTIPLE
+//     resident rows, potentially with DIFFERENT names. There is no
+//     single correct name to greet in the divergent case.
+//   - Picking one of N names silently would be dishonest for the
+//     divergent case; adding a name only in the non-divergent case
+//     would create a copy split that has to be maintained alongside
+//     the resolver's shape.
+// `Hi there,` is the only greeting that stays honest across all
+// three branches (0 rows fail-open / 1 row / N same-env / N divergent).
 
 function renderVehicleDeactivationHtml(args: {
   plate:    string

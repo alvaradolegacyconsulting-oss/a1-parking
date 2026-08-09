@@ -885,7 +885,7 @@ export interface ResidentSnapshotEcho {
 //                                         present + email* fields set
 export type DeactivateResidentResult =
   | { ok: false
-      reason: 'validation' | 'read_failed' | 'update_failed'
+      reason: 'validation' | 'read_failed' | 'not_visible' | 'update_failed'
       error?: unknown
       message: string }
   | { ok: true
@@ -927,6 +927,23 @@ export async function deactivateResidentWrite(
   if (readErr) {
     console.error('[deactivateResidentWrite] snapshot SELECT failed', { residentId, error: readErr })
     return { ok: false, reason: 'read_failed', error: readErr, message: readErr.message ?? 'Failed to read resident before deactivation.' }
+  }
+  // 🔴 Mateo Aug 9 Item 1 — parallel to the vehicle writer. `.maybeSingle()`
+  // returns `{data: null, error: null}` for zero rows; treating that as
+  // a snapshot with null fields is the D-8 conflation class. Zero rows
+  // here means the resident doesn't exist OR RLS hid the row from the
+  // caller (e.g. the resident's property changed and no longer overlaps
+  // the manager's scoped-properties list). Bail before any field access
+  // — the subsequent `.update().eq('id', residentId)` would silently
+  // affect zero rows under the same RLS, but only after the writer had
+  // already made a snapshot-based no-op decision on undefined fields.
+  if (snapshot === null) {
+    console.warn('[deactivateResidentWrite] snapshot not visible (RLS-hidden or missing row)', { residentId })
+    return {
+      ok: false,
+      reason: 'not_visible',
+      message: 'Resident is not visible to your session. If it was just modified elsewhere, refresh and try again; otherwise contact support.',
+    }
   }
 
   // ── No-op detection — same deactivation state already applied ────
@@ -1151,7 +1168,7 @@ export interface VehicleSnapshotEcho {
 // msgBox-class rationale on why the no-op branch omits emailDecision.
 export type DeactivateVehicleResult =
   | { ok: false
-      reason: 'validation' | 'read_failed' | 'rpc_error'
+      reason: 'validation' | 'read_failed' | 'not_visible' | 'rpc_error'
       error?: unknown
       message: string }
   | { ok: true
@@ -1198,6 +1215,26 @@ export async function deactivateVehicleWrite(
   if (readErr) {
     console.error('[deactivateVehicleWrite] snapshot SELECT failed', { vehicleId, error: readErr })
     return { ok: false, reason: 'read_failed', error: readErr, message: readErr.message ?? 'Failed to read vehicle before deactivation.' }
+  }
+  // 🔴 Mateo Aug 9 Item 1: snapshot === null is its own outcome.
+  // `.maybeSingle()` distinguishes error (readErr) from zero rows;
+  // treating "zero rows" as a snapshot whose fields happen to be null
+  // is the D-8 conflation class (see [[feedback_null_safe_operator_
+  // conflates_missing_row]] in memory). Zero rows here means:
+  //   - The row doesn't exist at all, OR
+  //   - RLS hid it from the caller's session (e.g. property = NULL
+  //     → property-scoped RLS predicate returns NULL → row filtered).
+  // Both cases mean we cannot make a safe no-op decision AND cannot
+  // safely fall through — the RPC could still succeed (via SECURITY
+  // DEFINER) and produce a mislabeled outcome. Return hard-fail
+  // before any field access.
+  if (snapshot === null) {
+    console.warn('[deactivateVehicleWrite] snapshot not visible (RLS-hidden or missing row)', { vehicleId })
+    return {
+      ok: false,
+      reason: 'not_visible',
+      message: 'Vehicle is not visible to your session. If it was just modified elsewhere, refresh and try again; otherwise contact support.',
+    }
   }
 
   // ── No-op detection — same deactivation state already applied ────
