@@ -111,3 +111,51 @@ ORDER BY v.property, v.unit;
 - FOR_MATEO_unit_occupancy_preflight_aug4_2026 (Part A three-predicate table)
 - CURRENT_STATE `vehicles.status` vs `is_active` mirror note
 - [pattern_enforcement_matches_on_plate_alone.md](../../.claude/projects/-Users-ALC-a1-parking/memory/pattern_enforcement_matches_on_plate_alone.md) — standing pattern that enforcement predicates are load-bearing
+
+---
+
+## ADDENDUM 2026-08-08 — the PERMISSIVE direction observed live
+
+The Aug 4 backlog entry documented only the `status='active' AND is_active=FALSE` direction (portal shows approved, enforcement denies — the tow-risk direction). The reverse — `is_active=TRUE AND status='pending'` — was measured at zero on Green Acres and Test Legacy Property at filing.
+
+**Not zero anymore.** The Aug 8 warnings panel V1 (`e62b548`) surfaced three rows at Test Legacy:
+
+- `BULKAPPROVE` at unit 205, `status='pending', is_active=TRUE`, created Jul 30
+- `WARN02` at unit 206, `status='pending', is_active=TRUE`
+- `WARN03` at unit 209, `status='pending', is_active=FALSE` (12 days aging — this one is `#4 aging_pending`, not #5)
+
+The first two are the permissive divergence: the plate scans as authorized right now, but the portal shows it awaiting the manager's approval. This is the reverse of Natalie's shape — the manager reads "pending" and answers the resident with that; enforcement admits the car anyway. Less tow-risk, more billing-and-audit-integrity risk (a car is on the property with a permit that was never actually granted).
+
+Warning panel row #5 ships as red for exactly this reason. Copy: *"this vehicle is still waiting for your approval, but it is already scanning as authorized."*
+
+## ADDENDUM 2026-08-08 — uniqueness index scope has a pending-duplicate hole
+
+`BULKAPPROVE` exists TWICE at Test Legacy:
+- unit 205: `status='pending', is_active=TRUE`
+- unit 888: `status='active'` (authorized)
+
+Different residents, same plate. The uniqueness index at [`migrations/20260703_slice5_plate_uniqueness_hardening.sql:75-77`](../../migrations/20260703_slice5_plate_uniqueness_hardening.sql#L75-L77):
+
+```sql
+CREATE UNIQUE INDEX vehicles_authorized_plate_uidx
+  ON public.vehicles (upper(plate), property)
+  WHERE is_active = true AND status IN ('active', 'under_review');
+```
+
+**The `status IN ('active','under_review')` predicate excludes `pending`.** So a plate already authorized at one unit can be re-registered as `pending` at a different unit indefinitely — the index does not fire on insert. If someone later tries to approve the pending row, `approve_vehicle` flips `status → 'active'` and the index catches it (23505 unique_violation). But until then, the pending row sits.
+
+### What the current shape gets right
+- Approval-time collision detection works — the index catches at flip-to-active
+- `assertPlateUniqueAtProperty` catches at insert-time IF the caller uses it (does; every manager write path today)
+- The permissive-direction warning row (`e62b548` #5) surfaces the divergence in the manager UI as soon as the pending row exists
+- Enforcement is safe (the authorized row at 888 continues to scan authorized regardless of the 205 pending)
+
+### What's worth reviewing
+- **Is the pending-duplicate-of-authorized state ever legitimate?** Marginal — could arise if a resident moves units and re-registers the same plate before the outgoing unit's registration is deactivated. That flow SHOULD go through the plate-change RPC (`submit_plate_change`), which has its own collision guard.
+- **Should the uniqueness index widen to include pending?** Trade-off: preventing pending-duplicate blocks a legitimate re-registration attempt that the manager could resolve (approve one, decline the other). Keeping the current scope defers the decision to the manager via the warnings panel — which is arguably better UX than a raw `23505` at insert time.
+
+### Recommendation
+
+**Leave the index as-is. Rely on the warnings panel (row #5) to surface the state early.** File this as an observation, not a fix. If the pending-duplicate pattern proves benign in practice (Jose watches Test Legacy + Green Acres over the next weeks), close as CLOSED-BY-OBSERVATION. If the pattern grows or produces surprises, revisit widening the index.
+
+Test-data artifact today (per Jose 2026-08-08) — `BULKAPPROVE` unit 205 was probably a test double-insert. No live customer exposure.

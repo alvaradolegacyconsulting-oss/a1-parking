@@ -119,9 +119,16 @@ export function computePropertyWarnings(input: WarningInput): PropertyWarning[] 
   }
 
   // ── #5 — Enforcement authorizes, portal shows pending ─────────────
-  // 🔴 Permissive tow-risk (the reverse of #1). An unapproved car
-  // parking freely. Same divergence backlog; same "no timestamp"
-  // rationale for the red-tier sort.
+  // 🔴 Permissive tow-risk (the reverse of #1). Same divergence
+  // backlog; same "no timestamp" rationale for the red-tier sort.
+  //
+  // 2026-08-08 remedy fix (Mateo close-out): the row previously
+  // said "contact your company administrator" — but the manager can
+  // resolve this themselves by approving or declining. Same action
+  // the amber #4 aging-pending row already offers. Telling the
+  // manager to escalate for something they can fix teaches them to
+  // ignore rows. Wired to `scroll_to_pending` so the button switches
+  // to the Residents tab where they can act.
   for (const r of crmResidents) {
     for (const v of (r.vehicles ?? [])) {
       if (v.is_active === true && v.status === 'pending') {
@@ -131,7 +138,8 @@ export function computePropertyWarnings(input: WarningInput): PropertyWarning[] 
           severity:  'red',
           title:     `Unit ${r.unit || '—'} · ${v.plate ?? '(no plate)'}`,
           body:      'this vehicle is still waiting for your approval, but it is already scanning as authorized.',
-          remedy:    'Approve or decline it to bring the records in line. (If declining doesn’t take effect, contact your company administrator.)',
+          remedy:    'Approve or decline it',
+          remedyAction: { kind: 'scroll_to_pending', unit: r.unit || '' },
           sortAnchor: r.unit || '',
         })
       }
