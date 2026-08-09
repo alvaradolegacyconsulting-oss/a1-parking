@@ -45,6 +45,7 @@ import { buildOccupancyStamp } from './unit-occupancy'
 import {
   isValidResidentReason,
   isValidVehicleReason,
+  reasonNotifies,
   reasonRequiresNote,
   DEACTIVATION_NOTE_MAX_LENGTH,
 } from './deactivation-reasons'
@@ -70,6 +71,64 @@ export async function callSyncOnAdd(
     return { ok: false, reason: String(json.reason ?? json.error ?? `HTTP ${res.status}`) }
   } catch (e) {
     return { ok: false, reason: (e as Error).message }
+  }
+}
+
+// 2026-08-09 Commit C — deactivation-email client wrapper. Mirror of
+// notifyResidentDecision. Called from deactivateResidentWrite after
+// the residents UPDATE + audit have landed.
+//
+// Returns the outcome the writer records in its audit row. The route
+// itself gates on the reason's notifies field via the caller — this
+// wrapper is only invoked when the writer has already decided a send
+// is warranted (notify=true, reasonNotifies(reason)=true, email
+// present).
+//
+// Dedup is enforced at the route (defense-in-depth) and upstream at
+// the writer (same-reason no-op check).
+export async function notifyResidentDeactivation(args: {
+  residentId: string
+}): Promise<{
+  ok:            boolean
+  outcome:       'sent' | 'overridden' | 'failed' | 'no-email-on-file'
+  message_id:    string | null
+  dedup_skipped: boolean
+  error:         string | null
+}> {
+  try {
+    const res = await fetch('/api/manager/notify-resident-deactivation', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(args),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (res.ok && j.ok) {
+      return {
+        ok:            true,
+        outcome:       j.outcome,       // 'sent' | 'overridden' | 'no-email-on-file'
+        message_id:    j.message_id ?? null,
+        dedup_skipped: !!j.dedup_skipped,
+        error:         null,
+      }
+    }
+    console.error('[resident-deactivation-email] failed:', j.error || res.statusText)
+    return {
+      ok:            false,
+      outcome:       'failed',
+      message_id:    null,
+      dedup_skipped: false,
+      error:         j.error || res.statusText || 'unknown error',
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[resident-deactivation-email] threw:', msg)
+    return {
+      ok:            false,
+      outcome:       'failed',
+      message_id:    null,
+      dedup_skipped: false,
+      error:         msg,
+    }
   }
 }
 
@@ -725,6 +784,19 @@ export interface DeactivateResidentInput {
   note:      string | null
   actor:     string        // deactivating manager's email (for deactivated_by)
   property:  string        // for audit new_values shape parity with APPROVE_RESIDENT
+  // 2026-08-09 Commit C — deactivation-email hook decision. Required,
+  // no default. Manager-initiated call sites pass true; admin cascade
+  // at admin/page.tsx:481 is a bulk `.update()` that never calls the
+  // writer, so it's exempt by construction. The parameter exists so
+  // if anyone later routes a cascade through the writer, they must
+  // pass the notify decision explicitly — cannot inherit silence,
+  // cannot inherit a send. (Same discipline as reason+notifies being
+  // one object in deactivation-reasons.ts.)
+  //
+  // notify=true means CONSIDER sending; the reason code's `notifies`
+  // field is the final gate. `duplicate_record`, `registered_in_error`,
+  // `resident_requested` all suppress even under notify=true.
+  notify:    boolean
 }
 
 export interface DeactivateResidentResult {
@@ -741,12 +813,18 @@ export interface DeactivateResidentResult {
     property: string | null
     name:     string | null
   }
+  // 2026-08-09 Commit C — email decision from the send hook, echoed
+  // for caller visibility. Same values recorded in the DEACTIVATE_RESIDENT
+  // audit row's new_values.email_decision.
+  emailDecision?:  'sent' | 'overridden' | 'suppressed-by-reason' | 'suppressed-by-cascade' | 'no-email-on-file' | 'failed'
+  emailMessageId?: string | null
+  emailError?:     string | null
 }
 
 export async function deactivateResidentWrite(
   args: DeactivateResidentInput,
 ): Promise<DeactivateResidentResult> {
-  const { supabase, residentId, reason, note, actor, property } = args
+  const { supabase, residentId, reason, note, actor, property, notify } = args
 
   // ── Validation ─────────────────────────────────────────────────────
   if (!isValidResidentReason(reason)) {
@@ -759,18 +837,43 @@ export async function deactivateResidentWrite(
   }
   const cleanNote = (note ?? '').slice(0, DEACTIVATION_NOTE_MAX_LENGTH).trim() || null
 
-  // ── Read the resident snapshot BEFORE the write, so the caller can
-  //    cascade even after a successful update (the update wouldn't
-  //    change email/unit/property, but reading first also gives the
-  //    ancillary fields the caller needs). ─────────────────────────
+  // ── Read the resident snapshot BEFORE the write ────────────────────
+  // Extended 2026-08-09 (Commit C) to include is_active + current
+  // deactivation_reason so we can detect a no-op re-write of the SAME
+  // deactivation state and skip the email hook. Probe 6's "hook twice
+  // on one deactivation → one email" property depends on this.
   const { data: snapshot, error: readErr } = await supabase
     .from('residents')
-    .select('email, unit, property, name')
+    .select('email, unit, property, name, is_active, deactivation_reason')
     .eq('id', residentId)
     .maybeSingle()
   if (readErr) {
     console.error('[deactivateResidentWrite] snapshot SELECT failed', { residentId, error: readErr })
     return { ok: false, reason: 'read_failed', error: readErr, message: readErr.message ?? 'Failed to read resident before deactivation.' }
+  }
+
+  // ── No-op detection — same deactivation state already applied ────
+  // If the row is already is_active=false AND the reason matches, this
+  // is a re-fire (probe 6 shape). Return ok WITHOUT running UPDATE,
+  // audit, or notify. Preserves the "one email per deactivation event"
+  // invariant.
+  const isNoop = snapshot?.is_active === false && snapshot?.deactivation_reason === reason
+  if (isNoop) {
+    return {
+      ok: true,
+      residentSnapshot: {
+        email:    snapshot?.email ?? null,
+        unit:     snapshot?.unit ?? null,
+        property: snapshot?.property ?? null,
+        name:     snapshot?.name ?? null,
+      },
+      // Report the dedup case honestly. Audit reader sees no
+      // repeat DEACTIVATE_RESIDENT row for this second call — the
+      // first call's audit is the record.
+      emailDecision:  'sent',
+      emailMessageId: null,
+      emailError:     null,
+    }
   }
 
   // ── The write — CHECK the error ────────────────────────────────────
@@ -803,11 +906,48 @@ export async function deactivateResidentWrite(
     return { ok: false, reason: 'update_failed', error: updErr, message: updErr.message ?? 'The database rejected the deactivation.' }
   }
 
-  // ── Success — write the audit row, extended shape ─────────────────
+  // ── Email decision (Commit C) ────────────────────────────────────
+  // Six outcomes at the writer per Mateo Aug 9. The helper
+  // sendCompanyScopedEmail's narrower three ('sent'|'overridden'|'failed')
+  // don't become the audit vocabulary here — suppression outcomes
+  // live at the writer, BEFORE the helper is called.
+  //
+  // Order:
+  //   notify=false                            → suppressed-by-cascade
+  //   !reasonNotifies('resident', reason)     → suppressed-by-reason
+  //   !snapshot.email                         → no-email-on-file
+  //   else                                    → call notify route
+  //                                             → outcome from route
+  let emailDecision:  'sent' | 'overridden' | 'suppressed-by-reason' | 'suppressed-by-cascade' | 'no-email-on-file' | 'failed'
+  let emailMessageId: string | null = null
+  let emailError:     string | null = null
+
+  if (!notify) {
+    emailDecision = 'suppressed-by-cascade'
+  } else if (!reasonNotifies('resident', reason)) {
+    emailDecision = 'suppressed-by-reason'
+  } else if (!snapshot?.email) {
+    emailDecision = 'no-email-on-file'
+  } else {
+    const sendResult = await notifyResidentDeactivation({ residentId: String(residentId) })
+    if (!sendResult.ok) {
+      emailDecision = 'failed'
+      emailError    = sendResult.error
+    } else if (sendResult.outcome === 'no-email-on-file') {
+      // Route independently discovered no email (race: snapshot.email
+      // was populated at read but the row was updated between snapshot
+      // and route call). Trust the route.
+      emailDecision = 'no-email-on-file'
+    } else {
+      emailDecision  = sendResult.outcome  // 'sent' | 'overridden'
+      emailMessageId = sendResult.message_id
+    }
+  }
+
+  // ── Success — write the audit row ─────────────────────────────────
   // Extends the historically-thin DEACTIVATE_RESIDENT shape (which
   // carried only {is_active, property}) to parity with APPROVE_RESIDENT
-  // plus the new deactivation fields. This is the June 17 follow-up #2
-  // delivery vehicle.
+  // plus the new deactivation fields plus the email decision.
   await logAudit({
     action:     'DEACTIVATE_RESIDENT',
     table_name: 'residents',
@@ -820,6 +960,12 @@ export async function deactivateResidentWrite(
       deactivation_reason: reason,
       deactivation_note:   cleanNote,
       deactivated_by:      actor,
+      // Commit C — email decision recorded alongside every deactivation.
+      // Six values matching Mateo Aug 9's audit vocabulary. Silent
+      // no-op is not an acceptable outcome; every path here writes one.
+      email_decision:      emailDecision,
+      email_message_id:    emailMessageId,
+      email_error:         emailError,
     },
   })
 
@@ -831,6 +977,9 @@ export async function deactivateResidentWrite(
       property: snapshot?.property ?? null,
       name:     snapshot?.name ?? null,
     },
+    emailDecision,
+    emailMessageId,
+    emailError,
   }
 }
 

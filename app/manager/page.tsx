@@ -2789,6 +2789,15 @@ export default function ManagerPortal() {
       reason, note,
       actor: managerEmail,
       property: manager.name,
+      // 2026-08-09 Commit C — required, no default (Mateo lock).
+      // Manager-initiated call site → notify. The reason's `notifies`
+      // field is the final gate; suppressed reasons (duplicate_record,
+      // registered_in_error, resident_requested) don't send even with
+      // notify=true. Admin cascade at admin/page.tsx:481 does NOT go
+      // through this writer — it's a bulk .update() — so it's exempt
+      // by construction; parameter exists so that stays enforced by
+      // the type system if someone ever routes the cascade here.
+      notify: true,
     })
     if (!result.ok) {
       const label = result.message ?? 'The database rejected the deactivation.'
