@@ -6,7 +6,61 @@ kickoff.** Read it first; it is the source of truth for where things stand.
 **Should live in the repo** (`docs/CURRENT_STATE.md`) so Mateo can read and maintain it. Jose
 uploads the current copy to project knowledge when starting a new chat.
 
-*Last updated: August 4, 2026 — tier gates retired · timezone arc shipped · unit-occupancy end-to-end (`5f92557`)*
+*Last updated: August 8, 2026 — deactivation arc + swift-handler findings + at-cap V1 + Add Vehicle + warnings panel*
+
+---
+
+## SHIPPED — August 5–8 (deactivation & anomaly-detection arc)
+
+Nine commits landing the deactivation model, live at-cap semantics, an in-product remedy for the second-vehicle dead end, and a manager-facing warnings panel. Verified at Test Legacy.
+
+**`cc3bc4d` — `get_my_effective_active` row precedence.** DEFINER RPC now picks the resident's best row (`resident_row_precedence(status, is_active)`) instead of arbitrary `LIMIT 1`. Closed the Green Acres portal-lockout class: a resident with 2+ rows (one declined + one active) is no longer redirected to `/deactivated`.
+
+**`e5369f8` — companion-vehicle proxy fix + banner.** `/api/register/companion-vehicle` was using `.maybeSingle()` on the residents lookup; multi-row residents triggered a 500 and dropped the incoming vehicle. Rewrote to the row-precedence order. The "we didn't receive your vehicles" banner now fires only on genuine failure.
+
+**`1d08135` — driver Deactivate button + swift-handler ban.** First working implementation. Added the button to the CA People tab under `CA_CRM_REDESIGN`; explicit-severity result banner via `driverActionResult` (bypasses the `msgBox` text-sniff heuristic). Ban-first ordering — subsequently reversed by `a78d129`, see below.
+
+**`db0107a` — CA-portal explicit severity for mgr/LA deactivation.** Extended the `userActionResult` pattern to `toggleUserActive` and the resident-createUser rollback. Deprecated `msgBox` at `:3829` with a long comment naming the concealment class.
+
+**`a78d129` — 🔴 REORDER: column-first for both handlers.** After Jose's live-probe finding (see below), reordered `toggleUserActive` and `toggleDriverActive` to write `user_roles.is_active` FIRST (the load-bearing control), then attempt the swift-handler ban (defense-in-depth). Three-state severity (`ok` / `partial` / `error`); `partial` renders amber without the ⚠ prefix — that's the routine case until the handler is fixed. Audit key `ban_applied: false` is the remediation-list key.
+
+**`92ededc` — visitor-pass at-cap V1 (read-only).** Manager Visitors tab gets a subsection listing plates at cap, drill-down per plate with `visiting_unit`, and the eligible-again date via the general formula `passes[N - L].created_at + 30 days`. Mirrors the trigger's exact-match property predicate.
+
+**`85f9b87` — Manager Add Vehicle for existing resident + copy alignment.** In-product remedy for the second-vehicle dead end (Add Resident form takes exactly one vehicle). Shared `eligibleAgainAt` helper in `app/lib/visitor-pass-cap.ts` (used by both the at-cap V1 and the resident portal's pass-limit message). Resident portal copy rewrite: drops "active passes", drops "wait for existing passes to expire", adds the eligible-again date. `/visitor` and `/api/visitor/create-pass` stay generic — see anon-oracle finding.
+
+**`2ef51ea` — DST fall-through for the eligible-again helper.** After Jose's verification query showed session `TimeZone = 'UTC'`, swapped `addCalendarDaysInTz` (Intl + Date.UTC calendar rollover) for `addFixedDays` (`getTime() + 30 * 86_400_000`). Matches the trigger under the session's UTC semantics. Verification query preserved in the header so a future TimeZone change is one paste away.
+
+**`e62b548` — Warnings panel V1 (manager portal only).** Six predicates evaluated live from CRM state (zero new fetches): portal-approved-enforcement-denied · enforcement-authorized-portal-pending · duplicate resident · active resident no authorized vehicle · pending vehicles aging (7d threshold) · unit-spelling collision. Two-tier severity (red/amber), leasing-office plain-language copy, tab badge on Insights. Live compute, no dismissal, no storage — self-clearing list. CA-portal parity deferred to V2 (CA has no per-property residents/vehicles state today).
+
+**`7ca0d29` — Warnings V1.1.** Duplicate-resident row names every unit variant (Sayra: `"117"`/`"#117"`/`"Apt 117"`), counts only live rows, restates the harm as "vehicles and records split across entries" (portal-lockout was a `cc3bc4d`-era symptom). Post-processing: dedup red rows by `(kind, normalized_plate)` so `BULKAPPROVE` under two unit spellings renders once. Post-processing: suppress unit-collision rows subsumed by a single-resident duplicate. Added session-only collapsible rows — DELIBERATELY not persisted (persisted collapse = acknowledgement, which is V2; a red row must never be silenceable across reloads).
+
+---
+
+## FINDINGS — August 5–8 (change how the system is understood)
+
+### 🔴 swift-handler cannot resolve any user
+`e5369f8`'s follow-on driver probe found that swift-handler's `deactivate_user` returns `"User not found"` for demonstrably-live users. Pagination hypothesis ruled out — Jose's rank query returned 12, 29, 34 for failing accounts (all inside the first 50 auth users). Manager, leasing-agent, and driver deactivation have been **column-only operations reporting themselves as auth-level ones** for the life of the product. Access revocation works via `user_roles.is_active`; the login block never has. Leading suspects for the handler bug: wrong client (anon key or user JWT rather than service role), wrong project URL, or `auth.users` accessed via PostgREST. Handler body still to be pasted from Jose's Supabase dashboard.
+
+### 🔴 `user_roles.is_active` is the load-bearing control, not the swift-handler ban
+Portal-mount `evaluatePortalGate` calls `get_my_effective_active` which reads `user_roles.is_active` at [migrations/20260617_deactivation_model.sql:123](migrations/20260617_deactivation_model.sql#L123). Login checks neither column. The comment at `company_admin/page.tsx:2508-2511` asserting ban-load-bearing was wrong when written, and `1d08135` + `db0107a` inherited it before the premise was caught. `a78d129` reversed the ordering. Corrected comment sits at the top of `toggleUserActive` now, cross-refs Jose's probe.
+
+### 🔴 The `msgBox` severity bug wasn't hygiene — it concealed total failure
+`docs/backlog/ca-msgbox-severity-derived-from-text.md` promoted from MEDIUM to RED on Aug 8. The text-sniff heuristic (`msg.startsWith('Error') || msg.includes('failed')`) rendered `"User not found"` as GREEN — hiding total mgr/LA/driver deactivation failure since launch. Now deprecated at the function definition with a long comment naming what it concealed.
+
+### Session `TimeZone` is UTC-equivalent (measured 2026-08-08)
+Verified via Jose's boundary query in `app/lib/visitor-pass-cap.ts` header. `interval '30 days'` on `timestamptz` is a fixed 720 hours (UTC has no DST). Confirmed once by observation; the query is retained in the header for the next reader.
+
+### Insights is ungated on both portals
+Manager `Insights` tab: no `hasFeature()` check. CA `Insights` tab: default landing under `CA_CRM_REDESIGN=true`. Neither is enforcement-tier-only. Warnings panel placement fits both by design; V1 shipped manager-only because the CA portal has no per-property residents/vehicles state.
+
+### `hello@shieldmylot.com` is a fourth support address on end-user surfaces
+`/deactivated` page has 3 `hello@` and 1 `support@` — the Aug 5 audit missed all of them because it searched for `support@` only. Backlog addendum filed at `docs/backlog/support-address-end-user-audit-2026-08-05.md`; discipline: widen audit queries to the class boundary, not the first known instance.
+
+### Disciplines earned this week
+- **Handler plus button in source is not a rendered affordance.** Reading catches source truth; only looking catches the deployment gate. Recorded in `feedback_reading_vs_looking.md`. Extension for the RPC-body side: grep every migration that `CREATE OR REPLACE`s a function name — superseded migration files carry bodies that no longer exist in the DB.
+- **A UI that derives severity from message text hides the failure of whatever it reports on.** Recorded in `feedback_severity_from_text_hides_downstream_failures.md`. The concealment class is the reporter's own bug amplifying every downstream defect.
+- **Write the verification query into the header alongside the assumption.** Recorded in `feedback_write_the_check_with_the_assumption.md`. Reading-vs-looking asks "did you check?"; this asks "did you make it possible for the next reader to check in one paste?"
+- **Three-state severity is often required, not just two.** Partial (primary control succeeded, defense-in-depth failed) is meaningfully different from full success and full failure. Companion audit key `<mechanism>_applied: false` becomes the post-fix remediation list.
 
 ---
 
