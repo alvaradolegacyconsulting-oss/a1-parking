@@ -105,8 +105,12 @@ export async function POST(req: NextRequest) {
   //
   // Fail-open at every branch (unresolvable env, unset override,
   // divergent lookup) sends normally. The gate never suppresses.
+  // 2026-08-09 v1.2 — helper no longer takes supabase. Env lookup runs
+  // under service_role internally so the routing decision is invariant
+  // across caller sessions (see helper header). Caller's auth check
+  // + RLS-scoped residents SELECT above still gates who can trigger
+  // the send.
   const sendResult = await sendCompanyScopedEmail({
-    supabase,
     to: resident.email,
     subject,
     html,
