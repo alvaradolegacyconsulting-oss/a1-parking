@@ -1,7 +1,7 @@
 import 'server-only'
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
-import { sendEmail } from '../../../lib/resend-client'
+import { sendCompanyScopedEmail } from '../../../lib/company-scoped-email'
 
 // Resident approval / decline notification endpoint.
 //
@@ -91,10 +91,26 @@ export async function POST(req: NextRequest) {
     ? renderApprovedHtml({ name, property })
     : renderDeclinedHtml({ name, property, note: noteText || null })
 
-  const sendResult = await sendEmail({
+  // 2026-08-09 Commit B — routes through sendCompanyScopedEmail (was
+  // sendEmail). Every send from this route now passes through the
+  // safe-test gate: recipients whose company_env is 'test' or 'demo'
+  // redirect to EMAIL_OVERRIDE_TO when that env var is set, subject
+  // gets a "[TEST → <originalTo>] " marker so redirected mail is
+  // unmistakable, response reports the outcome and both recipients so
+  // Vercel logs make the gate's decisions observable.
+  //
+  // Anchor: resident_id — the identity is already available on the
+  // request body, and residents.id is unique by construction so no
+  // multiplicity resolution is needed for this call site.
+  //
+  // Fail-open at every branch (unresolvable env, unset override,
+  // divergent lookup) sends normally. The gate never suppresses.
+  const sendResult = await sendCompanyScopedEmail({
+    supabase,
     to: resident.email,
     subject,
     html,
+    companyAnchor: { kind: 'resident_id', residentId: body.residentId },
   })
 
   if (!sendResult.ok) {
@@ -105,8 +121,11 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({
-    ok: true,
-    message_id: sendResult.message_id || null,
+    ok:          true,
+    message_id:  sendResult.message_id || null,
+    outcome:     sendResult.outcome,      // 'sent' | 'overridden'
+    originalTo:  sendResult.originalTo,
+    actualTo:    sendResult.actualTo,
   })
 }
 
