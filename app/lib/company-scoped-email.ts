@@ -139,7 +139,38 @@ export async function sendCompanyScopedEmail(args: SendCompanyScopedArgs): Promi
     ...(args.text !== undefined ? { text: args.text } : {}),
   } as Parameters<typeof sendEmail>[0])
 
+  // ── Observability (Mateo Aug 9 marker-question follow-up) ─────────
+  //
+  // Before this section existed, both overridden and sent outcomes
+  // logged only [resend-client] sent — a redirect and a normal send
+  // looked identical in Vercel logs. Same class as the msgBox
+  // severity finding: the reporter didn't distinguish two very
+  // different states. Fixed here so gate probes are interpretable.
+  //
+  // One distinctive tag per outcome:
+  //   [company-scoped-email:overridden]   — redirect fired
+  //   [company-scoped-email:passthrough]  — normal send, env known
+  //   [company-scoped-email:unresolvable] — normal send, env NULL
+  //                                         (fail-open branch)
+  //   [company-scoped-email:override-unset] — env was test/demo but
+  //                                           EMAIL_OVERRIDE_TO not set
+  //                                           (still normal send; still
+  //                                           worth surfacing so a
+  //                                           missing env var is loud)
+  //   [company-scoped-email:failed]       — sendEmail returned !ok
+  //
+  // Every tag carries the anchor kind (not the resolved recipient's
+  // identity — Vercel logs are shared with observability tooling and
+  // shouldn't accumulate PII beyond the address itself which
+  // sendEmail already logs).
+  const anchorKind = args.companyAnchor.kind
   if (!send.ok) {
+    console.error('[company-scoped-email:failed]', {
+      anchor:     anchorKind,
+      resolved:   { env, shouldRedirect },
+      originalTo, actualTo,
+      error:      send.error,
+    })
     return {
       ok:         false,
       message_id: null,
@@ -148,6 +179,43 @@ export async function sendCompanyScopedEmail(args: SendCompanyScopedArgs): Promi
       actualTo,
       error:      send.error,
     }
+  }
+
+  if (shouldRedirect) {
+    console.log('[company-scoped-email:overridden]', {
+      anchor: anchorKind, env,
+      originalTo, actualTo,
+      message_id: send.message_id,
+    })
+  } else if (env === null) {
+    // env couldn't be resolved (missing / miss / divergent). The
+    // divergent branch already logged its own detailed warning; this
+    // catches the plainer misses too so a passthrough that happened
+    // for the WRONG reason (couldn't resolve) is distinguishable
+    // from a passthrough that happened for the RIGHT reason (env is
+    // production).
+    console.log('[company-scoped-email:unresolvable]', {
+      anchor: anchorKind,
+      originalTo, actualTo,
+      message_id: send.message_id,
+      note: 'env not resolvable; fell through to normal send per fail-open rule. If the env should have been test/demo, check the anchor resolution.',
+    })
+  } else if ((env === 'test' || env === 'demo') && !overrideTo) {
+    // Env said redirect but no override address set. Send went to
+    // real recipient. Loud because a missing env var is easy to
+    // introduce and easy to miss.
+    console.warn('[company-scoped-email:override-unset]', {
+      anchor: anchorKind, env,
+      originalTo, actualTo,
+      message_id: send.message_id,
+      note: 'company_env is test/demo but EMAIL_OVERRIDE_TO is not set. Mail delivered to intended recipient (fail-open per policy). Set EMAIL_OVERRIDE_TO in Vercel project scope to redirect.',
+    })
+  } else {
+    console.log('[company-scoped-email:passthrough]', {
+      anchor: anchorKind, env,
+      originalTo, actualTo,
+      message_id: send.message_id,
+    })
   }
 
   return {
