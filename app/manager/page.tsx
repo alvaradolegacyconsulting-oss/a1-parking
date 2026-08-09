@@ -2126,6 +2126,14 @@ export default function ManagerPortal() {
         note:      args.note,
         actor:     managerEmail,
         property,
+        // 2026-08-09 Commit D — manager-initiated single-vehicle
+        // deactivation. Every cascade path (trim / unit-vacant / admin
+        // property) bypasses the writer entirely and is exempt-by-
+        // construction; the deactivateVehicleWrite writer sees only
+        // this call site, so notify=true is the only sensible value.
+        // Reason code's `notifies` field is the final gate:
+        // plate_superseded / registered_in_error suppress even here.
+        notify:    true,
       })
       if (!result.ok) {
         alert(`Deactivate failed: ${result.message ?? 'The database rejected the deactivation.'}`)
