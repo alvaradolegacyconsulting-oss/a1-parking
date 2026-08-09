@@ -36,13 +36,24 @@ After the constraint lands: delete the route's `!v.property → failed`
 branch. It becomes genuinely unreachable and the correctly-labeled
 schema-drift guard is no longer needed.
 
-## 2. 🔴 `deactivate_vehicle` RPC scope-gate silently passes NULL property — **SHIPPING NOW**
+## 2. 🔴 `deactivate_vehicle` RPC scope-gate silently passes NULL property — **FIXED 2026-08-09**
 
-**Status:** 2026-08-09 — being fixed in its own commit alongside this
-backlog note per Mateo Aug 9 review ("filing a P1 authority bypass
-behind a backlog file when the fix is a `COALESCE` is the wrong
-trade"). This section stays as the diagnosis record; enumeration of
-sibling DEFINER RPCs follows below.
+**Status:** SHIPPED in
+[migrations/20260809_deactivate_vehicle_null_property_scope_hardening.sql](../../migrations/20260809_deactivate_vehicle_null_property_scope_hardening.sql).
+Two-layer fix:
+- Layer 1: distinct `vehicle_property_missing` error class BEFORE the
+  scope check.
+- Layer 2: `IF NOT COALESCE(v_in_scope, false) THEN` on the scope
+  decision (defense-in-depth belt for any future column added to the
+  gate that could return NULL).
+
+**Sibling enumeration** delivered in
+[definer-rpc-scope-gate-null-audit-2026-08-09.md](definer-rpc-scope-gate-null-audit-2026-08-09.md).
+One direct confirmed-vulnerable sibling (`approve_vehicle`) plus five
+"needs nullability verification" RPCs keyed on `user_roles.company`
+or `user_roles.property` — Jose queries included in the audit doc.
+
+This section stays as the deactivate_vehicle-specific diagnosis record.
 
 
 Discovered during D-8 diagnosis. The RPC at
