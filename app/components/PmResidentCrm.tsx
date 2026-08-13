@@ -272,10 +272,69 @@ function useResidentDecisionGuard(
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// useVehicleDecisionGuard — Commit E fast-follow (2026-08-13)
+// ══════════════════════════════════════════════════════════════════════
+//
+// Parallel to useResidentDecisionGuard for the vehicle approve/decline
+// buttons on VehicleCard. Preflight bucket query (Mateo Aug 13 sibling
+// run):
+//   APPROVE_VEHICLE:  4 pairs, tightest 0.215s
+//   DECLINE_VEHICLE:  1 pair,  tightest 0.396s
+// Same double-click class as the resident-decision buttons. Plate-
+// change decisions returned zero pairs and are NOT wired.
+//
+// Render-condition invariant re-verified per surface (Mateo Aug 13):
+// "unmount-release argument holds only where the button's render
+// condition is the same field the action mutates." Confirmed for
+// VehicleCard at :1299-1300:
+//   const isPending  = vehicleDisplayStatus(v) === 'pending'
+//   const showApprove = isPending && ...
+//   const showDecline = isPending && ...
+// approve_vehicle RPC sets is_active=TRUE, status='active'; decline
+// sets is_active=FALSE, status='declined' (app/lib/manager-crm-writes.
+// ts:620). Both flip vehicleDisplayStatus(v) out of 'pending' →
+// showApprove/showDecline become false → button subtree unmounts.
+// Guard state dies with unmount, same as resident case.
+//
+// Handler signature differs from resident version — vehicles pass
+// (id: string | number) not the whole object. Keyed by String(id).
+// ══════════════════════════════════════════════════════════════════════
+
+function useVehicleDecisionGuard(
+  onApprove: (id: string | number) => Promise<void>,
+  onDecline: (id: string | number) => Promise<void>,
+) {
+  const [busy, setBusy] = useState<{ id: string; kind: DecisionKind } | null>(null)
+  const inFlight = useRef<Set<string>>(new Set())
+
+  const guard = (kind: DecisionKind, fn: (id: string | number) => Promise<void>) =>
+    async (id: string | number) => {
+      const key = String(id)
+      if (inFlight.current.has(key)) return
+      inFlight.current.add(key)
+      setBusy({ id: key, kind })
+      try {
+        await fn(id)
+      } catch (e) {
+        inFlight.current.delete(key)
+        setBusy(null)
+        throw e
+      }
+    }
+
+  return {
+    approve: guard('approve', onApprove),
+    decline: guard('decline', onDecline),
+    busyFor: (id: string | number): DecisionKind | null =>
+      busy?.id === String(id) ? busy.kind : null,
+  }
+}
+
 export default function PmResidentCrm({
   crmResidents, propertyName, availableSpaces, unitOccupancy,
   canApproveVehicles, isReadOnly,
-  onApproveVehicle, onDeclineVehicle,
+  onApproveVehicle: onApproveVehicleRaw, onDeclineVehicle: onDeclineVehicleRaw,
   onApproveResident: onApproveResidentRaw, onDeclineResident: onDeclineResidentRaw,
   onApproveAllPending,
   onReleaseSpace, onAssignSpaceRequest, onDeclineSpaceRequest,
@@ -295,6 +354,14 @@ export default function PmResidentCrm({
   const decisionGuard = useResidentDecisionGuard(onApproveResidentRaw, onDeclineResidentRaw)
   const onApproveResident = decisionGuard.approve
   const onDeclineResident = decisionGuard.decline
+
+  // Commit E fast-follow — vehicle approve/decline guard. See
+  // useVehicleDecisionGuard header for the render-condition invariant
+  // re-check on VehicleCard. Same double-click class, same
+  // unmount-release release semantics.
+  const vehicleDecisionGuard = useVehicleDecisionGuard(onApproveVehicleRaw, onDeclineVehicleRaw)
+  const onApproveVehicle = vehicleDecisionGuard.approve
+  const onDeclineVehicle = vehicleDecisionGuard.decline
 
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
@@ -564,6 +631,7 @@ export default function PmResidentCrm({
                     onEditVehicle={onEditVehicle}
                     unitOccupancy={unitOccupancy}
                     onOpenAddVehicle={onOpenAddVehicle}
+                    getVehicleDecisionBusy={vehicleDecisionGuard.busyFor}
                   />
                 )}
                 {subTab === 'spaces' && (
@@ -1151,7 +1219,7 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
   )
 }
 
-function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, onOpenAddVehicle }: {
+function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, onOpenAddVehicle, getVehicleDecisionBusy }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -1164,6 +1232,9 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
   onEditVehicle: (id: string | number, patch: Record<string, any>) => Promise<void>
   unitOccupancy: UnitOccupancyMap | null
   onOpenAddVehicle: (resident: CrmResident) => void
+  // Commit E fast-follow — per-vehicle busy lookup. Passed through to
+  // VehicleCard so each card queries its own v.id.
+  getVehicleDecisionBusy: (id: string | number) => DecisionKind | null
 }) {
   // 2026-08-08 — Add Vehicle affordance. Gated on the aggregate
   // residentDisplayStatus (matches the pattern at :721 for the
@@ -1219,13 +1290,14 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
           onReactivateVehicle={onReactivateVehicle}
           onEditVehicle={onEditVehicle}
           unitOccupancy={unitOccupancy}
+          decisionBusy={getVehicleDecisionBusy(v.id)}
         />
       ))}
     </>
   )
 }
 
-function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy }: {
+function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, decisionBusy }: {
   v: any
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -1237,6 +1309,9 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   onReactivateVehicle: (id: string | number) => Promise<void>
   onEditVehicle: (id: string | number, patch: Record<string, any>) => Promise<void>
   unitOccupancy: UnitOccupancyMap | null
+  // Commit E fast-follow — set when this vehicle has an in-flight
+  // approve/decline. Buttons render disabled with "-ing…" label.
+  decisionBusy: DecisionKind | null
 }) {
   // Slice 6 — inline edit mode + form state. Plate is DELIBERATELY NOT
   // in the form — it's read-only on the plate chip. If the resident
@@ -1416,18 +1491,26 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
       {(showApprove || showDecline) && (
         <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
           {showApprove && (
-            <button onClick={() => onApproveVehicle(v.id)} style={{
+            <button onClick={() => onApproveVehicle(v.id)}
+              disabled={decisionBusy !== null}
+              style={{
               flex: 1, padding: '8px', background: C.greenSoft, color: C.green,
               border: `1px solid ${C.greenLine}`, borderRadius: '6px',
-              cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
-            }}>Approve</button>
+              cursor: decisionBusy !== null ? 'wait' : 'pointer',
+              opacity: decisionBusy !== null ? 0.55 : 1,
+              fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+            }}>{decisionBusy === 'approve' ? 'Approving…' : 'Approve'}</button>
           )}
           {showDecline && (
-            <button onClick={() => onDeclineVehicle(v.id)} style={{
+            <button onClick={() => onDeclineVehicle(v.id)}
+              disabled={decisionBusy !== null}
+              style={{
               flex: showApprove ? 1 : undefined, padding: '8px 14px', background: C.redSoft, color: C.red,
               border: `1px solid ${C.redLine}`, borderRadius: '6px',
-              cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
-            }}>Decline</button>
+              cursor: decisionBusy !== null ? 'wait' : 'pointer',
+              opacity: decisionBusy !== null ? 0.55 : 1,
+              fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+            }}>{decisionBusy === 'decline' ? 'Declining…' : 'Decline'}</button>
           )}
         </div>
       )}
