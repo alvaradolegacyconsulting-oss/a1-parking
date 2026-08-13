@@ -4,14 +4,22 @@
 -- DEFAULT NULL preserved, grants preserved, both hardening layers
 -- present in the function body, comment updated, schema audit row landed.
 --
--- 🔴 RETURNS-ROWS PATTERN (Mateo Aug 9)
--- The `RAISE EXCEPTION`-only pattern used by prior verification
+-- 🔴 RETURNS-ROWS PATTERN v2 (Mateo Aug 13 correction)
+-- The `RAISE EXCEPTION`-only pattern (v0) used by prior verification
 -- migrations produced silent success — Jose could not distinguish
 -- "no rows because passed" from "no rows because I forgot to run".
--- This file ends with a final SELECT that returns ONE row on pass
--- listing every VQ gate checked. If any DO block RAISEs, the tx
--- aborts before that SELECT and Jose sees the exception message.
--- If Jose runs it and gets one row back → PASS, clearly visible.
+--
+-- v1 (Aug 9) added a final `SELECT 'PASS' ... ;` before `COMMIT;` —
+-- but the Supabase SQL Editor returns the result of the LAST
+-- statement in the paste, which was `COMMIT` (returns nothing). The
+-- PASS row was generated and discarded before Jose could see it.
+--
+-- v2: **no BEGIN/COMMIT wrap.** This file is a read-only assertion
+-- — every gate is a `DO $$ … END $$;` that RAISEs on failure and a
+-- terminal `SELECT`. There is nothing to roll back on pass, and any
+-- RAISE aborts the entire multi-statement paste in the SQL Editor
+-- with the exception message visible. Jose sees exactly two
+-- outcomes: PASS row on success, exception message on failure.
 --
 -- 🔴 Function lookup uses `pg_get_function_identity_arguments`
 -- (stable identity signature, no DEFAULTs) so a future default tweak
@@ -23,7 +31,6 @@
 -- Paste WHOLE. Expect: one row `PASS | approve_vehicle(BIGINT,TEXT) | {8 gates} | <ts>`.
 -- ══════════════════════════════════════════════════════════════════════
 
-BEGIN;
 
 -- ── VQ.RPC_EXISTS ────────────────────────────────────────────────────
 DO $$
@@ -170,5 +177,3 @@ SELECT
     'SCHEMA_AUDIT_ROW'
   ]                                     AS gates_verified,
   now()                                 AS verified_at;
-
-COMMIT;

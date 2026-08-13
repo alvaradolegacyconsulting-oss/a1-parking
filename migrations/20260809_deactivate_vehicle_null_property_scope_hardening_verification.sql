@@ -3,21 +3,23 @@
 -- POST-APPLY: RPC still exists at same identity signature, defaults
 -- preserved, grants preserved, both hardening layers present in the
 -- function body, comment updated, schema audit row landed.
--- BEGIN…COMMIT wrap — aborts at first RAISE. Silent = pass.
+-- 🔴 RETURNS-ROWS PATTERN v2 (Mateo Aug 13 correction — see paired
+-- approve_vehicle verification header for the full rationale). No
+-- BEGIN/COMMIT wrap. Every gate is a `DO $$ … END $$;` that RAISEs
+-- on failure; terminal SELECT returns one row on pass. SQL Editor
+-- returns the result of the last statement — the PASS row is visible.
 --
 -- 🔴 Function lookup uses `pg_get_function_identity_arguments` (the
--- stable identity signature — no DEFAULTs, no parameter names' fillers)
--- rather than `pg_get_function_arguments` (which includes DEFAULT
--- expressions and would drift with any harmless default tweak). The
--- default-preservation check is its own VQ.DEFAULTS_PRESERVED gate
--- below.
+-- stable identity signature — no DEFAULTs) rather than
+-- `pg_get_function_arguments` (which includes DEFAULT expressions and
+-- drifts with harmless tweaks). Default preservation has its own
+-- VQ.DEFAULTS_PRESERVED gate below.
 -- ══════════════════════════════════════════════════════════════════════
 --
 -- Run AFTER 20260809_deactivate_vehicle_null_property_scope_hardening.sql.
--- Paste WHOLE.
+-- Paste WHOLE. Expect: one row `PASS | deactivate_vehicle(BIGINT,TEXT,TEXT) | {8 gates} | <ts>`.
 -- ══════════════════════════════════════════════════════════════════════
 
-BEGIN;
 
 -- ── VQ.RPC_EXISTS ────────────────────────────────────────────────────
 -- Identity signature is unchanged from 20260806 install; hardening
@@ -155,4 +157,21 @@ BEGIN
   END IF;
 END $$;
 
-COMMIT;
+-- ── FINAL: return one row on pass ─────────────────────────────────
+-- All eight DO blocks passed (any RAISE aborts the paste before this
+-- SELECT). This row is the visible evidence of pass so Jose can
+-- distinguish silent success from not-run.
+SELECT
+  'PASS'::TEXT                                    AS status,
+  'deactivate_vehicle(BIGINT,TEXT,TEXT)'::TEXT    AS function_name,
+  ARRAY[
+    'RPC_EXISTS',
+    'DEFAULTS_PRESERVED',
+    'RPC_STILL_DEFINER',
+    'LAYER_1_PROPERTY_PRESENCE_GATE',
+    'LAYER_2_COALESCE_SCOPE_FLAG',
+    'GRANTS_PRESERVED',
+    'COMMENT_UPDATED',
+    'SCHEMA_AUDIT_ROW'
+  ]                                               AS gates_verified,
+  now()                                           AS verified_at;
