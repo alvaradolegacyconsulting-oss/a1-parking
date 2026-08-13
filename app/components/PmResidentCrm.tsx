@@ -6,7 +6,7 @@
 // Anti-N+1 contract: this component receives already-grouped CrmResident[]
 // from the parent. Zero DB access here; grouping done in app/lib/pm-crm.ts.
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus, NoAuthorizedBucket } from '@/app/lib/pm-crm'
 import {
   computeInsights, filterCrmRows, initials, residentDisplayStatus,
@@ -188,11 +188,95 @@ const plateChipStyle: React.CSSProperties = {
   display: 'inline-block',
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// useResidentDecisionGuard — Commit E (2026-08-13)
+// ══════════════════════════════════════════════════════════════════════
+//
+// Preflight (see docs/backlog + audit_logs Q1 bucket query, 2026-08-13):
+// six duplicate APPROVE_RESIDENT / DECLINE_RESIDENT audit pairs over
+// five weeks. `distinct_message_ids == notify_rows` in every group
+// (two rows = two emails actually sent), same actor in every group,
+// 5 of 6 under 1.3s, one outlier at 4.26s over three sends. Signature
+// of a client-side double-click, not a server-side re-fire.
+//
+// Mateo Aug 13 spec — the plain "disabled during promise" guard is not
+// enough. If the promise resolves before the CRM refetch visibly
+// updates the queue, the button re-enables and the manager clicks
+// again in good faith. Guard must hold **through the refetch** —
+// release only when the row visibly leaves the pending queue.
+//
+// This hook implements four layers:
+//   1. `isBusy` state disabling the button on click (per-resident+kind)
+//   2. `useRef` synchronous guard so a rapid second click cannot fire
+//      before React re-renders (also covers strict-mode
+//      double-invocation concerns)
+//   3. NO release on the success path. The buttons only render when
+//      `resident.status === 'pending'`; a successful approve/decline
+//      flips status out of pending, the parent's refetch surfaces the
+//      new status, showApprove/showDecline become false, and the
+//      button subtree UNMOUNTS. Guard state dies with the unmount.
+//      That is the "release through refetch" — automatic by virtue of
+//      the render condition, no timer, no explicit refetch signal.
+//   4. Release ONLY on the error path (setState + inFlight.delete),
+//      so the manager can retry after a network/RPC failure.
+//
+// Guard is keyed by resident.id so a bulk-approve of many residents
+// (via a different code path — this hook only wraps single-resident
+// buttons) or a second manager acting on a different resident is not
+// blocked. Preflight confirmed the pattern is same-actor same-resident.
+//
+// Deliberately NOT server-side: Mateo Aug 13 held the audit_logs
+// dedup check in reserve pending Green Acres impact from the client
+// guard. Re-run the Q1 bucket query in two weeks; zero new pairs =
+// arc closed.
+// ══════════════════════════════════════════════════════════════════════
+
+type DecisionKind = 'approve' | 'decline'
+
+function useResidentDecisionGuard(
+  onApprove: (r: CrmResident) => Promise<void>,
+  onDecline: (r: CrmResident) => Promise<void>,
+) {
+  const [busy, setBusy] = useState<{ id: string; kind: DecisionKind } | null>(null)
+  const inFlight = useRef<Set<string>>(new Set())
+
+  const guard = (kind: DecisionKind, fn: (r: CrmResident) => Promise<void>) =>
+    async (r: CrmResident) => {
+      const id = String(r.id)
+      // Synchronous double-click guard — blocks the second click
+      // before React has a chance to re-render with `busy` set. Also
+      // makes the wrapper safe against strict-mode double invocation.
+      if (inFlight.current.has(id)) return
+      inFlight.current.add(id)
+      setBusy({ id, kind })
+      try {
+        await fn(r)
+        // Success: leave busy set. Parent's refetch flips r.status,
+        // showApprove/showDecline become false, buttons unmount. State
+        // dies with the unmount. See header §3.
+      } catch (e) {
+        // Error: release so the manager can retry.
+        inFlight.current.delete(id)
+        setBusy(null)
+        throw e
+      }
+    }
+
+  return {
+    approve: guard('approve', onApprove),
+    decline: guard('decline', onDecline),
+    // Returns which button (if any) is currently busy for this resident.
+    // Null if this resident has no in-flight decision.
+    busyFor: (id: string | number): DecisionKind | null =>
+      busy?.id === String(id) ? busy.kind : null,
+  }
+}
+
 export default function PmResidentCrm({
   crmResidents, propertyName, availableSpaces, unitOccupancy,
   canApproveVehicles, isReadOnly,
   onApproveVehicle, onDeclineVehicle,
-  onApproveResident, onDeclineResident,
+  onApproveResident: onApproveResidentRaw, onDeclineResident: onDeclineResidentRaw,
   onApproveAllPending,
   onReleaseSpace, onAssignSpaceRequest, onDeclineSpaceRequest,
   onApprovePlateChange, onDeclinePlateChange,
@@ -203,6 +287,15 @@ export default function PmResidentCrm({
   onOpenAddVehicle,
   onExportLogged,
 }: Props) {
+  // Commit E — submit guard on approve/decline resident buttons. See
+  // useResidentDecisionGuard header. Wraps the incoming handlers with
+  // in-flight tracking + busy state so a rapid second click cannot
+  // fire a duplicate email while the first request is still returning
+  // or the refetch is still landing.
+  const decisionGuard = useResidentDecisionGuard(onApproveResidentRaw, onDeclineResidentRaw)
+  const onApproveResident = decisionGuard.approve
+  const onDeclineResident = decisionGuard.decline
+
   const [filter, setFilter] = useState<CrmFilter>('all')
   const [search, setSearch] = useState('')
   const [selectedEmail, setSelectedEmail] = useState<string | null>(
@@ -439,6 +532,7 @@ export default function PmResidentCrm({
                 onDeclineResident={onDeclineResident}
                 onDeactivateResident={onDeactivateResident}
                 onReactivateResident={onReactivateResident}
+                decisionBusy={decisionGuard.busyFor(selected.id)}
               />
               <FactsStrip resident={selected} />
               <SubTabBar tab={subTab} setTab={setSubTab} resident={selected} />
@@ -453,6 +547,7 @@ export default function PmResidentCrm({
                     onJumpToGuests={() => setSubTab('guests')}
                     onEditResident={onEditResident}
                     unitOccupancy={unitOccupancy}
+                    decisionBusy={decisionGuard.busyFor(selected.id)}
                   />
                 )}
                 {subTab === 'vehicles' && (
@@ -623,7 +718,7 @@ function EmptyDetail() {
   )
 }
 
-function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onDeactivateResident, onReactivateResident }: {
+function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onDeactivateResident, onReactivateResident, decisionBusy }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -631,6 +726,10 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
   onDeclineResident: (r: CrmResident) => Promise<void>
   onDeactivateResident: (r: CrmResident) => Promise<void>
   onReactivateResident: (r: CrmResident) => Promise<void>
+  // Commit E — set when a decision is in flight for this resident.
+  // Buttons render disabled with a "-ing…" label. See
+  // useResidentDecisionGuard header for the release semantics.
+  decisionBusy: DecisionKind | null
 }) {
   const showApprove = resident.status === 'pending' && canApproveVehicles && !isReadOnly
   const showDecline = resident.status === 'pending' && !isReadOnly
@@ -661,18 +760,26 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
         {(showApprove || showDecline || showDeactivate || showReactivate) && (
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {showApprove && (
-              <button onClick={() => onApproveResident(resident)} title="Cascades to pending vehicles" style={{
+              <button onClick={() => onApproveResident(resident)}
+                disabled={decisionBusy !== null}
+                title="Cascades to pending vehicles" style={{
                 padding: '8px 14px', background: C.greenSoft, color: C.green,
                 border: `1px solid ${C.greenLine}`, borderRadius: '6px',
-                cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
-              }}>Approve resident</button>
+                cursor: decisionBusy !== null ? 'wait' : 'pointer',
+                opacity: decisionBusy !== null ? 0.55 : 1,
+                fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+              }}>{decisionBusy === 'approve' ? 'Approving…' : 'Approve resident'}</button>
             )}
             {showDecline && (
-              <button onClick={() => onDeclineResident(resident)} style={{
+              <button onClick={() => onDeclineResident(resident)}
+                disabled={decisionBusy !== null}
+                style={{
                 padding: '8px 14px', background: C.redSoft, color: C.red,
                 border: `1px solid ${C.redLine}`, borderRadius: '6px',
-                cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
-              }}>Decline</button>
+                cursor: decisionBusy !== null ? 'wait' : 'pointer',
+                opacity: decisionBusy !== null ? 0.55 : 1,
+                fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+              }}>{decisionBusy === 'decline' ? 'Declining…' : 'Decline'}</button>
             )}
             {showDeactivate && (
               <button onClick={() => onDeactivateResident(resident)}
@@ -829,7 +936,7 @@ function SubTabBar({ tab, setTab, resident }: { tab: SubTab; setTab: (t: SubTab)
 
 // ── Sub-tab panes ────────────────────────────────────────────────────
 
-function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onJumpToGuests, onEditResident, unitOccupancy }: {
+function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onJumpToGuests, onEditResident, unitOccupancy, decisionBusy }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -838,6 +945,8 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
   onJumpToGuests: () => void
   onEditResident: (id: string | number, patch: Record<string, any>) => Promise<void>
   unitOccupancy: UnitOccupancyMap | null
+  // Commit E — see DetailHeader's decisionBusy comment.
+  decisionBusy: DecisionKind | null
 }) {
   // Slice 6 — resident cosmetic edit (phone / lease_end / manager_note).
   // Tags deferred to a later iteration (needs multi-value input UI).
@@ -919,18 +1028,26 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
           {(showApproveResident || showDeclineResident) && (
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {showApproveResident && (
-                <button onClick={() => onApproveResident(resident)} title="Cascades to pending vehicles" style={{
+                <button onClick={() => onApproveResident(resident)}
+                  disabled={decisionBusy !== null}
+                  title="Cascades to pending vehicles" style={{
                   padding: '7px 12px', background: C.greenSoft, color: C.green,
                   border: `1px solid ${C.greenLine}`, borderRadius: '6px',
-                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
-                }}>Approve resident</button>
+                  cursor: decisionBusy !== null ? 'wait' : 'pointer',
+                  opacity: decisionBusy !== null ? 0.55 : 1,
+                  fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>{decisionBusy === 'approve' ? 'Approving…' : 'Approve resident'}</button>
               )}
               {showDeclineResident && (
-                <button onClick={() => onDeclineResident(resident)} style={{
+                <button onClick={() => onDeclineResident(resident)}
+                  disabled={decisionBusy !== null}
+                  style={{
                   padding: '7px 12px', background: C.redSoft, color: C.red,
                   border: `1px solid ${C.redLine}`, borderRadius: '6px',
-                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
-                }}>Decline</button>
+                  cursor: decisionBusy !== null ? 'wait' : 'pointer',
+                  opacity: decisionBusy !== null ? 0.55 : 1,
+                  fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>{decisionBusy === 'decline' ? 'Declining…' : 'Decline'}</button>
               )}
             </div>
           )}
