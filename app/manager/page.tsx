@@ -690,7 +690,7 @@ export default function ManagerPortal() {
     // Commit 2 RLS. space_residents ties fetched once we know the space
     // IDs (one more batch).
     const [spacesRes, gaList, spaceReqsRes, pendingGuestRes] = await Promise.all([
-      supabase.from('spaces').select('id, label, type, status, is_active, assigned_to_resident_email, property').ilike('property', property),
+      supabase.from('spaces').select('id, label, type, status, is_active, assigned_to_resident_email, property, designated_vehicle_id').ilike('property', property),
       fetchActiveGuestAuths(supabase, { property }),
       // Slice 3.5 — correct columns. Actual schema has no requested_space_id
       // / requested_space_label (resident submits generically; PM picks the
@@ -4002,7 +4002,23 @@ export default function ManagerPortal() {
                               }}>{s.status}</span>
                               {!s.is_active && <span style={{ marginLeft:'4px', fontSize:'10px', color:'#666' }}>(inactive)</span>}
                             </td>
-                            <td style={{ padding:'8px', color:'#aaa' }}>{residentDisplayList(s.residents)}</td>
+                            <td style={{ padding:'8px', color:'#aaa' }}>
+                              {residentDisplayList(s.residents)}
+                              {/* 2026-08-19 designated-vehicle Commit 3 — chip after resident
+                                  name when a designation is set. Reference data only; the
+                                  in-modal display carries the "does not affect enforcement"
+                                  caveat. Chip is intentionally lower-key than an alert color
+                                  so a manager scanning the list reads it as info, not warning. */}
+                              {s.designated_vehicle_plate && (
+                                <span title="Designated vehicle (for your records — does not affect enforcement)" style={{
+                                  marginLeft:'8px', fontSize:'10px', padding:'2px 6px',
+                                  borderRadius:'8px', background:'#1a1400', color:'#C9A227',
+                                  border:'1px solid #3a2a00', fontFamily:'Courier New', fontWeight:'bold',
+                                }}>
+                                  ★ {s.designated_vehicle_plate}
+                                </span>
+                              )}
+                            </td>
                             <td style={{ padding:'8px', textAlign:'right' }}>
                               {!isReadOnly && (
                                 <>
@@ -4262,7 +4278,18 @@ export default function ManagerPortal() {
                 onMutate={async () => {
                   await refetchSpacesDashboard()
                   await refetchSpacesList()
+                  // Re-open with refreshed data so the designation
+                  // picker reflects the latest resolved plate. Look up
+                  // by id from the refreshed list.
+                  const refreshed = spacesList.find(s => s.id === targetSpaceDetail.id)
+                  if (refreshed) setTargetSpaceDetail(refreshed)
                 }}
+                // 2026-08-19 designated-vehicle Commit 3 — enable the
+                // picker for managers. Leasing agents get chip + copy
+                // only (no picker) via canEditDesignation=false. CA is
+                // Commit 4 (separate mount site in company_admin).
+                showDesignation={true}
+                canEditDesignation={!isReadOnly}
               />
             )}
 

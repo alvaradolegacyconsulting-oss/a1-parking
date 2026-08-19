@@ -80,6 +80,21 @@ export interface Space {
   // per page of spaces, ≤pageSize lookups). Order: alphabetical by name.
   // EMPTY ARRAY is a valid state (space has 0 ties → status='available').
   residents: ResidentOption[]
+
+  // 2026-08-19 designated-vehicle arc Commit 1 — the id of the ONE
+  // approved vehicle the PM has designated for this space. NULL means
+  // "any of the resident's approved vehicles" (today's enforcement
+  // behavior — unchanged). Reference data ONLY. Never consumed by
+  // driver / enforcement paths (locked non-goal — see migration
+  // 20260818_spaces_designated_vehicle_column_and_rpc.sql header).
+  designated_vehicle_id: number | null
+
+  // Denormalized plate for cheap chip rendering in list rows. Resolved
+  // by fetchSpacesList via one batched .in('id', ids) query per page.
+  // NULL when designated_vehicle_id is NULL OR the FK target vehicle
+  // is missing from this property's vehicles slice (defensive — trigger
+  // clears on vehicle deactivate/decline so this is normally impossible).
+  designated_vehicle_plate: string | null
 }
 
 // ── Pagination ──────────────────────────────────────────────────────
@@ -226,7 +241,7 @@ export async function fetchSpacesList(
     .range(page * pageSize, page * pageSize + pageSize - 1)
 
   const { data, count } = await q
-  const rawRows = (data ?? []) as Omit<Space, 'residents'>[]
+  const rawRows = (data ?? []) as Omit<Space, 'residents' | 'designated_vehicle_plate'>[]
 
   // v1.1 multi-resident: batch-load the residents array for every space on
   // this page. ONE round-trip via space_residents .in(space_id, ...) then a
@@ -238,14 +253,86 @@ export async function fetchSpacesList(
     property,
     rawRows.map(s => s.id),
   )
-  const rows: Space[] = rawRows.map(s => ({
-    ...s,
-    residents: residentsBySpaceId.get(s.id) ?? [],
-  }))
+
+  // 2026-08-19 designated-vehicle Commit 3 — batch-resolve plates for
+  // any spaces carrying a designated_vehicle_id. One extra .in('id', ids)
+  // query per page; symmetric with the residents batching above. Handles
+  // the vehicle-visibility miss defensively (returns NULL plate rather
+  // than throwing) — the lifecycle trigger from Commit 2 clears the FK
+  // on vehicle deactivate/decline so a stale pointer is normally
+  // impossible, but a race between fetch and trigger could show it.
+  const designatedIds = Array.from(new Set(
+    rawRows.map(s => (s as any).designated_vehicle_id).filter((v: any): v is number => typeof v === 'number')
+  ))
+  const plateById = new Map<number, string>()
+  if (designatedIds.length > 0) {
+    const { data: vehRows } = await supabase
+      .from('vehicles')
+      .select('id, plate')
+      .in('id', designatedIds)
+    for (const v of (vehRows ?? [])) {
+      if (typeof v.id === 'number') plateById.set(v.id, v.plate ?? '')
+    }
+  }
+
+  const rows: Space[] = rawRows.map(s => {
+    const dvId = (s as any).designated_vehicle_id ?? null
+    return {
+      ...s,
+      residents: residentsBySpaceId.get(s.id) ?? [],
+      designated_vehicle_id:    dvId,
+      designated_vehicle_plate: dvId != null ? (plateById.get(dvId) ?? null) : null,
+    }
+  })
 
   return {
     rows,
     totalCount: count ?? 0,
+  }
+}
+
+// ── setSpaceDesignatedVehicle — RPC wrapper (2026-08-19) ────────────
+// Wraps the set_space_designated_vehicle DEFINER RPC installed by
+// migration 20260818_spaces_designated_vehicle_column_and_rpc.sql.
+// Pass NULL vehicleId to clear. On success returns {ok:true, action:
+// 'set'|'cleared'}. On failure returns {ok:false, error:<code>,
+// hint?:<user-facing string>} — caller renders hint or falls back to
+// the code.
+//
+// Load-bearing scope-lock: this RPC's ONLY effect is on
+// spaces.designated_vehicle_id. It does NOT alter enforcement.
+// See the migration header for the full non-goal list.
+export interface SetSpaceDesignatedVehicleResult {
+  ok:      boolean
+  action?: 'set' | 'cleared'
+  error?:  string
+  hint?:   string
+}
+
+export async function setSpaceDesignatedVehicle(
+  supabase: SupabaseClient,
+  spaceId: number,
+  vehicleId: number | null,
+): Promise<SetSpaceDesignatedVehicleResult> {
+  const { data, error: rpcErr } = await supabase.rpc('set_space_designated_vehicle', {
+    p_space_id:   spaceId,
+    p_vehicle_id: vehicleId,
+  })
+  if (rpcErr) {
+    console.error('[setSpaceDesignatedVehicle] rpc call failed', { spaceId, vehicleId, error: rpcErr })
+    return { ok: false, error: rpcErr.message ?? 'rpc_call_failed' }
+  }
+  const result = data as { ok?: boolean; error?: string; hint?: string; action?: 'set' | 'cleared' } | null
+  if (!result || result.error) {
+    return {
+      ok:    false,
+      error: result?.error ?? 'unknown',
+      hint:  result?.hint,
+    }
+  }
+  return {
+    ok:     true,
+    action: result.action,
   }
 }
 
@@ -364,6 +451,7 @@ export async function fetchActiveResidentsAtProperty(
 // without a second pass. Empty list returned for residents with zero matches
 // (caller handles the "no active vehicles" render branch).
 export interface VehicleSummary {
+  id:    number         // NEW 2026-08-19 — designated-vehicle picker needs id
   plate: string
   year:  string | null
   color: string | null
@@ -384,7 +472,7 @@ export async function fetchSpaceVehicles(
   for (const e of lowered) result.set(e, [])
   const { data } = await supabase
     .from('vehicles')
-    .select('plate, year, color, make, model, resident_email')
+    .select('id, plate, year, color, make, model, resident_email')
     .ilike('property', property)
     .eq('is_active', true)
     .eq('status', 'active')
@@ -394,6 +482,7 @@ export async function fetchSpaceVehicles(
     if (!email) continue
     const list = result.get(email) ?? []
     list.push({
+      id:    v.id,
       plate: v.plate ?? '',
       year:  v.year  ?? null,
       color: v.color ?? null,

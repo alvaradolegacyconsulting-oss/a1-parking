@@ -1686,6 +1686,18 @@ function SpaceCard({ s, residentEmail, isReadOnly, onReleaseSpace }: {
           {s.type && (
             <span style={{ color: C.faint, fontSize: '11px', marginLeft: '8px' }}>· {s.type}</span>
           )}
+          {/* 2026-08-19 designated-vehicle Commit 3 — display-only chip.
+              Reference data; enforcement unaffected. Same styling as
+              the spaces-list-row chip for consistency across surfaces. */}
+          {s.designated_vehicle_plate && (
+            <span title="Designated vehicle (for your records — does not affect enforcement)" style={{
+              marginLeft: '8px', fontSize: '10.5px', padding: '2px 7px', borderRadius: '20px',
+              background: '#1a1400', color: C.gold, border: `1px solid ${C.goldLine}`,
+              fontFamily: 'Courier New', fontWeight: 700,
+            }}>
+              ★ {s.designated_vehicle_plate}
+            </span>
+          )}
         </div>
         {!isReadOnly && (
           <button onClick={() => onReleaseSpace(s.id, residentEmail)} title="Frees this resident's tie for reassignment. Co-residents (if any) retain their tie." style={{

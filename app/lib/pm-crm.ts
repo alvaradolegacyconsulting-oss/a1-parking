@@ -23,6 +23,15 @@ export interface CrmSpace {
   is_active: boolean
   assigned_to_resident_email?: string | null
   property?: string | null
+  // 2026-08-19 designated-vehicle arc — reference-data pointer from
+  // spaces.designated_vehicle_id. NULL means "any approved vehicle"
+  // (today's behavior — unchanged). Chip only; never gates enforcement.
+  designated_vehicle_id?: number | null
+  // Denormalized plate — resolved inside buildCrmResidents from the
+  // vehicles array already loaded (no extra fetch). NULL when the
+  // designated vehicle isn't in the current vehicles slice (e.g. RLS
+  // hidden or race with the lifecycle trigger from Commit 2).
+  designated_vehicle_plate?: string | null
 }
 
 // Slice 3 enrichment: each assigned space carries its authorized plate list
@@ -159,6 +168,26 @@ export function buildCrmResidents(input: {
     if (unit) {
       const list = vehiclesByUnit.get(unit) ?? []
       list.push(v); vehiclesByUnit.set(unit, list)
+    }
+  }
+
+  // 2026-08-19 designated-vehicle Commit 3 — resolve
+  // spaces.designated_vehicle_id → plate from the vehicles array
+  // already loaded. Zero-fetch; the same denormalization
+  // fetchSpacesList does batched, done here in-memory. If the
+  // designated vehicle isn't in the vehicles slice (e.g. mid-race
+  // with the lifecycle trigger from Commit 2), plate stays null and
+  // the chip renders as "designated but resolved-plate unknown".
+  const vehicleById = new Map<number, any>()
+  for (const v of input.vehicles) {
+    if (typeof v.id === 'number') vehicleById.set(v.id, v)
+  }
+  for (const s of input.spaces) {
+    const dvId = s.designated_vehicle_id ?? null
+    if (dvId != null && vehicleById.has(dvId)) {
+      s.designated_vehicle_plate = vehicleById.get(dvId)?.plate ?? null
+    } else {
+      s.designated_vehicle_plate = null
     }
   }
 

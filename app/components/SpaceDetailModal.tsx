@@ -36,6 +36,7 @@ import {
   type VehicleSummary,
   fetchSpaceResidents,
   fetchSpaceVehicles,
+  setSpaceDesignatedVehicle,
   TYPE_LABELS,
 } from '../lib/spaces'
 import SearchableResidentPicker, { type SearchableResidentPickerResult } from './SearchableResidentPicker'
@@ -48,9 +49,24 @@ interface Props {
   // so the parent's `s.residents` cap-aware render state stays in sync.
   // Called after add / per-resident remove / free entire space.
   onMutate: () => void | Promise<void>
+  // 2026-08-19 designated-vehicle arc Commit 3 — display + optional edit
+  // of spaces.designated_vehicle_id. Default false (opt-in) so callsites
+  // that haven't wired the picker yet (CA in Commit 3) keep old behavior.
+  //   showDesignation:      render the section at all
+  //   canEditDesignation:   render the picker + clear button (else read-only chip)
+  showDesignation?: boolean
+  canEditDesignation?: boolean
+  // Address for the "Don't see the vehicle? Register it first" affordance.
+  // Optional — the affordance falls back to a plain text hint if omitted.
+  onOpenAddVehicle?: (residentEmail: string) => void
 }
 
-export default function SpaceDetailModal({ space, property, onClose, onMutate }: Props) {
+export default function SpaceDetailModal({
+  space, property, onClose, onMutate,
+  showDesignation = false,
+  canEditDesignation = false,
+  onOpenAddVehicle,
+}: Props) {
   const [residents,      setResidents]      = useState<ResidentOption[]>(space.residents ?? [])
   const [vehiclesByEmail, setVehiclesByEmail] = useState<Map<string, VehicleSummary[]>>(new Map())
   const [loading,        setLoading]        = useState(true)
@@ -61,6 +77,12 @@ export default function SpaceDetailModal({ space, property, onClose, onMutate }:
   const [pendingRemoveEmail, setPendingRemoveEmail] = useState<string | null>(null)
   const [confirmFreeAll, setConfirmFreeAll] = useState(false)
   const [busy,           setBusy]           = useState(false)
+  // 2026-08-19 designated-vehicle Commit 3 — picker local state.
+  // designatedId reflects the CURRENT persisted state (mirrors space.
+  // designated_vehicle_id, refreshed post-reload). pendingDesignationId
+  // is the picker's uncommitted selection, applied on Save.
+  const [designatedId, setDesignatedId] = useState<number | null>(space.designated_vehicle_id ?? null)
+  const [pendingDesignationId, setPendingDesignationId] = useState<number | null>(space.designated_vehicle_id ?? null)
 
   // Fetch fresh residents + vehicles whenever the modal opens or the
   // residents set changes (post-mutation reload). Doing it inside the
@@ -85,6 +107,35 @@ export default function SpaceDetailModal({ space, property, onClose, onMutate }:
     reload()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [space.id, property])
+
+  // Sync designation state with the prop when the parent refetches
+  // (post-mutate). Parent's fetchSpacesList batch-resolves designated
+  // plate; we mirror the id here so the picker's persisted-vs-pending
+  // comparison stays honest across refetches.
+  useEffect(() => {
+    setDesignatedId(space.designated_vehicle_id ?? null)
+    setPendingDesignationId(space.designated_vehicle_id ?? null)
+  }, [space.id, space.designated_vehicle_id])
+
+  // 2026-08-19 Commit 3 — save picker selection via the DEFINER RPC.
+  // NULL vehicleId clears. On success, refresh local state + parent.
+  // On error, surface the RPC hint (or message) legibly rather than
+  // swallow.
+  async function handleSaveDesignation(nextVehicleId: number | null) {
+    setBusy(true); setError('')
+    try {
+      const res = await setSpaceDesignatedVehicle(supabase, space.id, nextVehicleId)
+      if (!res.ok) {
+        setError(res.hint ?? res.error ?? 'Could not save designation.')
+        return
+      }
+      setDesignatedId(nextVehicleId)
+      setPendingDesignationId(nextVehicleId)
+      await onMutate()   // parent refetches; will bring back the resolved plate
+    } finally {
+      setBusy(false)
+    }
+  }
 
   // --- Mutation handlers ---
 
@@ -192,6 +243,172 @@ export default function SpaceDetailModal({ space, property, onClose, onMutate }:
             Vehicle authorization comes from the resident&apos;s record, not from this space tie.
           </p>
         </div>
+
+        {/* 2026-08-19 designated-vehicle Commit 3 — Designated vehicle
+            section. Rendered when showDesignation is set by the parent.
+            Read-only (chip only) unless canEditDesignation is also true.
+            Placement ABOVE the tied-residents list because a manager
+            opening the modal to "assign the F-150 to R-1" should see
+            the designation control immediately, not after scrolling
+            past a residents list.
+
+            Empty state renders "No designated vehicle" — NEVER blank,
+            NEVER a dash. Mateo Aug 19 reporting-honesty rule: blank
+            is ambiguous between "none set" and "failed to load"; the
+            empty text distinguishes them. */}
+        {showDesignation && !loading && (() => {
+          // Flatten vehiclesByEmail into picker options, one per (owner,
+          // vehicle). Reads via space_residents (vehiclesByEmail is
+          // built from that set); never touches assigned_to_resident_email.
+          const pickerOptions: Array<{ id: number; plate: string; ymm: string; ownerName: string; ownerEmail: string }> = []
+          for (const r of residents) {
+            const plates = vehiclesByEmail.get(r.email) ?? []
+            for (const v of plates) {
+              pickerOptions.push({
+                id:         v.id,
+                plate:      v.plate,
+                ymm:        [v.year, v.color, v.make, v.model].filter(Boolean).join(' '),
+                ownerName:  r.name || r.email,
+                ownerEmail: r.email,
+              })
+            }
+          }
+          const currentOption = pickerOptions.find(o => o.id === designatedId) ?? null
+          const hasAnyOptions = pickerOptions.length > 0
+          const dirty = pendingDesignationId !== designatedId
+          // R-1 case: the manager wanted an F-150 not registered to
+          // the resident. Show the "not registered" affordance ALWAYS,
+          // not only when the list is empty — the R-1 failure was a
+          // 4-vehicle list without the intended target.
+          const showRegisterAffordance = canEditDesignation
+          return (
+            <div style={{
+              padding:'12px', background:'#101828', border:'1px solid #2a3550',
+              borderRadius:'8px', marginBottom:'14px',
+            }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'8px' }}>
+                <p style={{ color:'#C9A227', fontSize:'11px', margin:0, textTransform:'uppercase', letterSpacing:'0.05em', fontWeight:'bold' }}>
+                  Designated vehicle
+                </p>
+                {currentOption
+                  ? <span style={{ color:'#aaa', fontSize:'11px' }}>currently set</span>
+                  : <span style={{ color:'#888', fontSize:'11px' }}>No designated vehicle</span>}
+              </div>
+
+              {/* Current designation display */}
+              {currentOption && (
+                <p style={{ color:'#eee', fontSize:'13px', margin:'0 0 8px' }}>
+                  <span style={{ fontFamily:'Courier New', color:'white', fontWeight:'bold' }}>{currentOption.plate}</span>
+                  {currentOption.ymm && <span style={{ color:'#888', marginLeft:'8px' }}>{currentOption.ymm}</span>}
+                  <span style={{ color:'#666', marginLeft:'8px', fontSize:'11px' }}>· {currentOption.ownerName}</span>
+                </p>
+              )}
+
+              {/* Reference-only caveat — Mateo Aug 19: match the price
+                  pattern; must never imply enforcement */}
+              <p style={{ color:'#7a8394', fontSize:'11px', margin:'0 0 10px', lineHeight:'1.5', fontStyle:'italic' }}>
+                For your records. Does not affect enforcement — all of this resident&apos;s
+                approved vehicles remain authorized at the property.
+              </p>
+
+              {/* Picker + Save + Clear (only when canEditDesignation) */}
+              {canEditDesignation && (
+                <>
+                  {hasAnyOptions ? (
+                    <select
+                      value={pendingDesignationId ?? ''}
+                      onChange={e => {
+                        const v = e.target.value
+                        setPendingDesignationId(v === '' ? null : Number(v))
+                      }}
+                      disabled={busy}
+                      style={{
+                        width:'100%', padding:'8px', background:'#0f1117',
+                        color:'white', border:'1px solid #2a2f3d', borderRadius:'6px',
+                        fontSize:'12px', fontFamily:'inherit',
+                      }}
+                    >
+                      <option value="">— No designated vehicle (any approved vehicle) —</option>
+                      {pickerOptions.map(o => (
+                        <option key={o.id} value={o.id}>
+                          {o.plate}{o.ymm ? ` · ${o.ymm}` : ''} · {o.ownerName}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p style={{ color:'#888', fontSize:'12px', margin:'0 0 8px' }}>
+                      No approved vehicles for the tied residents.
+                    </p>
+                  )}
+
+                  {/* Empty-list / R-1 affordance — ALWAYS visible when
+                      editable, per Mateo Aug 19 acceptance criterion.
+                      The R-1 failure was a 4-vehicle list without the
+                      intended target, not an empty list. */}
+                  {showRegisterAffordance && (
+                    <p style={{ color:'#7a8394', fontSize:'11px', margin:'8px 0 0', lineHeight:'1.5' }}>
+                      Don&apos;t see the vehicle? It needs to be registered to this resident first.
+                      {onOpenAddVehicle && residents.length > 0 && (
+                        <>
+                          {' '}
+                          {residents.map((r, i) => (
+                            <span key={r.email}>
+                              {i > 0 && ' · '}
+                              <button
+                                onClick={() => onOpenAddVehicle(r.email)}
+                                disabled={busy}
+                                style={{
+                                  background:'transparent', border:'none', color:'#7ab1ff',
+                                  textDecoration:'underline', cursor: busy ? 'not-allowed' : 'pointer',
+                                  padding:0, fontSize:'inherit', fontFamily:'inherit',
+                                }}
+                              >
+                                Add for {r.name || r.email}
+                              </button>
+                            </span>
+                          ))}
+                        </>
+                      )}
+                    </p>
+                  )}
+
+                  {/* Save + Clear buttons */}
+                  <div style={{ display:'flex', gap:'8px', marginTop:'10px' }}>
+                    <button
+                      onClick={() => handleSaveDesignation(pendingDesignationId)}
+                      disabled={busy || !dirty}
+                      style={{
+                        flex:1, padding:'8px',
+                        background: (dirty && !busy) ? '#C9A227' : '#333',
+                        color: (dirty && !busy) ? '#0f1117' : '#666',
+                        border:'none', borderRadius:'6px',
+                        cursor: (dirty && !busy) ? 'pointer' : 'not-allowed',
+                        fontSize:'12px', fontWeight:'bold', fontFamily:'inherit',
+                      }}
+                    >
+                      {busy ? 'Saving…' : (pendingDesignationId === null ? 'Clear designation' : 'Save designation')}
+                    </button>
+                    {designatedId !== null && (
+                      <button
+                        onClick={() => handleSaveDesignation(null)}
+                        disabled={busy}
+                        title="Clear current designation — any approved vehicle authorized"
+                        style={{
+                          padding:'8px 12px', background:'#1e2535', color:'#aaa',
+                          border:'1px solid #3a4055', borderRadius:'6px',
+                          cursor: busy ? 'not-allowed' : 'pointer',
+                          fontSize:'12px', fontWeight:'bold', fontFamily:'inherit',
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )
+        })()}
 
         {/* Loading / error */}
         {loading && (
