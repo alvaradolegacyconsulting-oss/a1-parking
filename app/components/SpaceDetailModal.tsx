@@ -186,15 +186,36 @@ export default function SpaceDetailModal({
     }
   }
 
+  // 🔴 Finding B correction (Mateo Aug 19 evening) — reload MUST
+  // include space.designated_vehicle_id in its deps. Prior deps
+  // `[space.id, property]` don't change on Save (same space, same
+  // property), so reload() never re-fires and designatedInfo stays
+  // stale from the initial mount. The separate useEffect below
+  // updates designatedId to the new value, but without a matching
+  // designatedInfo refresh, the render sees (designatedId=<new>,
+  // designatedInfo=null, designatedFetchStatus stays 'loaded' from
+  // the pre-save fetch) → hits the 'unresolvable' branch and paints
+  // amber on a valid designation. That was Jose's Aug 19 evening
+  // reproduction.
+  //
+  // Adding designated_vehicle_id to the deps re-fires reload() when
+  // the parent's onMutate refreshes the space prop. The new reload
+  // sets designatedFetchStatus='loading' → clears designatedInfo →
+  // fires the direct fetch → renders 'loading' → then 'valid'.
+  //
+  // The RLS-race hypothesis Mateo raised is ruled out by this fix:
+  // the direct fetch never had a scope problem, it was never firing
+  // for the new id. Amber persists post-save because designatedInfo
+  // is null from the pre-save state, not because the fetch returned
+  // nothing.
   useEffect(() => {
     reload()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [space.id, property])
+  }, [space.id, property, space.designated_vehicle_id])
 
-  // Sync designation state with the prop when the parent refetches
-  // (post-mutate). Parent's fetchSpacesList batch-resolves designated
-  // plate; we mirror the id here so the picker's persisted-vs-pending
-  // comparison stays honest across refetches.
+  // Sync picker state with the prop when the parent refetches
+  // (post-mutate). Kept separate from the reload effect above so
+  // pickerpending state resets even if reload() throws.
   useEffect(() => {
     setDesignatedId(space.designated_vehicle_id ?? null)
     setPendingDesignationId(space.designated_vehicle_id ?? null)
