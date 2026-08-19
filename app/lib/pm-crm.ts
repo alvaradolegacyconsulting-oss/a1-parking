@@ -32,6 +32,16 @@ export interface CrmSpace {
   // designated vehicle isn't in the current vehicles slice (e.g. RLS
   // hidden or race with the lifecycle trigger from Commit 2).
   designated_vehicle_plate?: string | null
+  // 2026-08-19 Commit 5 — designation state for honest CSV export
+  // (moved from CrmResidentSpace to CrmSpace so buildCrmResidents'
+  // resolver can write it to raw space rows). Five values matching
+  // the modal's Defect 2 fix (Aug 19).
+  //   null            → no designation
+  //   'valid'         → vehicle active + owner tied
+  //   'stale-inactive' → vehicle no longer active
+  //   'stale-untied'   → owner no longer tied
+  //   'unresolvable'   → id set but not resolvable in current slice
+  designated_state?: 'valid' | 'stale-inactive' | 'stale-untied' | 'unresolvable' | null
 }
 
 // Slice 3 enrichment: each assigned space carries its authorized plate list
@@ -55,6 +65,8 @@ export interface CrmAuthorizedPlate {
 export interface CrmResidentSpace extends CrmSpace {
   authorizedPlates: CrmAuthorizedPlate[]
   roommateCount: number  // count of tied residents OTHER than the current one
+  // designated_vehicle_id / designated_vehicle_plate / designated_state
+  // inherited from CrmSpace above.
 }
 
 export interface CrmSpaceResidentTie {
@@ -191,6 +203,43 @@ export function buildCrmResidents(input: {
     }
   }
 
+  // Index ties by space_id ONCE for both the designated-state resolve
+  // (below) and the spaces-grouping loop (further below). O(1) per-
+  // space lookup on both.
+  const tieEmailsBySpaceId = new Map<number, string[]>()
+  for (const tie of input.spaceResidentTies) {
+    const email = norm(tie.resident_email)
+    if (!email) continue
+    const list = tieEmailsBySpaceId.get(tie.space_id) ?? []
+    list.push(email)
+    tieEmailsBySpaceId.set(tie.space_id, list)
+  }
+
+  // 2026-08-19 Commit 5 — resolve designated_state for honest CSV
+  // export. Five states matching the modal's Aug 19 Defect 2 fix:
+  //   null / valid / stale-inactive / stale-untied / unresolvable.
+  for (const s of input.spaces) {
+    const dvId = s.designated_vehicle_id ?? null
+    if (dvId == null) {
+      s.designated_state = null
+      continue
+    }
+    const veh = vehicleById.get(dvId)
+    if (!veh) {
+      s.designated_state = 'unresolvable'
+      continue
+    }
+    const active = veh.is_active === true && (veh.status ?? '') === 'active'
+    if (!active) {
+      s.designated_state = 'stale-inactive'
+      continue
+    }
+    const ownerEmail = norm(veh.resident_email)
+    const tiedEmails = tieEmailsBySpaceId.get(s.id) ?? []
+    const ownerTied = ownerEmail !== '' && tiedEmails.includes(ownerEmail)
+    s.designated_state = ownerTied ? 'valid' : 'stale-untied'
+  }
+
   // Spaces grouping — BUG-1 fix (2026-07-04). space_residents ties are
   // AUTHORITATIVE. Legacy `assigned_to_resident_email` fallback is per-
   // space and applies ONLY when that specific space has NO ties AND its
@@ -207,16 +256,8 @@ export function buildCrmResidents(input: {
   // legacy correctness without the silent-substitute misbehavior.
   const spacesByEmail = new Map<string, CrmSpace[]>()
 
-  // Index ties by space_id for O(1) per-space lookup.
-  const tieEmailsBySpaceId = new Map<number, string[]>()
-  for (const tie of input.spaceResidentTies) {
-    const email = norm(tie.resident_email)
-    if (!email) continue
-    const list = tieEmailsBySpaceId.get(tie.space_id) ?? []
-    list.push(email)
-    tieEmailsBySpaceId.set(tie.space_id, list)
-  }
-
+  // tieEmailsBySpaceId built above (hoisted for the designated_state
+  // resolve loop); reuse it here for the spaces-grouping pass.
   for (const s of input.spaces) {
     const tiedEmails = tieEmailsBySpaceId.get(s.id) ?? []
     if (tiedEmails.length > 0) {

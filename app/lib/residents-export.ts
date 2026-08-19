@@ -63,6 +63,26 @@ export type ExportableResident = Pick<CrmResident, ExportableResidentField>
 export const CSV_HEADERS = [
   'Resident Name', 'Unit', 'Email', 'Phone', 'Status', 'Registered',
   'Assigned Space', 'Plate', 'State', 'Make', 'Model', 'Year', 'Color', 'Vehicle Status',
+  // 2026-08-19 Commit 5 — designated-vehicle column. Appended at END
+  // to avoid disturbing existing position-based consumers. Mateo Aug 19:
+  // "Header wording: 'Designated Vehicle'. Consistent with the UI label
+  // so nobody reads it as an enforcement field."
+  //
+  // 🔴 One entry per assigned space, semicolon-joined ("R-1: TWICE;
+  // CP-2: TEST123 (inactive)"). Rendered from CrmResidentSpace.
+  // designated_state (populated in buildCrmResidents) so stale
+  // designations surface honestly rather than exporting blank — blank
+  // would read as "no designation" and reproduce the Aug 19 Defect 2
+  // false-negative class inside a documented consumer's file.
+  //
+  // Format rules:
+  //   valid            → "Space L: PLATE"
+  //   stale-inactive   → "Space L: PLATE (inactive)"
+  //   stale-untied     → "Space L: PLATE (owner not tied)"
+  //   unresolvable     → "Space L: #ID (unresolvable)"
+  //   null / no space  → skipped (cell shows only present designations)
+  //   no assigned space AND resident has 0 designations → cell blank
+  'Designated Vehicle',
 ] as const
 
 export interface FlattenResult {
@@ -88,9 +108,14 @@ export function flattenResidentsForExport(residents: ExportableResident[]): Flat
       formatDateMDY(r.created_at),
       (r.assignedSpaces || []).map(s => s.label).filter(Boolean).join(', '),
     ]
+    // 2026-08-19 Commit 5 — designated-vehicle cell. Rendered PER
+    // resident (not per vehicle) since designations are space-scoped,
+    // not vehicle-scoped. Repeated identically across every vehicle
+    // row for this resident (same shape as `identity` above).
+    const designatedCell = formatDesignatedVehicleCell(r.assignedSpaces || [])
     const vehicles = r.vehicles || []
     if (vehicles.length === 0) {
-      rows.push([...identity, '', '', '', '', '', '', ''])
+      rows.push([...identity, '', '', '', '', '', '', '', designatedCell])
     } else {
       for (const v of vehicles) {
         vehicleCount++
@@ -103,11 +128,50 @@ export function flattenResidentsForExport(residents: ExportableResident[]): Flat
           v.year != null ? String(v.year) : '',
           v.color || '',
           vehicleStatusLabel(v),
+          designatedCell,
         ])
       }
     }
   }
   return { rows, residentCount: residents.length, vehicleCount }
+}
+
+// 2026-08-19 Commit 5 — build the "Designated Vehicle" cell for one
+// resident by walking their assigned spaces. Each space contributes
+// zero or one entry; entries are joined with "; ".
+//
+// Reads directly from CrmResidentSpace.designated_vehicle_plate +
+// designated_state (both populated by buildCrmResidents from the id
+// via vehicleById lookup). NEVER routes through picker scope — same
+// discipline as the modal's Aug 19 Defect 2 fix. Stale states surface
+// with an explicit suffix so blank cells NEVER conflate with "set but
+// stale".
+function formatDesignatedVehicleCell(
+  spaces: Array<{
+    label: string
+    designated_vehicle_id?: number | null
+    designated_vehicle_plate?: string | null
+    designated_state?: 'valid' | 'stale-inactive' | 'stale-untied' | 'unresolvable' | null
+  }>,
+): string {
+  const entries: string[] = []
+  for (const s of spaces) {
+    if (s.designated_vehicle_id == null) continue
+    const label = s.label || `Space #${s.designated_vehicle_id}`
+    const plate = s.designated_vehicle_plate || `#${s.designated_vehicle_id}`
+    let suffix = ''
+    switch (s.designated_state) {
+      case 'valid':          suffix = ''; break
+      case 'stale-inactive': suffix = ' (inactive)'; break
+      case 'stale-untied':   suffix = ' (owner not tied)'; break
+      case 'unresolvable':   suffix = ' (unresolvable)'; break
+      default:               suffix = ''; break
+    }
+    // Prefer plate; unresolvable falls back to #ID which already shows
+    // in `plate` above.
+    entries.push(`${label}: ${plate}${suffix}`)
+  }
+  return entries.join('; ')
 }
 
 export function serializeCsv(headers: readonly string[], rows: string[][]): string {
