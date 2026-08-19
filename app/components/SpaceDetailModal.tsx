@@ -84,6 +84,30 @@ export default function SpaceDetailModal({
   const [designatedId, setDesignatedId] = useState<number | null>(space.designated_vehicle_id ?? null)
   const [pendingDesignationId, setPendingDesignationId] = useState<number | null>(space.designated_vehicle_id ?? null)
 
+  // 🔴 2026-08-19 Commit 3 fix (Mateo Aug 19 Defect 2) — direct fetch of
+  // the currently-designated vehicle, INDEPENDENT of the picker's
+  // tied-resident scope. The Aug 19 defect was: the modal resolved the
+  // current designation by looking it up in the tied-residents' active-
+  // vehicles list, and rendered "No designated vehicle" whenever the
+  // designated vehicle wasn't in that list (deactivated, or owned by
+  // an untied resident). That's a report-that-says-something-other-
+  // than-what-happened bug (Aug 9 class) — it concealed Defect 1's
+  // stale pointer on G-1 completely.
+  //
+  // Fix: fetch the designated vehicle by ID directly, and use its
+  // actual state to render honestly. The picker options (below) stay
+  // scoped to what's valid to designate to; the DISPLAY reflects what
+  // the column actually says.
+  interface DesignatedVehicleInfo {
+    id:            number
+    plate:         string
+    ymm:           string
+    ownerEmail:    string
+    is_active:     boolean
+    status:        string
+  }
+  const [designatedInfo, setDesignatedInfo] = useState<DesignatedVehicleInfo | null>(null)
+
   // Fetch fresh residents + vehicles whenever the modal opens or the
   // residents set changes (post-mutation reload). Doing it inside the
   // modal keeps the parent's loose coupling — caller only has to pass
@@ -96,6 +120,32 @@ export default function SpaceDetailModal({
       setResidents(freshResidents)
       const veh = await fetchSpaceVehicles(supabase, property, freshResidents.map(r => r.email))
       setVehiclesByEmail(veh)
+
+      // Direct fetch of the designated vehicle (independent of the
+      // tied-resident scope — see designatedInfo header for rationale).
+      if (space.designated_vehicle_id != null) {
+        const { data: dv } = await supabase
+          .from('vehicles')
+          .select('id, plate, year, color, make, model, resident_email, is_active, status')
+          .eq('id', space.designated_vehicle_id)
+          .maybeSingle()
+        if (dv && typeof dv.id === 'number') {
+          setDesignatedInfo({
+            id:         dv.id,
+            plate:      dv.plate ?? '',
+            ymm:        [dv.year, dv.color, dv.make, dv.model].filter(Boolean).join(' '),
+            ownerEmail: (dv.resident_email ?? '').toLowerCase(),
+            is_active:  dv.is_active === true,
+            status:     dv.status ?? 'unknown',
+          })
+        } else {
+          // Row invisible in scope (RLS-hidden) or FK target missing —
+          // render "unresolvable" honestly rather than pretending unset.
+          setDesignatedInfo(null)
+        }
+      } else {
+        setDesignatedInfo(null)
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load space detail')
     } finally {
@@ -273,7 +323,6 @@ export default function SpaceDetailModal({
               })
             }
           }
-          const currentOption = pickerOptions.find(o => o.id === designatedId) ?? null
           const hasAnyOptions = pickerOptions.length > 0
           const dirty = pendingDesignationId !== designatedId
           // R-1 case: the manager wanted an F-150 not registered to
@@ -281,26 +330,99 @@ export default function SpaceDetailModal({
           // not only when the list is empty — the R-1 failure was a
           // 4-vehicle list without the intended target.
           const showRegisterAffordance = canEditDesignation
+
+          // 🔴 Mateo Aug 19 Defect 2 fix — display state derives from
+          // the column (via designatedInfo direct fetch), NOT from the
+          // picker options. Four honest states:
+          //
+          //   1. Unset                    → "No designated vehicle"
+          //   2. Set + resolved + valid   → normal display (plate + ymm + owner)
+          //   3. Set + resolved + stale   → warning (inactive / declined / owner untied)
+          //                                 + Remove available
+          //   4. Set + not resolvable     → "designation not resolvable in your scope"
+          //                                 + Remove available
+          //
+          // Prior behavior collapsed states 3 and 4 into state 1 by
+          // relying on `pickerOptions.find(o => o.id === designatedId)`
+          // as the "is it set?" test — which returned null for any
+          // designation not in the currently-scoped tied-residents'
+          // active-vehicles list. That concealed both Defect 1 (G-1
+          // pointing at a deactivated vehicle) and Defect 2 (CP-1
+          // pointing at a valid vehicle whose owner scope didn't match).
+          let displayState:
+            | { kind: 'unset' }
+            | { kind: 'valid';        plate: string; ymm: string; ownerName: string }
+            | { kind: 'stale-inactive'; plate: string; status: string }
+            | { kind: 'stale-untied'; plate: string; ownerEmail: string }
+            | { kind: 'unresolvable'; id: number }
+          if (designatedId == null) {
+            displayState = { kind: 'unset' }
+          } else if (designatedInfo == null) {
+            displayState = { kind: 'unresolvable', id: designatedId }
+          } else if (!designatedInfo.is_active || designatedInfo.status !== 'active') {
+            displayState = { kind: 'stale-inactive', plate: designatedInfo.plate, status: designatedInfo.status }
+          } else {
+            const owner = residents.find(r => r.email === designatedInfo.ownerEmail)
+            if (!owner) {
+              displayState = { kind: 'stale-untied', plate: designatedInfo.plate, ownerEmail: designatedInfo.ownerEmail }
+            } else {
+              displayState = {
+                kind:      'valid',
+                plate:     designatedInfo.plate,
+                ymm:       designatedInfo.ymm,
+                ownerName: owner.name || owner.email,
+              }
+            }
+          }
+          const isStale = displayState.kind === 'stale-inactive' || displayState.kind === 'stale-untied' || displayState.kind === 'unresolvable'
+
           return (
             <div style={{
-              padding:'12px', background:'#101828', border:'1px solid #2a3550',
+              padding:'12px', background:'#101828', border:`1px solid ${isStale ? '#a16207' : '#2a3550'}`,
               borderRadius:'8px', marginBottom:'14px',
             }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'8px' }}>
                 <p style={{ color:'#C9A227', fontSize:'11px', margin:0, textTransform:'uppercase', letterSpacing:'0.05em', fontWeight:'bold' }}>
                   Designated vehicle
                 </p>
-                {currentOption
-                  ? <span style={{ color:'#aaa', fontSize:'11px' }}>currently set</span>
-                  : <span style={{ color:'#888', fontSize:'11px' }}>No designated vehicle</span>}
+                {displayState.kind === 'unset'
+                  ? <span style={{ color:'#888', fontSize:'11px' }}>No designated vehicle</span>
+                  : isStale
+                    ? <span style={{ color:'#fbbf24', fontSize:'11px' }}>needs attention</span>
+                    : <span style={{ color:'#aaa', fontSize:'11px' }}>currently set</span>}
               </div>
 
-              {/* Current designation display */}
-              {currentOption && (
+              {/* Current designation display — reads from designatedInfo
+                  (source of truth), NEVER from pickerOptions */}
+              {displayState.kind === 'valid' && (
                 <p style={{ color:'#eee', fontSize:'13px', margin:'0 0 8px' }}>
-                  <span style={{ fontFamily:'Courier New', color:'white', fontWeight:'bold' }}>{currentOption.plate}</span>
-                  {currentOption.ymm && <span style={{ color:'#888', marginLeft:'8px' }}>{currentOption.ymm}</span>}
-                  <span style={{ color:'#666', marginLeft:'8px', fontSize:'11px' }}>· {currentOption.ownerName}</span>
+                  <span style={{ fontFamily:'Courier New', color:'white', fontWeight:'bold' }}>{displayState.plate}</span>
+                  {displayState.ymm && <span style={{ color:'#888', marginLeft:'8px' }}>{displayState.ymm}</span>}
+                  <span style={{ color:'#666', marginLeft:'8px', fontSize:'11px' }}>· {displayState.ownerName}</span>
+                </p>
+              )}
+              {displayState.kind === 'stale-inactive' && (
+                <p style={{ color:'#fbbf24', fontSize:'13px', margin:'0 0 8px' }}>
+                  Designated vehicle{' '}
+                  <span style={{ fontFamily:'Courier New', color:'white', fontWeight:'bold' }}>{displayState.plate}</span>
+                  {' '}is no longer active
+                  <span style={{ color:'#888' }}> ({displayState.status})</span>.
+                  {canEditDesignation && ' Use Remove below to clear it.'}
+                </p>
+              )}
+              {displayState.kind === 'stale-untied' && (
+                <p style={{ color:'#fbbf24', fontSize:'13px', margin:'0 0 8px' }}>
+                  Designated vehicle{' '}
+                  <span style={{ fontFamily:'Courier New', color:'white', fontWeight:'bold' }}>{displayState.plate}</span>
+                  {' '}— owner <span style={{ color:'#888' }}>{displayState.ownerEmail}</span> is no longer tied to this space.
+                  {canEditDesignation && ' Use Remove below to clear it, or Save a new selection.'}
+                </p>
+              )}
+              {displayState.kind === 'unresolvable' && (
+                <p style={{ color:'#fbbf24', fontSize:'13px', margin:'0 0 8px' }}>
+                  Designated vehicle <span style={{ color:'#888' }}>#{displayState.id}</span> is not visible in your scope
+                  — cannot resolve plate.
+                  {canEditDesignation && ' Use Remove below to clear it.'}
                 </p>
               )}
 
