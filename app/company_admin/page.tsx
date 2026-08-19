@@ -5465,7 +5465,21 @@ export default function CompanyAdminPortal() {
                                   }}>{s.status}</span>
                                   {!s.is_active && <span style={{ marginLeft:'4px', fontSize:'10px', color:'#666' }}>(inactive)</span>}
                                 </td>
-                                <td style={{ padding:'8px', color:'#aaa' }}>{residentDisplayList(s.residents)}</td>
+                                <td style={{ padding:'8px', color:'#aaa' }}>
+                                  {residentDisplayList(s.residents)}
+                                  {/* 2026-08-19 designated-vehicle Commit 4 — CA parity.
+                                      Chip after resident name when a designation is set.
+                                      Same reference-only styling as the manager side. */}
+                                  {s.designated_vehicle_plate && (
+                                    <span title="Designated vehicle (for your records — does not affect enforcement)" style={{
+                                      marginLeft:'8px', fontSize:'10px', padding:'2px 6px',
+                                      borderRadius:'8px', background:'#1a1400', color:'#C9A227',
+                                      border:'1px solid #3a2a00', fontFamily:'Courier New', fontWeight:'bold',
+                                    }}>
+                                      ★ {s.designated_vehicle_plate}
+                                    </span>
+                                  )}
+                                </td>
                                 <td style={{ padding:'8px', textAlign:'right' }}>
                                   {/* v1.1: cap-aware Assign (set < 2). Reassign DROPPED.
                                       Free shown when residents.length > 0. Matches commit-3 manager shape. */}
@@ -5671,7 +5685,16 @@ export default function CompanyAdminPortal() {
                     onMutate={async () => {
                       await caRefetchSpacesDashboard()
                       await caRefetchSpacesList()
+                      // Re-open with refreshed data so the designation
+                      // picker reflects the freshly resolved plate.
+                      const refreshed = caSpacesList.find(s => s.id === caTargetSpaceDetail.id)
+                      if (refreshed) setCaTargetSpaceDetail(refreshed)
                     }}
+                    // 2026-08-19 designated-vehicle Commit 4 — CA parity.
+                    // CA has no isReadOnly concept within its scope; the
+                    // RPC's role gate accepts both manager + company_admin.
+                    showDesignation={true}
+                    canEditDesignation={true}
                   />
                 )}
                 {caTargetEdit && (
