@@ -107,6 +107,19 @@ export default function SpaceDetailModal({
     status:        string
   }
   const [designatedInfo, setDesignatedInfo] = useState<DesignatedVehicleInfo | null>(null)
+  // 🔴 Finding B (Mateo Aug 19) — distinguish "fetch never ran /
+  // in-flight" from "fetch returned no rows". The unresolvable amber
+  // state may ONLY be claimed after a successful fetch returning
+  // nothing. Prior code conflated null-because-loading with
+  // null-because-not-found, causing amber to fire on the healthy
+  // valid case in the post-save race window. Same class as Defect 2
+  // (fallback conflating states), one level up.
+  //
+  //   'idle'    — no designation to fetch (designated_vehicle_id was null)
+  //   'loading' — fetch in flight; render must NOT claim any verdict
+  //   'loaded'  — fetch settled; designatedInfo reflects actual state
+  const [designatedFetchStatus, setDesignatedFetchStatus] =
+    useState<'idle' | 'loading' | 'loaded'>('idle')
 
   // Fetch fresh residents + vehicles whenever the modal opens or the
   // residents set changes (post-mutation reload). Doing it inside the
@@ -123,13 +136,30 @@ export default function SpaceDetailModal({
 
       // Direct fetch of the designated vehicle (independent of the
       // tied-resident scope — see designatedInfo header for rationale).
+      // Finding B fix: track fetch status so the render can distinguish
+      // "loading" from "loaded-and-no-rows". Only the latter justifies
+      // the unresolvable amber verdict.
       if (space.designated_vehicle_id != null) {
-        const { data: dv } = await supabase
+        setDesignatedFetchStatus('loading')
+        setDesignatedInfo(null)   // clear stale info during fetch
+        const { data: dv, error: dvErr } = await supabase
           .from('vehicles')
           .select('id, plate, year, color, make, model, resident_email, is_active, status')
           .eq('id', space.designated_vehicle_id)
           .maybeSingle()
-        if (dv && typeof dv.id === 'number') {
+        if (dvErr) {
+          // 🔴 Fetch ERROR is not a data verdict — it's a system fault.
+          // Log distinctly (Aug 19 rule) rather than silently absorbing
+          // into the unresolvable amber branch. Keep status as 'loading'
+          // so the render shows a resolving state rather than claiming
+          // "no such vehicle" for what is actually a transient fault.
+          console.error('[SpaceDetailModal] designated-vehicle fetch failed', {
+            spaceId: space.id, vehicleId: space.designated_vehicle_id, error: dvErr.message,
+          })
+          setError(`Failed to load designated vehicle: ${dvErr.message}`)
+          setDesignatedInfo(null)
+          setDesignatedFetchStatus('loading')  // stay loading — visible retry via reopen
+        } else if (dv && typeof dv.id === 'number') {
           setDesignatedInfo({
             id:         dv.id,
             plate:      dv.plate ?? '',
@@ -138,13 +168,16 @@ export default function SpaceDetailModal({
             is_active:  dv.is_active === true,
             status:     dv.status ?? 'unknown',
           })
+          setDesignatedFetchStatus('loaded')
         } else {
-          // Row invisible in scope (RLS-hidden) or FK target missing —
-          // render "unresolvable" honestly rather than pretending unset.
+          // Fetch succeeded with no rows — FK target missing or RLS
+          // hid the row. That IS the unresolvable verdict.
           setDesignatedInfo(null)
+          setDesignatedFetchStatus('loaded')
         }
       } else {
         setDesignatedInfo(null)
+        setDesignatedFetchStatus('idle')
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load space detail')
@@ -349,15 +382,28 @@ export default function SpaceDetailModal({
           // active-vehicles list. That concealed both Defect 1 (G-1
           // pointing at a deactivated vehicle) and Defect 2 (CP-1
           // pointing at a valid vehicle whose owner scope didn't match).
+          // 🔴 Finding B fix (Mateo Aug 19): fetch-status gate.
+          // 'unresolvable' may ONLY be claimed when the direct fetch
+          // completed successfully with zero rows. 'loading' is a
+          // system state, not a data verdict.
           let displayState:
             | { kind: 'unset' }
+            | { kind: 'loading' }
             | { kind: 'valid';        plate: string; ymm: string; ownerName: string }
             | { kind: 'stale-inactive'; plate: string; status: string }
             | { kind: 'stale-untied'; plate: string; ownerEmail: string }
             | { kind: 'unresolvable'; id: number }
           if (designatedId == null) {
             displayState = { kind: 'unset' }
+          } else if (designatedFetchStatus === 'loading') {
+            // Fetch in flight (initial open or post-save reload).
+            // Render a neutral loading state; do NOT claim a data
+            // verdict. Prevents the amber "unresolvable" false
+            // positive Mateo caught on E-1 immediately after save.
+            displayState = { kind: 'loading' }
           } else if (designatedInfo == null) {
+            // designatedFetchStatus === 'loaded' AND null → FK target
+            // truly missing or RLS-hidden. Legitimate unresolvable.
             displayState = { kind: 'unresolvable', id: designatedId }
           } else if (!designatedInfo.is_active || designatedInfo.status !== 'active') {
             displayState = { kind: 'stale-inactive', plate: designatedInfo.plate, status: designatedInfo.status }
@@ -375,10 +421,12 @@ export default function SpaceDetailModal({
             }
           }
           const isStale = displayState.kind === 'stale-inactive' || displayState.kind === 'stale-untied' || displayState.kind === 'unresolvable'
+          const isLoading = displayState.kind === 'loading'
 
           return (
             <div style={{
-              padding:'12px', background:'#101828', border:`1px solid ${isStale ? '#a16207' : '#2a3550'}`,
+              padding:'12px', background:'#101828',
+              border:`1px solid ${isStale ? '#a16207' : isLoading ? '#3a4055' : '#2a3550'}`,
               borderRadius:'8px', marginBottom:'14px',
             }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'8px' }}>
@@ -387,10 +435,21 @@ export default function SpaceDetailModal({
                 </p>
                 {displayState.kind === 'unset'
                   ? <span style={{ color:'#888', fontSize:'11px' }}>No designated vehicle</span>
-                  : isStale
-                    ? <span style={{ color:'#fbbf24', fontSize:'11px' }}>needs attention</span>
-                    : <span style={{ color:'#aaa', fontSize:'11px' }}>currently set</span>}
+                  : isLoading
+                    ? <span style={{ color:'#888', fontSize:'11px' }}>resolving…</span>
+                    : isStale
+                      ? <span style={{ color:'#fbbf24', fontSize:'11px' }}>needs attention</span>
+                      : <span style={{ color:'#aaa', fontSize:'11px' }}>currently set</span>}
               </div>
+
+              {/* Loading state — Finding B (Mateo Aug 19). Show neutral
+                  "Resolving…" during the direct fetch; never claim a
+                  data verdict while in flight. */}
+              {displayState.kind === 'loading' && (
+                <p style={{ color:'#888', fontSize:'13px', margin:'0 0 8px', fontStyle:'italic' }}>
+                  Resolving current designation…
+                </p>
+              )}
 
               {/* Current designation display — reads from designatedInfo
                   (source of truth), NEVER from pickerOptions */}
