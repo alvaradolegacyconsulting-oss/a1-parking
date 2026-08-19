@@ -55,8 +55,14 @@
 -- property — cannot verify scope. Data-fix required." rather than a
 -- silent successful deactivation.
 --
--- APPLY: Test Legacy first via SQL Editor, verify with the paired
--- verification migration, then production.
+-- APPLY: Apply once (single database — Test Legacy is a tenant inside
+-- the production database, not a separate environment). CREATE OR
+-- REPLACE is live for A1 the moment it runs. Tenant-scoped step is
+-- the EXERCISE afterward: verify with the paired migration + probe
+-- from a Test Legacy manager session before relying on the surface.
+-- Wording earlier read as "apply first at Test Legacy, then
+-- production" which treats it as an environment gate — it isn't
+-- (Mateo Aug 19 correction).
 --
 -- 🔴 SIGNATURE PRESERVATION (Mateo Aug 9)
 -- CREATE OR REPLACE FUNCTION replaces the ENTIRE function definition,

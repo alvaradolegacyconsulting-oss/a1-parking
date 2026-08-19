@@ -50,8 +50,14 @@
 -- NOT NULL). Not scripted here — production is expected to hold
 -- these constraints permanently.
 --
--- APPLY: Test Legacy first via SQL Editor, verify with the paired
--- verification (v2 returns-rows pattern), then production.
+-- APPLY: Apply once (single database — Test Legacy is a tenant inside
+-- the production database, not a separate environment). The ALTER is
+-- live for A1 the moment it runs. Tenant-scoped step is the EXERCISE
+-- afterward: verify with the paired v2 returns-rows verification, then
+-- confirm no regression at Test Legacy before A1 traffic exercises
+-- the new constraint. "Test Legacy first, then production" wording
+-- (used in earlier migrations) treats this as an environment gate;
+-- it isn't (Mateo Aug 19 wording correction).
 -- ══════════════════════════════════════════════════════════════════════
 
 BEGIN;

@@ -60,9 +60,14 @@
 -- writer's existing error-passthrough surfaces "Vehicle has no
 -- property — cannot verify scope. Data-fix required." to the manager.
 --
--- APPLY: Test Legacy first via SQL Editor, verify with the paired
--- verification migration (which now RETURNS ROWS on pass — Mateo Aug
--- 9 "silence is indistinguishable from not-run"), then production.
+-- APPLY: Apply once (single database — Test Legacy is a tenant inside
+-- the production database, not a separate environment). CREATE OR
+-- REPLACE is live for A1 the moment it runs. Tenant-scoped step is
+-- the EXERCISE afterward: verify with the paired v2 returns-rows
+-- migration, then probe from a Test Legacy manager session before
+-- relying on the surface. "Test Legacy first, then production"
+-- wording treats this as an environment gate; it isn't (Mateo Aug 19
+-- correction).
 -- ══════════════════════════════════════════════════════════════════════
 
 BEGIN;
