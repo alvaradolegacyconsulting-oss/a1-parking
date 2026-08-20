@@ -2516,10 +2516,55 @@ export default function ManagerPortal() {
     return { ok: true }
   }
 
+  // 🔴 2026-08-20 Finding A follow-up (Aug 4 backlog vehicles-status-
+  // is_active-divergence.md "removeVehicle exception" fold-in).
+  //
+  // Manager-initiated permanent removal. This is the SUBTRACTIVE
+  // manager action symmetric with deactivateVehicleCrm's approach:
+  // it should write BOTH is_active AND status (like the DEACTIVATE_
+  // VEHICLE RPC flip) so display + enforcement + noAuthorizedBucket
+  // divergence-check agree on the row's classification.
+  //
+  // Pre-Aug-20 shape wrote is_active=false but left status='active',
+  // producing the exact `is_active=false AND status='active'`
+  // divergence the Aug 4 backlog documented. Not one of the six
+  // Green Acres rows (those came from cascade paths that are CORRECT
+  // to write is_active only — cascades preserve status so
+  // reactivation can restore it), but same visible-count class:
+  // manager clicks Remove, tile still says "approved."
+  //
+  // Fix — write both fields explicitly, mirroring the RPC's flip
+  // pattern:
+  //   is_active = false
+  //   status    = 'deactivated'
+  //
+  // Deliberately does NOT route through the deactivate_vehicle DEFINER
+  // RPC because that RPC requires a reason from the closed-set enum
+  // + a confirmation modal; this legacy Remove button is a bare
+  // confirm() with no reason UI. Route consolidation would need a
+  // separate UX pass. For now, the direct .update() writes both
+  // fields so the divergence class doesn't reappear here even if the
+  // route stays.
+  //
+  // AUDIT: extends new_values to record status too, so a future
+  // audit-log query can distinguish direct-Remove writes from
+  // cascade writes.
   async function removeVehicle(id: string) {
     if (!confirm('Remove this vehicle?')) return
-    await supabase.from('vehicles').update({ is_active: false }).eq('id', id)
-    await logAudit({ action: 'REMOVE_VEHICLE', table_name: 'vehicles', record_id: id, new_values: { is_active: false, property: manager.name } })
+    await supabase.from('vehicles').update({
+      is_active: false,
+      status:    'deactivated',
+    }).eq('id', id)
+    await logAudit({
+      action:     'REMOVE_VEHICLE',
+      table_name: 'vehicles',
+      record_id:  id,
+      new_values: {
+        is_active: false,
+        status:    'deactivated',
+        property:  manager.name,
+      },
+    })
     await refreshCrmData()
   }
 
