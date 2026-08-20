@@ -322,6 +322,18 @@ export default function ManagerPortal() {
   const [passLimit, setPassLimit] = useState('')
   const [exemptPlates, setExemptPlates] = useState<string[]>([])
   const [newExemptPlate, setNewExemptPlate] = useState('')
+  // 2026-08-20 house-rules arc Commit 2 — Settings-tab form state.
+  // Mirrors the passLimit / exemptPlates pattern above. Server-side
+  // trigger (20260820_property_house_rules_v1.sql) is the sole
+  // authority for version bump + normalized text-change detection —
+  // this form just writes house_rules_text + house_rules_effective_date.
+  // Whitespace-only saves and effective-date-only edits are handled
+  // correctly by the trigger; client-side we don't try to duplicate the
+  // logic (Mateo Aug 20 rule: trigger is the authority).
+  const [houseRulesDraft, setHouseRulesDraft] = useState('')
+  const [houseRulesEffectiveDate, setHouseRulesEffectiveDate] = useState('')
+  const [houseRulesMsg, setHouseRulesMsg] = useState('')
+  const [houseRulesBusy, setHouseRulesBusy] = useState(false)
 
   // ── B214: Guest Authorizations state ──
   // List, create-form, renew-modal, and revoke-modal state isolated to this
@@ -498,6 +510,16 @@ export default function ManagerPortal() {
     if (manager) {
       setPassLimit(manager.visitor_pass_limit != null ? String(manager.visitor_pass_limit) : '')
       setExemptPlates(manager.exempt_plates || [])
+      // House rules (Commit 2). Draft mirrors persisted; effective-date
+      // defaults to today when unpublished, otherwise mirrors persisted.
+      // The manager can then optionally push the date forward — Ch. 94
+      // notice-friendly workflow — without needing to type today's date.
+      setHouseRulesDraft(manager.house_rules_text ?? '')
+      setHouseRulesEffectiveDate(
+        manager.house_rules_effective_date
+          ?? new Date().toISOString().slice(0, 10)   // YYYY-MM-DD
+      )
+      setHouseRulesMsg('')
     }
   }, [manager])
 
@@ -902,6 +924,67 @@ export default function ManagerPortal() {
     else {
       await logAudit({ action: 'REMOVE_EXEMPT_PLATE', table_name: 'properties', record_id: manager.id, new_values: { plate, property: manager.name } })
       setExemptPlates(updated); setManager({ ...manager, exempt_plates: updated })
+    }
+  }
+
+  // 2026-08-20 house-rules arc Commit 2 — save handler. Mirrors
+  // savePassLimit's shape: direct .update() on properties, RLS-gated
+  // (manager owns the property scope), audit row on success.
+  //
+  // 🔴 Server-side trigger is the authority for version bump +
+  // normalized text-change detection. Client doesn't try to detect
+  // "no change" (Mateo Aug 20: populated-by-every-writer is not a
+  // constraint; keep the client dumb, let the trigger decide).
+  //
+  //   - text nulls out on empty/whitespace-only → trigger stores NULL
+  //     and inserts a "unpublish" history row when previously published
+  //   - effective_date sent verbatim; PM sets it or leaves today's default
+  //   - version + updated_at + updated_by are TRIGGER-SET, not sent
+  //
+  // Post-save: refetch the manager row so version + updated_at +
+  // updated_by come back from the DB (state-truth, not optimistic).
+  async function saveHouseRules() {
+    if (!manager?.id) return
+    setHouseRulesBusy(true); setHouseRulesMsg('')
+    try {
+      const normalizedText = houseRulesDraft.trim().length === 0 ? null : houseRulesDraft
+      const effectiveForSubmit = normalizedText === null
+        ? null                                     // unpublish clears the date too (mirrors trigger's clear-on-null)
+        : (houseRulesEffectiveDate || null)       // empty string → null; trigger defaults to CURRENT_DATE
+      const { error } = await supabase
+        .from('properties')
+        .update({
+          house_rules_text:           normalizedText,
+          house_rules_effective_date: effectiveForSubmit,
+        })
+        .eq('id', manager.id)
+      if (error) {
+        setHouseRulesMsg('Error: ' + error.message)
+        return
+      }
+      // Audit row. Trigger writes the history table itself; this row
+      // records manager intent + which portal action fired.
+      await logAudit({
+        action:     normalizedText === null ? 'UNPUBLISH_HOUSE_RULES' : 'SAVE_HOUSE_RULES',
+        table_name: 'properties',
+        record_id:  manager.id,
+        new_values: {
+          property:       manager.name,
+          text_length:    normalizedText === null ? 0 : normalizedText.length,
+          effective_date: effectiveForSubmit,
+        },
+      })
+      // Refetch the row so the UI reflects trigger-set fields
+      // (version, updated_at, updated_by).
+      const { data: refreshed } = await supabase
+        .from('properties')
+        .select('*')
+        .eq('id', manager.id)
+        .maybeSingle()
+      if (refreshed) setManager(refreshed)
+      setHouseRulesMsg(normalizedText === null ? 'House rules unpublished.' : 'House rules saved.')
+    } finally {
+      setHouseRulesBusy(false)
     }
   }
 
@@ -4980,6 +5063,117 @@ export default function ManagerPortal() {
                 <p style={{ color: settingsMsg.startsWith('Error') ? '#f44336' : '#4caf50', fontSize:'12px', margin:'10px 0 0' }}>{settingsMsg}</p>
               )}
             </div>
+
+            {/* 2026-08-20 house-rules arc Commit 2 — Section A.5 (House Rules).
+                Positioned above Registration QR because it's a policy-authoring
+                surface, more consequential than a display QR. Section shape
+                mirrors Visitor Pass Limit above:
+                - Header + descriptive copy
+                - Persisted-state readout (version + effective + last saved)
+                - Textarea + effective-date input + Ch. 94 help text
+                - Save button, disabled during in-flight save
+                - Status message
+
+                🔴 Non-goals reminder (see migration header):
+                - Not an enforcement input
+                - Free text — not a plate concept
+                - Not merged with resident bulletins
+                No acknowledgment gate; no driver surface. */}
+            {manager && (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'14px' }}>
+                <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>House Rules</p>
+                <p style={{ color:'#555', fontSize:'12px', margin:'0 0 12px', lineHeight:'1.5' }}>
+                  Property policy visible to residents in their portal and to your company admin.
+                  Free text — describe what your team wants residents to know
+                  (parking rules, tow zones, quiet hours, guest policy, etc.).
+                  Leave blank to unpublish. Does not affect enforcement — all approved vehicles remain
+                  authorized regardless of what&apos;s written here.
+                </p>
+
+                {/* Persisted-state readout. Only render when there IS a
+                    published version — an empty draft with no history reads
+                    as "no rules yet" via the placeholder in the textarea. */}
+                {manager.house_rules_version > 0 && (
+                  <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
+                    {manager.house_rules_text ? (
+                      <p style={{ color:'#aaa', fontSize:'11px', margin:0, lineHeight:'1.5' }}>
+                        <strong style={{ color:'#C9A227' }}>Version {manager.house_rules_version}</strong>
+                        {' · effective '}
+                        <strong style={{ color:'white' }}>{manager.house_rules_effective_date}</strong>
+                        {manager.house_rules_updated_by_email && (
+                          <>{' · last saved by '}<span style={{ color:'#888' }}>{manager.house_rules_updated_by_email}</span></>
+                        )}
+                      </p>
+                    ) : (
+                      <p style={{ color:'#fbbf24', fontSize:'11px', margin:0, lineHeight:'1.5' }}>
+                        <strong>Currently unpublished.</strong> Previous version {manager.house_rules_version} is in history.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Rules Text</label>
+                <textarea
+                  value={houseRulesDraft}
+                  onChange={e => { setHouseRulesDraft(e.target.value); setHouseRulesMsg('') }}
+                  placeholder="e.g. Overnight guest parking requires a visitor pass. Tow zone is the north lot (marked). Quiet hours 10pm–7am."
+                  disabled={isReadOnly || houseRulesBusy}
+                  rows={10}
+                  style={{
+                    display:'block', width:'100%', marginTop:'6px', marginBottom:'12px',
+                    padding:'9px 10px',
+                    background: (isReadOnly || houseRulesBusy) ? '#1a1a2a' : '#1e2535',
+                    border:'1px solid #3a4055', borderRadius:'6px',
+                    color: (isReadOnly || houseRulesBusy) ? '#555' : 'white',
+                    fontSize:'13px', fontFamily:'inherit', lineHeight:'1.5',
+                    boxSizing:'border-box', outline:'none', resize:'vertical',
+                  }}
+                />
+
+                <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Effective Date</label>
+                <input
+                  type="date"
+                  value={houseRulesEffectiveDate}
+                  onChange={e => { setHouseRulesEffectiveDate(e.target.value); setHouseRulesMsg('') }}
+                  disabled={isReadOnly || houseRulesBusy}
+                  style={{
+                    display:'block', width:'100%', marginTop:'6px', marginBottom:'6px',
+                    padding:'9px 10px',
+                    background: (isReadOnly || houseRulesBusy) ? '#1a1a2a' : '#1e2535',
+                    border:'1px solid #3a4055', borderRadius:'6px',
+                    color: (isReadOnly || houseRulesBusy) ? '#555' : 'white',
+                    fontSize:'13px', boxSizing:'border-box', outline:'none',
+                  }}
+                />
+                <p style={{ color:'#7a8394', fontSize:'11px', margin:'0 0 12px', lineHeight:'1.5', fontStyle:'italic' }}>
+                  If your property is subject to notice-of-change requirements, set the effective date to
+                  give residents advance notice per your lease terms and applicable law. Defaults to today.
+                </p>
+
+                {!isReadOnly && (
+                  <button
+                    onClick={saveHouseRules}
+                    disabled={houseRulesBusy}
+                    style={{
+                      width:'100%', padding:'10px',
+                      background: houseRulesBusy ? '#333' : '#C9A227',
+                      color: houseRulesBusy ? '#666' : '#0f1117',
+                      fontWeight:'bold', fontSize:'13px',
+                      border:'none', borderRadius:'8px',
+                      cursor: houseRulesBusy ? 'wait' : 'pointer',
+                    }}>
+                    {houseRulesBusy
+                      ? 'Saving…'
+                      : (houseRulesDraft.trim().length === 0 && manager.house_rules_text
+                        ? 'Save (unpublishes rules)'
+                        : 'Save House Rules')}
+                  </button>
+                )}
+                {houseRulesMsg && (
+                  <p style={{ color: houseRulesMsg.startsWith('Error') ? '#f44336' : '#4caf50', fontSize:'12px', margin:'10px 0 0' }}>{houseRulesMsg}</p>
+                )}
+              </div>
+            )}
 
             {/* Section B — Registration QR */}
             {manager && (
