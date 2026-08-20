@@ -79,6 +79,7 @@ import AddVehicleForResidentModal, { type AddVehiclePayload, type AddVehicleSubm
 import PropertyWarningsPanel from '../components/PropertyWarningsPanel'
 import { computePropertyWarnings } from '../lib/property-warnings'
 import SpaceDetailModal from '../components/SpaceDetailModal'
+import HouseRulesRenderer from '../components/HouseRulesRenderer'
 import CredentialsModal from '../components/CredentialsModal'
 // PM Resident CRM (slice 1) — replaces the Residents tab with a unified
 // list + detail surface. Read-only in slice 1; actions land in slices
@@ -5116,11 +5117,11 @@ export default function ManagerPortal() {
                 <textarea
                   value={houseRulesDraft}
                   onChange={e => { setHouseRulesDraft(e.target.value); setHouseRulesMsg('') }}
-                  placeholder="e.g. Overnight guest parking requires a visitor pass. Tow zone is the north lot (marked). Quiet hours 10pm–7am."
+                  placeholder={`Parking Rules\n- Each unit is assigned one parking space.\n- Visitor passes required for overnight guests.\n- Tow zone is the north lot (marked).\n\nVehicle Requirements\n- All vehicles must have current registration and insurance.\n- No commercial vehicles over 1 ton.\n\nQuiet Hours\n- 10pm to 7am daily.`}
                   disabled={isReadOnly || houseRulesBusy}
                   rows={10}
                   style={{
-                    display:'block', width:'100%', marginTop:'6px', marginBottom:'12px',
+                    display:'block', width:'100%', marginTop:'6px', marginBottom:'6px',
                     padding:'9px 10px',
                     background: (isReadOnly || houseRulesBusy) ? '#1a1a2a' : '#1e2535',
                     border:'1px solid #3a4055', borderRadius:'6px',
@@ -5129,6 +5130,17 @@ export default function ManagerPortal() {
                     boxSizing:'border-box', outline:'none', resize:'vertical',
                   }}
                 />
+                {/* 2026-08-20 Commit 2b — help text under the textarea.
+                    The paste-from-Word/PDF warning is the load-bearing
+                    part: the Aug 20 finding was a manager pasting from
+                    a rendered document (visual line breaks were layout,
+                    not \n characters) and the resident view showed a
+                    wall of text. The preview pane below is the durable
+                    fix; this copy is the advisory version. */}
+                <p style={{ color:'#7a8394', fontSize:'11px', margin:'0 0 12px', lineHeight:'1.5', fontStyle:'italic' }}>
+                  Plain text — press Enter for a new line, blank lines separate sections. Text pasted from Word or a PDF may
+                  lose its line breaks; check the preview below before saving.
+                </p>
 
                 <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Effective Date</label>
                 <input
@@ -5149,6 +5161,34 @@ export default function ManagerPortal() {
                   If your property is subject to notice-of-change requirements, set the effective date to
                   give residents advance notice per your lease terms and applicable law. Defaults to today.
                 </p>
+
+                {/* 🔴 2026-08-20 Commit 2b — LIVE PREVIEW.
+                    The durable fix for the paste-lost-line-breaks class
+                    (Mateo Aug 20 finding). A manager pastes from a PDF,
+                    immediately sees a wall of text in this preview,
+                    adds breaks, saves something readable. Self-corrects
+                    at authoring time.
+
+                    Shares the render treatment with the resident view
+                    via HouseRulesRenderer — if they drift, the preview
+                    stops being a preview (Mateo). No metadata line and
+                    no reference caveat here — the manager already sees
+                    the effective-date input + caveat above and doesn't
+                    need to be told what they're writing isn't
+                    ShieldMyLot policy. Collapsible=false so the manager
+                    sees the WHOLE thing (wall of text signals a problem
+                    only if you can see the whole wall). */}
+                {houseRulesDraft.trim().length > 0 && (
+                  <div style={{
+                    background:'#0f1117', border:'1px solid #2a2f3d',
+                    borderRadius:'8px', padding:'12px', marginBottom:'12px',
+                  }}>
+                    <p style={{ color:'#7a8394', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px', fontWeight:'bold' }}>
+                      Preview — as residents will see it
+                    </p>
+                    <HouseRulesRenderer text={houseRulesDraft} />
+                  </div>
+                )}
 
                 {!isReadOnly && (
                   <button
