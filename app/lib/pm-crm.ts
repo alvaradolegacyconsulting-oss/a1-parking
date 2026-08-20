@@ -465,13 +465,58 @@ export function buildCrmResidents(input: {
   return rows
 }
 
+// 🔴 2026-08-19 Finding A fix (Mateo Aug 19 greenlight; Aug 4 backlog
+// vehicles-status-is_active-divergence.md fix direction).
+//
+// The `approved` count now matches the enforcement predicate:
+// `is_active === true`. Previously it counted `status IN ('active',
+// 'approved')` alone, which over-reported deactivated vehicles as
+// approved and left staff answering residents that their car was
+// authorized when the driver's scan would show unauthorized.
+//
+// check_resident_plate ([migrations/20260524_b74_rls_vehicles_visitor
+// _passes.sql:139]) and pm_plate_lookup Branch 1 ([migrations/
+// 20260723_dnt_b2_function_scope_fix.sql:377-382]) both gate on
+// `is_active = TRUE`. This helper now aligns.
+//
+// Why NOT the joint predicate (`is_active AND status='active'`): the
+// deactivation cascade deliberately preserves `status` so
+// reactivation can restore approval without remembering prior state
+// (reactivateResident at manager/page.tsx:3019 does
+// `.update({is_active: true})` only; the pre-deactivation status is
+// what makes the vehicle re-enforceable). Filtering only on
+// is_active matches enforcement exactly; the joint predicate would
+// exclude legitimately-active vehicles whose status is 'under_review'
+// (plate change in flight — still enforce-valid on old plate).
+//
+// Pending / under_review counts unchanged — those are workflow
+// state, not enforcement state. A pending vehicle is
+// is_active=false + status='pending' by design.
+//
+// EXPECTED COUNT DELTA at Green Acres: six vehicles (JGV3186,
+// PCX5830, LYM8379, MPH9101, TJD8452, WSN6747 per Mateo Aug 19
+// evening) will now count as NOT approved. Insights tile
+// "Approved permits" drops by 6, per-row "N approved" text updates
+// on four residents (150, 15, 95, 149). Numbers become more correct
+// (match what the driver scan would report), but visibly shift for
+// Green Acres staff without in-app explanation. Jose is heads-up'ing
+// Amanda before deploy per Mateo Aug 19 constraint #1.
+//
+// The Insights warning panel that surfaces the divergence
+// (noAuthorizedBucket C_orphaned at :701) continues to fire — the
+// six rows still match its `is_active=false AND status='active'`
+// predicate. Belt-and-suspenders retained.
+//
+// removeVehicle at manager/page.tsx:2039 also has the divergence
+// class (manager-permanent-delete writes is_active only) — shipping
+// as a separate commit per Mateo Aug 19 constraint #2.
 export function countVehicles(vs: any[]): { approved: number; pending: number; underReview: number } {
   let approved = 0, pending = 0, underReview = 0
   for (const v of vs) {
     const s = norm(v.status)
     if (s === 'under_review') underReview++
     else if (s === 'pending') pending++
-    else if (s === 'active' || s === 'approved') approved++
+    else if ((s === 'active' || s === 'approved') && v.is_active === true) approved++
   }
   return { approved, pending, underReview }
 }
