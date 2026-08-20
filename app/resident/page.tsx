@@ -143,6 +143,18 @@ export default function ResidentPortal() {
   const [supportEmail, setSupportEmail] = useState('')
   const [supportWebsite, setSupportWebsite] = useState('')
   const [propertyManager, setPropertyManager] = useState<{ name: string | null; email: string | null }>({ name: null, email: null })
+  // 2026-08-20 house-rules arc Commit 3 — resident-portal render.
+  // Populated from the SAME fetch as propertyManager below (rides
+  // the existing property row per Mateo Aug 20 constraint: a separate
+  // fetch that fails would render nothing and "no rules posted" would
+  // become indistinguishable from "couldn't load"). Version NOT held
+  // here — residents don't see it (Mateo Aug 20: internal concept).
+  const [houseRules, setHouseRules] = useState<{
+    text: string | null
+    effective_date: string | null
+    updated_at: string | null
+  }>({ text: null, effective_date: null, updated_at: null })
+  const [houseRulesExpanded, setHouseRulesExpanded] = useState(false)
   const [companyName, setCompanyName] = useState<string>('')
   // B217 — double-click guard for the public resident-request-vehicle
   // path. A second RPC call lands a duplicate pending vehicle in the
@@ -375,13 +387,29 @@ export default function ResidentPortal() {
       }
     }
     if (data.property) {
+      // 🔴 SHARED FETCH — pm contact + house rules ride the SAME query
+      // (Mateo Aug 20 constraint). A failure takes the page down
+      // visibly rather than silently hiding either surface.
       const { data: prop } = await supabase
         .from('properties')
-        .select('pm_name, pm_email')
+        .select('pm_name, pm_email, house_rules_text, house_rules_effective_date, house_rules_updated_at')
         .ilike('name', data.property)
         .single()
-      if (prop) setPropertyManager({ name: prop.pm_name || null, email: prop.pm_email || null })
-      else setPropertyManager({ name: null, email: null })
+      if (prop) {
+        setPropertyManager({ name: prop.pm_name || null, email: prop.pm_email || null })
+        setHouseRules({
+          text:           prop.house_rules_text ?? null,
+          effective_date: prop.house_rules_effective_date ?? null,
+          updated_at:     prop.house_rules_updated_at ?? null,
+        })
+      } else {
+        setPropertyManager({ name: null, email: null })
+        setHouseRules({ text: null, effective_date: null, updated_at: null })
+      }
+      // Reset collapse state whenever the resident switches residencies
+      // — a new property may have longer/shorter rules and the previous
+      // expand state doesn't carry meaning.
+      setHouseRulesExpanded(false)
     }
     setCompanyName(data.company || localStorage.getItem('company_name') || '')
   }
@@ -1293,6 +1321,109 @@ export default function ResidentPortal() {
               {changePwLoading ? 'Saving...' : 'Update Password'}
             </button>
           </div>
+
+          {/* 2026-08-20 house-rules arc Commit 3 — resident render.
+              Rides the SAME properties fetch as propertyManager
+              (hydrateResidency :378) per Mateo Aug 20 constraint —
+              a separate fetch failing would render nothing and
+              "no rules posted" would be indistinguishable from
+              "couldn't load."
+
+              Invisible when unpublished (houseRules.text is null/
+              empty) — no section, no placeholder. Absence is
+              unambiguous because the fetch is shared: if the whole
+              property fetch failed, the personal-info block above
+              would also be blank.
+
+              🔴 white-space: pre-wrap is the whole formatting story
+              (Mateo Aug 20). HTML would collapse the manager's line
+              breaks + blank lines. With pre-wrap, what the manager
+              types is what the resident reads.
+
+              🔴 Plain text child. NO dangerouslySetInnerHTML, NO
+              markdown parse. React auto-escapes {houseRules.text}
+              so a subscriber (post-self-serve) can't inject HTML.
+
+              Future-effective-date decision (Mateo Aug 20 recommend
+              + we implement): show text NOW with a "takes effect
+              <date>" label if effective_date is in the future.
+              Hiding new rules until they take effect defeats the
+              purpose of a future effective date — the notice-friendly
+              workflow needs the resident to see what's coming.
+
+              Long-text ceiling: collapse at ~15 rendered lines
+              (heuristic: >600 chars OR >12 newlines) with a
+              client-side Read more toggle. Full text always in the
+              DOM — one tap away. */}
+          {houseRules.text && houseRules.text.trim().length > 0 && (() => {
+            const text = houseRules.text
+            const isLong = text.length > 600 || text.split('\n').length > 12
+            const collapsed = isLong && !houseRulesExpanded
+            const effDate = houseRules.effective_date
+            const isFuture = effDate ? effDate > new Date().toISOString().slice(0, 10) : false
+            return (
+              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginTop:'14px' }}>
+                <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0 0 4px' }}>House Rules</p>
+                <p style={{ color:'#555', fontSize:'12px', margin:'0 0 10px', lineHeight:'1.5' }}>
+                  Published by your property. Not ShieldMyLot policy — the platform doesn&apos;t enforce these rules;
+                  they&apos;re how the property communicates its expectations to residents.
+                </p>
+
+                {/* Metadata line: effective date + updated indicator */}
+                <div style={{ display:'flex', flexWrap:'wrap', gap:'12px', alignItems:'baseline', marginBottom:'10px', fontSize:'11px', color:'#7a8394' }}>
+                  {effDate && (
+                    <span>
+                      {isFuture ? 'Takes effect' : 'Effective'}{' '}
+                      <strong style={{ color: isFuture ? '#fbbf24' : '#aaa' }}>{formatDate(effDate)}</strong>
+                    </span>
+                  )}
+                  {houseRules.updated_at && (
+                    <span>Updated <span style={{ color:'#aaa' }}>{formatDate(houseRules.updated_at)}</span></span>
+                  )}
+                </div>
+
+                {/* The rules — pre-wrap so manager's line breaks +
+                    blank lines survive. React auto-escapes the string
+                    child. Container has max-height when collapsed with
+                    a gradient fade at the bottom to signal there's more. */}
+                <div style={{ position:'relative' }}>
+                  <div style={{
+                    color:'#e5e7eb',
+                    fontSize:'13.5px',
+                    lineHeight:'1.6',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    maxHeight: collapsed ? '300px' : undefined,
+                    overflow: collapsed ? 'hidden' : undefined,
+                    padding: '6px 2px',
+                  }}>
+                    {text}
+                  </div>
+                  {collapsed && (
+                    <div style={{
+                      position:'absolute', left:0, right:0, bottom:0, height:'80px',
+                      background:'linear-gradient(to bottom, rgba(22,27,38,0), rgba(22,27,38,1))',
+                      pointerEvents:'none',
+                    }} />
+                  )}
+                </div>
+
+                {isLong && (
+                  <button
+                    onClick={() => setHouseRulesExpanded(v => !v)}
+                    style={{
+                      marginTop:'8px', padding:'6px 12px',
+                      background:'transparent', color:'#C9A227',
+                      border:'1px solid #3a2a00', borderRadius:'6px',
+                      cursor:'pointer', fontSize:'12px', fontWeight:'bold', fontFamily:'inherit',
+                    }}
+                  >
+                    {houseRulesExpanded ? 'Show less' : 'Read more'}
+                  </button>
+                )}
+              </div>
+            )
+          })()}
           </>
         )}
 
