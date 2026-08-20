@@ -271,6 +271,12 @@ export async function fetchSpacesList(
       .select('id, plate')
       .in('id', designatedIds)
     for (const v of (vehRows ?? [])) {
+      // 🔴 typeof-number guard: see [pm-crm.ts:vehicleById] for the
+      // full rationale. BIGINT via PostgREST returns as JS number for
+      // safe-integer values (our range); a future switch to string
+      // handling would silently empty this map (chip blank, export
+      // blank — no error). If bigint-handling ever changes, widen +
+      // Number()-coerce; do NOT drop the guard.
       if (typeof v.id === 'number') plateById.set(v.id, v.plate ?? '')
     }
   }

@@ -1264,13 +1264,17 @@ export default function CompanyAdminPortal() {
     setCaFlaggedMigrationCount(flagged ?? 0)
   }
 
-  async function caRefetchSpacesList() {
-    if (!caSelectedSpacesProperty) return
+  // Returns fresh rows so callers use them directly instead of the
+  // (stale-until-committed) state closure. See manager/page.tsx's
+  // refetchSpacesList header for the Finding B v3 root-cause rationale.
+  async function caRefetchSpacesList(): Promise<Space[]> {
+    if (!caSelectedSpacesProperty) return []
     setCaSpacesListLoading(true)
     try {
       const { rows, totalCount } = await fetchSpacesList(supabase, caSelectedSpacesProperty, caSpacesFilters, caSpacesPage, caSpacesPageSize)
       setCaSpacesList(rows)
       setCaSpacesListTotal(totalCount)
+      return rows
     } finally {
       setCaSpacesListLoading(false)
     }
@@ -5684,10 +5688,12 @@ export default function CompanyAdminPortal() {
                     onClose={() => setCaTargetSpaceDetail(null)}
                     onMutate={async () => {
                       await caRefetchSpacesDashboard()
-                      await caRefetchSpacesList()
-                      // Re-open with refreshed data so the designation
-                      // picker reflects the freshly resolved plate.
-                      const refreshed = caSpacesList.find(s => s.id === caTargetSpaceDetail.id)
+                      // Finding B v3 root-cause fix (Mateo Aug 20):
+                      // read fresh rows from the return, not the
+                      // stale caSpacesList closure. Same shape as
+                      // manager/page.tsx onMutate.
+                      const freshRows = await caRefetchSpacesList()
+                      const refreshed = freshRows.find(s => s.id === caTargetSpaceDetail.id)
                       if (refreshed) setCaTargetSpaceDetail(refreshed)
                     }}
                     // 2026-08-19 designated-vehicle Commit 4 — CA parity.

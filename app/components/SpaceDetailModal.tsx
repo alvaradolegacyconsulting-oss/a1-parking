@@ -121,6 +121,20 @@ export default function SpaceDetailModal({
   const [designatedFetchStatus, setDesignatedFetchStatus] =
     useState<'idle' | 'loading' | 'loaded'>('idle')
 
+  // 🔴 Finding B v3 structural invariant (Mateo Aug 20) —
+  // "make the impossible-to-misrender invariant hold is what actually
+  // closes the class." Tracks which vehicle id designatedInfo
+  // describes. Render logic below treats
+  //   designatedId !== designatedInfoForId
+  // as a loading state regardless of designatedFetchStatus, so any
+  // future dep-mismatch or parent-closure bug that leaves the two
+  // out of sync can no longer render amber on a valid designation.
+  // The specific bug that motivated this — parent's stale spacesList
+  // closure passing back the pre-save space on null→value transition
+  // — is fixed independently in manager/page.tsx onMutate. This
+  // invariant is the defense against the CLASS.
+  const [designatedInfoForId, setDesignatedInfoForId] = useState<number | null>(null)
+
   // Fetch fresh residents + vehicles whenever the modal opens or the
   // residents set changes (post-mutation reload). Doing it inside the
   // modal keeps the parent's loose coupling — caller only has to pass
@@ -140,12 +154,14 @@ export default function SpaceDetailModal({
       // "loading" from "loaded-and-no-rows". Only the latter justifies
       // the unresolvable amber verdict.
       if (space.designated_vehicle_id != null) {
+        const targetId = space.designated_vehicle_id
         setDesignatedFetchStatus('loading')
         setDesignatedInfo(null)   // clear stale info during fetch
+        setDesignatedInfoForId(null)  // invariant: pair mismatched during fetch → render loading
         const { data: dv, error: dvErr } = await supabase
           .from('vehicles')
           .select('id, plate, year, color, make, model, resident_email, is_active, status')
-          .eq('id', space.designated_vehicle_id)
+          .eq('id', targetId)
           .maybeSingle()
         if (dvErr) {
           // 🔴 Fetch ERROR is not a data verdict — it's a system fault.
@@ -154,10 +170,11 @@ export default function SpaceDetailModal({
           // so the render shows a resolving state rather than claiming
           // "no such vehicle" for what is actually a transient fault.
           console.error('[SpaceDetailModal] designated-vehicle fetch failed', {
-            spaceId: space.id, vehicleId: space.designated_vehicle_id, error: dvErr.message,
+            spaceId: space.id, vehicleId: targetId, error: dvErr.message,
           })
           setError(`Failed to load designated vehicle: ${dvErr.message}`)
           setDesignatedInfo(null)
+          setDesignatedInfoForId(null)  // stay mismatched → loading render
           setDesignatedFetchStatus('loading')  // stay loading — visible retry via reopen
         } else if (dv && typeof dv.id === 'number') {
           setDesignatedInfo({
@@ -168,15 +185,19 @@ export default function SpaceDetailModal({
             is_active:  dv.is_active === true,
             status:     dv.status ?? 'unknown',
           })
+          setDesignatedInfoForId(targetId)  // 🔴 pair matches → valid classification allowed
           setDesignatedFetchStatus('loaded')
         } else {
           // Fetch succeeded with no rows — FK target missing or RLS
-          // hid the row. That IS the unresolvable verdict.
+          // hid the row. That IS the unresolvable verdict — but only
+          // when the pair matches (designatedInfoForId === targetId).
           setDesignatedInfo(null)
+          setDesignatedInfoForId(targetId)  // 🔴 pair matches at target, info null → unresolvable
           setDesignatedFetchStatus('loaded')
         }
       } else {
         setDesignatedInfo(null)
+        setDesignatedInfoForId(null)
         setDesignatedFetchStatus('idle')
       }
     } catch (e: unknown) {
@@ -416,15 +437,26 @@ export default function SpaceDetailModal({
             | { kind: 'unresolvable'; id: number }
           if (designatedId == null) {
             displayState = { kind: 'unset' }
-          } else if (designatedFetchStatus === 'loading') {
-            // Fetch in flight (initial open or post-save reload).
-            // Render a neutral loading state; do NOT claim a data
-            // verdict. Prevents the amber "unresolvable" false
-            // positive Mateo caught on E-1 immediately after save.
+          } else if (designatedFetchStatus === 'loading' || designatedInfoForId !== designatedId) {
+            // 🔴 STRUCTURAL INVARIANT (Mateo Aug 20 Finding B v3):
+            // if designatedInfo describes a DIFFERENT id than the
+            // current designatedId, the pair is out of sync — we have
+            // NOT resolved this designation yet. Render loading, NEVER
+            // a data verdict, regardless of what caused the mismatch
+            // (fetch not fired, effect dep missed, parent closure
+            // stale, race window). Only when designatedInfoForId ===
+            // designatedId can any classification below (valid /
+            // stale-* / unresolvable) be trusted.
+            //
+            // This is the "impossible-to-misrender invariant" — if
+            // rendering unresolvable requires (fetch loaded AND info
+            // null AND pair matches), then no timing bug can leak
+            // amber onto a healthy save.
             displayState = { kind: 'loading' }
           } else if (designatedInfo == null) {
-            // designatedFetchStatus === 'loaded' AND null → FK target
-            // truly missing or RLS-hidden. Legitimate unresolvable.
+            // designatedFetchStatus === 'loaded' AND info null AND
+            // pair matches target → FK target truly missing or RLS-
+            // hidden. Legitimate unresolvable.
             displayState = { kind: 'unresolvable', id: designatedId }
           } else if (!designatedInfo.is_active || designatedInfo.status !== 'active') {
             displayState = { kind: 'stale-inactive', plate: designatedInfo.plate, status: designatedInfo.status }

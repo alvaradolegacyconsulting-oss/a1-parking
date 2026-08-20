@@ -1019,14 +1019,24 @@ export default function ManagerPortal() {
     setAvailableSpacesForAssign(available)
   }
 
-  async function refetchSpacesList(property?: string) {
+  // Returns the fresh rows so callers can use them BEFORE React commits
+  // the setSpacesList dispatch. The prior shape (void return + closure
+  // read of spacesList) was the root cause of Finding B v3 (Mateo Aug
+  // 20 evening): onMutate's `spacesList.find(...)` after
+  // `await refetchSpacesList()` reads the pre-dispatch closure, gets
+  // the stale space (designated_vehicle_id=null on first designation),
+  // hands it back to setTargetSpaceDetail — modal's reload deps see
+  // no change on the null→value transition. Returning the rows here
+  // sidesteps the closure entirely.
+  async function refetchSpacesList(property?: string): Promise<Space[]> {
     const prop = property ?? manager?.name
-    if (!prop) return
+    if (!prop) return []
     setSpacesListLoading(true)
     try {
       const { rows, totalCount } = await fetchSpacesList(supabase, prop, spacesFilters, spacesPage, spacesPageSize)
       setSpacesList(rows)
       setSpacesListTotal(totalCount)
+      return rows
     } finally {
       setSpacesListLoading(false)
     }
@@ -4277,11 +4287,20 @@ export default function ManagerPortal() {
                 onClose={() => setTargetSpaceDetail(null)}
                 onMutate={async () => {
                   await refetchSpacesDashboard()
-                  await refetchSpacesList()
-                  // Re-open with refreshed data so the designation
-                  // picker reflects the latest resolved plate. Look up
-                  // by id from the refreshed list.
-                  const refreshed = spacesList.find(s => s.id === targetSpaceDetail.id)
+                  // 🔴 Finding B v3 root-cause fix (Mateo Aug 20):
+                  // read the fresh rows from refetchSpacesList's
+                  // return value, NOT from the `spacesList` state
+                  // closure (which is stale until React commits the
+                  // dispatch). On the first designation set (null →
+                  // value transition), the closure returned the
+                  // pre-save space with designated_vehicle_id=null;
+                  // setTargetSpaceDetail(oldSpace) then triggered no
+                  // dep change in the modal's reload useEffect and
+                  // left designatedInfo unrefreshed → amber on a
+                  // valid designation. Reading the returned rows
+                  // sidesteps the closure entirely.
+                  const freshRows = await refetchSpacesList()
+                  const refreshed = freshRows.find(s => s.id === targetSpaceDetail.id)
                   if (refreshed) setTargetSpaceDetail(refreshed)
                 }}
                 // 2026-08-19 designated-vehicle Commit 3 — enable the

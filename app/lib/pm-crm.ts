@@ -192,6 +192,19 @@ export function buildCrmResidents(input: {
   // the chip renders as "designated but resolved-plate unknown".
   const vehicleById = new Map<number, any>()
   for (const v of input.vehicles) {
+    // 🔴 typeof-number guard: PostgREST returns BIGINT as JS number
+    // for values within safe-integer range (Number.MAX_SAFE_INTEGER
+    // = 2^53-1). Vehicle IDs are small (thousands) → always number
+    // in practice. IF a future supabase-js version, custom deserializer,
+    // or a switch to server-side bigint handling ever returns them as
+    // string, this map SILENTLY empties (no error, no warning) — the
+    // guard passes zero entries and every downstream `.get(id)` returns
+    // undefined. Symptoms: chip blank, modal amber "unresolvable",
+    // export blank. Sibling site: spaces.ts:274 (fetchSpacesList's
+    // plate resolver — same class). If bigint-handling ever changes,
+    // widen the guard to `typeof v.id === 'number' || typeof v.id ===
+    // 'string'` and Number()-coerce; do NOT drop the guard entirely
+    // (undefined ids would poison the map).
     if (typeof v.id === 'number') vehicleById.set(v.id, v)
   }
   for (const s of input.spaces) {

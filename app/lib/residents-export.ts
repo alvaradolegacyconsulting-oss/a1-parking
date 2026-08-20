@@ -146,16 +146,8 @@ export function flattenResidentsForExport(residents: ExportableResident[]): Flat
 // discipline as the modal's Aug 19 Defect 2 fix. Stale states surface
 // with an explicit suffix so blank cells NEVER conflate with "set but
 // stale".
-// One-shot debug flag so a Test Legacy export dumps the first
-// non-empty assignedSpaces set to the browser console. Diagnostic
-// for Finding C (Mateo Aug 19: column blank on rows with valid
-// designations). Remove once the miss is isolated and fixed. Fires
-// AT MOST ONCE per module load.
-let __designationDebugFired = false
-
 function formatDesignatedVehicleCell(
   spaces: Array<{
-    id?: number | string
     label: string
     designated_vehicle_id?: number | null
     designated_vehicle_plate?: string | null
@@ -164,22 +156,6 @@ function formatDesignatedVehicleCell(
 ): string {
   const entries: string[] = []
   for (const s of spaces) {
-    // 🔴 Finding C diagnostic: dump the shape of the first assignedSpace
-    // encountered per export invocation so we can see exactly what
-    // fields survived the buildCrmResidents → Phase 1 → Phase 2 →
-    // filterCrmRows chain. Console-only; no CSV impact.
-    if (!__designationDebugFired && spaces.length > 0) {
-      __designationDebugFired = true
-      try {
-        // eslint-disable-next-line no-console
-        console.log('[FindingC-debug] first assignedSpaces sample:', {
-          spaceCount: spaces.length,
-          firstSpaceKeys: Object.keys(spaces[0] ?? {}),
-          firstSpace: spaces[0],
-          spacesWithDesignation: spaces.filter(x => x.designated_vehicle_id != null).length,
-        })
-      } catch { /* ignore */ }
-    }
     if (s.designated_vehicle_id == null) continue
     const label = s.label || `Space #${s.designated_vehicle_id}`
     const plate = s.designated_vehicle_plate || `#${s.designated_vehicle_id}`
