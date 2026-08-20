@@ -3,7 +3,7 @@ title: "Adding Properties"
 category: "Shared"
 audience: ["company_admin", "manager"]
 tier_required: "any"
-last_updated: "2026-07-02"
+last_updated: "2026-08-20"
 related: ["provisioning-drivers", "submitting-violations", "understanding-your-tier", "billing-and-tier-changes"]
 ---
 
@@ -59,15 +59,17 @@ See [Billing and Tier Changes](13-billing-and-tier-changes.md) for the full pric
 - **Property name** — The display name your team will recognize. Examples: "Bayou Heights Apartments", "Westchase Plaza", "Memorial Park Lofts". This name appears throughout the platform on violations, visitor passes, and tow tickets.
 - **Property address** — Full street address.
 - **City** — Texas only; the platform is licensed for Texas operation under Chapter 2308.
+- **State**
 - **Zip code**
-- **Property type** — Apartment complex, retail center, office building, etc. This is informational but helps you organize larger property portfolios.
 
 **Optional but recommended:**
 
-- **Property owner/contact name** — Your point of contact at the property management company or property owner.
-- **Property owner phone and email** — For escalations and account issues.
+- **Property owner/contact name** — Your point of contact at the property management company or property owner. The form labels this as "PM Name" / "PM Phone" / "PM Email."
+- **Property owner phone and email**
+- **Visitor capacity** — The number of visitor parking spots the property offers, if any. Used by the visitor pass system.
+- **Towing authorization PDF** — Upload the signed authorization document (10MB max, PDF only). Stored privately and shown to managers via a signed link.
 - **Towing authorization expiration date** — Track when you need to renew the authorization agreement.
-- **Notes** — Any property-specific information your team should know (e.g., "Tow zone is rear lot only; do not tow from front lot").
+- **Towing authorization notes** — Details about the authorization terms, renewal contacts, or scope-of-work language from the agreement. This field lives inside the Towing Authorization card and is intended for compliance information about the authorization itself, not for operational rules like tow-zone geometry. There is no general property-notes field today; operational rules belong with the property manager, not on the property record.
 
 ### Step 4: Save
 
@@ -79,33 +81,35 @@ Click **Save**. The property is added immediately and visible to all managers an
 
 After the property exists, there are additional settings you should configure.
 
-### Exempt plates
+### Visitor Pass Quota Exemptions (managed in the manager portal)
 
-Some vehicles should never be towed from a property, even if they appear to violate rules. Common examples:
+Some regular visitors would otherwise exceed the rolling 30-day visitor-pass cap through normal use — caregivers, family members visiting weekly, service providers, contractors, delivery drivers with recurring routes.
 
-- The property owner's personal vehicles
-- Maintenance contractor vehicles with regular access
-- Delivery service vehicles (UPS, FedEx, USPS)
-- Vehicles with permanent permits agreed to by the owner
+To add a plate to the exemption list:
+1. Sign in to the **manager portal** (this control is not in the Company Admin portal)
+2. Open the property's **Settings** tab
+3. Scroll to the **Visitor Pass Quota Exemptions** section
+4. Add plates one at a time
 
-To add exempt plates:
-1. Navigate to the property's settings page (click the property name in the Manage tab)
-2. Find the **Exempt Plates** section
-3. Add plates one at a time
+Exempt plates bypass the visitor-pass rolling-30 cap for that property. They do **not** grant enforcement authorization — that comes from resident vehicles or approved visitor passes. Think of the exemption as "don't count this plate against the resident's visitor allowance," not "always allow this plate."
 
-Exempt plates bypass both violation submission warnings AND visitor pass limits. Use this list for regular visitors who would otherwise exceed the rolling 30-day visitor-pass cap through nothing but normal use — caregivers, family members visiting weekly, service providers, contractors. Without the exemption, the limit will start rejecting their passes once they cross the threshold.
+**Note for company admins:** if you don't see the Visitor Pass Quota Exemptions section in the Company Admin portal, that is correct. Adding a plate to the exemption list is a manager-portal action, scoped to a single property. If you're the CA and need an exemption added, ask the property's manager to add it, or sign in as a manager for that property.
 
-### Visitor pass settings (Property Management track only)
+### Visitor pass settings (managed in the manager portal)
 
-Enforcement track customers can skip this section — visitor passes are a PM-track feature.
+Enforcement-track customers can skip this section — visitor passes are a PM-track feature.
+
+The visitor-pass daily/monthly cap and the exemption list (above) are both set from the **manager portal's Settings tab**, one property at a time. The Company Admin portal does not have controls for these — the CA sees aggregate visitor-pass activity on the Property tab but does not adjust the per-property cap.
 
 For PM customers, see [Visitor Passes](../property-management-track/09-visitor-passes.md).
 
 ### Towing authorization documentation
 
-You're responsible for maintaining your signed towing authorization documents from each property owner. Keep these in your own files (PDF, contract management system, or wherever you maintain customer agreements) and use the property notes field in ShieldMyLot to record the authorization expiration date.
+You can upload the signed towing authorization PDF directly on the property record (Add Property form or Edit Property, "Towing Authorization" card — Company Admin portal). Managers see a signed link to the PDF on their portal but cannot upload or replace it — that's a CA-only action.
 
-Set yourself a calendar reminder 30-60 days before each authorization expires to renew with the property owner. Towing from a property after authorization has lapsed can result in penalties under Texas Chapter 2308.
+Also record the **authorization expiration date** on the same card. Set yourself a calendar reminder 30-60 days before each authorization expires to renew with the property owner. Towing from a property after authorization has lapsed can result in penalties under Texas Chapter 2308.
+
+If you prefer to keep the PDF in your own files (contract management system, shared drive) rather than upload it, the expiration date field on the property record is still worth setting so the platform can flag imminent renewals.
 
 ### Assigning managers
 
@@ -163,7 +167,11 @@ Each property in ShieldMyLot is tied to one company. If two different towing com
 They remain visible to everyone who could see them before deactivation (managers, company admins, residents whose plates match, super admin). Soft-deleted violations and their evidence remain intact for legal record retention.
 
 **Can a property name be changed after creation?**
-Yes. Click the property in the Manage tab, edit the name, save. Be aware that historical violations will reflect the new name on display — the underlying database links are preserved, but display labels update.
+Only until the first manager or leasing agent is assigned to it. Once at least one non-admin user is assigned, the name is locked — attempting to save a rename will fail with a database error. This is intentional: the property name is referenced across historical audit rows, and mid-flight renames after user assignments cause cross-portal display drift.
+
+**What if I need to rename after users are assigned?** Contact support@shieldmylot.com. Renames are still possible with coordination, but the guardrail prevents them from happening accidentally during onboarding.
+
+Otherwise (no users yet): click the property in the Manage tab, edit the name, save. Historical violations reflect the new name on display; the underlying database links are preserved.
 
 ---
 
