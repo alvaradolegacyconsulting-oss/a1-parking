@@ -134,24 +134,35 @@ export default function AdminConsolePage() {
   const [drawerCompany, setDrawerCompany] = useState<CompanyDetail | null>(null)
   const [drawerLoading, setDrawerLoading] = useState(false)
   const [searchQ, setSearchQ] = useState('')
-  // 2026-07-20 company_env console toggle — 4-way filter, default 'all'.
+  // 2026-07-20 company_env console toggle — 4-way filter.
+  //
+  // 🔴 2026-08-21 default changed from 'all' → 'production' (Mateo).
+  //    Census shows 4 of 5 companies are test/demo noise, exactly one
+  //    is production (A1). Console at default was 20% signal; production-
+  //    default flips that to 100%. Test-only / Demo-only remain available
+  //    via the toggle for smokes. See docs/backlog/property-settings-
+  //    surface-preflight for the census evidence.
+  //
   // Initialized from ?env= URL param (via useSearchParams below) so a
-  // reloaded/bookmarked filtered view survives. Every setter also pushes
-  // the router so browser back/forward reflects the state.
+  // reloaded/bookmarked filtered view survives; when no param, default
+  // to production. Every setter also pushes the router so browser
+  // back/forward reflects the state.
   const searchParams = useSearchParams()
   const router = useRouter()
   const initialEnv: EnvFilter = ((): EnvFilter => {
     const p = searchParams?.get('env')
-    return p === 'production' || p === 'test' || p === 'demo' ? p : 'all'
+    if (p === 'production' || p === 'test' || p === 'demo' || p === 'all') return p
+    return 'production'   // 🔴 was 'all' pre-2026-08-21 (Mateo)
   })()
   const [envFilter, setEnvFilterState] = useState<EnvFilter>(initialEnv)
   function setEnvFilter(next: EnvFilter) {
     setEnvFilterState(next)
-    // URL sync — replace so filter changes don't spam browser history but
-    // an explicit back button still crosses out of the filter.
+    // URL sync — strip ?env when it matches the DEFAULT (production);
+    // otherwise set explicitly. Pre-2026-08-21 the default was 'all'
+    // so `all → strip` was correct; the flip inverts that.
     const url = new URL(window.location.href)
-    if (next === 'all') url.searchParams.delete('env')
-    else                url.searchParams.set('env', next)
+    if (next === 'production') url.searchParams.delete('env')   // 🔴 was 'all' pre-2026-08-21
+    else                        url.searchParams.set('env', next)
     router.replace(url.pathname + url.search, { scroll: false })
   }
   // B228 Phase 2 — spike flags, PM per-property drill, cost rates
@@ -735,7 +746,16 @@ export default function AdminConsolePage() {
                 })}
               </div>
 
-              {envFilter !== 'all' && (
+              {/* 🔴 2026-08-21 banner tone refactor (Mateo):
+                  - LOUD banner ONLY fires when the filter HIDES the live
+                    customer (test/demo). That's the "forgotten filter
+                    hides A1" risk the original comment at :710-714
+                    warned about — genuinely alarming, keep loud.
+                  - MUTED indicator for production (the default) and all.
+                    Production-default is not a special state; the muted
+                    line satisfies "toggle state visible at all times"
+                    without alarming on the normal view. */}
+              {(envFilter === 'test' || envFilter === 'demo') && (
                 <div style={{
                   background: 'rgba(201,162,39,0.10)',
                   border: `1px solid ${GOLD}`,
@@ -750,11 +770,11 @@ export default function AdminConsolePage() {
                   gap: 10,
                   flexWrap: 'wrap' as const,
                 }}>
-                  <span>⚠ VIEWING: {envFilter.toUpperCase()} ONLY</span>
+                  <span>⚠ VIEWING: {envFilter.toUpperCase()} ONLY — production hidden</span>
                   <span style={{ color: '#aaa', fontWeight: 'normal', fontSize: 11 }}>
                     · {envFilterHiddenCount} {envFilterHiddenCount === 1 ? 'company' : 'companies'} hidden
                   </span>
-                  <button onClick={() => setEnvFilter('all')}
+                  <button onClick={() => setEnvFilter('production')}
                     style={{
                       marginLeft: 'auto',
                       padding: '3px 10px',
@@ -767,9 +787,16 @@ export default function AdminConsolePage() {
                       cursor: 'pointer',
                       fontFamily: 'Arial',
                     }}>
-                    Clear filter
+                    Back to Production
                   </button>
                 </div>
+              )}
+              {(envFilter === 'production' || envFilter === 'all') && (
+                <p style={{ color: '#7a8394', fontSize: 11, margin: '0 0 10px', fontStyle: 'italic' }}>
+                  {envFilter === 'production'
+                    ? `Production only — ${envFilterHiddenCount} test/demo ${envFilterHiddenCount === 1 ? 'company' : 'companies'} hidden. Click All to include them.`
+                    : `Showing all environments (production + test + demo). Click Production to filter to live subscribers.`}
+                </p>
               )}
 
               <div style={{ overflowX: 'auto' }}>
@@ -826,7 +853,26 @@ export default function AdminConsolePage() {
                       </tr>
                     ))}
                     {filteredAggregates.length === 0 && (
-                      <tr><td colSpan={10} style={{ padding: 14, color: '#555', textAlign: 'center' }}>No subscribers match.</td></tr>
+                      // 🔴 2026-08-21 empty-state differentiates by
+                      // filter (Mateo Aug 21 absence-as-failure-output
+                      // rule applied to filters: "No subscribers" and
+                      // "No production subscribers" must not render
+                      // identically — one may be a data reality, the
+                      // other is a filter reminder).
+                      <tr><td colSpan={10} style={{ padding: 14, color: '#555', textAlign: 'center' }}>
+                        {envFilter === 'production'
+                          ? (searchQ.trim().length > 0
+                              ? 'No production subscribers match this search. Toggle All to include test/demo.'
+                              : 'No production subscribers. Toggle All to see test/demo companies.')
+                          : envFilter === 'test'
+                            ? 'No test subscribers match. Toggle Production or All to see other environments.'
+                          : envFilter === 'demo'
+                            ? 'No demo subscribers match. Toggle Production or All to see other environments.'
+                          : (searchQ.trim().length > 0
+                              ? 'No subscribers match this search.'
+                              : 'No subscribers to show.')
+                        }
+                      </td></tr>
                     )}
                   </tbody>
                 </table>
