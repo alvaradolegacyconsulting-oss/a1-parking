@@ -974,6 +974,24 @@ export default function AdminConsolePage() {
                         <> · loaded {loadedAtLabel}</>
                       )}
                     </span>
+                    {/* 2026-08-21 evening — Refresh control (Mateo:
+                        "the console going stale mid-day is real, the
+                        panel exists precisely to catch things as they
+                        arise"). Kept alongside the loaded-at line so
+                        the two carry the freshness story together;
+                        hidden on failed state (Retry button in the
+                        error box is the affordance there instead). */}
+                    {panelState !== 'failed' && (
+                      <button onClick={retryRedWarnings} disabled={redWarningsRetrying}
+                        title="Re-fetch red warnings from the database"
+                        style={{ background: 'transparent', color: redWarningsRetrying ? '#555' : GOLD,
+                                 border: '1px solid #2a2f3d', borderRadius: 4,
+                                 padding: '2px 8px', fontSize: 10, fontWeight: 'bold',
+                                 cursor: redWarningsRetrying ? 'default' : 'pointer',
+                                 textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        {redWarningsRetrying ? '…' : '↻ Refresh'}
+                      </button>
+                    )}
                   </div>
 
                   {panelState === 'failed' && (
