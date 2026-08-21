@@ -1,21 +1,40 @@
 'use client'
 // B113 — first-login force-reset landing for bulk-uploaded users.
-// Companion to /reset-password (B99) with three important differences:
+// Companion to /reset-password (B99); the two flows are now SYMMETRIC
+// (both auto-login post-updateUser + rely on the portal-layout consent
+// gate → /consent to enforce missing legal consents). See notes (2) +
+// (2a) below for the history.
 //
 //   (1) Auth source: Supabase Auth invite (inviteUserByEmail) instead
 //       of password-reset email. Both flows mint a session via the
 //       URL hash on landing (detectSessionInUrl=true); architecturally
 //       same from this page's perspective.
 //
-//   (2) Post-success: sign out + redirect to /login (NOT auto-login
-//       like /reset-password). Reason: bulk-uploaded users have NULL
-//       tos_accepted_at + NULL version columns on user_roles. The ToS
-//       modal at /login is the only place the modal-decision flow
-//       fires; auto-redirecting by role would bypass it entirely.
-//       The credential-re-entry friction is the cost of not
-//       duplicating B118 modal logic in this page. Counter-proposal
-//       H.2 ("password reset FIRST, then ToS modal on next session")
-//       accepted at greenlight.
+//   (2) 🔴 SUPERSEDED 2026-08-21 (B199 fix, Mateo Option 3) — the
+//       original H.2 tradeoff was "sign out + redirect to /login" so
+//       bulk-uploaded users hit the ToS modal that used to live on
+//       /login. That tradeoff assumed the friction cost was "one extra
+//       credential entry"; a live A1 support call (Amanda Canchola,
+//       manager, 2026-08-21) showed the actual delivered cost was
+//       "password appears not to have worked" — the 700ms success flash
+//       + login-screen-appears reads as failure to the user, no auth
+//       error to distinguish from a real password miss.
+//
+//   (2a) 🟢 CURRENT — post-success: redirect straight to /consent.
+//       /consent (P1 CONSENT HARD-GATE Commit 2, 2026-07-16) is a
+//       dedicated authenticated route that recomputes missing docs
+//       server-side, renders LegalGateAccordion, and calls
+//       accept_all_pending_consents + redirectByRole on accept. If the
+//       user has no missing consents, /consent redirects immediately
+//       to the portal (idempotent as a URL). The consent enforcement
+//       moved from "deny the session so /login fires the modal" to
+//       "grant the session and route to a page whose entire job is
+//       the gate" — a stronger guarantee than the /login modal it
+//       replaced, since Commit 3 wired portal-layout server gates on
+//       every authenticated page (see app/*/layout.tsx uses of
+//       hasCurrentConsents) so consent cannot be bypassed by direct
+//       navigation regardless of how the user arrived authenticated.
+//       Closes the flow asymmetry with /reset-password.
 //
 //   (3) Clears must_change_password=true on user_roles via the
 //       set_must_change_password SECURITY DEFINER RPC (B82 retrofit
@@ -23,7 +42,7 @@
 //       arrive with must_change_password=true set by the bulk-invite
 //       flow (commit 2 work); clearing here avoids the post-login
 //       /change-password redirect (line 36-37 of app/login/page.tsx)
-//       since the user already set their password here.
+//       on any later manual sign-in.
 //
 // Graceful-degrade pattern matches /login's accept_tos() RPC call: if
 // set_must_change_password fails, the user sees /change-password on
@@ -87,12 +106,19 @@ export default function ResetPasswordRequired() {
     })
     supabase.auth.getSession().then(({ data }) => onUser(data.session?.user ?? null))
 
+    // 2026-08-21 (Mateo B199 fold-in) — extended 4s → 15s.
+    // A1's managers are on phones, often cellular, often in a parking
+    // lot. 4s to detect a session was optimistic there, and the OTP
+    // fallback card ("Verify your invite") would read as *another*
+    // failure on top of the invite one. 15s is closer to "the request
+    // actually resolves" without going indefinite; the OTP fallback
+    // remains a last-resort recovery rather than an on-timer surprise.
     const timeoutId = window.setTimeout(() => {
       if (!resolved && !cancelled) {
         resolved = true
         setStatus({ kind: 'no_session' })
       }
-    }, 4000)
+    }, 15000)
 
     return () => {
       cancelled = true
@@ -164,14 +190,24 @@ export default function ResetPasswordRequired() {
 
     setStatus({ kind: 'success' })
 
-    // Sign out + redirect to /login. Forces the user through the
-    // /login dispatch + B118 modal-decision flow so bulk-uploaded
-    // users (who have NULL tos_accepted_at + NULL version columns)
-    // get the ToS + Privacy modal fired on next session per H.2.
-    // 700ms delay lets the success state flash briefly for UX feedback.
-    setTimeout(async () => {
-      await supabase.auth.signOut()
-      window.location.href = '/login'
+    // 🟢 2026-08-21 B199 fix — auto-login + redirect to /consent.
+    // 🔴 SUPERSEDES the prior H.2 signOut + /login redirect (see
+    //    header note (2)). Amanda Canchola (A1 manager) 2026-08-21
+    //    call proved the friction cost of that path was mis-priced.
+    //
+    // /consent handles the consent-gate. If the user has no missing
+    // consents (impossible for bulk-invited/first-time-set-password
+    // users, but possible in future), /consent redirects immediately
+    // to the portal — idempotent as a URL. On accept, /consent calls
+    // accept_all_pending_consents + redirectByRole. The portal-layout
+    // consent gate on every authenticated portal (app/*/layout.tsx
+    // hasCurrentConsents) is the additional defense-in-depth: even if
+    // a user landed on the portal directly with missing consents, they
+    // would be redirected to /consent from there.
+    //
+    // 700ms delay preserved so the success flash registers before nav.
+    setTimeout(() => {
+      window.location.href = '/consent'
     }, 700)
   }
 

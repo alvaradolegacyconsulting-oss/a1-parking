@@ -10,6 +10,16 @@
 // exchange already minted a session; a forced re-login adds friction
 // without security benefit.
 //
+// 🟢 SYMMETRY WITH /reset-password-required (2026-08-21 B199 fix):
+// both flows now auto-login post-updateUser. The invite sibling used
+// to signOut + redirect to /login (H.2 tradeoff) so bulk-invited users
+// hit the ToS modal that used to live on /login; that was superseded
+// when consent enforcement moved to the /consent route + portal-layout
+// server gates. The invite sibling now redirects to /consent directly;
+// this flow keeps redirectByRole and the portal-layout gate at the
+// destination catches any missing consents. See app/reset-password-
+// required/page.tsx header note (2a).
+//
 // must_change_password clearing on user_roles is deferred to a small
 // follow-up commit (would require an authenticated UPDATE that current
 // RLS doesn't permit + new helper). Until then, users whose admin had
@@ -83,12 +93,16 @@ export default function ResetPassword() {
     })
     supabase.auth.getSession().then(({ data }) => onUser(data.session?.user ?? null))
 
+    // 2026-08-21 (Mateo B199 fold-in) — extended 4s → 15s for slow
+    // mobile / cellular connections; keeps parity with /reset-password-
+    // required/page.tsx same timeout. OTP fallback remains genuine
+    // last-resort rather than on-timer surprise.
     const timeoutId = window.setTimeout(() => {
       if (!resolved && !cancelled) {
         resolved = true
         setStatus({ kind: 'no_session' })
       }
-    }, 4000)
+    }, 15000)
 
     return () => {
       cancelled = true
