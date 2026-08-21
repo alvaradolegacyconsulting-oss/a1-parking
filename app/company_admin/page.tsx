@@ -5755,100 +5755,15 @@ export default function CompanyAdminPortal() {
                   />
                 )}
 
-                {/* 2026-08-20 house-rules arc Commit 4 — CA read-only
-                    modal. Opens from the "View rules" button on the
-                    property detail card. Shows current text via the
-                    shared HouseRulesRenderer + history list (fetched
-                    on open). Version + effective date visible per
-                    Mateo Aug 20 (dispatcher use case: "version 3,
-                    effective 15 August" is the detail on a tow call).
-
-                    Read-only throughout — CA does not author (that
-                    stays manager-side per the Aug 20 split). */}
-                {caHouseRulesModalProperty && (
-                  <div
-                    onClick={caCloseHouseRulesModal}
-                    style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'20px', overflowY:'auto' }}
-                  >
-                    <div
-                      onClick={e => e.stopPropagation()}
-                      style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'640px', width:'100%', maxHeight:'90vh', overflowY:'auto' }}
-                    >
-                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'14px', gap:'12px' }}>
-                        <div style={{ flex:1, minWidth:0 }}>
-                          <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>House rules</p>
-                          <p style={{ color:'white', fontSize:'16px', margin:0, fontWeight:'bold' }}>{caHouseRulesModalProperty.name}</p>
-                        </div>
-                        <button
-                          onClick={caCloseHouseRulesModal}
-                          style={{ background:'transparent', color:'#888', border:'none', fontSize:'22px', cursor:'pointer', padding:'0 4px', lineHeight:1 }}
-                          aria-label="Close"
-                        >×</button>
-                      </div>
-
-                      {/* Current version — always the top-of-modal
-                          content. Uses shared renderer with metadata
-                          + heading so the CA sees the same treatment
-                          the resident does, plus version prominently. */}
-                      <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'14px', marginBottom:'14px' }}>
-                        <div style={{ display:'flex', gap:'10px', alignItems:'baseline', marginBottom:'8px' }}>
-                          <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:0 }}>Current</p>
-                          {caHouseRulesModalProperty.house_rules_version > 0 && (
-                            <span style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold' }}>v{caHouseRulesModalProperty.house_rules_version}</span>
-                          )}
-                        </div>
-                        {caHouseRulesModalProperty.house_rules_text ? (
-                          <HouseRulesRenderer
-                            text={caHouseRulesModalProperty.house_rules_text}
-                            effectiveDate={caHouseRulesModalProperty.house_rules_effective_date}
-                            updatedAt={caHouseRulesModalProperty.house_rules_updated_at}
-                          />
-                        ) : (
-                          <p style={{ color:'#fbbf24', fontSize:'12.5px', margin:0, fontStyle:'italic' }}>
-                            Currently unpublished. The property manager cleared the text; prior versions are in history below.
-                          </p>
-                        )}
-                      </div>
-
-                      {/* History section — version list, newest-first.
-                          Effective date prominent (Mateo Aug 20: "the
-                          question is always 'what was in force,' not
-                          'when was this typed'"). Each entry expandable
-                          via <details> — cheap, no state needed. */}
-                      <div>
-                        <p style={{ color:'#7a8394', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px', fontWeight:'bold' }}>Version history</p>
-                        {caHouseRulesHistoryLoading && (
-                          <p style={{ color:'#888', fontSize:'12px', margin:0, fontStyle:'italic' }}>Loading history…</p>
-                        )}
-                        {!caHouseRulesHistoryLoading && caHouseRulesHistory && caHouseRulesHistory.length === 0 && (
-                          <p style={{ color:'#888', fontSize:'12px', margin:0, fontStyle:'italic' }}>No history entries — this property has never published house rules.</p>
-                        )}
-                        {!caHouseRulesHistoryLoading && caHouseRulesHistory && caHouseRulesHistory.map((h) => (
-                          <details key={h.version} style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'6px', marginBottom:'6px' }}>
-                            <summary style={{ padding:'10px 12px', cursor:'pointer', color:'#aaa', fontSize:'12.5px', display:'flex', gap:'12px', flexWrap:'wrap', alignItems:'baseline' }}>
-                              <span style={{ color:'#C9A227', fontWeight:'bold' }}>v{h.version}</span>
-                              {h.effective_date ? (
-                                <span style={{ color:'#e5e7eb' }}>effective <strong>{h.effective_date}</strong></span>
-                              ) : (
-                                <span style={{ color:'#fbbf24' }}>unpublish transition</span>
-                              )}
-                              {h.created_by_email && (
-                                <span style={{ color:'#555', fontSize:'11px' }}>· by {h.created_by_email}</span>
-                              )}
-                            </summary>
-                            <div style={{ padding:'0 12px 12px' }}>
-                              {h.text ? (
-                                <HouseRulesRenderer text={h.text} />
-                              ) : (
-                                <p style={{ color:'#7a8394', fontSize:'12px', margin:0, fontStyle:'italic' }}>Rules were cleared at this version — no text stored.</p>
-                              )}
-                            </div>
-                          </details>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {/* House-rules CA modal was originally placed here on
+                    2026-08-20 (0-len block deleted). It sat inside
+                    the manageSection === 'spaces' block; the trigger
+                    is on the PROPERTIES tab → modal never mounted →
+                    "View rules" click produced no visible change (Aug
+                    20 defect). Modal now lives at page root before
+                    </main> per Mateo's guidance: "mount the modal at
+                    the page root rather than inside the property
+                    card." Keeping this pointer so nobody re-nests it. */}
 
                 {caTargetEdit && (
                   <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
@@ -9011,6 +8926,106 @@ export default function CompanyAdminPortal() {
           </div>
         )}
       </div>
+
+      {/* 2026-08-20 house-rules arc Commit 4 fix (Aug 20 Mateo defect
+          report: "View rules" click did nothing). Modal mounted at
+          PAGE ROOT rather than inside any manageSection block.
+          Original position was inside manageSection === 'spaces',
+          which never renders when CA is on the properties tab —
+          state set, JSX not in the tree, nothing appeared.
+
+          🔴 KEEP AT PAGE ROOT. Do not nest inside any tab / section
+          conditional. Modal must render regardless of which tab is
+          active so the state → mount path never depends on the
+          user's current view. This applies as a class rule (see
+          also: designated-vehicle modal ergonomics, Aug 19 Finding B).
+
+          Empty when caHouseRulesModalProperty is null (React
+          renders nothing for {null}), so this position has zero
+          visual cost when the modal is closed. */}
+      {caHouseRulesModalProperty && (
+        <div
+          onClick={caCloseHouseRulesModal}
+          style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.78)', zIndex:9999, display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'20px', overflowY:'auto' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background:'#161b26', border:'1px solid #3b82f6', borderRadius:'14px', padding:'22px', maxWidth:'640px', width:'100%', maxHeight:'90vh', overflowY:'auto' }}
+          >
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'14px', gap:'12px' }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>House rules</p>
+                <p style={{ color:'white', fontSize:'16px', margin:0, fontWeight:'bold' }}>{caHouseRulesModalProperty.name}</p>
+              </div>
+              <button
+                onClick={caCloseHouseRulesModal}
+                style={{ background:'transparent', color:'#888', border:'none', fontSize:'22px', cursor:'pointer', padding:'0 4px', lineHeight:1 }}
+                aria-label="Close"
+              >×</button>
+            </div>
+
+            {/* Current version — always the top-of-modal content.
+                Uses shared renderer with metadata + heading so the
+                CA sees the same treatment the resident does, plus
+                version prominently. */}
+            <div style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'14px', marginBottom:'14px' }}>
+              <div style={{ display:'flex', gap:'10px', alignItems:'baseline', marginBottom:'8px' }}>
+                <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:0 }}>Current</p>
+                {caHouseRulesModalProperty.house_rules_version > 0 && (
+                  <span style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold' }}>v{caHouseRulesModalProperty.house_rules_version}</span>
+                )}
+              </div>
+              {caHouseRulesModalProperty.house_rules_text ? (
+                <HouseRulesRenderer
+                  text={caHouseRulesModalProperty.house_rules_text}
+                  effectiveDate={caHouseRulesModalProperty.house_rules_effective_date}
+                  updatedAt={caHouseRulesModalProperty.house_rules_updated_at}
+                />
+              ) : (
+                <p style={{ color:'#fbbf24', fontSize:'12.5px', margin:0, fontStyle:'italic' }}>
+                  Currently unpublished. The property manager cleared the text; prior versions are in history below.
+                </p>
+              )}
+            </div>
+
+            {/* History section — version list, newest-first. Effective
+                date prominent (Mateo Aug 20: "the question is always
+                'what was in force,' not 'when was this typed'"). Each
+                entry expandable via <details> — cheap, no state. */}
+            <div>
+              <p style={{ color:'#7a8394', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px', fontWeight:'bold' }}>Version history</p>
+              {caHouseRulesHistoryLoading && (
+                <p style={{ color:'#888', fontSize:'12px', margin:0, fontStyle:'italic' }}>Loading history…</p>
+              )}
+              {!caHouseRulesHistoryLoading && caHouseRulesHistory && caHouseRulesHistory.length === 0 && (
+                <p style={{ color:'#888', fontSize:'12px', margin:0, fontStyle:'italic' }}>No history entries — this property has never published house rules.</p>
+              )}
+              {!caHouseRulesHistoryLoading && caHouseRulesHistory && caHouseRulesHistory.map((h) => (
+                <details key={h.version} style={{ background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'6px', marginBottom:'6px' }}>
+                  <summary style={{ padding:'10px 12px', cursor:'pointer', color:'#aaa', fontSize:'12.5px', display:'flex', gap:'12px', flexWrap:'wrap', alignItems:'baseline' }}>
+                    <span style={{ color:'#C9A227', fontWeight:'bold' }}>v{h.version}</span>
+                    {h.effective_date ? (
+                      <span style={{ color:'#e5e7eb' }}>effective <strong>{h.effective_date}</strong></span>
+                    ) : (
+                      <span style={{ color:'#fbbf24' }}>unpublish transition</span>
+                    )}
+                    {h.created_by_email && (
+                      <span style={{ color:'#555', fontSize:'11px' }}>· by {h.created_by_email}</span>
+                    )}
+                  </summary>
+                  <div style={{ padding:'0 12px 12px' }}>
+                    {h.text ? (
+                      <HouseRulesRenderer text={h.text} />
+                    ) : (
+                      <p style={{ color:'#7a8394', fontSize:'12px', margin:0, fontStyle:'italic' }}>Rules were cleared at this version — no text stored.</p>
+                    )}
+                  </div>
+                </details>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

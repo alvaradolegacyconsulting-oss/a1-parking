@@ -1,18 +1,30 @@
 'use client'
 //
 // 2026-08-20 house-rules arc — shared renderer for property house
-// rules text. Extracted from app/resident/page.tsx to eliminate the
-// drift risk Mateo Aug 20 flagged: if the manager-side preview and
-// the resident render diverge, the preview stops being a preview.
+// rules text.
 //
-// Consumers today:
-//   - app/resident/page.tsx    → full display (metadata + caveat + collapsible)
-//   - app/manager/page.tsx     → live Settings preview (text only, no
-//                                metadata, no caveat, no collapse — the
-//                                manager already sees effective date +
-//                                caveat above the textarea)
+// 🔴 THIS COMPONENT IS DELIBERATELY SHARED BY THREE SURFACES. If you
+// are considering "simplifying" one of them back into a local render,
+// don't — that reintroduces the drift risk this file exists to
+// eliminate (Mateo Aug 20). Any change to the render treatment (font
+// size, line height, wrap, escape rules, collapse behavior) must
+// apply to all three by construction.
 //
-// 🔴 LOAD-BEARING PROPERTIES
+// Consumers:
+//   - app/resident/page.tsx      → full display (metadata + caveat + collapsible)
+//   - app/manager/page.tsx       → live Settings preview (text only,
+//                                  no metadata, no caveat, no collapse
+//                                  — the manager already sees the
+//                                  effective-date input + caveat above
+//                                  the textarea, and a "wall of text"
+//                                  is only a signal if you can see
+//                                  the WHOLE wall)
+//   - app/company_admin/page.tsx → CA read-only modal (metadata + no
+//                                  caveat) — Jose's dispatcher use
+//                                  case; version + effective date
+//                                  visible for tow-call lookups
+//
+// 🔴 LOAD-BEARING PROPERTIES — do not remove or bypass
 //
 //   whitespace: pre-wrap on the text container — the WHOLE formatting
 //   story (Mateo Aug 20). HTML collapses newlines by default; with
@@ -22,8 +34,11 @@
 //   NO dangerouslySetInnerHTML. Every subscriber post-public_signup_open
 //   is a potential author; HTML rendering would be stored-XSS surface.
 //
-// If you touch this component, verify BOTH consumer sites still render
-// correctly. The drift risk is exactly why this file exists.
+//   If rich formatting is ever genuinely wanted, it's a SEPARATE design
+//   with sanitisation — not an incremental tweak here.
+//
+// If you touch this component, verify ALL THREE consumer sites still
+// render correctly.
 
 import { useState } from 'react'
 import { formatDate } from '../lib/format-time'
