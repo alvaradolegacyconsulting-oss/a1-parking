@@ -20,7 +20,48 @@ import { useState, useEffect } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '../supabase'
 
-type Tab = 'console' | 'onboarding' | 'system'
+type Tab = 'console' | 'properties' | 'onboarding' | 'system'
+
+// 2026-08-21 — Super-admin console Commit 2. Per-property activity row
+// returned by public.get_console_per_property_activity() (migration
+// 20260821). One row per active property; company_env in the row so the
+// client can filter to production default (Commit 1 discipline).
+//
+// Server does NOT classify mode — inferMode() below does that in JS so
+// Jose can see the classification alongside the raw numbers and refute
+// it visually for a week before per-mode anomaly flags can be trusted.
+interface PerPropertyActivity {
+  property_id:         number
+  property_name:       string
+  company_id:          number
+  company_name:        string
+  company_env:         'production' | 'test' | 'demo' | null
+  property_created_at: string
+  residents_active:    number
+  vehicles_active:     number
+  spaces_active:       number
+  violations_30d:      number
+  passes_30d:          number
+  last_activity_at:    string
+}
+
+// 4-way inferred mode from the property's activity profile. Server keeps
+// no opinion; this function is the whole classifier + must match the
+// Mateo Aug 21 census table shape:
+//   Green Acres      residents>0 && passes>0            → full-service
+//   Sugarberry Place residents=0 && passes>0            → visitor-only
+//   Southfork Lake   residents>0 && passes=0            → enforcement-only
+//   Miramar          all zeros                          → not-started
+// The residents>0/passes=0 branch also catches enforcement-only.
+type InferredMode = 'full-service' | 'visitor-only' | 'enforcement-only' | 'not-started'
+function inferMode(row: PerPropertyActivity): InferredMode {
+  const anyActivity = row.residents_active + row.vehicles_active + row.spaces_active
+                    + row.violations_30d + row.passes_30d
+  if (anyActivity === 0) return 'not-started'
+  if (row.residents_active === 0 && row.passes_30d  > 0) return 'visitor-only'
+  if (row.residents_active >  0 && row.passes_30d  > 0) return 'full-service'
+  return 'enforcement-only'   // residents>0 && passes=0, or violations/spaces only
+}
 
 interface CompanyAggregate {
   company_id:        number
@@ -202,6 +243,23 @@ export default function AdminConsolePage() {
   // B228 Phase 4 — System tab error-rate tile (real audit_logs number)
   const [errorRate24h, setErrorRate24h] = useState<number | null>(null)
 
+  // 2026-08-21 — Commit 2 per-property activity state. Lazy-loaded on
+  // first Properties-tab open (RPC is admin-gated + already role-checked
+  // once at page mount, but the aggregate query touches 5 tables so we
+  // pay for it only when the tab is opened, not on every console load).
+  const [perProperty,        setPerProperty]        = useState<PerPropertyActivity[]>([])
+  const [perPropertyLoading, setPerPropertyLoading] = useState(false)
+  const [perPropertyError,   setPerPropertyError]   = useState<string | null>(null)
+  const [perPropertyLoaded,  setPerPropertyLoaded]  = useState(false)
+  // Sort state. Default 'last_activity_at' ASC = "top of list is the
+  // property nobody's touched" — the call-sheet ordering Mateo asked for.
+  // Sort keys are hardcoded to PerPropertyActivity keys the header
+  // buttons expose (no arbitrary user-provided keys → no injection surface).
+  type PPSortCol = 'property_name' | 'company_name' | 'residents_active' | 'vehicles_active'
+                 | 'spaces_active' | 'violations_30d' | 'passes_30d' | 'last_activity_at'
+  const [ppSortCol, setPpSortCol] = useState<PPSortCol>('last_activity_at')
+  const [ppSortDir, setPpSortDir] = useState<'asc' | 'desc'>('asc')
+
   // Role gate — admin only.
   useEffect(() => {
     let cancelled = false
@@ -277,6 +335,46 @@ export default function AdminConsolePage() {
     gate()
     return () => { cancelled = true }
   }, [])
+
+  // 2026-08-21 — Commit 2 lazy fetch on first Properties-tab open.
+  // Deliberately NOT included in the mount-time Promise.all above so a
+  // super-admin who never opens Properties never pays for the 5-table
+  // aggregate. On subsequent switches, cached data (perPropertyLoaded)
+  // is used — a manual refresh button in the tab body reruns the RPC
+  // when Jose wants a fresh count.
+  useEffect(() => {
+    if (tab !== 'properties' || perPropertyLoaded || perPropertyLoading) return
+    let cancelled = false
+    setPerPropertyLoading(true)
+    setPerPropertyError(null)
+    supabase.rpc('get_console_per_property_activity').then(({ data, error }) => {
+      if (cancelled) return
+      if (error) {
+        setPerPropertyError(error.message)
+        setPerPropertyLoading(false)
+        return
+      }
+      setPerProperty((data ?? []) as PerPropertyActivity[])
+      setPerPropertyLoaded(true)
+      setPerPropertyLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [tab, perPropertyLoaded, perPropertyLoading])
+
+  // Manual refresh — button in the Properties tab body.
+  async function refreshPerProperty() {
+    setPerPropertyLoading(true)
+    setPerPropertyError(null)
+    const { data, error } = await supabase.rpc('get_console_per_property_activity')
+    if (error) {
+      setPerPropertyError(error.message)
+      setPerPropertyLoading(false)
+      return
+    }
+    setPerProperty((data ?? []) as PerPropertyActivity[])
+    setPerPropertyLoaded(true)
+    setPerPropertyLoading(false)
+  }
 
   // B228 Phase 3 — super_admin_deactivate_company RPC call.
   // Server-side enforces super-admin role check; client UX gates with
@@ -614,11 +712,17 @@ export default function AdminConsolePage() {
           <p style={{ color: '#666', fontSize: 11, margin: '6px 0 0' }}>Internal — decision surface for ownership/leadership.</p>
         </div>
 
-        {/* 3-tab nav */}
+        {/* 4-tab nav (Properties added 2026-08-21 — Commit 2 per-property
+            activity view. Placed second so it's adjacent to Console but
+            keeps the Console-first ordering the previous 3-tab layout
+            established.) */}
         <div style={{ display: 'flex', gap: 3, background: '#1e2535', borderRadius: 8, padding: 3, marginBottom: 16 }}>
-          {(['console', 'onboarding', 'system'] as Tab[]).map(t => {
+          {(['console', 'properties', 'onboarding', 'system'] as Tab[]).map(t => {
             const active = tab === t
-            const label = t === 'console' ? 'Console' : t === 'onboarding' ? 'Onboarding' : 'System'
+            const label = t === 'console' ? 'Console'
+                        : t === 'properties' ? 'Properties'
+                        : t === 'onboarding' ? 'Onboarding'
+                        : 'System'
             return (
               <button key={t} onClick={() => setTab(t)}
                 style={{
@@ -881,6 +985,206 @@ export default function AdminConsolePage() {
             </div>
           </div>
         )}
+
+        {/* ── PROPERTIES TAB ─────────────────────────────────────
+            2026-08-21 — Commit 2 per-property activity view.
+            One row per active property; per-row inferred mode
+            (full-service / visitor-only / enforcement-only /
+            not-started) + activity counts + last-activity floor.
+            Default filter mirrors Console (production only) with
+            the same 4-way toggle. No anomaly flags on this view —
+            mode inference needs a week of eyes-on before per-mode
+            flags can be trusted (Mateo Aug 21: Sugarberry visitor-
+            only would trip a "passes with no roster" flag every
+            day and be wrong).
+        ─────────────────────────────────────────────────────────── */}
+        {tab === 'properties' && (() => {
+          const filtered = perProperty.filter(r => {
+            if (envFilter === 'all') return true
+            return r.company_env === envFilter
+          }).filter(r => {
+            if (searchQ.trim().length === 0) return true
+            const q = searchQ.trim().toLowerCase()
+            return r.property_name.toLowerCase().includes(q)
+                || r.company_name.toLowerCase().includes(q)
+          })
+          const sorted = [...filtered].sort((a, b) => {
+            const av = a[ppSortCol] as string | number
+            const bv = b[ppSortCol] as string | number
+            let cmp = 0
+            if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv
+            else cmp = String(av).localeCompare(String(bv))
+            return ppSortDir === 'asc' ? cmp : -cmp
+          })
+          const envFilterHiddenCount = envFilter !== 'all'
+            ? perProperty.filter(r => r.company_env !== envFilter).length
+            : 0
+          function toggleSort(col: PPSortCol) {
+            if (ppSortCol === col) setPpSortDir(d => d === 'asc' ? 'desc' : 'asc')
+            else { setPpSortCol(col); setPpSortDir(col === 'property_name' || col === 'company_name' ? 'asc' : 'desc') }
+          }
+          function ModeChip({ mode }: { mode: InferredMode }) {
+            const style = mode === 'full-service'    ? { bg: '#0d3d1a', fg: '#5fd68a', label: 'Full-service' }
+                        : mode === 'visitor-only'    ? { bg: '#2a1e0f', fg: '#e0a458', label: 'Visitor-only' }
+                        : mode === 'enforcement-only'? { bg: '#1e1e2a', fg: '#9a9de8', label: 'Enforcement' }
+                        :                              { bg: '#1a1a1a', fg: '#666',    label: 'Not started' }
+            return (
+              <span style={{ background: style.bg, color: style.fg, fontSize: 10, fontWeight: 'bold',
+                             padding: '2px 6px', borderRadius: 4, whiteSpace: 'nowrap' }}>{style.label}</span>
+            )
+          }
+          function EnvChip({ env }: { env: PerPropertyActivity['company_env'] }) {
+            const st = env === 'production' ? { bg: '#0d3d1a', fg: '#5fd68a', label: 'PROD' }
+                     : env === 'test'       ? { bg: '#2a1e0f', fg: '#e0a458', label: 'TEST' }
+                     : env === 'demo'       ? { bg: '#1e1e2a', fg: '#9a9de8', label: 'DEMO' }
+                     :                        { bg: '#1a1a1a', fg: '#666',    label: '—' }
+            return (
+              <span style={{ background: st.bg, color: st.fg, fontSize: 9, fontWeight: 'bold',
+                             padding: '1px 5px', borderRadius: 3, letterSpacing: '0.05em' }}>{st.label}</span>
+            )
+          }
+          function daysSince(iso: string): number {
+            return Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000))
+          }
+          function SortArrow({ col }: { col: PPSortCol }) {
+            if (ppSortCol !== col) return <span style={{ color: '#3a3f4d', marginLeft: 4 }}>↕</span>
+            return <span style={{ color: GOLD, marginLeft: 4 }}>{ppSortDir === 'asc' ? '↑' : '↓'}</span>
+          }
+          return (
+            <div>
+              {/* Filter recap — mirrors Console banner discipline. LOUD
+                  only for test/demo (hides A1); muted for production/all. */}
+              {(envFilter === 'test' || envFilter === 'demo') && (
+                <div style={{ background: '#3a2a00', border: '1px solid #C9A227', borderRadius: 8,
+                              padding: '10px 14px', marginBottom: 12, color: GOLD, fontSize: 12, fontWeight: 'bold' }}>
+                  ⚠ VIEWING: {envFilter.toUpperCase()} ONLY — production properties hidden.
+                  <button onClick={() => setEnvFilter('production')}
+                    style={{ marginLeft: 12, background: 'transparent', color: GOLD, border: '1px solid #C9A227',
+                             padding: '2px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>
+                    Return to production
+                  </button>
+                </div>
+              )}
+              {(envFilter === 'production' || envFilter === 'all') && (
+                <p style={{ color: '#7a8394', fontSize: 11, margin: '0 0 10px', fontStyle: 'italic' }}>
+                  {envFilter === 'production'
+                    ? `Production only — ${envFilterHiddenCount} test/demo properties hidden. Toggle All to include them.`
+                    : `Showing all environments (${perProperty.length} properties).`}
+                </p>
+              )}
+
+              {/* Toolbar: env toggle + search + refresh */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                <div style={{ display: 'flex', gap: 3, background: '#1e2535', borderRadius: 6, padding: 2 }}>
+                  {(['production', 'test', 'demo', 'all'] as EnvFilter[]).map(f => {
+                    const active = envFilter === f
+                    return (
+                      <button key={f} onClick={() => setEnvFilter(f)}
+                        style={{ padding: '5px 10px', background: active ? GOLD : 'transparent',
+                                 color: active ? '#0f1117' : '#888', fontWeight: active ? 'bold' : 'normal',
+                                 fontSize: 11, border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+                        {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                      </button>
+                    )
+                  })}
+                </div>
+                <input value={searchQ} onChange={e => setSearchQ(e.target.value)}
+                  placeholder="Search property or company…"
+                  style={{ flex: 1, minWidth: 200, padding: '6px 10px', background: '#0f1117',
+                           border: '1px solid #2a2f3d', borderRadius: 6, color: 'white', fontSize: 12 }} />
+                <button onClick={refreshPerProperty} disabled={perPropertyLoading}
+                  style={{ padding: '6px 12px', background: perPropertyLoading ? '#2a2f3d' : '#1e2535',
+                           color: perPropertyLoading ? '#666' : GOLD, border: '1px solid #2a2f3d',
+                           borderRadius: 6, cursor: perPropertyLoading ? 'default' : 'pointer',
+                           fontSize: 11, fontWeight: 'bold' }}>
+                  {perPropertyLoading ? 'Loading…' : 'Refresh'}
+                </button>
+              </div>
+
+              {perPropertyError && (
+                <div style={{ background: '#3a1010', border: '1px solid #f44336', borderRadius: 8,
+                              padding: 12, marginBottom: 12, color: '#ff6b6b', fontSize: 12 }}>
+                  Load failed: {perPropertyError}
+                </div>
+              )}
+
+              {perPropertyLoading && !perPropertyLoaded ? (
+                <p style={{ color: '#666', fontSize: 12, padding: 20, textAlign: 'center' }}>Loading per-property activity…</p>
+              ) : (
+                <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 10, padding: 0, overflow: 'hidden' }}>
+                  <div style={{ overflow: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead style={{ background: '#1e2535' }}>
+                        <tr style={{ color: '#888', textAlign: 'left' }}>
+                          <th style={{ padding: '10px 12px', cursor: 'pointer' }} onClick={() => toggleSort('property_name')}>Property<SortArrow col="property_name" /></th>
+                          <th style={{ padding: '10px 12px', cursor: 'pointer' }} onClick={() => toggleSort('company_name')}>Company<SortArrow col="company_name" /></th>
+                          <th style={{ padding: '10px 12px' }}>Env</th>
+                          <th style={{ padding: '10px 12px' }}>Mode</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'right', cursor: 'pointer' }} onClick={() => toggleSort('residents_active')}>Res<SortArrow col="residents_active" /></th>
+                          <th style={{ padding: '10px 12px', textAlign: 'right', cursor: 'pointer' }} onClick={() => toggleSort('vehicles_active')}>Veh<SortArrow col="vehicles_active" /></th>
+                          <th style={{ padding: '10px 12px', textAlign: 'right', cursor: 'pointer' }} onClick={() => toggleSort('spaces_active')}>Spc<SortArrow col="spaces_active" /></th>
+                          <th style={{ padding: '10px 12px', textAlign: 'right', cursor: 'pointer' }} onClick={() => toggleSort('violations_30d')}>Vio 30d<SortArrow col="violations_30d" /></th>
+                          <th style={{ padding: '10px 12px', textAlign: 'right', cursor: 'pointer' }} onClick={() => toggleSort('passes_30d')}>Pass 30d<SortArrow col="passes_30d" /></th>
+                          <th style={{ padding: '10px 12px', textAlign: 'right', cursor: 'pointer' }} onClick={() => toggleSort('last_activity_at')}>Last act<SortArrow col="last_activity_at" /></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sorted.length === 0 ? (
+                          <tr><td colSpan={10} style={{ padding: 24, textAlign: 'center', color: '#666', fontSize: 12 }}>
+                            {/* Absence-as-failure-output rule (feedback_
+                                absence_must_not_be_failure_output.md).
+                                Distinguish "filter excludes everything"
+                                from "nothing to show at all". */}
+                            {envFilter === 'production' ? (searchQ.trim().length > 0
+                              ? 'No production properties match this search. Toggle All to include test/demo.'
+                              : 'No production properties. Toggle All to see test/demo.')
+                             : envFilter === 'test' ? 'No test properties match. Toggle Production or All to broaden.'
+                             : envFilter === 'demo' ? 'No demo properties match. Toggle Production or All to broaden.'
+                             : (searchQ.trim().length > 0 ? 'No properties match this search.' : 'No properties to show.')}
+                          </td></tr>
+                        ) : sorted.map(r => {
+                          const mode = inferMode(r)
+                          const lastActDays = daysSince(r.last_activity_at)
+                          const isFloor = r.last_activity_at === r.property_created_at
+                          return (
+                            <tr key={r.property_id} style={{ borderTop: '1px solid #2a2f3d' }}>
+                              <td style={{ padding: '10px 12px', color: 'white', fontWeight: 'bold' }}>{r.property_name}</td>
+                              <td style={{ padding: '10px 12px', color: '#aaa' }}>{r.company_name}</td>
+                              <td style={{ padding: '10px 12px' }}><EnvChip env={r.company_env} /></td>
+                              <td style={{ padding: '10px 12px' }}><ModeChip mode={mode} /></td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', color: r.residents_active > 0 ? 'white' : '#555' }}>{r.residents_active}</td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', color: r.vehicles_active > 0 ? 'white' : '#555' }}>{r.vehicles_active}</td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', color: r.spaces_active > 0 ? 'white' : '#555' }}>{r.spaces_active}</td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', color: r.violations_30d > 0 ? 'white' : '#555' }}>{r.violations_30d}</td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', color: r.passes_30d > 0 ? 'white' : '#555' }}>{r.passes_30d}</td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', color: '#7a8394', fontSize: 11 }}>
+                                {isFloor
+                                  /* Floor case: last_activity_at fell back to
+                                     property.created_at (no activity in any
+                                     source). Render as "since create" so a
+                                     bare "N days ago" isn't misread as "had
+                                     activity N days ago". */
+                                  ? <span style={{ color: '#555' }}>none · {lastActDays}d since create</span>
+                                  : `${lastActDays}d ago`}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {sorted.length > 0 && (
+                    <div style={{ padding: '10px 14px', background: '#0f1117', borderTop: '1px solid #2a2f3d',
+                                  color: '#555', fontSize: 10, display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{sorted.length} of {perProperty.length} properties · mode inferred client-side (no anomaly flags in v1)</span>
+                      <span>Last activity = max of residents · vehicles · violations · passes; floor = property.created_at</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* ── ONBOARDING TAB ──────────────────────────────────── */}
         {tab === 'onboarding' && (
