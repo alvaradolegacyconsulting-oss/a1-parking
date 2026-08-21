@@ -12,6 +12,24 @@
 // V2: extend CA — either add per-property fetch there, or route both
 // portals through an RPC that embeds noAuthorizedBucket server-side.
 //
+// ── 🔴 SQL MIRROR OF THE TWO RED PREDICATES EXISTS 🔴 ────────────────
+//
+// 2026-08-21 — Mateo shipped a super-admin cross-tenant rollup for
+// the RED predicates only, in migrations/20260821_get_console_red_
+// warnings.sql (RPC: public.get_console_red_warnings). That RPC is a
+// DELIBERATE partial mirror of kinds #1 (portal_approved_enforcement_
+// denied) and #5 (enforcement_authorized_portal_pending) below.
+//
+// 🔴 IF YOU CHANGE EITHER RED PREDICATE HERE, ALSO CHANGE THE SQL
+//    MIRROR IN THE SAME COMMIT. The four amber predicates are NOT
+//    mirrored (super-admin sees only red per Jose's spec).
+//
+// The mirror is PROVISIONAL: it exists because the full 6-predicate
+// extraction is blocked on the Aug 8 warnings-self-clearing diagnostic
+// and Jose needed the cross-tenant view now. When the full extraction
+// lands, the mirror RPC either calls into it or is deleted, and this
+// file becomes the sole implementation of the red predicates again.
+//
 // ── AUDIENCE — LEASING OFFICE, NOT ENGINEERING ───────────────────────
 //
 // Copy contract (Mateo lock 2026-08-08):

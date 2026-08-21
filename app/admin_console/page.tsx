@@ -45,6 +45,30 @@ interface PerPropertyActivity {
   last_activity_at:    string
 }
 
+// 2026-08-21 — Super-admin console red-warnings row. Returned by
+// public.get_console_red_warnings() (migration 20260821). One row per
+// vehicle matching either red predicate:
+//   portal_approved_enforcement_denied   (status=active  AND is_active=false)
+//   enforcement_authorized_portal_pending (status=pending AND is_active=true)
+//
+// 🔴 The two predicates are ALSO in TypeScript at app/lib/property-
+//    warnings.ts (kinds #1 and #5). This RPC is a DELIBERATE mirror —
+//    if a red predicate changes, change TypeScript first and mirror in
+//    the same commit. See migration header for the tradeoff.
+interface RedWarning {
+  company_id:          number | null
+  company_name:        string | null
+  company_env:         'production' | 'test' | 'demo' | null
+  property:            string
+  unit:                string | null
+  plate:               string | null
+  kind:                'portal_approved_enforcement_denied' | 'enforcement_authorized_portal_pending'
+  vehicle_status:      string
+  vehicle_is_active:   boolean
+  vehicle_id:          number
+  vehicle_created_at:  string
+}
+
 // 4-way inferred mode from the property's activity profile. Server keeps
 // no opinion; this function is the whole classifier + must match the
 // Mateo Aug 21 census table shape:
@@ -260,6 +284,15 @@ export default function AdminConsolePage() {
   const [ppSortCol, setPpSortCol] = useState<PPSortCol>('last_activity_at')
   const [ppSortDir, setPpSortDir] = useState<'asc' | 'desc'>('asc')
 
+  // 2026-08-21 — red-warnings rollup state (Mateo: small standalone
+  // panel Jose asked for; provisional mirror of TS #1+#5 predicates).
+  // Fetched on mount so the panel is always ready when Console opens;
+  // page-level envFilter drives client-side filtering so toggling the
+  // env is instant (no RPC re-call). RPC's own DEFAULT is 'production'
+  // but we call with NULL to get all envs and filter here.
+  const [redWarnings, setRedWarnings] = useState<RedWarning[]>([])
+  const [redWarningsError, setRedWarningsError] = useState<string | null>(null)
+
   // Role gate — admin only.
   useEffect(() => {
     let cancelled = false
@@ -278,7 +311,7 @@ export default function AdminConsolePage() {
       // and the error-rate 24h count. All super-admin-gated; role check
       // above already passed.
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-      const [aggRes, flagsRes, settingsRes, errorRateRes, envRes] = await Promise.all([
+      const [aggRes, flagsRes, settingsRes, errorRateRes, envRes, redWarningsRes] = await Promise.all([
         supabase.rpc('get_console_aggregates'),
         supabase.rpc('get_console_spike_flags'),
         supabase.from('platform_settings').select('*').eq('id', 1).maybeSingle(),
@@ -297,6 +330,11 @@ export default function AdminConsolePage() {
         // env map and join in JS below. Indexed on company_env
         // (companies_company_env_idx from 20260708 layer1), tiny payload.
         supabase.from('companies').select('id, company_env'),
+        // 2026-08-21 — red-warnings rollup. Call with NULL to receive
+        // all envs; client-side filter on the shared envFilter drives
+        // display. RPC's server-side default is 'production' but pass
+        // NULL so a toggle to All doesn't require re-fetching.
+        supabase.rpc('get_console_red_warnings', { p_company_env: null }),
       ])
       if (cancelled) return
       if (aggRes.error) {
@@ -330,6 +368,13 @@ export default function AdminConsolePage() {
       }
       if (!errorRateRes.error) setErrorRate24h(errorRateRes.count ?? 0)
       else console.warn('[admin_console] error-rate load failed:', errorRateRes.error.message)
+      // Red-warnings rollup — non-fatal; if it errors, panel shows the
+      // error inline rather than blocking the whole console.
+      if (!redWarningsRes.error) setRedWarnings((redWarningsRes.data ?? []) as RedWarning[])
+      else {
+        setRedWarningsError(redWarningsRes.error.message)
+        console.warn('[admin_console] red-warnings load failed:', redWarningsRes.error.message)
+      }
       setLoading(false)
     }
     gate()
@@ -810,6 +855,129 @@ export default function AdminConsolePage() {
                 })}
               </div>
             )}
+
+            {/* ── RED WARNINGS PANEL ──────────────────────────────
+                2026-08-21 — Mateo Jose-asked-for standalone. Two red
+                predicates from property-warnings.ts, cross-tenant.
+                Always rendered — empty state is "No red warnings" so
+                blank never reads as "didn't load" (absence-as-failure-
+                output rule). Filter follows the page-level envFilter so
+                toggle state is visible via the CRM search-bar env
+                chips + the panel's own filter recap line.
+                Provisional. See migration header for the tradeoff. */}
+            {(() => {
+              const redFiltered = redWarnings.filter(w => {
+                if (envFilter === 'all') return true
+                return w.company_env === envFilter
+              })
+              const hiddenByEnv = envFilter !== 'all'
+                ? redWarnings.filter(w => w.company_env !== envFilter).length
+                : 0
+              // Group by company → property → rows
+              type Grouped = Map<string, Map<string, RedWarning[]>>
+              const grouped: Grouped = new Map()
+              for (const w of redFiltered) {
+                const companyKey = w.company_name ?? '(unresolved company)'
+                let byProp = grouped.get(companyKey)
+                if (!byProp) { byProp = new Map(); grouped.set(companyKey, byProp) }
+                const bucket = byProp.get(w.property)
+                if (bucket) bucket.push(w); else byProp.set(w.property, [w])
+              }
+              const kindLabel = (k: RedWarning['kind']): string =>
+                k === 'portal_approved_enforcement_denied' ? 'Portal approved · enforcement denied'
+                                                           : 'Enforcement authorized · portal pending'
+              const kindTooltip = (k: RedWarning['kind']): string =>
+                k === 'portal_approved_enforcement_denied'
+                  ? 'Vehicle shows approved in portal but will not scan as authorized (status=active, is_active=false) — wrongful tow risk.'
+                  : 'Vehicle is scanning as authorized but portal shows pending (status=pending, is_active=true) — permissive tow risk.'
+              const ageDays = (iso: string): number =>
+                Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+              return (
+                <div style={{ background: '#161b26',
+                              border: `1px solid ${redFiltered.length > 0 ? '#7c1d1d' : '#2a2f3d'}`,
+                              borderRadius: 10, padding: 14, marginBottom: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    <p style={{
+                      color: redFiltered.length > 0 ? '#ff6b6b' : GOLD,
+                      fontWeight: 'bold', fontSize: 11, textTransform: 'uppercase',
+                      letterSpacing: '0.06em', margin: 0,
+                    }}>
+                      🔴 Red Warnings ({redFiltered.length})
+                    </p>
+                    {/* Filter recap line — visible at all times per Mateo:
+                        "empty board and empty *filtered* board must not
+                        look identical." */}
+                    <span style={{ color: '#7a8394', fontSize: 11, fontStyle: 'italic' }}>
+                      {envFilter === 'all'
+                        ? `All environments (${redWarnings.length} total)`
+                        : `${envFilter.charAt(0).toUpperCase() + envFilter.slice(1)} only${hiddenByEnv > 0 ? ` — ${hiddenByEnv} in other envs hidden` : ''}`}
+                    </span>
+                  </div>
+
+                  {redWarningsError && (
+                    <div style={{ background: '#3a1010', border: '1px solid #f44336', borderRadius: 6,
+                                  padding: '8px 12px', marginBottom: 8, color: '#ff6b6b', fontSize: 12 }}>
+                      Red-warnings load failed: {redWarningsError}
+                    </div>
+                  )}
+
+                  {redFiltered.length === 0 ? (
+                    /* Empty state — explicit "no rows", never blank. */
+                    <p style={{ color: '#5fd68a', fontSize: 12, margin: 0, padding: '4px 0' }}>
+                      No red warnings {envFilter === 'all' ? 'across any environment' : `in ${envFilter}`}.
+                      {hiddenByEnv > 0 && ` (${hiddenByEnv} exist in other environments — toggle All to see.)`}
+                    </p>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      {Array.from(grouped.entries()).map(([companyName, byProp]) => (
+                        <div key={companyName} style={{ background: '#0f1117', border: '1px solid #2a2f3d', borderRadius: 6, padding: 10 }}>
+                          <p style={{ color: 'white', fontWeight: 'bold', fontSize: 13, margin: '0 0 6px' }}>{companyName}</p>
+                          {Array.from(byProp.entries()).map(([propName, rows]) => (
+                            <div key={propName} style={{ marginBottom: 6 }}>
+                              <p style={{ color: '#7a8394', fontSize: 11, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                {propName || '(no property)'} · {rows.length} row{rows.length === 1 ? '' : 's'}
+                              </p>
+                              <div style={{ overflow: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                  <thead>
+                                    <tr style={{ color: '#666', textAlign: 'left' }}>
+                                      <th style={{ padding: '4px 8px' }}>Unit</th>
+                                      <th style={{ padding: '4px 8px' }}>Plate</th>
+                                      <th style={{ padding: '4px 8px' }}>Kind</th>
+                                      <th style={{ padding: '4px 8px' }}>status</th>
+                                      <th style={{ padding: '4px 8px' }}>is_active</th>
+                                      <th style={{ padding: '4px 8px', textAlign: 'right' }}>Age</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {rows.map(r => (
+                                      <tr key={r.vehicle_id} style={{ borderTop: '1px solid #2a2f3d' }}>
+                                        <td style={{ padding: '6px 8px', color: 'white' }}>{r.unit || '—'}</td>
+                                        <td style={{ padding: '6px 8px', color: 'white', fontFamily: 'Courier New', fontWeight: 'bold' }}>{r.plate || '(no plate)'}</td>
+                                        <td style={{ padding: '6px 8px', color: '#ff6b6b', fontSize: 11 }} title={kindTooltip(r.kind)}>{kindLabel(r.kind)}</td>
+                                        {/* Raw as-stored — Mateo: "show the raw values,
+                                            so Jose can assess without a second query." */}
+                                        <td style={{ padding: '6px 8px', color: '#aaa', fontFamily: 'Courier New' }}>{r.vehicle_status}</td>
+                                        <td style={{ padding: '6px 8px', color: '#aaa', fontFamily: 'Courier New' }}>{String(r.vehicle_is_active)}</td>
+                                        <td style={{ padding: '6px 8px', textAlign: 'right', color: '#7a8394', fontSize: 11 }}>{ageDays(r.vehicle_created_at)}d</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <p style={{ color: '#555', fontSize: 10, margin: '10px 0 0', fontStyle: 'italic' }}>
+                    Mirror of app/lib/property-warnings.ts kinds #1 + #5 · read-only, no dismissal · resolve upstream (approve/decline in manager portal, or contact CA)
+                  </p>
+                </div>
+              )
+            })()}
 
             {/* Subscribers CRM */}
             <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: 10, padding: 14, marginBottom: 14 }}>
