@@ -292,6 +292,14 @@ export default function AdminConsolePage() {
   // but we call with NULL to get all envs and filter here.
   const [redWarnings, setRedWarnings] = useState<RedWarning[]>([])
   const [redWarningsError, setRedWarningsError] = useState<string | null>(null)
+  // 2026-08-21 Defect 2 fix (Mateo): error state and empty state must be
+  // mutually exclusive. Track when the last successful load happened so
+  // the panel can distinguish "loaded, zero rows" from "failed, no rows
+  // yet." A null loadedAt with non-null error = never successfully
+  // loaded → header count is (—), not (0). Also drives the "Last loaded
+  // HH:MM" line so a console open all day doesn't quietly go stale.
+  const [redWarningsLoadedAt, setRedWarningsLoadedAt] = useState<string | null>(null)
+  const [redWarningsRetrying, setRedWarningsRetrying] = useState(false)
 
   // Role gate — admin only.
   useEffect(() => {
@@ -370,8 +378,11 @@ export default function AdminConsolePage() {
       else console.warn('[admin_console] error-rate load failed:', errorRateRes.error.message)
       // Red-warnings rollup — non-fatal; if it errors, panel shows the
       // error inline rather than blocking the whole console.
-      if (!redWarningsRes.error) setRedWarnings((redWarningsRes.data ?? []) as RedWarning[])
-      else {
+      if (!redWarningsRes.error) {
+        setRedWarnings((redWarningsRes.data ?? []) as RedWarning[])
+        setRedWarningsError(null)
+        setRedWarningsLoadedAt(new Date().toISOString())
+      } else {
         setRedWarningsError(redWarningsRes.error.message)
         console.warn('[admin_console] red-warnings load failed:', redWarningsRes.error.message)
       }
@@ -405,6 +416,23 @@ export default function AdminConsolePage() {
     })
     return () => { cancelled = true }
   }, [tab, perPropertyLoaded, perPropertyLoading])
+
+  // 2026-08-21 Defect 2 fix — red-warnings retry handler. Called by the
+  // Retry button that appears inside the error box (Mateo: "If a retry
+  // affordance is cheap, add one. Jose's only recourse today is a page
+  // reload.").
+  async function retryRedWarnings() {
+    setRedWarningsRetrying(true)
+    setRedWarningsError(null)
+    const { data, error } = await supabase.rpc('get_console_red_warnings', { p_company_env: null })
+    setRedWarningsRetrying(false)
+    if (error) {
+      setRedWarningsError(error.message)
+      return
+    }
+    setRedWarnings((data ?? []) as RedWarning[])
+    setRedWarningsLoadedAt(new Date().toISOString())
+  }
 
   // Manual refresh — button in the Properties tab body.
   async function refreshPerProperty() {
@@ -859,12 +887,27 @@ export default function AdminConsolePage() {
             {/* ── RED WARNINGS PANEL ──────────────────────────────
                 2026-08-21 — Mateo Jose-asked-for standalone. Two red
                 predicates from property-warnings.ts, cross-tenant.
-                Always rendered — empty state is "No red warnings" so
-                blank never reads as "didn't load" (absence-as-failure-
-                output rule). Filter follows the page-level envFilter so
-                toggle state is visible via the CRM search-bar env
-                chips + the panel's own filter recap line.
-                Provisional. See migration header for the tradeoff. */}
+
+                🔴 STATE MACHINE — mutually exclusive (Defect 2 fix,
+                Mateo Aug 21 evening): the panel has EXACTLY ONE of
+                three visible bodies at any moment.
+
+                  FAILED  (redWarningsError !== null)
+                    → error box + Retry button + count header shows (—)
+                    → NO "no red warnings" line, NO rows, NO green text
+                  LOADED-EMPTY (error===null && filtered.length===0)
+                    → green "No red warnings" line + count shows (0)
+                  LOADED-NON-EMPTY (error===null && filtered.length>0)
+                    → grouped table + count shows (N)
+
+                Pre-fix bug: error and empty-state rendered SIMULTANEOUSLY.
+                The reassuring "no red warnings" text appeared UNDER the
+                error box, and the count showed (0) — a monitoring
+                surface reporting "clear" during its own failure, which
+                is worse than not having the surface. Same class as
+                designated-vehicle Finding B v3 + blank-CSV-column: a
+                failure path falling through to an empty verdict.
+                Provisional mirror. See migration header. */}
             {(() => {
               const redFiltered = redWarnings.filter(w => {
                 if (envFilter === 'all') return true
@@ -892,42 +935,74 @@ export default function AdminConsolePage() {
                   : 'Vehicle is scanning as authorized but portal shows pending (status=pending, is_active=true) — permissive tow risk.'
               const ageDays = (iso: string): number =>
                 Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+              // Three-state discriminant — computed ONCE so the whole
+              // panel renders one branch.
+              const panelState: 'failed' | 'empty' | 'nonempty' =
+                redWarningsError !== null ? 'failed'
+                : redFiltered.length === 0 ? 'empty'
+                : 'nonempty'
+              // Count in header — (—) means "no verdict"; (0) means
+              // "loaded, verified zero." Never conflate.
+              const headerCount = panelState === 'failed' ? '—' : String(redFiltered.length)
+              const borderColor = panelState === 'failed'   ? '#f44336'
+                                : panelState === 'nonempty' ? '#7c1d1d'
+                                :                             '#2a2f3d'
+              const headerColor = panelState === 'nonempty' ? '#ff6b6b' : GOLD
+              const loadedAtLabel = redWarningsLoadedAt
+                ? new Date(redWarningsLoadedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+                : null
               return (
                 <div style={{ background: '#161b26',
-                              border: `1px solid ${redFiltered.length > 0 ? '#7c1d1d' : '#2a2f3d'}`,
+                              border: `1px solid ${borderColor}`,
                               borderRadius: 10, padding: 14, marginBottom: 14 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                     <p style={{
-                      color: redFiltered.length > 0 ? '#ff6b6b' : GOLD,
+                      color: headerColor,
                       fontWeight: 'bold', fontSize: 11, textTransform: 'uppercase',
                       letterSpacing: '0.06em', margin: 0,
                     }}>
-                      🔴 Red Warnings ({redFiltered.length})
+                      🔴 Red Warnings ({headerCount})
                     </p>
-                    {/* Filter recap line — visible at all times per Mateo:
-                        "empty board and empty *filtered* board must not
-                        look identical." */}
+                    {/* Filter recap + last-loaded — visible at all
+                        times per Mateo: "empty board and empty *filtered*
+                        board must not look identical." */}
                     <span style={{ color: '#7a8394', fontSize: 11, fontStyle: 'italic' }}>
-                      {envFilter === 'all'
-                        ? `All environments (${redWarnings.length} total)`
+                      {panelState === 'failed' ? 'Load failed — verdict unknown'
+                        : envFilter === 'all' ? `All environments (${redWarnings.length} total)`
                         : `${envFilter.charAt(0).toUpperCase() + envFilter.slice(1)} only${hiddenByEnv > 0 ? ` — ${hiddenByEnv} in other envs hidden` : ''}`}
+                      {loadedAtLabel && panelState !== 'failed' && (
+                        <> · loaded {loadedAtLabel}</>
+                      )}
                     </span>
                   </div>
 
-                  {redWarningsError && (
+                  {panelState === 'failed' && (
                     <div style={{ background: '#3a1010', border: '1px solid #f44336', borderRadius: 6,
-                                  padding: '8px 12px', marginBottom: 8, color: '#ff6b6b', fontSize: 12 }}>
-                      Red-warnings load failed: {redWarningsError}
+                                  padding: '10px 14px', color: '#ff6b6b', fontSize: 12 }}>
+                      <p style={{ margin: '0 0 6px', fontWeight: 'bold' }}>Red-warnings load failed.</p>
+                      <p style={{ margin: '0 0 8px', color: '#ffb0b0', fontFamily: 'Courier New', fontSize: 11 }}>{redWarningsError}</p>
+                      <p style={{ margin: '0 0 10px', color: '#e0a458', fontSize: 11 }}>
+                        The count above shows (—), NOT (0). Do not treat this as “no warnings” — the query never ran.
+                      </p>
+                      <button onClick={retryRedWarnings} disabled={redWarningsRetrying}
+                        style={{ background: redWarningsRetrying ? '#2a2f3d' : '#7c1d1d',
+                                 color: redWarningsRetrying ? '#666' : 'white',
+                                 border: '1px solid #a12525', borderRadius: 4,
+                                 padding: '5px 12px', fontSize: 11, fontWeight: 'bold',
+                                 cursor: redWarningsRetrying ? 'default' : 'pointer' }}>
+                        {redWarningsRetrying ? 'Retrying…' : 'Retry'}
+                      </button>
                     </div>
                   )}
 
-                  {redFiltered.length === 0 ? (
-                    /* Empty state — explicit "no rows", never blank. */
+                  {panelState === 'empty' && (
                     <p style={{ color: '#5fd68a', fontSize: 12, margin: 0, padding: '4px 0' }}>
                       No red warnings {envFilter === 'all' ? 'across any environment' : `in ${envFilter}`}.
                       {hiddenByEnv > 0 && ` (${hiddenByEnv} exist in other environments — toggle All to see.)`}
                     </p>
-                  ) : (
+                  )}
+
+                  {panelState === 'nonempty' && (
                     <div style={{ display: 'grid', gap: 10 }}>
                       {Array.from(grouped.entries()).map(([companyName, byProp]) => (
                         <div key={companyName} style={{ background: '#0f1117', border: '1px solid #2a2f3d', borderRadius: 6, padding: 10 }}>

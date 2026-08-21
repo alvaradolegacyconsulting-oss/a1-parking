@@ -7,13 +7,22 @@
 --   - Terminal SELECT returns one row with `status='PASS'` on success
 --   - Any gate failure surfaces via a RAISE EXCEPTION mid-DO block
 --
--- 6 gates:
+-- 7 gates:
 --   G1 function exists with correct signature
 --   G2 SECURITY DEFINER + search_path pinned
 --   G3 return shape: 12 columns, correct types, correct order
 --   G4 grants: anon=0, service_role=0, authenticated=1 EXECUTE
 --   G5 body contains admin role-gate literal (forbidden_not_admin ERRCODE 42501)
 --   G6 schema audit row present (SCHEMA_GET_CONSOLE_PER_PROPERTY_ACTIVITY)
+--   G7 🔴 EXECUTION — SELECT COUNT(*) FROM the RPC must not throw.
+--      Reason: original v1 verification passed with 7-of-7 structural
+--      gates against a function that threw 42804 on every invocation
+--      (c.company_env enum → TEXT-declared return column). CREATE
+--      FUNCTION accepts the definition; the type-check is RUNTIME.
+--      Structural checks against a never-invoked function are proof of
+--      well-formedness, not proof of working. Never omit this gate on
+--      an RPC verification. See feedback_rpc_verification_must_
+--      include_execution_gate.md.
 -- ══════════════════════════════════════════════════════════════════════
 
 DO $$
@@ -121,12 +130,30 @@ BEGIN
     RAISE EXCEPTION 'G6 FAIL: schema audit row not found (count=%)', v_audit_count;
   END IF;
 
-  RAISE NOTICE 'All 6 gates passed.';
+  RAISE NOTICE 'All 6 structural gates passed. G7 execution gate next.';
+END $$;
+
+-- ── G7 EXECUTION gate ────────────────────────────────────────────────
+-- 🔴 The gate that would have caught the enum-cast bug on 20260821.
+-- Six structural gates passed against a function that threw 42804 on
+-- every invocation. RUNTIME type-checks (RETURNS TABLE column type vs
+-- actual SELECT column type) do not fire at CREATE FUNCTION time —
+-- only on call. Any RPC verification that skips this gate is a false
+-- pass by construction. See feedback_rpc_verification_must_include_
+-- execution_gate.md.
+--
+-- We assert the RPC RUNS without error. Row count is not asserted —
+-- can legitimately be 0 in a test tenant with no properties.
+DO $$
+DECLARE v_row_count INT;
+BEGIN
+  SELECT COUNT(*) INTO v_row_count FROM public.get_console_per_property_activity();
+  RAISE NOTICE 'G7 execution: RPC returned % rows (any count is fine; RUN is the assertion).', v_row_count;
 END $$;
 
 -- Terminal SELECT returns one PASS row (v2 pattern).
 SELECT
   'PASS'                                             AS status,
   'get_console_per_property_activity'                AS function_name,
-  '6 gates: exists / definer+searchpath / return-shape / grants / role-gate / audit' AS gates,
+  '7 gates: exists / definer+searchpath / return-shape / grants / role-gate / audit / EXECUTION' AS gates,
   now()                                              AS verified_at;

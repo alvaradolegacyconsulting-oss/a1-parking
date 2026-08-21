@@ -7,7 +7,7 @@
 --   - Terminal SELECT returns one row with `status='PASS'` on success
 --   - Any gate failure surfaces via a RAISE EXCEPTION mid-DO block
 --
--- 7 gates:
+-- 8 gates:
 --   G1 function exists with exact signature (1 TEXT arg)
 --   G2 SECURITY DEFINER + search_path pinned
 --   G3 return shape: 11 columns, correct order
@@ -15,6 +15,12 @@
 --   G5 body contains admin role-gate literal (forbidden_not_admin ERRCODE 42501)
 --   G6 body mirrors TS predicate literals verbatim (both branches present)
 --   G7 schema audit row present (SCHEMA_GET_CONSOLE_RED_WARNINGS)
+--   G8 🔴 EXECUTION — SELECT COUNT(*) FROM RPC (both signatures) must
+--      not throw. Reason: original v1 passed 7-of-7 structural gates
+--      against a function that threw 42804 on every invocation
+--      (c.company_env enum → TEXT-declared return column). CREATE
+--      FUNCTION accepts the definition; type-check is RUNTIME. See
+--      feedback_rpc_verification_must_include_execution_gate.md.
 --
 -- NOTE: no gate for "p_company_env DEFAULT preserved" — pg_proc.proargdefaults
 -- storage of TEXT literals is stable across CREATE OR REPLACE only when
@@ -146,12 +152,38 @@ BEGIN
     RAISE EXCEPTION 'G7 FAIL: schema audit row not found (count=%)', v_audit_count;
   END IF;
 
-  RAISE NOTICE 'All 7 gates passed.';
+  RAISE NOTICE 'All 7 structural gates passed. G8 execution gate next.';
+END $$;
+
+-- ── G8 EXECUTION gate ────────────────────────────────────────────────
+-- 🔴 The gate that would have caught the enum-cast bug. See header.
+-- Assert BOTH call shapes run:
+--   (a) with the default argument path (no arg passed) — exercises
+--       DEFAULT 'production' resolution
+--   (b) with explicit NULL — exercises the "all envs" branch the
+--       client calls with at mount
+-- Row count is not asserted; RUN is the assertion.
+DO $$
+DECLARE
+  v_default_rows INT;
+  v_all_env_rows INT;
+BEGIN
+  SELECT COUNT(*) INTO v_default_rows FROM public.get_console_red_warnings();
+  SELECT COUNT(*) INTO v_all_env_rows FROM public.get_console_red_warnings(NULL);
+  RAISE NOTICE 'G8 execution: default-arg call → % rows; NULL-arg call → % rows.',
+    v_default_rows, v_all_env_rows;
+  -- Sanity: NULL-arg (all envs) must be >= default-arg (production only).
+  -- Enforces the filter actually filters — if NULL returned FEWER than
+  -- 'production', something is very wrong (e.g. WHERE inverted).
+  IF v_all_env_rows < v_default_rows THEN
+    RAISE EXCEPTION 'G8 SANITY FAIL: NULL-arg (all envs, %) < default-arg (production only, %); filter inverted?',
+      v_all_env_rows, v_default_rows;
+  END IF;
 END $$;
 
 -- Terminal SELECT returns one PASS row (v2 pattern).
 SELECT
   'PASS'::TEXT                                   AS status,
   'get_console_red_warnings(TEXT)'::TEXT         AS function_name,
-  '7 gates: signature+default / definer+searchpath / arg+return-shape / grants / role-gate / TS-parity predicates / audit'::TEXT AS gates,
+  '8 gates: signature+default / definer+searchpath / arg+return-shape / grants / role-gate / TS-parity predicates / audit / EXECUTION (default + NULL + filter-not-inverted)'::TEXT AS gates,
   now()                                          AS verified_at;
