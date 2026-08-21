@@ -635,12 +635,40 @@ export function vehicleDisplayStatus(v: { status?: string | null; is_active?: bo
   if (raw === 'expired')      return 'expired'
   if (raw === 'deactivated')  return 'deactivated'
   if (raw === 'active' || raw === 'approved') {
-    // A vehicle marked status='active' but is_active=FALSE is the
-    // C_orphaned case from noAuthorizedBucket (silent divergence).
-    // For DISPLAY purposes, show 'active' — the manager needs the
-    // signal that the row still carries the approved status. Panel
-    // classification is what surfaces the divergence, not this
-    // helper.
+    // 🟢 2026-08-21 Option B (Mateo greenlight) — badge now agrees
+    //    with the count and CSV export and enforcement.
+    //
+    // A vehicle with status='active' AND is_active=FALSE is the
+    // C_orphaned case from noAuthorizedBucket (silent divergence at
+    // the underlying data). Enforcement gates on is_active alone
+    // (check_resident_plate + pm_plate_lookup, per
+    // 20260524_b74_rls_vehicles_visitor_passes.sql:139 and
+    // 20260723_dnt_b2_function_scope_fix.sql:377-382). countVehicles
+    // already gated on is_active as of Aug 20 (22c7da1). And
+    // residents-export.ts:vehicleStatusLabel line 230 gates too.
+    //
+    // The badge was the last holdout — it was the one surface
+    // still telling the manager the vehicle was "active" while every
+    // other layer said otherwise. Fix moves the badge onto is_active
+    // as well; the manager now sees the same answer here that the
+    // count summary, the CSV export, and enforcement all report.
+    //
+    // 🔴 CONSEQUENCE FOR property-warnings.ts KIND #1
+    //    (portal_approved_enforcement_denied):
+    //    The predicate reads RAW v.status/v.is_active (not through
+    //    this helper), so it STILL fires on these rows. Post-badge-
+    //    fix its meaning changes from "portal says approved,
+    //    enforcement denies → tow risk" to "raw status field is
+    //    stale but display/enforcement agree → schema-integrity
+    //    curio." The super-admin console will still show these rows
+    //    until a follow-up commit decides one of:
+    //      (a) retire kind #1 (predicate becomes noise-only)
+    //      (b) narrow via Option A layered on top: gate on resident
+    //          is_active as well, so only genuine schema drift with
+    //          a still-active resident surfaces
+    //    Mateo Aug 21: ship B alone first, observe the panel for a
+    //    couple of days, then decide (a) vs (b).
+    if (v.is_active === false) return 'deactivated'
     return 'active'
   }
   return 'unknown'
