@@ -7,14 +7,21 @@
 --   - Terminal SELECT returns one row with `status='PASS'` on success
 --   - Any gate failure surfaces via a RAISE EXCEPTION mid-DO block
 --
--- 8 gates:
+-- 8 gates (G6 updated 2026-08-22 for kind #1 retirement):
 --   G1 function exists with exact signature (1 TEXT arg)
 --   G2 SECURITY DEFINER + search_path pinned
 --   G3 return shape: 11 columns, correct order
 --   G4 grants: anon=0, service_role=0, authenticated=1 EXECUTE
 --   G5 body contains admin role-gate literal (forbidden_not_admin ERRCODE 42501)
---   G6 body mirrors TS predicate literals verbatim (both branches present)
---   G7 schema audit row present (SCHEMA_GET_CONSOLE_RED_WARNINGS)
+--   G6 🟢 TS-parity — surviving red predicate (kind #5) PRESENT +
+--      retired kind #1 predicate EXPLICITLY ABSENT. Was "both
+--      branches present"; kind #1 retired 2026-08-22 (see migration
+--      20260822_get_console_red_warnings_retire_kind1.sql). The
+--      absent-assertion catches a well-meaning re-addition — if
+--      someone recreates the kind #1 branch, this gate fails loudly.
+--   G7 schema audit row present (SCHEMA_GET_CONSOLE_RED_WARNINGS,
+--      original migration + also SCHEMA_GET_CONSOLE_RED_WARNINGS_
+--      RETIRE_KIND1 if the retirement was applied)
 --   G8 🔴 EXECUTION — SELECT COUNT(*) FROM RPC (both signatures) must
 --      not throw. Reason: original v1 passed 7-of-7 structural gates
 --      against a function that threw 42804 on every invocation
@@ -132,13 +139,18 @@ BEGIN
     RAISE EXCEPTION 'G5 FAIL: body missing ERRCODE 42501';
   END IF;
 
-  -- G6: both TS-mirroring predicate branches present. If either is
-  -- silently removed in a future CREATE OR REPLACE, this fires.
-  IF v_body NOT ILIKE '%status = ''active''%is_active = FALSE%' THEN
-    RAISE EXCEPTION 'G6 FAIL: red predicate #1 (status=active AND is_active=FALSE) not present in body';
-  END IF;
+  -- G6 (updated 2026-08-22): kind #5 predicate PRESENT, kind #1 ABSENT.
+  --   PRESENT check: same TS-parity discipline as before — the
+  --     surviving red predicate must appear verbatim in the body.
+  --   ABSENT check: catches a well-meaning re-addition of the retired
+  --     kind #1 predicate. If someone recreates it, this fires — the
+  --     absent-assertion is the enforcement mechanism for the
+  --     "do not re-add" note in the retirement migration.
   IF v_body NOT ILIKE '%status = ''pending''%is_active = TRUE%' THEN
-    RAISE EXCEPTION 'G6 FAIL: red predicate #2 (status=pending AND is_active=TRUE) not present in body';
+    RAISE EXCEPTION 'G6 FAIL (present): red predicate kind #5 (status=pending AND is_active=TRUE) not present in body';
+  END IF;
+  IF v_body ILIKE '%status = ''active''%is_active = FALSE%' THEN
+    RAISE EXCEPTION 'G6 FAIL (absent): retired kind #1 predicate (status=active AND is_active=FALSE) reappeared. See migration 20260822_get_console_red_warnings_retire_kind1.sql for the retirement rationale — do not re-add without revisiting the alignment history.';
   END IF;
 
   -- ── G7 schema audit row ──────────────────────────────────────────

@@ -12,17 +12,20 @@
 // V2: extend CA — either add per-property fetch there, or route both
 // portals through an RPC that embeds noAuthorizedBucket server-side.
 //
-// ── 🔴 SQL MIRROR OF THE TWO RED PREDICATES EXISTS 🔴 ────────────────
+// ── 🔴 SQL MIRROR OF THE ONE REMAINING RED PREDICATE EXISTS 🔴 ──────
 //
 // 2026-08-21 — Mateo shipped a super-admin cross-tenant rollup for
-// the RED predicates only, in migrations/20260821_get_console_red_
-// warnings.sql (RPC: public.get_console_red_warnings). That RPC is a
-// DELIBERATE partial mirror of kinds #1 (portal_approved_enforcement_
-// denied) and #5 (enforcement_authorized_portal_pending) below.
+// the RED predicates in migrations/20260821_get_console_red_
+// warnings.sql (RPC: public.get_console_red_warnings). Originally a
+// deliberate mirror of BOTH red kinds; on 2026-08-22 kind #1
+// (portal_approved_enforcement_denied) was retired from BOTH sides
+// (see WarningKind alias below + migrations/20260822_get_console_
+// red_warnings_retire_kind1.sql). The RPC now mirrors kind #5 only
+// (enforcement_authorized_portal_pending).
 //
-// 🔴 IF YOU CHANGE EITHER RED PREDICATE HERE, ALSO CHANGE THE SQL
-//    MIRROR IN THE SAME COMMIT. The four amber predicates are NOT
-//    mirrored (super-admin sees only red per Jose's spec).
+// 🔴 IF YOU CHANGE THE SURVIVING RED PREDICATE HERE, ALSO CHANGE THE
+//    SQL MIRROR IN THE SAME COMMIT. The four amber predicates are
+//    NOT mirrored (super-admin sees only red per Jose's spec).
 //
 // The mirror is PROVISIONAL: it exists because the full 6-predicate
 // extraction is blocked on the Aug 8 warnings-self-clearing diagnostic
@@ -63,7 +66,24 @@ export const PENDING_AGE_THRESHOLD_DAYS = 7
 export type WarningSeverity = 'red' | 'amber'
 
 export type WarningKind =
-  | 'portal_approved_enforcement_denied'      // 🔴 tow risk
+  // 🔴 kind 'portal_approved_enforcement_denied' RETIRED 2026-08-22
+  //    (Mateo). The divergence it detected — v.status='active' AND
+  //    v.is_active=false displaying as "active" in the manager panel
+  //    while enforcement denied — was closed by the alignment arc:
+  //      22c7da1 (Aug 20) fixed countVehicles to gate on is_active
+  //      74e8934 (Aug 21) fixed vehicleDisplayStatus badge to gate too
+  //    Post-alignment the row displays as "deactivated" everywhere
+  //    (badge, count, CSV export, enforcement). The predicate then
+  //    described a stale column value with no downstream consumer —
+  //    Jose could not act on it, CA could not act on it, manager could
+  //    not act on it (resident had moved out). A permanent red row
+  //    nobody can act on teaches the reader to skim past red, which
+  //    is exactly what costs you when a real one appears — same
+  //    failure mode as warnings that don't self-clear, arriving by a
+  //    third route.
+  //    SQL mirror retirement: migrations/20260822_get_console_red_
+  //    warnings_retire_kind1.sql — change-together rule.
+  //    Do not re-add without revisiting the alignment arc first.
   | 'enforcement_authorized_portal_pending'   // 🔴 tow risk (permissive)
   | 'duplicate_resident_registration'
   | 'active_resident_no_authorized_vehicle'
@@ -116,25 +136,17 @@ export function computePropertyWarnings(input: WarningInput): PropertyWarning[] 
   const thresholdDays = input.pendingAgeThresholdDays ?? PENDING_AGE_THRESHOLD_DAYS
   const warnings: PropertyWarning[] = []
 
-  // ── #1 — Portal shows approved, enforcement denies ────────────────
-  // 🔴 Wrongful tow. Natalie's exact shape. No usable timestamp on the
-  // divergence itself (it's the discrepancy between two writes, one of
-  // which may have been the one to fail). Sort by unit within red tier.
-  for (const r of crmResidents) {
-    for (const v of (r.vehicles ?? [])) {
-      if (v.status === 'active' && v.is_active === false) {
-        warnings.push({
-          id:        `portal_approved_enforcement_denied:${r.id}:${v.id}`,
-          kind:      'portal_approved_enforcement_denied',
-          severity:  'red',
-          title:     `Unit ${r.unit || '—'} · ${v.plate ?? '(no plate)'}`,
-          body:      'this vehicle shows as approved here, but it will not scan as authorized. It could be towed.',
-          remedy:    'Contact your company administrator — this needs to be corrected by ShieldMyLot.',
-          sortAnchor: r.unit || '',
-        })
-      }
-    }
-  }
+  // ── #1 — RETIRED 2026-08-22 ────────────────────────────────────────
+  // Was: portal_approved_enforcement_denied
+  //   for (const r of crmResidents)
+  //     for (const v of (r.vehicles ?? []))
+  //       if (v.status === 'active' && v.is_active === false) → push RED
+  //
+  // Retired because the divergence it detected was closed by the
+  // count fix (22c7da1) + badge fix (74e8934). Post-alignment the
+  // predicate described a stale status field with no consumer. See
+  // WarningKind type-alias comment above + SQL mirror retirement
+  // migration for the full history. Do not re-add.
 
   // ── #5 — Enforcement authorizes, portal shows pending ─────────────
   // 🔴 Permissive tow-risk (the reverse of #1). Same divergence

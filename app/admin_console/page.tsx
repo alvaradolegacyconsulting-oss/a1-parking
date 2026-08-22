@@ -47,13 +47,19 @@ interface PerPropertyActivity {
 
 // 2026-08-21 — Super-admin console red-warnings row. Returned by
 // public.get_console_red_warnings() (migration 20260821). One row per
-// vehicle matching either red predicate:
-//   portal_approved_enforcement_denied   (status=active  AND is_active=false)
+// vehicle matching the surviving red predicate:
 //   enforcement_authorized_portal_pending (status=pending AND is_active=true)
 //
-// 🔴 The two predicates are ALSO in TypeScript at app/lib/property-
-//    warnings.ts (kinds #1 and #5). This RPC is a DELIBERATE mirror —
-//    if a red predicate changes, change TypeScript first and mirror in
+// 🟢 2026-08-22 — kind 'portal_approved_enforcement_denied' RETIRED
+//    from both this file and the SQL mirror. See app/lib/property-
+//    warnings.ts WarningKind alias comment + migration
+//    20260822_get_console_red_warnings_retire_kind1.sql for the
+//    alignment-arc history (22c7da1 count + 74e8934 badge fix closed
+//    the divergence; predicate had no consumer post-alignment).
+//
+// 🔴 The surviving predicate is ALSO in TypeScript at app/lib/property-
+//    warnings.ts (kind #5). This RPC is a DELIBERATE mirror — if the
+//    red predicate changes, change TypeScript first and mirror in
 //    the same commit. See migration header for the tradeoff.
 interface RedWarning {
   company_id:          number | null
@@ -62,7 +68,7 @@ interface RedWarning {
   property:            string
   unit:                string | null
   plate:               string | null
-  kind:                'portal_approved_enforcement_denied' | 'enforcement_authorized_portal_pending'
+  kind:                'enforcement_authorized_portal_pending'
   vehicle_status:      string
   vehicle_is_active:   boolean
   vehicle_id:          number
@@ -926,13 +932,14 @@ export default function AdminConsolePage() {
                 const bucket = byProp.get(w.property)
                 if (bucket) bucket.push(w); else byProp.set(w.property, [w])
               }
-              const kindLabel = (k: RedWarning['kind']): string =>
-                k === 'portal_approved_enforcement_denied' ? 'Portal approved · enforcement denied'
-                                                           : 'Enforcement authorized · portal pending'
-              const kindTooltip = (k: RedWarning['kind']): string =>
-                k === 'portal_approved_enforcement_denied'
-                  ? 'Vehicle shows approved in portal but will not scan as authorized (status=active, is_active=false) — wrongful tow risk.'
-                  : 'Vehicle is scanning as authorized but portal shows pending (status=pending, is_active=true) — permissive tow risk.'
+              // Post-retirement of kind #1 (2026-08-22), only one kind
+              // remains. Kept as functions rather than constants so a
+              // future re-addition (a new red predicate, not a re-add
+              // of the retired one) plugs in without restructuring.
+              const kindLabel = (_k: RedWarning['kind']): string =>
+                'Enforcement authorized · portal pending'
+              const kindTooltip = (_k: RedWarning['kind']): string =>
+                'Vehicle is scanning as authorized but portal shows pending (status=pending, is_active=true) — permissive tow risk.'
               const ageDays = (iso: string): number =>
                 Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
               // Three-state discriminant — computed ONCE so the whole
