@@ -175,15 +175,64 @@ END $$;
 --   (b) with explicit NULL — exercises the "all envs" branch the
 --       client calls with at mount
 -- Row count is not asserted; RUN is the assertion.
+--
+-- 🔴 JWT IMPERSONATION — MANDATORY for admin-gated RPCs
+--
+-- The RPC's role gate (line 9 of get_console_red_warnings body) reads
+-- auth.jwt() ->> 'email'. In the SQL Editor context, auth.jwt() is
+-- NULL (no JWT — the caller is service_role/postgres, not an
+-- authenticated user), so the RPC aborts with 42501 'unauthenticated'
+-- BEFORE its typed SELECT runs. That defeats the entire point of an
+-- execution gate — the gate exists to catch runtime type errors in
+-- the SELECT (enum→TEXT, column-order drift), which are only visible
+-- once the SELECT actually executes.
+--
+-- Fix: set request.jwt.claims LOCAL to this DO block so the RPC's
+-- auth.jwt() call sees an impersonated admin email. LOCAL scope
+-- (third arg TRUE) auto-clears when this DO block's implicit
+-- transaction ends — no session bleed into subsequent queries.
+--
+-- This is safe: the verification runs by an authorized deployer
+-- (Jose) in SQL Editor. Any actor with SQL Editor access already has
+-- full DB privilege — impersonating an admin's email is not an
+-- escalation, only a way to reach the RPC body.
+--
+-- Discovered 2026-08-22 (Jose's first execution-gate run failed with
+-- exactly this 42501). Class rule updated: feedback_rpc_verification_
+-- must_include_execution_gate.md.
 DO $$
 DECLARE
+  v_admin_email  TEXT;
   v_default_rows INT;
   v_all_env_rows INT;
 BEGIN
+  -- Find any active admin to impersonate. If none exists, the RPC's
+  -- role gate could not pass in ANY caller context — surface as a
+  -- PREREQ failure with a distinct message so it's not conflated with
+  -- an RPC-body bug.
+  SELECT email INTO v_admin_email
+    FROM public.user_roles
+   WHERE role = 'admin'
+     AND is_active = TRUE
+   LIMIT 1;
+  IF v_admin_email IS NULL THEN
+    RAISE EXCEPTION 'G8 PREREQ FAIL: no active admin user_roles row to impersonate — execution gate cannot proceed';
+  END IF;
+
+  -- Impersonate: set the JWT claims GUC LOCAL to this txn. Third arg
+  -- TRUE means LOCAL scope — reset at end of DO block. Included
+  -- 'role':'authenticated' for parity with what PostgREST sets in
+  -- normal request flow (some Supabase helpers read it).
+  PERFORM set_config(
+    'request.jwt.claims',
+    jsonb_build_object('email', v_admin_email, 'role', 'authenticated')::text,
+    TRUE
+  );
+
   SELECT COUNT(*) INTO v_default_rows FROM public.get_console_red_warnings();
   SELECT COUNT(*) INTO v_all_env_rows FROM public.get_console_red_warnings(NULL);
-  RAISE NOTICE 'G8 execution: default-arg call → % rows; NULL-arg call → % rows.',
-    v_default_rows, v_all_env_rows;
+  RAISE NOTICE 'G8 execution (impersonated %): default-arg call → % rows; NULL-arg call → % rows.',
+    v_admin_email, v_default_rows, v_all_env_rows;
   -- Sanity: NULL-arg (all envs) must be >= default-arg (production only).
   -- Enforces the filter actually filters — if NULL returned FEWER than
   -- 'production', something is very wrong (e.g. WHERE inverted).

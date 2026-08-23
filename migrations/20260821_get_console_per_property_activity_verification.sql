@@ -142,13 +142,38 @@ END $$;
 -- pass by construction. See feedback_rpc_verification_must_include_
 -- execution_gate.md.
 --
--- We assert the RPC RUNS without error. Row count is not asserted —
--- can legitimately be 0 in a test tenant with no properties.
+-- 🔴 JWT IMPERSONATION — MANDATORY for admin-gated RPCs
+-- The RPC's role gate reads auth.jwt() ->> 'email'. In SQL Editor
+-- context auth.jwt() is NULL and the RPC aborts with 42501
+-- 'unauthenticated' before its typed SELECT runs. We set
+-- request.jwt.claims LOCAL to this DO block so the role gate passes
+-- and the SELECT executes (which is what the execution gate needs
+-- to verify). Full rationale in the red-warnings verification G8
+-- block + memory rule. Discovered 2026-08-22 (first execution-gate
+-- run failed with exactly this 42501).
 DO $$
-DECLARE v_row_count INT;
+DECLARE
+  v_admin_email  TEXT;
+  v_row_count    INT;
 BEGIN
+  SELECT email INTO v_admin_email
+    FROM public.user_roles
+   WHERE role = 'admin'
+     AND is_active = TRUE
+   LIMIT 1;
+  IF v_admin_email IS NULL THEN
+    RAISE EXCEPTION 'G7 PREREQ FAIL: no active admin user_roles row to impersonate — execution gate cannot proceed';
+  END IF;
+
+  PERFORM set_config(
+    'request.jwt.claims',
+    jsonb_build_object('email', v_admin_email, 'role', 'authenticated')::text,
+    TRUE
+  );
+
   SELECT COUNT(*) INTO v_row_count FROM public.get_console_per_property_activity();
-  RAISE NOTICE 'G7 execution: RPC returned % rows (any count is fine; RUN is the assertion).', v_row_count;
+  RAISE NOTICE 'G7 execution (impersonated %): RPC returned % rows (any count is fine; RUN is the assertion).',
+    v_admin_email, v_row_count;
 END $$;
 
 -- Terminal SELECT returns one PASS row (v2 pattern).
