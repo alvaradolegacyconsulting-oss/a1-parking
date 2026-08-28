@@ -103,10 +103,41 @@ async function main() {
   if (row.company === null || row.company === undefined || String(row.company).trim() === '') {
     console.error(`   ✗ FAIL: response has \`company\` key but value is empty (got: ${JSON.stringify(row.company)}).`)
     console.error('     Cache sees the column but the function is returning NULL for it.')
+    console.error('     Not a cache issue — the migration or residents.company itself is wrong.')
     console.error('     Verify Postgres-side execution gate (G8) also passed — that would have caught this.')
     process.exit(3)
   }
   console.log(`   ✓ Response includes company="${row.company}" — new signature is live in PostgREST.`)
+
+  // ── 4. Lookup-consistency check ────────────────────────────────
+  // Mateo Aug 28 G9 spec: assert the returned company matches "that
+  // resident's actual company." Multi-residency means the function's
+  // precedence may pick a DIFFERENT row than the sample we fetched, so
+  // strict equality against probeRow.company would false-fail on any
+  // test data with multi-row residents. Match the SQL G8 pattern
+  // instead — the returned (email, company) pair must EXIST as some
+  // residents row for the probe email. If not, the function is
+  // inventing values.
+  console.log('\n4) Lookup-consistency check — (returned email, returned company) exists in residents')
+  const { data: verifyRow, error: verifyErr } = await admin
+    .from('residents')
+    .select('id')
+    .ilike('email', String(row.email ?? probeEmail))
+    .eq('company', String(row.company))
+    .limit(1)
+    .maybeSingle()
+  if (verifyErr) {
+    console.error(`   ✗ Lookup-consistency read failed: ${verifyErr.message}`)
+    process.exit(3)
+  }
+  if (!verifyRow) {
+    console.error(`   ✗ FAIL: no residents row with (email=${row.email}, company=${row.company}) exists.`)
+    console.error('     PostgREST returned a company value that does not appear on any residents row')
+    console.error('     for this email. Not a cache issue — the function is inventing values or the')
+    console.error('     migration body is wrong. Compare against the SQL G8 execution gate result.')
+    process.exit(3)
+  }
+  console.log(`   ✓ (email=${row.email}, company=${row.company}) is a real residents row — no invented values.`)
 
   console.log('\n════════════════════════════════════════════════════════')
   console.log('🟢 PASS — PostgREST cache sees get_residents_row_by_precedence\'s new 4-column shape.')
