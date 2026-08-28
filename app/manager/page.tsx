@@ -2437,6 +2437,11 @@ export default function ManagerPortal() {
         plate: normalizedPlate,
         unit: unit || newVehicle.unit,
         property: manager.name,
+        // 🟢 2026-08-28 vehicles.company arc Commit 2 — manager.company
+        // is the properties row's company field (populated in the
+        // manager-bootstrap fetch at L465). Already in scope, no
+        // additional lookup.
+        company: manager.company,
         resident_email: ownerEmail,
         status: initState.status,
         is_active: initState.is_active,
@@ -2792,6 +2797,9 @@ export default function ManagerPortal() {
           color: newResident.vehicle_color.trim() || null,
           unit: newResident.unit,
           property: manager.name,
+          // 🟢 2026-08-28 vehicles.company arc Commit 2 — same
+          // manager.company source as the Add-Vehicle path above.
+          company: manager.company,
           // B166 — owner stamp. targetEmail already lowercased at L522.
           resident_email: targetEmail,
           is_active: cascadeInitState.is_active,

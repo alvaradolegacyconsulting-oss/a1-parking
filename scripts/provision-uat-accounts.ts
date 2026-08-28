@@ -418,6 +418,11 @@ async function main() {
       color: v.color,
       unit: RESIDENT_UNIT,
       property: PROPERTY_NAME,
+      // 🟢 2026-08-28 vehicles.company arc Commit 2 — seed writer.
+      // COMPANY_NAME is the test tenant's company by construction of
+      // this script. Populating here so seed data does not create
+      // NULL-company rows that Commit 4 SET NOT NULL will reject.
+      company: COMPANY_NAME,
       // B209 alignment — owner stamp (B166 discipline). lowercased
       // per the convention all forward-stamping paths use.
       resident_email: residentAEmail,

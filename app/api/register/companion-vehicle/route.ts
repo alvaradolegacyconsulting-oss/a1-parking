@@ -223,7 +223,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<SuccessRespon
   const { data: residentRows, error: rErr } = await admin
     .rpc('get_residents_row_by_precedence', { p_email: callerEmail })
   const residentRow = Array.isArray(residentRows) && residentRows.length > 0
-    ? residentRows[0] as { email: string; unit: string | null; property: string | null }
+    ? residentRows[0] as { email: string; unit: string | null; property: string | null; company: string | null }
     : null
 
   if (rErr) {
@@ -263,6 +263,13 @@ export async function POST(req: NextRequest): Promise<NextResponse<SuccessRespon
         unit: residentRow.unit,
         property: residentRow.property,
         resident_email: residentRow.email.toLowerCase(),
+        // 🟢 2026-08-28 vehicles.company arc Commit 2 — company from
+        // the SAME residents-precedence row that gave us property + unit.
+        // NOT a separate lookup; RPC returns all four in one query so
+        // multi-residency precedence resolves to a single (email, unit,
+        // property, company) tuple. See migration
+        // 20260828_get_residents_row_by_precedence_add_company.sql.
+        company: residentRow.company,
         // Pending-approval state — matches both /register's original
         // intent and the manager queue's status='pending' predicate.
         is_active: false,

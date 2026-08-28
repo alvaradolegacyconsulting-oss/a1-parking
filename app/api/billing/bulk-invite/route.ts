@@ -322,13 +322,16 @@ export async function POST(req: NextRequest) {
             // deactivation-time owner-trim match is reliable regardless
             // of what validateRows does upstream.
             resident_email: res.email.trim().toLowerCase(),
-            // B203 — `company` column does NOT exist on `vehicles`; the
-            // earlier inclusion here was returning a PostgREST schema-
-            // cache rejection that was swallowed by the catch below.
-            // Ownership scope is via (property, unit) + resident_email,
-            // consistent with the 4 other vehicles.insert call sites
-            // (manager/page.tsx:596, :694, resident/page.tsx:321,
-            // register/page.tsx:137).
+            // 🟢 2026-08-28 vehicles.company arc Commit 2 — restored.
+            // An earlier version of this insert included `company` and
+            // was rejected by PostgREST because the column didn't exist
+            // (that historical evidence was what convinced Mateo Aug 28
+            // to go writer-populated). Column landed via Commit 1
+            // (migration 20260828_vehicles_add_company_column.sql,
+            // gate 45a46c0 + PostgREST cache verified via
+            // gate-vehicles-company-postgrest.ts). roleRow.company is
+            // in scope from the residents insert two blocks above.
+            company: roleRow.company,
             property: res.property,
             unit: res.unit,
             // Permit-Door Piece 1 §2 — helper-routed insert state.
