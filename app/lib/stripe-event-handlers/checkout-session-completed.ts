@@ -5,7 +5,7 @@ import { getStripe } from '../stripe'
 import { sendEmail } from '../resend-client'
 import type { HandlerResult } from './types'
 
-interface IntendedTier {
+export interface IntendedTier {
   track: 'enforcement' | 'property_management'
   tier: 'starter' | 'growth' | 'legacy' | 'essential' | 'professional' | 'enterprise'
   cycle: 'monthly' | 'annual'
@@ -837,7 +837,12 @@ function escapeHtml(s: string): string {
 // unit_amount_cents=null + tiers=null + a diagnostic log. Better a
 // partial snapshot than no snapshot.
 
-interface WriteOrderFormSnapshotArgs {
+// Exported for scripts/probe-c5-writer-and-immutability.ts — the probe
+// imports and CALLS this exact function (not a re-implementation of
+// its INSERT shape) so the payload-assembly, FK-resolution, and
+// stripe_prices JOIN logic get tested for real. Handler-scope
+// dependencies: none (writer takes supabase + all state via args).
+export interface WriteOrderFormSnapshotArgs {
   supabase:              ReturnType<typeof createSupabaseServiceClient>
   companyId:             number
   source:                'self_serve' | 'proposal_code'
@@ -858,7 +863,7 @@ interface LineItemSnapshot {
   tiers:             unknown | null  // JSONB from stripe_prices for graduated permit line
 }
 
-async function writeOrderFormSnapshot(args: WriteOrderFormSnapshotArgs): Promise<void> {
+export async function writeOrderFormSnapshot(args: WriteOrderFormSnapshotArgs): Promise<void> {
   const {
     supabase, companyId, source, intendedTier, stripeCustomerId,
     stripeSubscriptionId, subscriptionItems, proposalCodeId,

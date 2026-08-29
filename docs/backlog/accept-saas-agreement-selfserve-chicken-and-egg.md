@@ -101,6 +101,18 @@ But report-first when picked up — Jose may have legal-side preferences.
   smoke can prove it, but no end-to-end verification until this bug
   fixes. Structural completeness only.
 
+## Evidence in prod today
+
+Jose's tos_acceptances audit 2026-07-23 (during legal-versions
+verification) surfaced two rows with `company_id = NULL`:
+`id=266` (2026-07-13) and `id=331` (2026-07-17), both for user
+`a767da27`. With `public_signup_open = false`, that's an abandoned
+registration or a role-less user — the same operational shape as
+the orphan class this bug will produce at scale once
+`public_signup_open` flips. Useful evidence when this arc is picked
+up: reconciliation tooling needs to handle NULL-company acceptance
+rows already existing in prod, not just future ones.
+
 ## Cross-references
 
 - [B2-1 C1 preflight report](../../.claude/projects/-Users-ALC-a1-parking/memory/project_b28_signup_path_consent_forward_path.md) —
