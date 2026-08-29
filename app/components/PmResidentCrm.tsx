@@ -120,6 +120,16 @@ interface Props {
   // the affordance + gates.
   onDeactivateResident: (r: CrmResident) => Promise<void>
   onReactivateResident: (r: CrmResident) => Promise<void>
+  // 🟢 2026-08-28 A1-cluster Item 3 Commit 4 — un-decline affordance.
+  // DIFFERENT PATH from onReactivateResident. Reactivate is undo-
+  // deactivation (previously approved → restore is_active=true +
+  // owner-scoped plate restore). Undecline is undo-decline (never
+  // approved; declined → return to pending queue for a real Approve/
+  // Decline decision; vehicles → pending, NOT active). Cross-wiring
+  // these would silently grant portal access to a rejected resident.
+  // Handler details in app/lib/manager-crm-writes.ts's
+  // undeclineResidentWrite; surface handler in manager/page.tsx.
+  onUndeclineResident: (r: CrmResident) => Promise<void>
   // 2026-08-08 — Manager Add Vehicle for an existing resident. Opens
   // AddVehicleForResidentModal at the parent level. Callback signature
   // is trigger-only (no payload); the parent owns the modal state +
@@ -342,7 +352,7 @@ export default function PmResidentCrm({
   onDeactivateVehicle, onReactivateVehicle,
   onEditVehicle, onEditResident,
   onApproveGuestAuthRequest, onDeclineGuestAuthRequest,
-  onDeactivateResident, onReactivateResident,
+  onDeactivateResident, onReactivateResident, onUndeclineResident,
   onOpenAddVehicle,
   onExportLogged,
 }: Props) {
@@ -599,6 +609,7 @@ export default function PmResidentCrm({
                 onDeclineResident={onDeclineResident}
                 onDeactivateResident={onDeactivateResident}
                 onReactivateResident={onReactivateResident}
+                onUndeclineResident={onUndeclineResident}
                 decisionBusy={decisionGuard.busyFor(selected.id)}
               />
               <FactsStrip resident={selected} />
@@ -786,7 +797,7 @@ function EmptyDetail() {
   )
 }
 
-function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onDeactivateResident, onReactivateResident, decisionBusy }: {
+function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResident, onDeclineResident, onDeactivateResident, onReactivateResident, onUndeclineResident, decisionBusy }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -794,6 +805,7 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
   onDeclineResident: (r: CrmResident) => Promise<void>
   onDeactivateResident: (r: CrmResident) => Promise<void>
   onReactivateResident: (r: CrmResident) => Promise<void>
+  onUndeclineResident: (r: CrmResident) => Promise<void>
   // Commit E — set when a decision is in flight for this resident.
   // Buttons render disabled with a "-ing…" label. See
   // useResidentDecisionGuard header for the release semantics.
@@ -806,6 +818,11 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
   // pending residents (approve/decline is the correct action there).
   const showDeactivate = resident.status === 'active' && resident.is_active && !isReadOnly
   const showReactivate = resident.status === 'active' && !resident.is_active && !isReadOnly
+  // 🟢 A1-cluster Item 3 Commit 4 — un-decline affordance on declined
+  // residents. Hidden by default because the CRM's default filters
+  // (all/active/needs/review/no-authorized) don't surface declined
+  // rows conspicuously; a manager finds them via 'all' + search.
+  const showUndecline = resident.status === 'declined' && !isReadOnly
   return (
     <div style={{ padding: '18px 20px 16px', borderBottom: `1px solid ${C.border}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap' }}>
@@ -825,7 +842,7 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
             </div>
           </div>
         </div>
-        {(showApprove || showDecline || showDeactivate || showReactivate) && (
+        {(showApprove || showDecline || showDeactivate || showReactivate || showUndecline) && (
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {showApprove && (
               <button onClick={() => onApproveResident(resident)}
@@ -866,6 +883,15 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
                   border: `1px solid ${C.greenLine}`, borderRadius: '6px',
                   cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
                 }}>Reactivate resident</button>
+            )}
+            {showUndecline && (
+              <button onClick={() => onUndeclineResident(resident)}
+                title="Return this resident to the pending queue. They will NOT get portal access — you'll still need to Approve or Decline. Their previously-declined vehicles will move to pending alongside them."
+                style={{
+                  padding: '8px 14px', background: C.greenSoft, color: C.green,
+                  border: `1px solid ${C.greenLine}`, borderRadius: '6px',
+                  cursor: 'pointer', fontSize: '12px', fontWeight: 700, fontFamily: 'inherit',
+                }}>Return to pending</button>
             )}
           </div>
         )}

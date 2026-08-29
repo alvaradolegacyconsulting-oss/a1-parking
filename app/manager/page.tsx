@@ -4671,6 +4671,7 @@ export default function ManagerPortal() {
             onDeclineGuestAuthRequest={(id, reason) => declineGuestAuthRequestCrm(id, reason)}
             onDeactivateResident={(r) => deactivateResident(String(r.id))}
             onReactivateResident={(r) => reactivateResident(String(r.id))}
+            onUndeclineResident={(r) => undeclineResident({ id: String(r.id), name: r.name, email: r.email })}
             onOpenAddVehicle={(r) => setAddVehicleFor(r)}
             onExportLogged={async ({ propertyName, residentCount, vehicleCount, filterUsed, searchUsed }) => {
               // 2026-07-29 — resident+vehicle CSV export audit trail.
