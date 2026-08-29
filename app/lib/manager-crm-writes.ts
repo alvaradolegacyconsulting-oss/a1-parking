@@ -620,14 +620,43 @@ export async function declineVehicleWrite(
     .update({ is_active: false, status: 'declined', manager_note: managerNote })
     .eq('id', vehicleId)
   await logAudit({ action: 'DECLINE_VEHICLE', table_name: 'vehicles', record_id: vehicleId, new_values: { status: 'declined', property } })
-  const { data: veh } = await supabase.from('vehicles').select('unit, property').eq('id', vehicleId).single()
-  if (veh) {
-    await supabase.from('residents')
-      .update({ status: 'active', is_active: true })
-      .ilike('unit', escapeIlikeValue(veh.unit))
-      .ilike('property', escapeIlikeValue(veh.property))
-      .eq('status', 'pending')
-  }
+  // ── 2026-08-28 A1-cluster Item 3 Commit 1 — SITE 2 REMOVED ────────
+  //
+  // 🔴 If a future reader thinks a residents-back-to-active cascade
+  // belongs here, IT DOES NOT. Read this before touching it.
+  //
+  // Original intent (f142973, 2026-05-06, "resident portal access
+  // after vehicle decline"): un-lock the portal for a pending resident
+  // whose vehicle got declined. At the time, pending residents
+  // (is_active=false, status='pending') hit the portal account gate
+  // and were locked out; the fix flipped them to active so they could
+  // retry.
+  //
+  // Superseded by 1aa70b2 (2026-07-27): hydrateResidency now skips the
+  // account gate for status='pending' via GATE_EXEMPT_STATUSES
+  // (resident/page.tsx:318). The "Registration Pending" banner at
+  // resident/page.tsx:882 renders correctly for a pending resident.
+  // No approval status change is needed to keep the portal reachable
+  // — the read path handles it, where it belongs.
+  //
+  // Email-scoping the old cascade (Option B in the Aug 28 gate report)
+  // was REJECTED, not because the shape was harmless, but because
+  // "declining a vehicle approves its owner" is the Change 2 class
+  // Mateo rejected in July: a write destroys pending-ness and lets a
+  // later read interpret its absence as approval. Rescoping narrows
+  // the blast radius while preserving the mechanism. Same class.
+  //
+  // Correct sequence today: manager declines the vehicle → resident
+  // stays in the pending queue → manager still owes them Approve or
+  // Decline. If the resident's only vehicle was declined and that
+  // becomes a real workflow gap, surface it in the queue ("resident's
+  // only vehicle was declined") — don't flip status behind the
+  // manager's back.
+  //
+  // Site 2's audit history: 3 DECLINE_VEHICLE rows total (all
+  // 2026-07-24, test tenant). Never fired in production. Full
+  // rationale in the Item 3 gate report + Mateo's Option-A ruling
+  // (Aug 28).
   return { ok: true }
 }
 
