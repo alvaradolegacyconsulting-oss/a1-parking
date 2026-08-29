@@ -68,12 +68,23 @@ BEGIN
   IF v_prosecdef IS NOT TRUE THEN
     RAISE EXCEPTION 'G2 FAIL: prosecdef must be TRUE (SECURITY DEFINER); got %', v_prosecdef;
   END IF;
+  -- Postgres normalizes `SET search_path = ''` for storage in
+  -- pg_proc.proconfig. The stored element format is `name=value`;
+  -- empty values are wrapped in double quotes to disambiguate empty
+  -- from missing, so the entry is `search_path=""`. Some paths may
+  -- produce the un-quoted `search_path=`. Rather than enumerate every
+  -- normalization, strip the prefix + strip surrounding quotes and
+  -- check the remainder is empty. Mateo Aug 29 more-robust shape;
+  -- replaces my earlier IN-list check that missed both normalizations
+  -- initially (my first edit accepted them but was fragile against
+  -- any future normalization change).
   IF v_proconfig IS NULL
      OR NOT EXISTS (
        SELECT 1 FROM unnest(v_proconfig) AS s
-        WHERE s = 'search_path='
+        WHERE s LIKE 'search_path=%'
+          AND btrim(split_part(s, '=', 2), '"') = ''
      ) THEN
-    RAISE EXCEPTION 'G2 FAIL: expected search_path pinned to empty string via SET; got proconfig=%', v_proconfig;
+    RAISE EXCEPTION 'G2 FAIL: search_path not pinned to empty. proconfig=%. Empty pinning forces the body to reference auth.users via its fully-qualified name; a non-empty search_path (e.g. `public, pg_temp`) could shadow auth.users if a same-named table existed in a listed schema.', v_proconfig;
   END IF;
   IF v_lang <> 'sql' THEN
     RAISE EXCEPTION 'G2 FAIL: expected LANGUAGE sql; got %', v_lang;
