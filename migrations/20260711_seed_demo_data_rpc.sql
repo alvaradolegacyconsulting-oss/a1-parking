@@ -623,49 +623,65 @@ BEGIN
     FOR r IN
       SELECT * FROM (VALUES
         -- ── OPEN 0-7d (4 rows) ──────────────────────────────────────
-        ('TX7HDN82', c_prop_sunset, 'no_parking_permit',   'Building A rear lot',  'no_permit', 'new',        3,  23, 15, 0),
-        ('TX6WXP38', c_prop_sunset, 'fire_lane',           'Main entry curb',      'fire lane', 'tow_ticket', 5,  22, 30, 0),
-        ('TX3XKV52', c_prop_willow, 'no_parking_permit',   'Visitor spot 7',       'no permit', 'new',        6,  1,  20, 0),
-        ('TX3GBP54', c_prop_north,  'reserved_parking',    'Employee row',         'occupied reserved', 'tow_ticket', 2, 6, 15, 0),
+        -- should_tow: TRUE = tow_ticket_generated set (+ storage/fee).
+        -- 12 marked TRUE across the 30 rows:
+        --   • all 8 status='tow_ticket'  — canonical case
+        --   • 3 status='resolved'        — post-tow resolved
+        --   • 1 status='disputed'        — post-tow dispute (TX5WMR86)
+        -- The widget formula excludes voided rows from BOTH numerator
+        -- and denominator, so:
+        --   Voided = 2 (TX2JHN45 [towed+voided], TX2QLS16 [not towed])
+        --   Non-voided = 28
+        --   Towed & non-voided = 11  (12 marked TRUE minus TX2JHN45)
+        --   tow_rate_pct = 11 / 28 = 39.3%  → tile displays "39%"
+        -- TX2JHN45 is intentionally BOTH towed and voided — a
+        -- wrongful-tow that PM later voided — a valuable audit-trail
+        -- story for towing-company prospects. Don't chase a rounder
+        -- number by flipping it (per Jose 2026-07-11 decision).
+        ('TX7HDN82', c_prop_sunset, 'no_parking_permit',   'Building A rear lot',  'no_permit', 'new',        3,  23, 15, 0, FALSE),
+        ('TX6WXP38', c_prop_sunset, 'fire_lane',           'Main entry curb',      'fire lane', 'tow_ticket', 5,  22, 30, 0, TRUE),
+        ('TX3XKV52', c_prop_willow, 'no_parking_permit',   'Visitor spot 7',       'no permit', 'new',        6,  1,  20, 0, FALSE),
+        ('TX3GBP54', c_prop_north,  'reserved_parking',    'Employee row',         'occupied reserved', 'tow_ticket', 2, 6, 15, 0, TRUE),
 
         -- ── OPEN 8-30d (5 rows) ─────────────────────────────────────
-        ('TX0RSY93', c_prop_sunset, 'blocking_access',     'Dumpster area',        'blocking bin access', 'tow_ticket', 12, 23, 45, 0),
-        ('TX3TWQ29', c_prop_sunset, 'no_parking_zone',     'Fire hydrant zone',    'red curb',      'tow_ticket', 18, 22, 10, 0),
-        ('TX9MHT81', c_prop_willow, 'no_parking_permit',   'Building B lot',       'no permit',     'new',        15, 5,  30, 0),
-        ('TX7LMS29', c_prop_north,  'reserved_parking',    'Loading dock 2',       'unauthorized loading', 'tow_ticket', 22, 0, 45, 0),
-        ('TX6NVT48', c_prop_north,  'no_parking_permit',   'Building C south',     'no permit',     'new',        25, 6, 50, 0),
+        ('TX0RSY93', c_prop_sunset, 'blocking_access',     'Dumpster area',        'blocking bin access', 'tow_ticket', 12, 23, 45, 0, TRUE),
+        ('TX3TWQ29', c_prop_sunset, 'no_parking_zone',     'Fire hydrant zone',    'red curb',      'tow_ticket', 18, 22, 10, 0, TRUE),
+        ('TX9MHT81', c_prop_willow, 'no_parking_permit',   'Building B lot',       'no permit',     'new',        15, 5,  30, 0, FALSE),
+        ('TX7LMS29', c_prop_north,  'reserved_parking',    'Loading dock 2',       'unauthorized loading', 'tow_ticket', 22, 0, 45, 0, TRUE),
+        ('TX6NVT48', c_prop_north,  'no_parking_permit',   'Building C south',     'no permit',     'new',        25, 6, 50, 0, FALSE),
 
         -- ── OPEN 30+d (4 rows) ──────────────────────────────────────
-        ('TX9PXS12', c_prop_sunset, 'no_parking_permit',   'Guest overflow row',   'no permit',     'new',        38, 2,  30, 0),
-        ('TX6VCR78', c_prop_sunset, 'blocking_access',     'Gate approach',        'blocking gate', 'tow_ticket', 45, 22, 50, 0),
-        ('TX9QDF63', c_prop_north,  'reserved_parking',    'Executive row',        'reserved',      'tow_ticket', 52, 23, 20, 0),
-        ('TX6NVT48', c_prop_north,  'wrong_space',         'Handicap zone',        'not permitted', 'tow_ticket', 65, 13, 15, 0),
+        ('TX9PXS12', c_prop_sunset, 'no_parking_permit',   'Guest overflow row',   'no permit',     'new',        38, 2,  30, 0, FALSE),
+        ('TX6VCR78', c_prop_sunset, 'blocking_access',     'Gate approach',        'blocking gate', 'tow_ticket', 45, 22, 50, 0, TRUE),
+        ('TX9QDF63', c_prop_north,  'reserved_parking',    'Executive row',        'reserved',      'tow_ticket', 52, 23, 20, 0, TRUE),
+        ('TX6NVT48', c_prop_north,  'wrong_space',         'Handicap zone',        'not permitted', 'tow_ticket', 65, 13, 15, 0, TRUE),
 
         -- ── CLOSED — Sunset Ridge resolved / disputed (8) ───────────
-        ('TX3QLW56', c_prop_sunset, 'no_parking_permit',   'Visitor row',          NULL, 'resolved', 8,  0,  20, 0),
-        ('TX9KRV14', c_prop_sunset, 'expired_visitor_pass','Visitor spot 3',       NULL, 'resolved', 14, 22, 45, 0),
-        ('TX2FMB74', c_prop_sunset, 'no_parking_permit',   'Overflow row',         NULL, 'resolved', 20, 1,  15, 0),
-        ('TX8CJT61', c_prop_sunset, 'blocking_access',     'Mailroom curb',        NULL, 'resolved', 28, 23, 30, 0),
-        ('TX5GVK41', c_prop_sunset, 'no_parking_zone',     'Fire hydrant zone',    NULL, 'resolved', 35, 5,  40, 0),
-        ('TX7BLD56', c_prop_sunset, 'no_parking_permit',   'Building A lot',       NULL, 'resolved', 42, 22, 15, 0),
-        -- voided_at populated: row 20 (50d ago @ 06:20, voided 2d after created)
-        ('TX2JHN45', c_prop_sunset, 'expired_visitor_pass','Visitor spot 5',       NULL, 'resolved', 50, 6,  20, 2),
-        ('TX4YKB33', c_prop_sunset, 'wrong_space',         'Reserved row 12',      NULL, 'disputed', 55, 15, 45, 0),
+        ('TX3QLW56', c_prop_sunset, 'no_parking_permit',   'Visitor row',          NULL, 'resolved', 8,  0,  20, 0, FALSE),
+        ('TX9KRV14', c_prop_sunset, 'expired_visitor_pass','Visitor spot 3',       NULL, 'resolved', 14, 22, 45, 0, FALSE),
+        ('TX2FMB74', c_prop_sunset, 'no_parking_permit',   'Overflow row',         NULL, 'resolved', 20, 1,  15, 0, FALSE),
+        ('TX8CJT61', c_prop_sunset, 'blocking_access',     'Mailroom curb',        NULL, 'resolved', 28, 23, 30, 0, FALSE),
+        ('TX5GVK41', c_prop_sunset, 'no_parking_zone',     'Fire hydrant zone',    NULL, 'resolved', 35, 5,  40, 0, FALSE),
+        ('TX7BLD56', c_prop_sunset, 'no_parking_permit',   'Building A lot',       NULL, 'resolved', 42, 22, 15, 0, TRUE),
+        -- voided_at populated + towed: audit trail example. Tow executed,
+        -- violation later voided (wrongful-tow that manager voided).
+        ('TX2JHN45', c_prop_sunset, 'expired_visitor_pass','Visitor spot 5',       NULL, 'resolved', 50, 6,  20, 2, TRUE),
+        ('TX4YKB33', c_prop_sunset, 'wrong_space',         'Reserved row 12',      NULL, 'disputed', 55, 15, 45, 0, FALSE),
 
         -- ── CLOSED — Willowbrook resolved (5) ───────────────────────
         -- voided_at populated: row 22 (4d ago @ 05:50, voided 1d later)
-        ('TX2QLS16', c_prop_willow, 'expired_visitor_pass','Visitor spot A2',      NULL, 'resolved', 4,  5,  50, 1),
-        ('TX4JBM48', c_prop_willow, 'no_parking_permit',   'Building B curb',      NULL, 'resolved', 11, 23, 10, 0),
-        ('TX8PWD24', c_prop_willow, 'no_parking_zone',     'Fire lane B',          NULL, 'resolved', 32, 1,  40, 0),
-        ('TX0KTR91', c_prop_willow, 'blocking_access',     'Compactor area',       NULL, 'resolved', 60, 12, 45, 0),
-        ('TX1YVN82', c_prop_willow, 'expired_visitor_pass','Visitor spot B1',      NULL, 'resolved', 88, 22, 15, 0),
+        ('TX2QLS16', c_prop_willow, 'expired_visitor_pass','Visitor spot A2',      NULL, 'resolved', 4,  5,  50, 1, FALSE),
+        ('TX4JBM48', c_prop_willow, 'no_parking_permit',   'Building B curb',      NULL, 'resolved', 11, 23, 10, 0, FALSE),
+        ('TX8PWD24', c_prop_willow, 'no_parking_zone',     'Fire lane B',          NULL, 'resolved', 32, 1,  40, 0, FALSE),
+        ('TX0KTR91', c_prop_willow, 'blocking_access',     'Compactor area',       NULL, 'resolved', 60, 12, 45, 0, FALSE),
+        ('TX1YVN82', c_prop_willow, 'expired_visitor_pass','Visitor spot B1',      NULL, 'resolved', 88, 22, 15, 0, FALSE),
 
         -- ── CLOSED — Northgate resolved / disputed (4) ──────────────
-        ('TX4RBM75', c_prop_north,  'reserved_parking',    'Loading dock 1',       NULL, 'resolved', 9,  0,  30, 0),
-        ('TX8CLK39', c_prop_north,  'no_parking_zone',     'Fire hydrant zone',    NULL, 'resolved', 40, 22, 35, 0),
-        ('TX0PXH52', c_prop_north,  'no_parking_permit',   'Contractor lot',       NULL, 'resolved', 70, 16, 20, 0),
-        ('TX5WMR86', c_prop_north,  'wrong_space',         'Handicap zone',        NULL, 'disputed', 21, 14, 30, 0)
-      ) AS t(plate, prop, viol_type, location, notes, status, days_ago, hh, mm, voided_days_after)
+        ('TX4RBM75', c_prop_north,  'reserved_parking',    'Loading dock 1',       NULL, 'resolved', 9,  0,  30, 0, FALSE),
+        ('TX8CLK39', c_prop_north,  'no_parking_zone',     'Fire hydrant zone',    NULL, 'resolved', 40, 22, 35, 0, FALSE),
+        ('TX0PXH52', c_prop_north,  'no_parking_permit',   'Contractor lot',       NULL, 'resolved', 70, 16, 20, 0, TRUE),
+        ('TX5WMR86', c_prop_north,  'wrong_space',         'Handicap zone',        NULL, 'disputed', 21, 14, 30, 0, TRUE)
+      ) AS t(plate, prop, viol_type, location, notes, status, days_ago, hh, mm, voided_days_after, should_tow)
     LOOP
       v_created := v_day - (r.days_ago || ' days')::INTERVAL
                  + (r.hh || ' hours ' || r.mm || ' minutes')::INTERVAL;
@@ -699,7 +715,9 @@ BEGIN
         driver_name, driver_license,
         vehicle_color, vehicle_make, vehicle_model, vehicle_year,
         is_confirmed, status, created_at, voided_at,
-        voided_by_email, voided_by_role, void_reason
+        voided_by_email, voided_by_role, void_reason,
+        tow_ticket_generated, tow_ticket_generated_at,
+        tow_storage_name, tow_storage_address, tow_storage_phone, tow_fee
       ) VALUES (
         r.plate, r.viol_type, r.location, r.notes, r.prop,
         c_driver_name, c_driver_license,
@@ -707,7 +725,13 @@ BEGIN
         TRUE, r.status, v_created, v_voided,
         CASE WHEN v_voided IS NOT NULL THEN 'demo-manager@test.shieldmylot.com' END,
         CASE WHEN v_voided IS NOT NULL THEN 'manager' END,
-        CASE WHEN v_voided IS NOT NULL THEN 'seed_demo_data_voided_sample' END
+        CASE WHEN v_voided IS NOT NULL THEN 'seed_demo_data_voided_sample' END,
+        r.should_tow,
+        CASE WHEN r.should_tow THEN v_created + INTERVAL '2 hours' END,
+        CASE WHEN r.should_tow THEN 'Demo Tow Yard' END,
+        CASE WHEN r.should_tow THEN '9200 Industrial Row, Houston, TX 77048' END,
+        CASE WHEN r.should_tow THEN '713-555-0142' END,
+        CASE WHEN r.should_tow THEN 275.00 END
       );
       v_violations_created := v_violations_created + 1;
     END LOOP;
