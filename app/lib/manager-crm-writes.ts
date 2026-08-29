@@ -964,6 +964,16 @@ export async function runBulkApprove(
         record_id: r.id,
         new_values: {
           name: r.name, unit: r.unit, property,
+          // 🔴 AUDIT-TAG ASYMMETRY — Item 1 grep-mismatch resolution
+          // (Mateo Aug 28-29). Phase 1 (RESIDENTS side, this row) tags
+          // batch='crm_bulk'. Phase 2 (VEHICLES side, via
+          // approveVehiclesBatch → logSite='runBulkApprove' at :787,
+          // stamped into APPROVE_VEHICLE new_values.batch) tags
+          // batch='runBulkApprove'. Different strings, same operation.
+          // If you're greping the audit log for bulk-approve activity,
+          // check BOTH tags. Mateo's Item 1 report thought bulk cascade
+          // had never fired; the real cause was greping only crm_bulk
+          // on the vehicles side, where it had never appeared.
           batch: 'crm_bulk',
           email_sent: emailResult.ok,
           message_id: emailResult.message_id,
