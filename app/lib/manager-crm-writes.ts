@@ -733,6 +733,145 @@ export async function declineVehicleWrite(
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// undeclineResidentWrite — 2026-08-28 A1-cluster Item 3 Commit 3
+// ══════════════════════════════════════════════════════════════════════
+//
+// Un-decline handler for accidentally-declined residents. Moves the
+// resident from (is_active=false, status='declined') back to
+// (is_active=false, status='pending') — returning them to the pending
+// queue for a real Approve/Decline decision by a manager. Restores
+// this resident's OWN declined vehicles to pending alongside.
+//
+// 🔴 TWO LOAD-BEARING GUARDRAILS — DO NOT WEAKEN
+//
+// (1) Writes status='pending', NOT 'active'.
+//     Writing 'active' would recreate the Site 2 / Change 2 class Mateo
+//     rejected — a write destroys pending-ness and grants portal
+//     access without a manager decision. Un-decline restores the
+//     manager's *ability* to decide; it does not decide for them.
+//     Symmetric with the Commit 2 cascade: decline moves pending →
+//     declined, un-decline moves declined → pending. Both keep
+//     is_active=false; approval remains a separate manager act.
+//
+// (2) Scoped to the resident's OWN vehicles by resident_email.
+//     A vehicle caught as collateral off a unit-mate (pre-Commit-2
+//     historical row at Green Acres unit 144: vehicles 766/767 belong
+//     to José, declined via cascade off Arely) does NOT belong to the
+//     resident being un-declined. resident_email scoping gives this
+//     for free — José's vehicles stay put when Arely is un-declined.
+//     They need their own restoration path (data cleanup or manager
+//     manual action per Jose's ruling).
+//
+// ── PROVENANCE LIMITATION (documented; not fixable in code) ──────────
+//
+// For vehicles declined AFTER Commit 2 ships, DECLINE_VEHICLE_CASCADE
+// audit rows make provenance clean. For historical rows (2026-07-30
+// through Commit 2 landing), no per-vehicle audit exists — but the
+// resident_email scoping means un-decline still does the right thing:
+// it only touches this resident's vehicles regardless of what caused
+// them to be declined. Historical collateral vehicles owned by OTHER
+// residents remain declined and need explicit restoration.
+//
+// ── SHAPE CONSISTENCY WITH SIBLING WRITES ─────────────────────────────
+//
+// resident_email  → .eq() on lowered value. Matches Commit 2 + B166.
+// property        → .ilike(escapeIlikeValue()). Matches Commit 2 + B166.
+// Both audit action names distinct (UNDECLINE_RESIDENT and
+// UNDECLINE_VEHICLE_CASCADE) so decline/un-decline are pairable
+// forever via distinct action tags in audit_logs.
+export async function undeclineResidentWrite(
+  supabase: SupabaseClient,
+  args: {
+    resident: { id: string; name?: string | null; email?: string | null }
+    property: string
+  },
+): Promise<{
+  ok: boolean
+  vehiclesRestored: number
+  restoredPlates: string[]
+  error?: unknown
+}> {
+  const { resident, property } = args
+  const email = (resident.email ?? '').trim().toLowerCase()
+
+  // 1. Resident row: declined → pending. Kept is_active=false; approval
+  //    is a manager act separate from un-decline.
+  const { error: rErr } = await supabase.from('residents')
+    .update({ is_active: false, status: 'pending' })
+    .eq('id', resident.id)
+  if (rErr) {
+    console.error('[undecline-resident-failed]', { residentId: resident.id, error: rErr.message })
+    return { ok: false, vehiclesRestored: 0, restoredPlates: [], error: rErr }
+  }
+
+  // 2. Vehicle restore: this resident's OWN declined vehicles at this
+  //    property go declined → pending. Email-scoped by construction so
+  //    collateral vehicles (owned by others, declined via cascade off
+  //    someone else) are correctly untouched.
+  let restoredVehicles: { id: number; plate: string }[] = []
+  if (email) {
+    const { data: restored, error: vErr } = await supabase
+      .from('vehicles')
+      .update({ is_active: false, status: 'pending' })
+      .eq('resident_email', email)
+      .ilike('property', escapeIlikeValue(property))
+      .eq('status', 'declined')
+      .select('id, plate')
+    if (vErr) {
+      console.error('[undecline-vehicles-restore-failed]', {
+        residentId: resident.id, email, property, error: vErr.message,
+      })
+      // Non-fatal — resident is un-declined; the vehicle restore is a
+      // convenience cascade. Manager can add vehicles individually
+      // if this half fails. Surface via return payload.
+    } else {
+      restoredVehicles = (restored as { id: number; plate: string }[]) || []
+    }
+  }
+
+  // 3. Audit: UNDECLINE_RESIDENT (single row) + UNDECLINE_VEHICLE_CASCADE
+  //    (single per-invocation row if any vehicles restored). Mirrors
+  //    the DECLINE_RESIDENT / DECLINE_VEHICLE_CASCADE pair from Commit 2
+  //    so decline/un-decline audit trails are structurally symmetric.
+  await logAudit({
+    action: 'UNDECLINE_RESIDENT',
+    table_name: 'residents',
+    record_id: resident.id,
+    new_values: {
+      name: resident.name,
+      email,
+      property,
+      new_status: 'pending',
+      vehicles_restored: restoredVehicles.length,
+      restored_plates: restoredVehicles.map(v => v.plate),
+      restored_vehicle_ids: restoredVehicles.map(v => v.id),
+    },
+  })
+  if (restoredVehicles.length > 0) {
+    await logAudit({
+      action: 'UNDECLINE_VEHICLE_CASCADE',
+      table_name: 'vehicles',
+      new_values: {
+        source: 'UNDECLINE_RESIDENT',
+        resident_email: email,
+        property,
+        undeclined_resident_id: resident.id,
+        vehicles_affected: restoredVehicles.length,
+        plates:      restoredVehicles.map(v => v.plate),
+        vehicle_ids: restoredVehicles.map(v => v.id),
+        new_status:  'pending',
+      },
+    })
+  }
+
+  return {
+    ok: true,
+    vehiclesRestored: restoredVehicles.length,
+    restoredPlates: restoredVehicles.map(v => v.plate),
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // Bulk orchestration
 // ══════════════════════════════════════════════════════════════════════
 

@@ -29,6 +29,7 @@ import {
   approveResidentWrite,
   approveVehicleWrite,
   declineResidentWrite,
+  undeclineResidentWrite,
   declineVehicleWrite,
   runBulkApprove,
   deactivateResidentWrite,
@@ -3204,6 +3205,48 @@ export default function ManagerPortal() {
         restored_plates: restoredVehicles.map(v => v.plate),
       },
     })
+    await refreshCrmData()
+  }
+
+  // 🟢 2026-08-28 A1-cluster Item 3 Commit 3 — un-decline surface handler.
+  //
+  // Return-to-pending affordance for accidentally-declined residents.
+  // Wired to the CRM affordance in Commit 4; this commit lands the
+  // handler so the wiring in Commit 4 has a target.
+  //
+  // 🔴 UN-DECLINE IS NOT REACTIVATE — DO NOT MERGE THE TWO PATHS.
+  //   REACTIVATE_RESIDENT (:3094 above) is the undo-deactivation
+  //   path — resident was previously approved, all restore semantics
+  //   assume that history. Writes is_active=true, restores plates
+  //   owner-scoped.
+  //   UNDECLINE_RESIDENT (this handler) is the undo-decline path —
+  //   resident was NEVER approved; they were rejected. Writes
+  //   is_active=false, status='pending', moves their pending queue
+  //   position back. Vehicles restore to PENDING (not approved),
+  //   awaiting a manager decision alongside their owner.
+  // Cross-wiring these two would silently grant portal + protection
+  // to a rejected resident. Full rationale in
+  // undeclineResidentWrite's header at manager-crm-writes.ts.
+  async function undeclineResident(r: { id: string; name?: string | null; email?: string | null }) {
+    if (!manager?.name) return
+    const property = manager.name
+    const label = r.name || r.email || '(this resident)'
+    const confirmMsg = `Return ${label} to the pending queue?\n\n`
+      + `They will show as awaiting approval again, and their previously-`
+      + `declined vehicles at this property will move to pending alongside `
+      + `them. You'll still need to decide Approve or Decline before they `
+      + `get portal access.`
+    if (!window.confirm(confirmMsg)) return
+
+    const result = await undeclineResidentWrite(supabase, { resident: r, property })
+    if (!result.ok) {
+      alert('Un-decline failed: ' + ((result.error as { message?: string })?.message ?? String(result.error)))
+      return
+    }
+    const plateSuffix = result.vehiclesRestored > 0
+      ? ` ${result.vehiclesRestored} vehicle${result.vehiclesRestored === 1 ? '' : 's'} moved back to pending${result.restoredPlates.length > 0 ? ` (${result.restoredPlates.join(', ')})` : ''}.`
+      : ' No declined vehicles to restore for this resident.'
+    alert(`Resident returned to the pending queue.${plateSuffix}`)
     await refreshCrmData()
   }
 
