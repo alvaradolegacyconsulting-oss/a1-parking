@@ -2526,6 +2526,13 @@ export default function CompanyAdminPortal() {
     }
 
     // ── Step 4: audit ─────────────────────────────────────────────
+    // 🟢 2026-08-29 Item 2 Commit 3 — added outcome tag alongside
+    // ban_applied so the audit is grep-clean by explicit outcome.
+    // 'failed' when the swift-handler ban did not apply; 'ok'
+    // otherwise. Both fields kept — ban_applied is the historical
+    // key (existing Aug 5-8 remediation query uses it), outcome
+    // is the forward-looking discriminant now that swift-handler
+    // is fixed and ban failures should be rare.
     await auditLog(
       wasActive ? 'DEACTIVATE_DRIVER' : 'ACTIVATE_DRIVER',
       'user_roles',
@@ -2538,28 +2545,46 @@ export default function CompanyAdminPortal() {
         drivers_column_write_failed: !!drvErr,
         ban_applied: banApplied,
         ban_error: banError,
+        outcome: banApplied ? 'ok' : 'failed',
       },
     )
 
     // ── Step 5: banner ────────────────────────────────────────────
-    // green = both column writes ok + ban applied
-    // amber = column ok + (ban failed OR drivers column failed)
-    //   copy composes: base + optional login-block clause + optional
-    //   billing clause. Routine, plain, no warning tone.
+    // 🟢 2026-08-29 Item 2 Commit 3 — severity discipline changed
+    // per Mateo Aug 29 spec:
+    //   ban ok + drivers ok           → 'ok' (as before)
+    //   ban ok + drivers failed       → 'partial' (billing may drift)
+    //   ban FAILED                    → 'error' (was 'partial')
+    // A ban failure means the user can still authenticate at the
+    // auth layer, even though the column write above already gated
+    // them out of the portal. Calling that "partial" understated
+    // the two accounts of divergence at A1 (Aug 10) — this labels
+    // it honestly. Message names what's true, not just what's wrong,
+    // per Mateo Aug 29.
     if (banApplied && !drvErr) {
       setDriverActionResult({
         severity: 'ok',
         text: wasActive ? 'Driver deactivated.' : 'Driver reactivated.',
       })
-    } else {
+    } else if (banApplied) {
+      // Ban succeeded but drivers column write failed — billing may
+      // drift, ban itself worked. Partial is honest here.
       const baseText = wasActive
         ? 'Driver access revoked.'
         : 'Driver access restored.'
-      const banSuffix = banApplied ? '' : ' Login block not applied.'
-      const billingSuffix = drvErr ? ' This driver may still be counted for billing.' : ''
       setDriverActionResult({
         severity: 'partial',
-        text: `${baseText}${banSuffix}${billingSuffix}`,
+        text: `${baseText} This driver may still be counted for billing until reconciliation.`,
+      })
+    } else {
+      // Ban FAILED. Hard error — the operation did not complete.
+      // The user is portal-blocked (column write above) but can
+      // still authenticate (no ban). Divergent state.
+      const baseAction = wasActive ? 'deactivation' : 'reactivation'
+      const billingSuffix = drvErr ? ' Billing counter may also be affected.' : ''
+      setDriverActionResult({
+        severity: 'error',
+        text: `Driver ${baseAction} did NOT complete. The driver is blocked from the portal, but the login block was not applied and they can still authenticate. Retry.${billingSuffix}`,
       })
     }
 
@@ -2875,27 +2900,39 @@ export default function CompanyAdminPortal() {
     // ── Step 3: audit ───────────────────────────────────────────
     // column_write_failed is always false here (we returned on step 1
     // failure). ban_applied is the remediation-list key.
+    //
+    // 🟢 2026-08-29 Item 2 Commit 3 — added outcome tag alongside
+    // ban_applied. Same discipline as toggleDriverActive :2529
+    // (see comment there). 'failed' when swift-handler ban didn't
+    // apply; 'ok' otherwise. ban_applied kept for historical
+    // remediation queries; outcome is the forward discriminant.
     await auditLog(activate ? 'activate_user' : 'deactivate_user', 'user_roles', email, {
       email, is_active: activate,
       column_write_failed: false,
       ban_applied: banApplied,
       ban_error: banError,
+      outcome: banApplied ? 'ok' : 'failed',
     })
     setCompanyUsers(prev => prev.map(u => u.email === email ? { ...u, is_active: activate } : u))
     setTogglingUser(null)
 
     // ── Step 4: banner ──────────────────────────────────────────
+    // 🟢 2026-08-29 Item 2 Commit 3 — severity 'partial' → 'error'
+    // when ban failed (Mateo Aug 29 spec). Message names what's true
+    // (blocked from portal, still can authenticate) not just what's
+    // wrong. "Partial success" understated the two accounts of
+    // divergence at A1 (Aug 10); "did NOT complete" labels it
+    // honestly and prompts a retry.
     if (banApplied) {
       setUserActionResult({
         severity: 'ok',
         text: activate ? 'User reactivated.' : 'User deactivated.',
       })
     } else {
+      const baseAction = activate ? 'reactivation' : 'deactivation'
       setUserActionResult({
-        severity: 'partial',
-        text: activate
-          ? 'User access restored. Login block not applied.'
-          : 'User access revoked. Login block not applied.',
+        severity: 'error',
+        text: `User ${baseAction} did NOT complete. The user is blocked from the portal, but the login block was not applied and they can still authenticate. Retry.`,
       })
     }
   }
