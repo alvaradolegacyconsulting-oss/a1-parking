@@ -49,6 +49,10 @@ function RegisterForm() {
   const [tosReviewedAt, setTosReviewedAt] = useState<string | null>(null)
   const [privacyReviewedAt, setPrivacyReviewedAt] = useState<string | null>(null)
   const [account, setAccount] = useState({ email: '', password: '', confirm: '', name: '', phone: '', unit: '' })
+  // 🟢 2026-08-29 Entry 3 — password visibility toggles. Default hidden;
+  // never persisted; type="button" on the toggle so it doesn't submit.
+  const [showAccountPassword, setShowAccountPassword] = useState(false)
+  const [showAccountConfirm, setShowAccountConfirm] = useState(false)
   const [vehicles, setVehicles] = useState<any[]>([])
 
   // CAPTCHA — gated server-side via /api/register/captcha-verify (called FIRST
@@ -516,12 +520,24 @@ function RegisterForm() {
                 placeholder="you@email.com" style={inp} />
 
               <label style={lbl}>Password * (min 8 characters)</label>
-              <input type="password" value={account.password} onChange={e => setAccount({...account, password: e.target.value})}
-                placeholder="••••••••" style={inp} />
+              <div style={{ position: 'relative' }}>
+                <input type={showAccountPassword ? 'text' : 'password'} autoComplete="new-password" value={account.password} onChange={e => setAccount({...account, password: e.target.value})}
+                  placeholder="••••••••" style={{ ...inp, paddingRight: 60 }} />
+                <button type="button" onClick={() => setShowAccountPassword(v => !v)}
+                  aria-label={showAccountPassword ? 'Hide password' : 'Show password'} aria-pressed={showAccountPassword}
+                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer', padding: '6px 8px', fontFamily: 'inherit' }}
+                >{showAccountPassword ? 'Hide' : 'Show'}</button>
+              </div>
 
               <label style={lbl}>Confirm Password *</label>
-              <input type="password" value={account.confirm} onChange={e => setAccount({...account, confirm: e.target.value})}
-                placeholder="••••••••" style={inp} />
+              <div style={{ position: 'relative' }}>
+                <input type={showAccountConfirm ? 'text' : 'password'} autoComplete="new-password" value={account.confirm} onChange={e => setAccount({...account, confirm: e.target.value})}
+                  placeholder="••••••••" style={{ ...inp, paddingRight: 60 }} />
+                <button type="button" onClick={() => setShowAccountConfirm(v => !v)}
+                  aria-label={showAccountConfirm ? 'Hide password' : 'Show password'} aria-pressed={showAccountConfirm}
+                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer', padding: '6px 8px', fontFamily: 'inherit' }}
+                >{showAccountConfirm ? 'Hide' : 'Show'}</button>
+              </div>
 
               <label style={lbl}>Full Name *</label>
               <input value={account.name} onChange={e => setAccount({...account, name: e.target.value})}

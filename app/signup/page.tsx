@@ -93,6 +93,9 @@ export default function SignupTierPicker() {
   const [companyName, setCompanyName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  // 🟢 2026-08-29 Entry 3 — password visibility toggle. Default hidden;
+  // never persisted; type="button" on the toggle so it doesn't submit.
+  const [showPassword, setShowPassword] = useState(false)
   const [attestChecked, setAttestChecked] = useState(false)
   // B118 Layer 2 Commit 3 — replace ToS + Privacy checkboxes with the
   // <LegalGateAccordion> (scroll-to-sign gate per document). reviewed_at
@@ -378,7 +381,14 @@ export default function SignupTierPicker() {
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" style={inputStyle} />
           {email && !emailOk && <p style={{ color: '#f44336', fontSize: 11, margin: '4px 0 0' }}>Enter a valid email address.</p>}
           <label style={labelStyle}>Password</label>
-          <input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 8 characters" style={inputStyle} />
+          <div style={{ position: 'relative' }}>
+            <input type={showPassword ? 'text' : 'password'} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 8 characters"
+              style={{ ...inputStyle, paddingRight: 60 }} />
+            <button type="button" onClick={() => setShowPassword(v => !v)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}
+              style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer', padding: '6px 8px', fontFamily: 'inherit' }}
+            >{showPassword ? 'Hide' : 'Show'}</button>
+          </div>
           {password && passwordErr && <p style={{ color: '#f44336', fontSize: 11, margin: '4px 0 0' }}>{passwordErr}</p>}
         </div>
 

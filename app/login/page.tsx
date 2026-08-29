@@ -31,6 +31,10 @@ import { resolveCompanyByName } from '../lib/company-resolve'
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  // 🟢 2026-08-29 Entry 3 — password visibility toggle. Default hidden;
+  // never persisted; type="button" on the toggle so it doesn't submit.
+  // Follows NIST SP 800-63B guidance (allow display while entering).
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [logoFailed, setLogoFailed] = useState(false)
@@ -332,14 +336,24 @@ export default function Login() {
 
           <div style={{ marginBottom:'20px' }}>
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleLogin()}
-              placeholder="••••••••"
-              style={{ display:'block', width:'100%', marginTop:'6px', padding:'10px 12px', fontSize:'13px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none', boxSizing:'border-box' }}
-            />
+            <div style={{ position: 'relative', marginTop: '6px' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                placeholder="••••••••"
+                style={{ display:'block', width:'100%', padding:'10px 56px 10px 12px', fontSize:'13px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none', boxSizing:'border-box' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(v => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
+                style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer', padding: '6px 8px', fontFamily: 'inherit' }}
+              >{showPassword ? 'Hide' : 'Show'}</button>
+            </div>
           </div>
 
           <div style={{ textAlign: 'right', marginBottom: 14 }}>

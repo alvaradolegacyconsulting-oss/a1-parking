@@ -9,6 +9,10 @@ const lbl: React.CSSProperties = { color:'#aaa', fontSize:'11px', textTransform:
 export default function ChangePassword() {
   const [newPw, setNewPw] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
+  // 🟢 2026-08-29 Entry 3 — password visibility toggles. Default hidden;
+  // never persisted; type="button" on the toggle so it doesn't submit.
+  const [showNewPw, setShowNewPw] = useState(false)
+  const [showConfirmPw, setShowConfirmPw] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [logoFailed, setLogoFailed] = useState(false)
@@ -77,12 +81,26 @@ export default function ChangePassword() {
           )}
 
           <label style={lbl}>New Password (min 8 characters)</label>
-          <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && submit()} placeholder="••••••••" style={inp} />
+          <div style={{ position: 'relative' }}>
+            <input type={showNewPw ? 'text' : 'password'} autoComplete="new-password" value={newPw} onChange={e => setNewPw(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()} placeholder="••••••••"
+              style={{ ...inp, paddingRight: 60 }} />
+            <button type="button" onClick={() => setShowNewPw(v => !v)}
+              aria-label={showNewPw ? 'Hide password' : 'Show password'} aria-pressed={showNewPw}
+              style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer', padding: '6px 8px', fontFamily: 'inherit' }}
+            >{showNewPw ? 'Hide' : 'Show'}</button>
+          </div>
 
           <label style={lbl}>Confirm New Password</label>
-          <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && submit()} placeholder="••••••••" style={inp} />
+          <div style={{ position: 'relative' }}>
+            <input type={showConfirmPw ? 'text' : 'password'} autoComplete="new-password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()} placeholder="••••••••"
+              style={{ ...inp, paddingRight: 60 }} />
+            <button type="button" onClick={() => setShowConfirmPw(v => !v)}
+              aria-label={showConfirmPw ? 'Hide password' : 'Show password'} aria-pressed={showConfirmPw}
+              style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer', padding: '6px 8px', fontFamily: 'inherit' }}
+            >{showConfirmPw ? 'Hide' : 'Show'}</button>
+          </div>
 
           <button onClick={submit} disabled={loading || !newPw || !confirmPw}
             style={{ width:'100%', padding:'13px', background: (!newPw || !confirmPw) ? '#555' : '#C9A227', color: (!newPw || !confirmPw) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!newPw || !confirmPw) ? 'not-allowed' : 'pointer' }}>

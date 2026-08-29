@@ -70,6 +70,10 @@ export default function ResetPasswordRequired() {
   const [status, setStatus] = useState<Status>({ kind: 'loading' })
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  // 🟢 2026-08-29 Entry 3 — password visibility toggles. Default hidden;
+  // never persisted; type="button" on the toggle so it doesn't submit.
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
   // B117 Phase 2 — OTP fallback state. Email pre-fills from ?email=
   // URL param (set by the new Invite-user template); user can override.
@@ -314,19 +318,31 @@ export default function ResetPasswordRequired() {
             )}
             <div style={{ marginBottom: 14 }}>
               <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>New password</label>
-              <input type="password" autoComplete="new-password" value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="At least 8 characters"
-                style={{ display: 'block', width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box' }} />
+              <div style={{ position: 'relative', marginTop: 6 }}>
+                <input type={showPassword ? 'text' : 'password'} autoComplete="new-password" value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                  style={{ display: 'block', width: '100%', padding: '10px 56px 10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box' }} />
+                <button type="button" onClick={() => setShowPassword(v => !v)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}
+                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer', padding: '6px 8px', fontFamily: 'inherit' }}
+                >{showPassword ? 'Hide' : 'Show'}</button>
+              </div>
               {password && pwErr && <p style={{ color: '#f44336', fontSize: 11, margin: '6px 0 0' }}>{pwErr}</p>}
             </div>
             <div style={{ marginBottom: 20 }}>
               <label style={{ color: '#aaa', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Confirm password</label>
-              <input type="password" autoComplete="new-password" value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && formOk && submit()}
-                placeholder="Re-enter password"
-                style={{ display: 'block', width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box' }} />
+              <div style={{ position: 'relative', marginTop: 6 }}>
+                <input type={showConfirmPassword ? 'text' : 'password'} autoComplete="new-password" value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && formOk && submit()}
+                  placeholder="Re-enter password"
+                  style={{ display: 'block', width: '100%', padding: '10px 56px 10px 12px', fontSize: 13, background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, color: 'white', outline: 'none', boxSizing: 'border-box' }} />
+                <button type="button" onClick={() => setShowConfirmPassword(v => !v)}
+                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'} aria-pressed={showConfirmPassword}
+                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer', padding: '6px 8px', fontFamily: 'inherit' }}
+                >{showConfirmPassword ? 'Hide' : 'Show'}</button>
+              </div>
               {matchErr && <p style={{ color: '#f44336', fontSize: 11, margin: '6px 0 0' }}>{matchErr}</p>}
             </div>
             <button onClick={submit} disabled={!formOk || status.kind === 'updating'}
