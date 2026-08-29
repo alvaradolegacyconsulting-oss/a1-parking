@@ -83,6 +83,10 @@ export default function AdminPortal() {
   const [userSearch, setUserSearch] = useState('')
   const [showAddUser, setShowAddUser] = useState(false)
   const [newUser, setNewUser] = useState({ email:'', password:'', role:'manager', company:'', property:'' })
+  // 🟢 2026-08-28 A1-cluster Item 4 — confirm-email UX. See same-day
+  // company_admin/page.tsx addition for rationale (A1 typo → burned
+  // auth.users row); mirrors confirmPassword pattern.
+  const [newUserConfirmEmail, setNewUserConfirmEmail] = useState('')
   const [userMsg, setUserMsg] = useState('')
   const [showBulkUpload, setShowBulkUpload] = useState(false)
   const [bulkRows, setBulkRows] = useState<any[]>([])
@@ -95,6 +99,8 @@ export default function AdminPortal() {
   const [showAddDriver, setShowAddDriver] = useState(false)
   const [editingDriver, setEditingDriver] = useState<any>(null)
   const [newDriver, setNewDriver] = useState({ name:'', email:'', phone:'', company:'', operator_license:'', assigned_properties:[] as string[], is_active:true })
+  // 🟢 2026-08-28 A1-cluster Item 4 — confirm-email UX for dedicated Add-Driver.
+  const [newDriverConfirmEmail, setNewDriverConfirmEmail] = useState('')
   const [driverMsg, setDriverMsg] = useState('')
 
   const [facilities, setFacilities] = useState<any[]>([])
@@ -556,6 +562,11 @@ export default function AdminPortal() {
   async function addUser() {
     const isResident = newUser.role === 'resident'
     if (!newUser.email) { setUserMsg('Email is required'); return }
+    // 🟢 A1-cluster Item 4 — belt-and-braces confirm-email check.
+    if (newUser.email.trim().toLowerCase() !== newUserConfirmEmail.trim().toLowerCase()) {
+      setUserMsg('Email addresses do not match. Retype the confirmation email.')
+      return
+    }
     if (!isResident && !newUser.password) { setUserMsg('Password is required for non-resident roles'); return }
     setUserMsg('Creating account...')
 
@@ -663,7 +674,7 @@ export default function AdminPortal() {
         email: targetEmail, created_by_role: 'admin', created_by_email: adminEmail,
       })
       setUserMsg('Resident created successfully!')
-      setNewUser({ email:'', password:'', role:'manager', company:'', property:'' })
+      setNewUser({ email:'', password:'', role:'manager', company:'', property:'' }); setNewUserConfirmEmail('')
       fetchUsers()
       setCredentials({ email: targetEmail, password: passwordToUse })
       return
@@ -689,7 +700,7 @@ export default function AdminPortal() {
     }
     await auditLog(adminEmail, 'ADD_USER', 'user_roles', newUser.email, { email: newUser.email, role: newUser.role })
     setUserMsg('User created successfully!')
-    setNewUser({ email:'', password:'', role:'manager', company:'', property:'' })
+    setNewUser({ email:'', password:'', role:'manager', company:'', property:'' }); setNewUserConfirmEmail('')
     fetchUsers()
   }
 
@@ -821,6 +832,11 @@ export default function AdminPortal() {
 
   async function addDriver() {
     if (!newDriver.name || !newDriver.email) { setDriverMsg('Name and email are required'); return }
+    // 🟢 A1-cluster Item 4 — belt-and-braces confirm-email check.
+    if (newDriver.email.trim().toLowerCase() !== newDriverConfirmEmail.trim().toLowerCase()) {
+      setDriverMsg('Email addresses do not match. Retype the confirmation email.')
+      return
+    }
     setDriverMsg('Creating driver...')
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
     const { data: { session } } = await supabase.auth.getSession()
@@ -840,6 +856,7 @@ export default function AdminPortal() {
     await auditLog(adminEmail, 'ADD_DRIVER', 'drivers', data.id, newDriver)
     setDriverMsg(`Driver created! Temp password: ${tempPass}`)
     setNewDriver({ name:'', email:'', phone:'', company:'', operator_license:'', assigned_properties:[], is_active:true })
+    setNewDriverConfirmEmail('')
     setShowAddDriver(false)
     fetchDrivers()
   }
@@ -1275,6 +1292,12 @@ export default function AdminPortal() {
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>New User Account</p>
                 <label style={lbl}>Email *</label>
                 <input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} placeholder="user@example.com" style={inp} />
+                <label style={lbl}>Confirm email *</label>
+                <input type="email" value={newUserConfirmEmail} onChange={e => setNewUserConfirmEmail(e.target.value)} placeholder="Retype the email exactly" style={inp} autoComplete="off" />
+                {newUser.email.trim().length > 0 && newUserConfirmEmail.trim().length > 0
+                  && newUser.email.trim().toLowerCase() !== newUserConfirmEmail.trim().toLowerCase() && (
+                  <p style={{ color:'#f44336', fontSize:'11px', margin:'-6px 0 8px' }}>Emails do not match.</p>
+                )}
                 {newUser.role !== 'resident' && (<>
                   <label style={lbl}>Password *</label>
                   <input type="password" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} placeholder="Min 8 characters" style={inp} />
@@ -1303,7 +1326,18 @@ export default function AdminPortal() {
                   </div>
                 )}
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={addUser} style={{ ...bGold, flex:1 }}>Create User</button>
+                  {(() => {
+                    // 🟢 A1-cluster Item 4 — submit-gate includes email match.
+                    const emailsMatch = newUser.email.trim().length > 0
+                      && newUser.email.trim().toLowerCase() === newUserConfirmEmail.trim().toLowerCase()
+                    return (
+                      <button onClick={addUser} disabled={!emailsMatch}
+                        title={!emailsMatch ? 'Retype the confirmation email to match' : undefined}
+                        style={{ ...bGold, flex:1, cursor: emailsMatch ? 'pointer' : 'not-allowed', opacity: emailsMatch ? 1 : 0.6 }}>
+                        Create User
+                      </button>
+                    )
+                  })()}
                   <button onClick={() => { setShowAddUser(false); setUserMsg('') }} style={bGray}>Cancel</button>
                 </div>
               </div>
@@ -1512,6 +1546,14 @@ export default function AdminPortal() {
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                   <div style={{ gridColumn:'span 2' }}><label style={lbl}>Full Name *</label><input value={newDriver.name} onChange={e => setNewDriver({...newDriver, name: e.target.value})} style={inp} /></div>
                   <div style={{ gridColumn:'span 2' }}><label style={lbl}>Email *</label><input value={newDriver.email} onChange={e => setNewDriver({...newDriver, email: e.target.value})} style={inp} /></div>
+                  <div style={{ gridColumn:'span 2' }}>
+                    <label style={lbl}>Confirm email *</label>
+                    <input type="email" value={newDriverConfirmEmail} onChange={e => setNewDriverConfirmEmail(e.target.value)} placeholder="Retype the email exactly" style={inp} autoComplete="off" />
+                    {newDriver.email.trim().length > 0 && newDriverConfirmEmail.trim().length > 0
+                      && newDriver.email.trim().toLowerCase() !== newDriverConfirmEmail.trim().toLowerCase() && (
+                      <p style={{ color:'#f44336', fontSize:'11px', margin:'-6px 0 8px' }}>Emails do not match.</p>
+                    )}
+                  </div>
                   <div><label style={lbl}>Phone</label><input value={newDriver.phone} onChange={e => setNewDriver({...newDriver, phone: e.target.value})} style={inp} /></div>
                   <div>
                     <label style={lbl}>Company</label>
@@ -1567,7 +1609,18 @@ export default function AdminPortal() {
                   </div>
                 )}
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={addDriver} style={{ ...bGold, flex:1 }}>Add Driver</button>
+                  {(() => {
+                    // 🟢 A1-cluster Item 4 — submit-gate includes email match.
+                    const emailsMatch = newDriver.email.trim().length > 0
+                      && newDriver.email.trim().toLowerCase() === newDriverConfirmEmail.trim().toLowerCase()
+                    return (
+                      <button onClick={addDriver} disabled={!emailsMatch}
+                        title={!emailsMatch ? 'Retype the confirmation email to match' : undefined}
+                        style={{ ...bGold, flex:1, cursor: emailsMatch ? 'pointer' : 'not-allowed', opacity: emailsMatch ? 1 : 0.6 }}>
+                        Add Driver
+                      </button>
+                    )
+                  })()}
                   <button onClick={() => { setShowAddDriver(false); setDriverMsg('') }} style={bGray}>Cancel</button>
                 </div>
               </div>

@@ -340,6 +340,12 @@ export default function CompanyAdminPortal() {
   const [newUser, setNewUser] = useState<{ name: string; email: string; role: string; properties: string[] }>({
     name: '', email: '', role: 'manager', properties: []
   })
+  // 🟢 2026-08-28 A1-cluster Item 4 — confirm-email UX. A1 typo
+  // (amanda_a1wrecker+properties@gmai.com, July 29) permanently burned
+  // an auth.users row; prevention is a fraction of the cost of repair
+  // (repair is blocked on bounce visibility, Entry 2). Mirrors the
+  // existing confirmPassword pattern in /reset-password.
+  const [newUserConfirmEmail, setNewUserConfirmEmail] = useState('')
   const [userMsg, setUserMsg] = useState('')
   // 2026-08-08 §6 Option B — explicit-severity companion to userMsg.
   // Bypasses msgBox at :3775 whose sniffer concealed swift-handler's
@@ -377,6 +383,9 @@ export default function CompanyAdminPortal() {
   const [showAddDriver, setShowAddDriver] = useState(false)
   const [editingDriver, setEditingDriver] = useState<any>(null)
   const [newDriver, setNewDriver] = useState({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] as string[] })
+  // 🟢 2026-08-28 A1-cluster Item 4 — confirm-email UX for dedicated
+  // Add-Driver form. See newUserConfirmEmail comment above for rationale.
+  const [newDriverConfirmEmail, setNewDriverConfirmEmail] = useState('')
   const [driverMsg, setDriverMsg] = useState('')
   // 2026-08-08 §1 — dedicated result surface for toggleDriverActive.
   // Rendered with explicit severity (not through msgBox's text-sniff
@@ -1798,6 +1807,14 @@ export default function CompanyAdminPortal() {
   async function createUser() {
     const isResident = newUser.role === 'resident'
     if (!newUser.email || !newUser.role) { setUserMsg('Email and role are required'); return }
+    // 🟢 A1-cluster Item 4 — belt-and-braces confirm-email check. UI
+    // disables the button when they mismatch, but a keyboard/devtools
+    // bypass would land a typo permanently in auth.users. Same
+    // lower(trim) compare shape as the actual downstream lookup.
+    if (newUser.email.trim().toLowerCase() !== newUserConfirmEmail.trim().toLowerCase()) {
+      setUserMsg('Email addresses do not match. Retype the confirmation email.')
+      return
+    }
 
     // Permit-Door Piece 1 §4 — manager creation requires explicit yes/no
     // for can_approve_vehicles authority (universal, every CA).
@@ -1982,7 +1999,7 @@ export default function CompanyAdminPortal() {
         email: targetEmail, created_by_role: 'company_admin', created_by_email: user?.email, company: role?.company,
       })
       setUserMsg('Resident created successfully!')
-      setNewUser({ name: '', email: '', role: 'manager', properties: [] })
+      setNewUser({ name: '', email: '', role: 'manager', properties: [] }); setNewUserConfirmEmail('')
       setShowAddUser(false)
       fetchCompanyUsers()
       setCredentials({ email: targetEmail, password: passwordToUse })
@@ -2042,7 +2059,7 @@ export default function CompanyAdminPortal() {
       return
     }
 
-    setNewUser({ name: '', email: '', role: 'manager', properties: [] })
+    setNewUser({ name: '', email: '', role: 'manager', properties: [] }); setNewUserConfirmEmail('')
     setShowAddUser(false)
     fetchCompanyUsers()
     } finally {
@@ -2073,6 +2090,18 @@ export default function CompanyAdminPortal() {
       assigned_properties: override?.assigned_properties ?? newDriver.assigned_properties,
     }
     if (!payload.name || !payload.email) { setDriverMsg('Name and email are required'); return false }
+    // 🟢 A1-cluster Item 4 — confirm-email UX. Only when this handler
+    // is called WITHOUT override (i.e., from the dedicated Add-Driver
+    // form). The Add-User form's driver-role path routes through
+    // createUser() which does its own newUserConfirmEmail check
+    // before handing off here; passing an override signals "email
+    // already confirmed at the caller." Belt-and-braces to the UI's
+    // disabled submit button.
+    if (!override
+        && payload.email.trim().toLowerCase() !== newDriverConfirmEmail.trim().toLowerCase()) {
+      setDriverMsg('Email addresses do not match. Retype the confirmation email.')
+      return false
+    }
     // Phase 2a: race-guard before creating the auth user, so a tier-blocked
     // attempt doesn't leave an orphaned auth account. Admin bypasses (Q3).
     if (role?.role !== 'admin') {
@@ -2151,6 +2180,7 @@ export default function CompanyAdminPortal() {
     })
 
     setNewDriver({ name: '', email: '', phone: '', operator_license: '', assigned_properties: [] })
+    setNewDriverConfirmEmail('')
     setShowAddDriver(false)
     fetchCompanyDrivers()
     return true
@@ -6920,6 +6950,12 @@ export default function CompanyAdminPortal() {
                       <input value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} placeholder="Jane Doe" style={inp} />
                       <label style={lbl}>Email *</label>
                       <input type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="user@example.com" style={inp} />
+                      <label style={lbl}>Confirm email *</label>
+                      <input type="email" value={newUserConfirmEmail} onChange={e => setNewUserConfirmEmail(e.target.value)} placeholder="Retype the email exactly" style={inp} autoComplete="off" />
+                      {newUser.email.trim().length > 0 && newUserConfirmEmail.trim().length > 0
+                        && newUser.email.trim().toLowerCase() !== newUserConfirmEmail.trim().toLowerCase() && (
+                        <p style={{ color:'#f44336', fontSize:'11px', margin:'-6px 0 8px' }}>Emails do not match.</p>
+                      )}
                       <label style={lbl}>Role *</label>
                       <select value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })} style={inp}>
                         <option value="manager">Manager</option>
@@ -7011,7 +7047,7 @@ export default function CompanyAdminPortal() {
                                 assigned_properties: newUser.properties.map(p => (p || '').trim()).filter(p => p.length > 0),
                               })
                               if (ok) {
-                                setNewUser({ name: '', email: '', role: 'manager', properties: [] })
+                                setNewUser({ name: '', email: '', role: 'manager', properties: [] }); setNewUserConfirmEmail('')
                                 setShowAddUser(false)
                               }
                             } else {
@@ -7289,7 +7325,19 @@ export default function CompanyAdminPortal() {
                       </>
                     )}
                     <div style={{ display:'flex', gap:'8px' }}>
-                      <button onClick={createUser} disabled={createUserSubmitting} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: createUserSubmitting ? 'not-allowed' : 'pointer', opacity: createUserSubmitting ? 0.6 : 1, fontFamily:'Arial' }}>{createUserSubmitting ? 'Creating…' : 'Create User'}</button>
+                      {(() => {
+                        // 🟢 A1-cluster Item 4 — submit-gate includes email match.
+                        const emailsMatch = newUser.email.trim().length > 0
+                          && newUser.email.trim().toLowerCase() === newUserConfirmEmail.trim().toLowerCase()
+                        const disabled = createUserSubmitting || !emailsMatch
+                        return (
+                          <button onClick={createUser} disabled={disabled}
+                            title={!emailsMatch ? 'Retype the confirmation email to match' : undefined}
+                            style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.6 : 1, fontFamily:'Arial' }}>
+                            {createUserSubmitting ? 'Creating…' : 'Create User'}
+                          </button>
+                        )
+                      })()}
                       <button onClick={() => { setShowAddUser(false); setUserMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                     </div>
                   </div>
@@ -7478,6 +7526,12 @@ export default function CompanyAdminPortal() {
                     <input value={newDriver.name} onChange={e => setNewDriver({ ...newDriver, name: e.target.value })} placeholder="Jane Doe" style={inp} />
                     <label style={lbl}>Email *</label>
                     <input type="email" value={newDriver.email} onChange={e => setNewDriver({ ...newDriver, email: e.target.value })} placeholder="driver@example.com" style={inp} />
+                    <label style={lbl}>Confirm email *</label>
+                    <input type="email" value={newDriverConfirmEmail} onChange={e => setNewDriverConfirmEmail(e.target.value)} placeholder="Retype the email exactly" style={inp} autoComplete="off" />
+                    {newDriver.email.trim().length > 0 && newDriverConfirmEmail.trim().length > 0
+                      && newDriver.email.trim().toLowerCase() !== newDriverConfirmEmail.trim().toLowerCase() && (
+                      <p style={{ color:'#f44336', fontSize:'11px', margin:'-6px 0 8px' }}>Emails do not match.</p>
+                    )}
                     <label style={lbl}>Phone</label>
                     <input value={newDriver.phone} onChange={e => setNewDriver({ ...newDriver, phone: e.target.value })} placeholder="(713) 555-0123" style={inp} />
                     <label style={lbl}>Operator License</label>
@@ -7507,7 +7561,18 @@ export default function CompanyAdminPortal() {
                       ))}
                     </div>
                     <div style={{ display:'flex', gap:'8px' }}>
-                      <button onClick={() => createDriver()} style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Create Driver</button>
+                      {(() => {
+                        // 🟢 A1-cluster Item 4 — submit-gate includes email match.
+                        const emailsMatch = newDriver.email.trim().length > 0
+                          && newDriver.email.trim().toLowerCase() === newDriverConfirmEmail.trim().toLowerCase()
+                        return (
+                          <button onClick={() => createDriver()} disabled={!emailsMatch}
+                            title={!emailsMatch ? 'Retype the confirmation email to match' : undefined}
+                            style={{ flex:1, padding:'11px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: emailsMatch ? 'pointer' : 'not-allowed', opacity: emailsMatch ? 1 : 0.6, fontFamily:'Arial' }}>
+                            Create Driver
+                          </button>
+                        )
+                      })()}
                       <button onClick={() => { setShowAddDriver(false); setDriverMsg('') }} style={{ padding:'11px 12px', background:'#1e2535', color:'#aaa', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                     </div>
                   </div>
