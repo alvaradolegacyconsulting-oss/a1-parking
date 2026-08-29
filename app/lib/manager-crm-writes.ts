@@ -578,12 +578,84 @@ export async function declineResidentWrite(
   await supabase.from('residents')
     .update({ is_active: false, status: 'declined', manager_note: managerNote })
     .eq('id', resident.id)
-  // Pending-vehicles cascade at (unit, property).
-  await supabase.from('vehicles')
-    .update({ is_active: false, status: 'declined' })
-    .ilike('unit', escapeIlikeValue(resident.unit ?? ''))
-    .ilike('property', escapeIlikeValue(property))
-    .eq('status', 'pending')
+  // ── 2026-08-28 A1-cluster Item 3 Commit 2 — Site 1 RESCOPED ──────
+  //
+  // 🔴 If a future reader thinks this cascade should key on (unit,
+  // property), IT SHOULD NOT. Read this before touching it.
+  //
+  // Was:
+  //   .ilike('unit', escapeIlikeValue(resident.unit ?? ''))
+  //   .ilike('property', escapeIlikeValue(property))
+  //   .eq('status', 'pending')
+  //
+  // Cross-resident collateral: at a shared unit, declining resident A
+  // wrote status='declined' onto resident B's pending vehicles too.
+  // Green Acres unit 144 was the live case — vehicles 766 (José, TWS7703)
+  // and 767 (José, HHT7083) were declined by cascade off Arely (695)
+  // 2026-08-02 without audit rows naming them.
+  //
+  // 🔴 Rescoping to just `email` was rejected in favor of KEEPING a
+  // `property` predicate because residents can hold rows at more than
+  // one property (July 25 multi-residency arc). Email-only would
+  // decline the resident's vehicles at OTHER properties too. Kept
+  // property, dropped unit — unit is what created the collateral.
+  //
+  // Comparison shape:
+  //   resident_email → .eq() on the LOWERED value (residents.email is
+  //                    forward-stamped lowercase; historical mixed-case
+  //                    rows wiped pre-launch). .eq() avoids ILIKE
+  //                    wildcard injection on % / _ / \ in local-parts.
+  //   property       → .ilike(escapeIlikeValue()) — matches the
+  //                    convention in the sibling B166 owner-trim at
+  //                    :298-304 within this same function. Deliberate
+  //                    consistency: a grep for either convention finds
+  //                    both cascades. Do NOT drift to lower(trim())
+  //                    equality here without moving B166 too.
+  //
+  // 🔴 Per-vehicle audit rows — the provenance rescue for future
+  // un-decline / cleanup. Distinct action name (DECLINE_VEHICLE_CASCADE)
+  // + source='DECLINE_RESIDENT' so cascade-declined and manager-declined
+  // stay distinguishable forever. Without this distinction, un-decline
+  // cannot tell a resident's own declined vehicles from ones caught as
+  // collateral off a unit-mate. Provenance is what makes recovery
+  // possible.
+  //
+  // NOTE for backlog: this is another name-keyed property resolution
+  // site. Rescoping to resident_email doesn't remove that. Add
+  // declineResidentWrite to the property_id refactor list.
+  const declinedEmail = (resident.email ?? '').trim().toLowerCase()
+  if (declinedEmail) {
+    const { data: cascaded, error: cascadeErr } = await supabase.from('vehicles')
+      .update({ is_active: false, status: 'declined' })
+      .eq('resident_email', declinedEmail)
+      .ilike('property', escapeIlikeValue(property))
+      .eq('status', 'pending')
+      .select('id, plate, unit')
+    if (cascadeErr) {
+      console.error('[decline-resident-cascade-failed]', {
+        residentId: resident.id, email: declinedEmail, property,
+        error: cascadeErr.message,
+      })
+    } else if ((cascaded ?? []).length > 0) {
+      await logAudit({
+        action: 'DECLINE_VEHICLE_CASCADE',
+        table_name: 'vehicles',
+        new_values: {
+          source: 'DECLINE_RESIDENT',
+          resident_email: declinedEmail,
+          property,
+          declined_resident_id: resident.id,
+          vehicles_affected: cascaded!.length,
+          plates:      cascaded!.map(v => v.plate),
+          vehicle_ids: cascaded!.map(v => v.id),
+          units:       cascaded!.map(v => v.unit),
+        },
+      })
+    }
+  }
+  // else: resident row without an email cannot have vehicles owned by
+  // that email; cascade is a structural no-op. No audit row emitted
+  // (nothing happened to record).
   const emailResult = await notifyResidentDecision({ residentId: String(resident.id), decision: 'declined', note: managerNote })
   await logAudit({
     action: 'DECLINE_RESIDENT',
