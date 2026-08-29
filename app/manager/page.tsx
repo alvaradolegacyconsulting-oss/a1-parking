@@ -179,6 +179,13 @@ export default function ManagerPortal() {
   // B167 — optional vehicle fields on PM Add Resident. Plate empty
   // string => skip vehicle insert (resident-only path).
   const [newResident, setNewResident] = useState({ name: '', email: '', phone: '', unit: '', space: '', lease_end: '', vehicle_plate: '', vehicle_state: 'TX', vehicle_make: '', vehicle_model: '', vehicle_year: '', vehicle_color: '' })
+  // 🟢 2026-08-29 A1-cluster Item 4 fifth site — confirm-email UX on
+  // manager Add-Resident. 2691884 covered the four CA + super-admin
+  // Add-User/Add-Driver forms but missed this one; it emits
+  // RESIDENT_CREATED_WITH_AUTH, not INVITE_USER_SENT, and lives on the
+  // busiest portal we have (Green Acres). Same confirmPassword-mirror
+  // pattern as the four earlier sites — do not invent a second idiom.
+  const [newResidentConfirmEmail, setNewResidentConfirmEmail] = useState('')
   const [editingResident, setEditingResident] = useState<any>(null)
   const [allProperties, setAllProperties] = useState<any[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
@@ -2660,6 +2667,14 @@ export default function ManagerPortal() {
 
   async function addResident() {
     if (!newResident.name || !newResident.unit || !newResident.email) { alert('Name, email and unit are required'); return }
+    // 🟢 A1-cluster Item 4 fifth site — belt-and-braces confirm-email
+    // check. UI disables the button on mismatch, but a keyboard/
+    // devtools bypass would burn an auth.users row permanently (see
+    // 2691884 for the same guard on the four earlier forms).
+    if (newResident.email.trim().toLowerCase() !== newResidentConfirmEmail.trim().toLowerCase()) {
+      alert('Email addresses do not match. Retype the confirmation email.')
+      return
+    }
     // 2026-07-27 — fail-loud guard on company scoping. managerCompany
     // is useState('') and populates async from user_roles; if it hasn't
     // landed OR the manager genuinely has no company, the insert would
@@ -2878,6 +2893,7 @@ export default function ManagerPortal() {
 
     setShowAddResident(false)
     setNewResident({ name:'', email:'', phone:'', unit:'', space:'', lease_end:'', vehicle_plate:'', vehicle_state:'TX', vehicle_make:'', vehicle_model:'', vehicle_year:'', vehicle_color:'' })
+    setNewResidentConfirmEmail('')
     // 2026-07-27 — feedback before refresh. The manager is on the phone
     // with the resident, waiting to read out the temp password; fire the
     // credentials modal first so it appears immediately, then run the
@@ -4561,7 +4577,15 @@ export default function ManagerPortal() {
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Add New Resident</p>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                   <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Full Name *</label><input value={newResident.name} onChange={e => setNewResident({...newResident, name: e.target.value})} placeholder="John Smith" style={inputStyle} /></div>
-                  <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Email *</label><input value={newResident.email} onChange={e => setNewResident({...newResident, email: e.target.value})} placeholder="john@email.com" style={inputStyle} /></div>
+                  <div style={{ gridColumn:'span 2' }}><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Email *</label><input type="email" value={newResident.email} onChange={e => setNewResident({...newResident, email: e.target.value})} placeholder="john@email.com" style={inputStyle} /></div>
+                  <div style={{ gridColumn:'span 2' }}>
+                    <label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Confirm email *</label>
+                    <input type="email" value={newResidentConfirmEmail} onChange={e => setNewResidentConfirmEmail(e.target.value)} placeholder="Retype the email exactly" style={inputStyle} autoComplete="off" />
+                    {newResident.email.trim().length > 0 && newResidentConfirmEmail.trim().length > 0
+                      && newResident.email.trim().toLowerCase() !== newResidentConfirmEmail.trim().toLowerCase() && (
+                      <p style={{ color:'#f44336', fontSize:'11px', margin:'-6px 0 8px' }}>Emails do not match.</p>
+                    )}
+                  </div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Phone</label><input value={newResident.phone} onChange={e => setNewResident({...newResident, phone: e.target.value})} placeholder="713-555-0100" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Unit *</label><input value={newResident.unit} onChange={e => setNewResident({...newResident, unit: e.target.value})} placeholder="Apt 214" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Space</label><input value={newResident.space} onChange={e => setNewResident({...newResident, space: e.target.value})} placeholder="A-12" style={inputStyle} /></div>
@@ -4596,8 +4620,20 @@ export default function ManagerPortal() {
                   </div>
                 )}
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={addResident} disabled={addResidentSubmitting} style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: addResidentSubmitting ? 'not-allowed' : 'pointer', opacity: addResidentSubmitting ? 0.6 : 1 }}>{addResidentSubmitting ? 'Adding…' : 'Add Resident'}</button>
-                  <button onClick={() => { setShowAddResident(false); setNewResidentAssignSpaceId('') }} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
+                  {(() => {
+                    // 🟢 A1-cluster Item 4 fifth site — submit-gate includes email match.
+                    const emailsMatch = newResident.email.trim().length > 0
+                      && newResident.email.trim().toLowerCase() === newResidentConfirmEmail.trim().toLowerCase()
+                    const disabled = addResidentSubmitting || !emailsMatch
+                    return (
+                      <button onClick={addResident} disabled={disabled}
+                        title={!emailsMatch ? 'Retype the confirmation email to match' : undefined}
+                        style={{ flex:1, padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.6 : 1 }}>
+                        {addResidentSubmitting ? 'Adding…' : 'Add Resident'}
+                      </button>
+                    )
+                  })()}
+                  <button onClick={() => { setShowAddResident(false); setNewResidentAssignSpaceId(''); setNewResidentConfirmEmail('') }} style={{ padding:'10px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>Cancel</button>
                 </div>
               </div>
             )}
