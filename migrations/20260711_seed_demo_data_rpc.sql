@@ -512,13 +512,21 @@ BEGIN
       SELECT count(*) INTO v_exists FROM public.vehicles
        WHERE plate = r.plate AND property = r.prop;
       IF v_exists = 0 THEN
+        -- 🟢 2026-08-28 vehicles.company arc Seed Commit 2 — stamps
+        -- c_company on every seeded row. Matches Commit 2's five
+        -- production writer paths + the Commit 3 backfill of legacy
+        -- NULL rows. Required so a post-Commit-4 (SET NOT NULL)
+        -- re-seed of the Demo tenant does not fail the constraint.
+        -- c_company = 'Demo Company' — same constant every other
+        -- INSERT in this RPC keys on (residents, spaces,
+        -- storage_facilities, properties).
         INSERT INTO public.vehicles (
           plate, state, make, model, year, color,
-          unit, property, resident_email,
+          unit, property, company, resident_email,
           status, is_active
         ) VALUES (
           r.plate, 'TX', r.make, r.model, r.yr, r.color,
-          r.unit, r.prop, r.resident_email,
+          r.unit, r.prop, c_company, r.resident_email,
           r.status,
           -- is_active = TRUE for active; FALSE for pending/declined
           (r.status = 'active')
