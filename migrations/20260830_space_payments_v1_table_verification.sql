@@ -240,10 +240,25 @@ END $$;
 -- Runs as SQL Editor's default role (service_role/postgres), bypassing
 -- RLS. Provides a Test-LEGACY row for the manager SELECT gate to find
 -- and for the cross-role gate to be filtered out from.
+--
+-- 🔴 2026-08-30 REWRITE after VQ11 mis-diagnosed an empty-table state
+-- as "RLS filtering." Two changes:
+--   1. period_month uses date_trunc('month', CURRENT_DATE)::date —
+--      NOT date_trunc('month', now())::date. now() is TIMESTAMPTZ; the
+--      cast to date depends on session timezone and can land on the
+--      last day of the PRIOR month, tripping the first-of-month CHECK.
+--      CURRENT_DATE is a bare DATE and stays first-of-month
+--      unambiguously.
+--   2. Explicit ROW_COUNT check after INSERT — RAISE loudly if 0 rows
+--      landed. Silent 0-row INSERT was the class that produced a
+--      confidently-wrong VQ11 message. A separate FIXTURE gate below
+--      the SETUP block then re-verifies existence before VQ11 runs,
+--      distinguishing "SETUP failed" from "RLS filtered."
 DO $$
 DECLARE
   v_probe_space_id  BIGINT;
   v_probe_id        BIGINT;
+  v_rowcount        INT;
 BEGIN
   -- Find any Test-LEGACY space to attach the probe to
   SELECT id INTO v_probe_space_id
@@ -252,7 +267,7 @@ BEGIN
      AND is_active = true
    ORDER BY id LIMIT 1;
   IF v_probe_space_id IS NULL THEN
-    RAISE EXCEPTION 'SETUP FAIL: no active Test-LEGACY space found for probe row';
+    RAISE EXCEPTION 'SETUP FAIL: no active Test-LEGACY space found for probe row. Cannot proceed to VQ11-VQ13.';
   END IF;
   INSERT INTO public.space_payments (
     space_id, company, property, space_label,
@@ -262,13 +277,47 @@ BEGIN
   )
   SELECT
     s.id, s.company, s.property, s.label,
-    date_trunc('month', now())::date, 25.00, 'cash',
+    date_trunc('month', CURRENT_DATE)::date, 25.00, 'cash',
     NULL, NULL, NULL,
     '__V-COMMIT-2-PROBE-' || floor(extract(epoch from now()))::text,
     'system_verification'
     FROM public.spaces s WHERE s.id = v_probe_space_id
   RETURNING id INTO v_probe_id;
-  RAISE NOTICE 'Probe row inserted: id=%, space_id=%', v_probe_id, v_probe_space_id;
+  GET DIAGNOSTICS v_rowcount = ROW_COUNT;
+  IF v_rowcount <> 1 OR v_probe_id IS NULL THEN
+    RAISE EXCEPTION 'SETUP FAIL: probe INSERT returned rowcount=% (want 1) and probe_id=% (want non-null). Silent 0-row INSERT means either the SELECT sub-query missed the row or a race dropped it. VQ11-VQ13 will not run correctly; halt here and diagnose.',
+      v_rowcount, v_probe_id;
+  END IF;
+  RAISE NOTICE 'SETUP: probe row inserted id=% space_id=% period_month=%',
+    v_probe_id, v_probe_space_id, date_trunc('month', CURRENT_DATE)::date;
+END $$;
+
+-- ── FIXTURE GATE — probe row exists before VQ11 runs ────────────────
+-- 🔴 2026-08-30 NEW GATE. VQ11 previously RAISED "RLS is filtering
+-- out own-company rows or manager policy body is wrong" against an
+-- empty table — because the SETUP silently failed and nothing
+-- checked. A gate that depends on a fixture must verify the fixture
+-- first, and it must fail with a DIFFERENT message than the thing
+-- under test.
+--
+-- Runs as service_role/postgres (bypasses RLS). If the row is not
+-- here, SETUP failed silently AND the failure was not caught. VQ11
+-- would produce meaningless output. Halt with a clear "FIXTURE FAIL"
+-- so the downstream noise never reaches the operator.
+DO $$
+DECLARE
+  v_fixture_count INT;
+BEGIN
+  SELECT COUNT(*) INTO v_fixture_count
+    FROM public.space_payments
+   WHERE note LIKE '__V-COMMIT-2-PROBE-%';
+  IF v_fixture_count = 0 THEN
+    RAISE EXCEPTION 'FIXTURE FAIL: no probe row present after SETUP. VQ11-VQ13 will NOT be run — their results would be meaningless (any "manager saw 0 rows" is unreadable when there are no rows to see). Investigate SETUP for silent INSERT failure: check for CHECK-constraint violation, non-matching space company, or the period_month TZ trap that this rewrite fixed.';
+  END IF;
+  IF v_fixture_count > 1 THEN
+    RAISE NOTICE 'FIXTURE: % probe rows present (>1 — likely from a prior partial verification run). Not fatal; VQ11 counts >= 1 as pass.', v_fixture_count;
+  END IF;
+  RAISE NOTICE 'FIXTURE: % probe row(s) present. VQ11-VQ13 have real state to test against.', v_fixture_count;
 END $$;
 
 -- ── VQ11: 🔴 EXECUTION — Test-LEGACY manager SELECTs own probe row ─
@@ -295,7 +344,14 @@ BEGIN
     FROM public.space_payments
    WHERE note LIKE '__V-COMMIT-2-PROBE-%';
   IF v_seen = 0 THEN
-    RAISE EXCEPTION 'VQ11 FAIL: manager % impersonation returned 0 probe rows. RLS is filtering out own-company rows or manager policy body is wrong.', v_mgr_email;
+    -- 🔴 Message discipline: state what was observed, list candidate
+    -- causes, do not assert one. The FIXTURE gate above already
+    -- confirmed a probe row exists — so "0 rows seen under
+    -- impersonation" narrows the cause to something the RLS predicate
+    -- decided. Enumerate the specific things to check rather than
+    -- naming a cause the gate never tested.
+    RAISE EXCEPTION 'VQ11 FAIL: manager % impersonation returned 0 probe rows (FIXTURE confirmed >=1 row exists). Candidate causes to check, in order: (a) get_my_role() returns something other than "manager" for this user — verify user_roles.role; (b) get_my_properties() returns [] or doesn''t include the probe row''s property — verify user_roles.property for this user; (c) the probe row''s property does not match get_my_properties() output under lower(trim()) — compare literally; (d) the manager_own_space_payments policy body was replaced or dropped after apply — re-run VQ8 policy inspection.',
+      v_mgr_email;
   END IF;
   RAISE NOTICE 'VQ11: manager % saw % probe row(s).', v_mgr_email, v_seen;
 END $$;
@@ -431,6 +487,7 @@ SELECT
     'VQ8  RLS enabled',
     'VQ9  authenticated has SELECT',
     'VQ10 authenticated does NOT have INSERT/UPDATE/DELETE',
+    'SETUP+FIXTURE probe row inserted AND independently verified present',
     'VQ11 EXECUTION manager sees own probe row',
     'VQ12 EXECUTION manager INSERT rejected (insufficient_privilege)',
     'VQ13 EXECUTION unauthorized role sees 0 rows without error',
