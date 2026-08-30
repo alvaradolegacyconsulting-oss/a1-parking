@@ -82,39 +82,57 @@ BEGIN
 END $$;
 
 -- ── VQ2: OLD 5-arg signature is GONE ────────────────────────────────
+-- 🔴 2026-08-29 REWRITE — original VQ2 filtered on
+-- pg_get_function_identity_arguments() = <exact string>, which
+-- silently misbehaves for TWO reasons on this PG version:
+--   1. identity_arguments INCLUDES parameter names in some formats
+--      (returned 'p_space_id bigint, ...' not 'bigint, ...')
+--   2. Function parameter type modifiers are stripped at creation —
+--      NUMERIC(10,2) → 'numeric' — so any filter written from the
+--      migration text disagrees with the catalog
+-- Net: the string comparison returned 0 rows for ANY function,
+-- meaning VQ2 = 0 = pass regardless of whether the 5-arg version
+-- was actually gone. A gate that always passes is worse than no gate.
+--
+-- FIX: use to_regprocedure(), the built-in signature resolver.
+-- Returns the OID if a function with that EXACT signature exists,
+-- NULL if not. Handles all the type-name canonicalization + modifier
+-- stripping + PG-version formatting differences internally, because
+-- it IS the resolver Postgres uses when parsing function references.
 DO $$
 DECLARE
-  v_old_count INT;
+  v_old_oid oid;
 BEGIN
-  SELECT COUNT(*) INTO v_old_count
-    FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'public'
-     AND p.proname = 'update_space_metadata'
-     AND pg_get_function_identity_arguments(p.oid) = 'bigint, text, text, text, boolean';
-  IF v_old_count <> 0 THEN
-    RAISE EXCEPTION 'VQ2 FAIL: OLD 5-arg update_space_metadata still exists (count=%). DROP FUNCTION did not run. Any stale caller can still hit it and miss monthly_fee.', v_old_count;
+  v_old_oid := to_regprocedure('public.update_space_metadata(bigint, text, text, text, boolean)');
+  IF v_old_oid IS NOT NULL THEN
+    RAISE EXCEPTION 'VQ2 FAIL: OLD 5-arg update_space_metadata still exists (oid=%). DROP FUNCTION did not run. Any stale caller can still hit it and miss monthly_fee.', v_old_oid;
   END IF;
 END $$;
 
 -- ── VQ3: NEW 6-arg signature exists ─────────────────────────────────
+-- 🔴 2026-08-29 REWRITE — same class of bug as VQ2. Original filtered
+-- against a hand-composed exact string that never matches what
+-- pg_get_function_identity_arguments actually returns on this PG
+-- version, so VQ3 returned count=0 (fail) for a function that DID
+-- exist. Diagnosed as false-negative via D1 sweep 02:11 (D1 saw
+-- pronargs=6, args='p_space_id bigint, ...', prosecdef=true).
+--
+-- FIX: to_regprocedure() takes a signature by base type name (bigint,
+-- not int8; numeric, not numeric(10,2)) and returns the OID iff a
+-- function with that exact base-type signature exists. Zero string
+-- matching, zero PG-version dependency.
 DO $$
 DECLARE
-  v_new_count INT;
-  v_definer   BOOLEAN;
+  v_new_oid oid;
+  v_definer BOOLEAN;
 BEGIN
-  SELECT COUNT(*), bool_and(p.prosecdef)
-    INTO v_new_count, v_definer
-    FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'public'
-     AND p.proname = 'update_space_metadata'
-     AND pg_get_function_identity_arguments(p.oid) = 'bigint, text, text, text, boolean, numeric';
-  IF v_new_count <> 1 THEN
-    RAISE EXCEPTION 'VQ3 FAIL: expected exactly 1 6-arg update_space_metadata; got %', v_new_count;
+  v_new_oid := to_regprocedure('public.update_space_metadata(bigint, text, text, text, boolean, numeric)');
+  IF v_new_oid IS NULL THEN
+    RAISE EXCEPTION 'VQ3 FAIL: 6-arg update_space_metadata does not exist (to_regprocedure returned NULL). Migration CREATE FUNCTION did not run, or landed with a different signature.';
   END IF;
+  SELECT prosecdef INTO v_definer FROM pg_proc WHERE oid = v_new_oid;
   IF NOT COALESCE(v_definer, false) THEN
-    RAISE EXCEPTION 'VQ3 FAIL: new 6-arg update_space_metadata is not SECURITY DEFINER';
+    RAISE EXCEPTION 'VQ3 FAIL: new 6-arg update_space_metadata (oid=%) is not SECURITY DEFINER', v_new_oid;
   END IF;
 END $$;
 
