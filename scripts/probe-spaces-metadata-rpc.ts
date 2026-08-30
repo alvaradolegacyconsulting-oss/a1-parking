@@ -185,6 +185,7 @@ async function caseDriverRejected(setup: Setup) {
       p_description: null,
       p_type: 'regular',
       p_is_bundled: false,
+      p_monthly_fee: null,  // 🟢 2026-08-29 Commit 1 — 6th arg (no fee) — probe tests non-fee behavior
     })
     const pass = !!error && /role_not_allowed/i.test(error.message)
     record(id, pass, pass
@@ -205,6 +206,7 @@ async function caseLabelCollision(setup: Setup, manager: RolePersona) {
       p_description: null,
       p_type: 'regular',
       p_is_bundled: false,
+      p_monthly_fee: null,  // 🟢 2026-08-29 Commit 1 — 6th arg (no fee) — probe tests non-fee behavior
     })
     const passRaise = !!error && /label_already_exists/i.test(error.message)
     record(`${id}.clean_raise`, passRaise, passRaise
@@ -231,6 +233,7 @@ async function caseInvalidType(setup: Setup, manager: RolePersona) {
       p_description: null,
       p_type: 'not_a_real_type',
       p_is_bundled: false,
+      p_monthly_fee: null,  // 🟢 2026-08-29 Commit 1 — 6th arg (no fee) — probe tests non-fee behavior
     })
     const pass = !!error && /invalid_type/i.test(error.message)
     record(id, pass, pass
@@ -250,6 +253,7 @@ async function caseEmptyLabel(setup: Setup, manager: RolePersona) {
       p_description: null,
       p_type: 'regular',
       p_is_bundled: false,
+      p_monthly_fee: null,  // 🟢 2026-08-29 Commit 1 — 6th arg (no fee) — probe tests non-fee behavior
     })
     const pass = !!error && /label_required/i.test(error.message)
     record(id, pass, pass
@@ -271,6 +275,7 @@ async function caseSuccessAuditRevert(setup: Setup, manager: RolePersona) {
       p_description: null,
       p_type: 'regular',
       p_is_bundled: false,
+      p_monthly_fee: null,  // 🟢 2026-08-29 Commit 1 — 6th arg (no fee) — probe tests non-fee behavior
     })
     record(`${id}.forward_rename_succeeded`, !fwdErr, fwdErr
       ? `forward rename FAILED: "${fwdErr.message}"`
@@ -309,6 +314,7 @@ async function caseSuccessAuditRevert(setup: Setup, manager: RolePersona) {
       p_description: null,
       p_type: 'regular',
       p_is_bundled: false,
+      p_monthly_fee: null,  // 🟢 2026-08-29 Commit 1 — 6th arg (no fee) — probe tests non-fee behavior
     })
     record(`${id}.revert_succeeded`, !revertErr, revertErr
       ? `REVERT FAILED — space ${setup.spaceA.id} STILL labeled '${probeLabel}' (manual cleanup needed): "${revertErr.message}"`

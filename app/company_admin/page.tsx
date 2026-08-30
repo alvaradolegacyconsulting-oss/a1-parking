@@ -514,8 +514,12 @@ export default function CompanyAdminPortal() {
   }> | null>(null)
   const [caHouseRulesHistoryLoading, setCaHouseRulesHistoryLoading] = useState(false)
   const [caTargetEdit, setCaTargetEdit] = useState<Space | null>(null)
-  const [caEditForm, setCaEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean }>({
-    label: '', description: '', type: 'carport', is_bundled: false,
+  // 🟢 2026-08-29 Reserved-space payment tracking Commit 1 — mirrors
+  // manager editForm shape; monthly_fee added as 5th field. CA has
+  // full edit + decommission on spaces (per Aug 29 scope-doc correction
+  // to the preflight), so the fee field belongs here symmetrically.
+  const [caEditForm, setCaEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean; monthly_fee: number | null }>({
+    label: '', description: '', type: 'carport', is_bundled: false, monthly_fee: null,
   })
 
   // B219 Layer 2b Insights tab state. Calls get_enforcement_insights
@@ -1370,6 +1374,8 @@ export default function CompanyAdminPortal() {
       p_description: caEditForm.description || null,
       p_type: caEditForm.type,
       p_is_bundled: caEditForm.is_bundled,
+      // 🟢 2026-08-29 Commit 1 — 6th arg mirrors manager path.
+      p_monthly_fee: caEditForm.monthly_fee,
     })
     if (error) { setCaSpacesError(error.message); return }
     setCaTargetEdit(null)
@@ -5619,7 +5625,7 @@ export default function CompanyAdminPortal() {
                                       as manager portal). Available on every row regardless of state. */}
                                   <button onClick={() => setCaTargetSpaceDetail(s)}
                                     style={{ padding:'4px 8px', background:'#0a1e3a', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>View</button>
-                                  <button onClick={() => { setCaTargetEdit(s); setCaEditForm({ label:s.label, description:s.description ?? '', type:s.type, is_bundled:s.is_bundled }); setCaSpacesError('') }}
+                                  <button onClick={() => { setCaTargetEdit(s); setCaEditForm({ label:s.label, description:s.description ?? '', type:s.type, is_bundled:s.is_bundled, monthly_fee:s.monthly_fee ?? null }); setCaSpacesError('') }}
                                     style={{ padding:'4px 8px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>Edit</button>
                                   {s.status === 'available' && s.is_active && (
                                     <button onClick={() => { setCaTargetDecommission(s); setCaSpacesError('') }}
@@ -5842,9 +5848,22 @@ export default function CompanyAdminPortal() {
                       <select value={caEditForm.type} onChange={e => setCaEditForm({ ...caEditForm, type: e.target.value as SpaceType })} style={inp}>
                         {SPACE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
                       </select>
-                      <label style={lbl}>Description (location + reference-only price)</label>
+                      <label style={lbl}>Description (location + notes)</label>
                       <textarea value={caEditForm.description} onChange={e => setCaEditForm({ ...caEditForm, description: e.target.value })}
+                        placeholder="e.g. North lot row 3 · covered · near mailroom"
                         style={{ ...inp, minHeight:'50px', resize:'vertical', fontFamily:'Arial' }} />
+                      {/* 🟢 2026-08-29 Reserved-space payment tracking Commit 1 —
+                          mirrors manager form. NULL = no fee. Not billed by us. */}
+                      <label style={lbl}>Monthly fee (USD, optional — property tracks; not billed by us)</label>
+                      <input
+                        type='number'
+                        step='0.01'
+                        min='0'
+                        value={caEditForm.monthly_fee ?? ''}
+                        onChange={e => setCaEditForm({ ...caEditForm, monthly_fee: e.target.value === '' ? null : parseFloat(e.target.value) })}
+                        placeholder='e.g. 25.00 (leave blank if none)'
+                        style={inp}
+                      />
                       <label style={{ display:'flex', alignItems:'center', gap:'6px', cursor:'pointer', margin:'4px 0 12px' }}>
                         <input type='checkbox' checked={caEditForm.is_bundled} onChange={e => setCaEditForm({ ...caEditForm, is_bundled: e.target.checked })} />
                         <span style={{ color:'#aaa', fontSize:'12px' }}>Bundled / paid (reference flag)</span>

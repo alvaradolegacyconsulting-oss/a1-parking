@@ -302,8 +302,13 @@ export default function ManagerPortal() {
   // state; this state just controls mount/unmount + which space is in focus.
   const [targetSpaceDetail, setTargetSpaceDetail] = useState<Space | null>(null)
   const [targetEdit, setTargetEdit] = useState<Space | null>(null)
-  const [editForm, setEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean }>({
-    label: '', description: '', type: 'carport', is_bundled: false,
+  // 🟢 2026-08-29 Reserved-space payment tracking arc — Commit 1.
+  // monthly_fee added alongside the existing 4 fields. NULL means no
+  // fee. All-fields-required contract: submitEditMetadata below always
+  // passes the current or new value explicitly (no COALESCE-nullable
+  // pattern — see update_space_metadata RPC header 2026-06-21).
+  const [editForm, setEditForm] = useState<{ label: string; description: string; type: SpaceType; is_bundled: boolean; monthly_fee: number | null }>({
+    label: '', description: '', type: 'carport', is_bundled: false, monthly_fee: null,
   })
   // ── Resident-approval optional assign-space dropdowns (commit 4) ──
   // Optional per Jose lock 2026-06-21: "approval ≠ assignment; most
@@ -1225,6 +1230,10 @@ export default function ManagerPortal() {
       p_description: editForm.description || null,
       p_type: editForm.type,
       p_is_bundled: editForm.is_bundled,
+      // 🟢 2026-08-29 Commit 1 — 6th arg. All-fields-required contract:
+      // pass the current or new fee explicitly. NULL = "no fee tracked."
+      // See migration 20260829_spaces_add_monthly_fee_and_extend_rpc.sql.
+      p_monthly_fee: editForm.monthly_fee,
     })
     if (error) { setSpacesError(error.message); return }
     setTargetEdit(null)
@@ -4251,7 +4260,7 @@ export default function ManagerPortal() {
                                     style={{ padding:'4px 8px', background:'#0a1e3a', color:'#3b82f6', border:'1px solid #3b82f6', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
                                     View
                                   </button>
-                                  <button onClick={() => { setTargetEdit(s); setEditForm({ label:s.label, description:s.description ?? '', type:s.type, is_bundled:s.is_bundled }); setSpacesError('') }}
+                                  <button onClick={() => { setTargetEdit(s); setEditForm({ label:s.label, description:s.description ?? '', type:s.type, is_bundled:s.is_bundled, monthly_fee:s.monthly_fee ?? null }); setSpacesError('') }}
                                     style={{ padding:'4px 8px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', marginLeft:'4px' }}>
                                     Edit
                                   </button>
@@ -4537,10 +4546,24 @@ export default function ManagerPortal() {
                   <select value={editForm.type} onChange={e => setEditForm({ ...editForm, type: e.target.value as SpaceType })} style={inputStyle}>
                     {SPACE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
                   </select>
-                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Description (location + reference-only price)</label>
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Description (location + notes)</label>
                   <textarea value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })}
-                    placeholder="e.g. North lot row 3 · ref $50/mo (not billed)"
+                    placeholder="e.g. North lot row 3 · covered · near mailroom"
                     style={{ ...inputStyle, minHeight:'50px', resize:'vertical', fontFamily:'Arial' }} />
+                  {/* 🟢 2026-08-29 Reserved-space payment tracking Commit 1 —
+                      monthly_fee input. NULL means no fee tracked. Empty
+                      string in the input → null in state → NULL at the DB.
+                      Not billed by us; property collects directly. */}
+                  <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase' }}>Monthly fee (USD, optional — property tracks; not billed by us)</label>
+                  <input
+                    type='number'
+                    step='0.01'
+                    min='0'
+                    value={editForm.monthly_fee ?? ''}
+                    onChange={e => setEditForm({ ...editForm, monthly_fee: e.target.value === '' ? null : parseFloat(e.target.value) })}
+                    placeholder='e.g. 25.00 (leave blank if none)'
+                    style={inputStyle}
+                  />
                   <label style={{ display:'flex', alignItems:'center', gap:'6px', cursor:'pointer', margin:'4px 0 12px' }}>
                     <input type='checkbox' checked={editForm.is_bundled} onChange={e => setEditForm({ ...editForm, is_bundled: e.target.checked })} />
                     <span style={{ color:'#aaa', fontSize:'12px' }}>Bundled / paid (reference flag)</span>

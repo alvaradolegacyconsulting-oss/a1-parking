@@ -75,6 +75,15 @@ export interface Space {
   created_by_email: string
   migration_note: string | null
 
+  // 🟢 2026-08-29 Reserved-space payment tracking arc — Commit 1.
+  // NULL means no fee is tracked on this space. NUMERIC(10,2) at
+  // the DB level; TS number carries dollars as a decimal (e.g., 25.00).
+  // 🔴 INERT to the system. Rendered on manager + CA edit forms and
+  // (per scope Aug 28 §4) the resident portal space display. No
+  // enforcement or authorization consults it. See load-bearing rule
+  // in migration 20260829_spaces_add_monthly_fee_and_extend_rpc.sql.
+  monthly_fee: number | null
+
   // v1.1 multi-resident — the explicit-tie set, loaded via space_residents
   // join. Attached by fetchSpacesList per row (batch query: one round-trip
   // per page of spaces, ≤pageSize lookups). Order: alphabetical by name.
