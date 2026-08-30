@@ -92,10 +92,24 @@ COMMENT ON COLUMN public.properties.total_spaces IS
 -- PART 2 — spaces table extension (ADD columns; preserve legacy)
 -- ════════════════════════════════════════════════════════════════════
 -- Existing columns (preserved, deprecated for follow-on cleanup):
---   space_number, status, assigned_to_unit, assigned_to_plate,
---   notes, location_notes, property
--- Existing columns kept as-is: id, property
+--   space_number, assigned_to_unit, assigned_to_plate,
+--   notes, location_notes
+-- Existing columns kept LIVE (do not deprecate — load-bearing):
+--   id, property (part of UNIQUE (property, label) at :187,
+--     part of every RLS policy at 20260702 :68-86, referenced by
+--     every fetchSpacesList/plate-lookup/RLS-scope helper. Stays
+--     text until the wider property_id FK arc migrates properties
+--     + spaces + all snapshot-carrying tables together —
+--     project_fk_property_id_migration [dated 2026-08-30])
 -- Existing 'status' column repurposed (see Part 3 backfill)
+--
+-- 🔴 HEADER CORRECTION 2026-08-30: prior text listed `property` in
+-- BOTH the deprecated group and the kept-live group six lines apart.
+-- That contradiction cost a round-trip during the 2026-08-29 spaces
+-- monthly_fee Commit 1 preflight — the wrong bucket got read and
+-- had to be re-derived against the tree. Removed `property` from the
+-- deprecated list; explicit note above what keeps it load-bearing.
+-- Comment-only edit; no executable change to the RPC or schema.
 
 ALTER TABLE public.spaces
   ADD COLUMN IF NOT EXISTS company                    TEXT,
