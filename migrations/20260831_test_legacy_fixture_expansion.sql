@@ -167,7 +167,7 @@ BEGIN
   IF v_tie_a_exists = 0 THEN
     INSERT INTO public.space_residents (space_id, resident_email, added_by_email)
     VALUES (v_bundled_space_id, lower(c_res_a_email), 'system_fixture_migration');
-    RAISE NOTICE 'Tied resident A to bundled space', c_res_a_email;
+    RAISE NOTICE 'Tied resident A (%) to bundled space', c_res_a_email;
   END IF;
   SELECT COUNT(*) INTO v_tie_b_exists
     FROM public.space_residents
@@ -176,7 +176,7 @@ BEGIN
   IF v_tie_b_exists = 0 THEN
     INSERT INTO public.space_residents (space_id, resident_email, added_by_email)
     VALUES (v_bundled_space_id, lower(c_res_b_email), 'system_fixture_migration');
-    RAISE NOTICE 'Tied resident B to bundled space', c_res_b_email;
+    RAISE NOTICE 'Tied resident B (%) to bundled space', c_res_b_email;
   END IF;
 
   RAISE NOTICE 'Fixture expansion complete. Re-run 20260830_record_and_void_space_payment_rpcs_verification.sql to exercise VE4 + the new VE9 (2+ tie NULL snapshots).';
