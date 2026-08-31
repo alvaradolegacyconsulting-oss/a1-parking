@@ -236,39 +236,83 @@ BEGIN
   END IF;
 END $$;
 
--- ── SETUP for VQ11-VQ13 — insert probe row as current (superuser) ──
--- Runs as SQL Editor's default role (service_role/postgres), bypassing
--- RLS. Provides a Test-LEGACY row for the manager SELECT gate to find
--- and for the cross-role gate to be filtered out from.
+-- ══════════════════════════════════════════════════════════════════════
+-- ── VQ11-VQ13 CONSOLIDATED EXECUTION BLOCK ─────────────────────────
+-- ══════════════════════════════════════════════════════════════════════
+-- 🔴 2026-08-30 SECOND REWRITE after Mateo diagnosed the previous
+-- attempt: FIXTURE ran as service_role and saw the row (bypasses RLS);
+-- VQ11 ran as authenticated + JWT and legitimately saw 0 rows because
+-- SETUP picked a manager and a space INDEPENDENTLY. If the chosen
+-- manager was assigned to property A and the chosen space was at
+-- property B, RLS correctly filtered the row out — the test was
+-- validating scoping that we hadn't ensured existed.
 --
--- 🔴 2026-08-30 REWRITE after VQ11 mis-diagnosed an empty-table state
--- as "RLS filtering." Two changes:
---   1. period_month uses date_trunc('month', CURRENT_DATE)::date —
---      NOT date_trunc('month', now())::date. now() is TIMESTAMPTZ; the
---      cast to date depends on session timezone and can land on the
---      last day of the PRIOR month, tripping the first-of-month CHECK.
---      CURRENT_DATE is a bare DATE and stays first-of-month
---      unambiguously.
---   2. Explicit ROW_COUNT check after INSERT — RAISE loudly if 0 rows
---      landed. Silent 0-row INSERT was the class that produced a
---      confidently-wrong VQ11 message. A separate FIXTURE gate below
---      the SETUP block then re-verifies existence before VQ11 runs,
---      distinguishing "SETUP failed" from "RLS filtered."
+-- Two structural fixes applied here:
+--
+-- 1. ONE DO BLOCK — SETUP + FIXTURE + VQ11 + VQ12 + VQ13 + CLEANUP
+--    all in one transaction. If any gate RAISEs, the whole thing rolls
+--    back, INCLUDING the probe INSERT — no orphan cleanup needed. If
+--    all pass, DELETE at the end runs, then the transaction commits
+--    (INSERT + DELETE net to zero rows).
+--    Per Mateo Aug 30 §1 additional rule: "a fixture gate must run
+--    in the same scope and at the same point as the gates it protects."
+--    Cross-block visibility was the third defect.
+--
+-- 2. LINKED MANAGER + SPACE — pick the manager FIRST (with a non-empty
+--    user_roles.property assignment), then pick a space at THAT
+--    property. Guarantees RLS admits the probe row for this specific
+--    manager. If RLS then filters it out, that IS a real bug — no
+--    "unlinked entities" false-signal.
+--
+-- Impersonation lifecycle:
+--   PERFORM set_config('role', 'authenticated', true)  → RLS applies
+--   PERFORM set_config('request.jwt.claims', {email:X}, true)
+--   ... test ...
+--   EXECUTE 'RESET role'   → back to service_role for the next section
+--
+-- SET LOCAL and RESET are transaction-scoped, so the RESET after each
+-- impersonation is required because subsequent SETUP/CLEANUP ops need
+-- superuser context.
 DO $$
 DECLARE
+  v_mgr_email       TEXT;
+  v_mgr_property    TEXT;
   v_probe_space_id  BIGINT;
   v_probe_id        BIGINT;
   v_rowcount        INT;
+  v_seen            INT;
+  v_grant_reject    BOOLEAN;
+  v_unauth_email    TEXT;
+  v_unauth_role     TEXT;
 BEGIN
-  -- Find any Test-LEGACY space to attach the probe to
+  -- ── STEP 1: PICK MANAGER FIRST, capture their property ────────────
+  SELECT lower(email), property
+    INTO v_mgr_email, v_mgr_property
+    FROM public.user_roles
+   WHERE company ~~* 'Test-LEGACY'
+     AND role = 'manager'
+     AND lower(coalesce(is_active::text, 'true')) <> 'false'
+     AND property IS NOT NULL
+     AND length(trim(property)) > 0
+   ORDER BY id LIMIT 1;
+  IF v_mgr_email IS NULL THEN
+    RAISE EXCEPTION 'SETUP FAIL: no Test-LEGACY manager with a non-empty property assignment. Cannot link probe space to manager scope; RLS test would compare unlinked entities.';
+  END IF;
+
+  -- ── STEP 2: PICK SPACE AT THAT PROPERTY (linked) ─────────────────
   SELECT id INTO v_probe_space_id
     FROM public.spaces
    WHERE company ~~* 'Test-LEGACY'
      AND is_active = true
+     AND lower(trim(property)) = lower(trim(v_mgr_property))
    ORDER BY id LIMIT 1;
   IF v_probe_space_id IS NULL THEN
-    RAISE EXCEPTION 'SETUP FAIL: no active Test-LEGACY space found for probe row. Cannot proceed to VQ11-VQ13.';
+    RAISE EXCEPTION 'SETUP FAIL: no active space at property "%" (manager %s assignment). Manager scoped to a property with no active spaces. VQ11 would fire against RLS correctly filtering. Verify Test-LEGACY seed data.',
+      v_mgr_property, v_mgr_email;
   END IF;
+
+  -- ── STEP 3: INSERT PROBE (as current superuser role — bypasses RLS
+  --   AND the SELECT-only grant) ───────────────────────────────────
   INSERT INTO public.space_payments (
     space_id, company, property, space_label,
     period_month, amount, method,
@@ -285,134 +329,75 @@ BEGIN
   RETURNING id INTO v_probe_id;
   GET DIAGNOSTICS v_rowcount = ROW_COUNT;
   IF v_rowcount <> 1 OR v_probe_id IS NULL THEN
-    RAISE EXCEPTION 'SETUP FAIL: probe INSERT returned rowcount=% (want 1) and probe_id=% (want non-null). Silent 0-row INSERT means either the SELECT sub-query missed the row or a race dropped it. VQ11-VQ13 will not run correctly; halt here and diagnose.',
-      v_rowcount, v_probe_id;
+    RAISE EXCEPTION 'SETUP FAIL: probe INSERT rowcount=% probe_id=% (want 1 non-null).', v_rowcount, v_probe_id;
   END IF;
-  RAISE NOTICE 'SETUP: probe row inserted id=% space_id=% period_month=%',
-    v_probe_id, v_probe_space_id, date_trunc('month', CURRENT_DATE)::date;
-END $$;
+  RAISE NOTICE 'SETUP: probe id=% at space_id=% property="%" manager="%"',
+    v_probe_id, v_probe_space_id, v_mgr_property, v_mgr_email;
 
--- ── FIXTURE GATE — probe row exists before VQ11 runs ────────────────
--- 🔴 2026-08-30 NEW GATE. VQ11 previously RAISED "RLS is filtering
--- out own-company rows or manager policy body is wrong" against an
--- empty table — because the SETUP silently failed and nothing
--- checked. A gate that depends on a fixture must verify the fixture
--- first, and it must fail with a DIFFERENT message than the thing
--- under test.
---
--- Runs as service_role/postgres (bypasses RLS). If the row is not
--- here, SETUP failed silently AND the failure was not caught. VQ11
--- would produce meaningless output. Halt with a clear "FIXTURE FAIL"
--- so the downstream noise never reaches the operator.
-DO $$
-DECLARE
-  v_fixture_count INT;
-BEGIN
-  SELECT COUNT(*) INTO v_fixture_count
-    FROM public.space_payments
-   WHERE note LIKE '__V-COMMIT-2-PROBE-%';
-  IF v_fixture_count = 0 THEN
-    RAISE EXCEPTION 'FIXTURE FAIL: no probe row present after SETUP. VQ11-VQ13 will NOT be run — their results would be meaningless (any "manager saw 0 rows" is unreadable when there are no rows to see). Investigate SETUP for silent INSERT failure: check for CHECK-constraint violation, non-matching space company, or the period_month TZ trap that this rewrite fixed.';
-  END IF;
-  IF v_fixture_count > 1 THEN
-    RAISE NOTICE 'FIXTURE: % probe rows present (>1 — likely from a prior partial verification run). Not fatal; VQ11 counts >= 1 as pass.', v_fixture_count;
-  END IF;
-  RAISE NOTICE 'FIXTURE: % probe row(s) present. VQ11-VQ13 have real state to test against.', v_fixture_count;
-END $$;
-
--- ── VQ11: 🔴 EXECUTION — Test-LEGACY manager SELECTs own probe row ─
-DO $$
-DECLARE
-  v_mgr_email TEXT;
-  v_seen      INT;
-BEGIN
-  SELECT lower(email) INTO v_mgr_email
-    FROM public.user_roles
-   WHERE company ~~* 'Test-LEGACY'
-     AND role = 'manager'
-     AND lower(coalesce(is_active::text, 'true')) <> 'false'
-   ORDER BY id LIMIT 1;
-  IF v_mgr_email IS NULL THEN
-    RAISE EXCEPTION 'VQ11 PREREQ FAIL: no Test-LEGACY manager found to impersonate';
+  -- ── STEP 4: FIXTURE — the row is present in this transaction ─────
+  -- (Redundant given the RETURNING above set v_probe_id, but kept as
+  -- an explicit assertion so future readers see it. Same transaction,
+  -- same scope as the impersonated tests below.)
+  SELECT COUNT(*) INTO v_seen
+    FROM public.space_payments WHERE id = v_probe_id;
+  IF v_seen <> 1 THEN
+    RAISE EXCEPTION 'FIXTURE FAIL: probe id=% not visible in the same transaction (count=%). Impossible under normal Postgres — investigate.', v_probe_id, v_seen;
   END IF;
 
+  -- ── VQ11: manager SELECTs their own linked probe row ─────────────
   PERFORM set_config('role', 'authenticated', true);
   PERFORM set_config('request.jwt.claims',
                      json_build_object('email', v_mgr_email)::text, true);
 
   SELECT COUNT(*) INTO v_seen
-    FROM public.space_payments
-   WHERE note LIKE '__V-COMMIT-2-PROBE-%';
+    FROM public.space_payments WHERE id = v_probe_id;
   IF v_seen = 0 THEN
-    -- 🔴 Message discipline: state what was observed, list candidate
-    -- causes, do not assert one. The FIXTURE gate above already
-    -- confirmed a probe row exists — so "0 rows seen under
-    -- impersonation" narrows the cause to something the RLS predicate
-    -- decided. Enumerate the specific things to check rather than
-    -- naming a cause the gate never tested.
-    RAISE EXCEPTION 'VQ11 FAIL: manager % impersonation returned 0 probe rows (FIXTURE confirmed >=1 row exists). Candidate causes to check, in order: (a) get_my_role() returns something other than "manager" for this user — verify user_roles.role; (b) get_my_properties() returns [] or doesn''t include the probe row''s property — verify user_roles.property for this user; (c) the probe row''s property does not match get_my_properties() output under lower(trim()) — compare literally; (d) the manager_own_space_payments policy body was replaced or dropped after apply — re-run VQ8 policy inspection.',
-      v_mgr_email;
+    -- 🔴 Message discipline: since SETUP linked manager+space at the
+    -- same property, RLS filtering here means the manager_own policy
+    -- is not admitting a legitimately-in-scope row. State the observation;
+    -- enumerate candidate causes.
+    EXECUTE 'RESET role';
+    RAISE EXCEPTION 'VQ11 FAIL: manager % (property="%") saw 0 probe rows. Probe id=% is at property="%" (manager''s own assignment — linked at SETUP). Since SETUP guarantees the row IS in scope, this narrows to: (a) get_my_role() returns <> ''manager'' for this user — verify user_roles.role; (b) get_my_properties() returns empty or missing this property — verify user_roles.property; (c) the manager_own_space_payments policy body was altered post-apply — re-run VQ8.',
+      v_mgr_email, v_mgr_property, v_probe_id, v_mgr_property;
   END IF;
-  RAISE NOTICE 'VQ11: manager % saw % probe row(s).', v_mgr_email, v_seen;
-END $$;
+  RAISE NOTICE 'VQ11 PASS: manager % saw probe row (id=%)', v_mgr_email, v_probe_id;
 
--- ── VQ12: 🔴 EXECUTION — same manager INSERT REJECTED (permission_denied) ─
-DO $$
-DECLARE
-  v_mgr_email        TEXT;
-  v_test_space_id    BIGINT;
-  v_grant_reject     BOOLEAN := FALSE;
-BEGIN
-  SELECT lower(email) INTO v_mgr_email
-    FROM public.user_roles
-   WHERE company ~~* 'Test-LEGACY' AND role = 'manager'
-     AND lower(coalesce(is_active::text, 'true')) <> 'false'
-   ORDER BY id LIMIT 1;
-  SELECT id INTO v_test_space_id
-    FROM public.spaces WHERE company ~~* 'Test-LEGACY' AND is_active LIMIT 1;
-
-  PERFORM set_config('role', 'authenticated', true);
-  PERFORM set_config('request.jwt.claims',
-                     json_build_object('email', v_mgr_email)::text, true);
-
+  -- ── VQ12: same manager INSERT REJECTED with insufficient_privilege ─
+  -- (Still under authenticated role from VQ11; no need to re-SET.)
+  v_grant_reject := FALSE;
   BEGIN
     INSERT INTO public.space_payments (
       space_id, company, property, space_label,
       period_month, amount, recorded_by_email
     ) VALUES (
-      v_test_space_id, 'Test-LEGACY', 'placeholder', 'placeholder',
-      date_trunc('month', now())::date, 1.00, v_mgr_email
+      v_probe_space_id, 'Test-LEGACY', v_mgr_property, 'V12-probe',
+      date_trunc('month', CURRENT_DATE)::date, 1.00, v_mgr_email
     );
-    -- If we reach here, grant restriction did NOT fire. The row is
-    -- committed. Manual cleanup will be needed.
-    RAISE EXCEPTION 'VQ12 FAIL: authenticated manager INSERT was ACCEPTED. Grant restriction is not enforcing — every DEFINER RPC in Commit 3 becomes bypassable. Halt and re-run REVOKE.';
+    -- Reached only if grant restriction failed to fire.
+    EXECUTE 'RESET role';
+    RAISE EXCEPTION 'VQ12 FAIL: authenticated manager INSERT was ACCEPTED. Grant restriction is not enforcing — every DEFINER RPC in Commit 3 becomes bypassable. Halt and re-run: REVOKE ALL FROM authenticated; GRANT SELECT TO authenticated.';
   EXCEPTION
     WHEN insufficient_privilege THEN
-      -- SQLSTATE 42501 — expected. Grant restriction fired before RLS check.
+      -- SQLSTATE 42501 — expected. Grant restriction fired before RLS.
       v_grant_reject := TRUE;
     WHEN raise_exception THEN
-      RAISE;  -- re-raise the VQ12 FAIL from above
+      -- Re-raise the VQ12 FAIL that we RAISEd above.
+      RAISE;
     WHEN others THEN
+      EXECUTE 'RESET role';
       RAISE EXCEPTION 'VQ12 FAIL: manager INSERT raised unexpected SQLSTATE=% : %. Expected 42501 (insufficient_privilege from grants).', SQLSTATE, SQLERRM;
   END;
-
   IF NOT v_grant_reject THEN
-    RAISE EXCEPTION 'VQ12 FAIL: control flow reached the end without insufficient_privilege — should be unreachable';
+    EXECUTE 'RESET role';
+    RAISE EXCEPTION 'VQ12 FAIL: control flow reached end without insufficient_privilege';
   END IF;
-  RAISE NOTICE 'VQ12: manager INSERT correctly rejected with insufficient_privilege.';
-END $$;
+  RAISE NOTICE 'VQ12 PASS: manager INSERT rejected with insufficient_privilege';
 
--- ── VQ13: 🔴 EXECUTION — unauthorized role SEES 0 ROWS (not error) ──
--- Prefer a resident at Test-LEGACY; fall back to any resident/driver
--- from ANY company (their RLS-role has no policy on this table AND/OR
--- no matching scope, so RLS filters to 0 rows).
-DO $$
-DECLARE
-  v_unauth_email TEXT;
-  v_unauth_role  TEXT;
-  v_seen         INT;
-BEGIN
-  -- Try a resident at Test-LEGACY first
+  -- Restore role to superuser for VQ13 setup (find unauth user).
+  EXECUTE 'RESET role';
+
+  -- ── VQ13: unauthorized role SEES 0 ROWS silently ─────────────────
+  -- Prefer Test-LEGACY resident; fall back to any resident/driver.
   SELECT lower(email), role INTO v_unauth_email, v_unauth_role
     FROM public.user_roles
    WHERE company ~~* 'Test-LEGACY'
@@ -420,7 +405,6 @@ BEGIN
      AND lower(coalesce(is_active::text, 'true')) <> 'false'
    ORDER BY id LIMIT 1;
   IF v_unauth_email IS NULL THEN
-    -- Fallback: any resident or driver anywhere
     SELECT lower(email), role INTO v_unauth_email, v_unauth_role
       FROM public.user_roles
      WHERE role IN ('resident', 'driver')
@@ -428,27 +412,33 @@ BEGIN
      ORDER BY id LIMIT 1;
   END IF;
   IF v_unauth_email IS NULL THEN
-    RAISE NOTICE 'VQ13 SKIPPED: no resident or driver in user_roles anywhere. Cannot impersonate for the RLS-filter test.';
-    RETURN;
+    RAISE NOTICE 'VQ13 SKIPPED: no resident or driver in user_roles anywhere.';
+  ELSE
+    PERFORM set_config('role', 'authenticated', true);
+    PERFORM set_config('request.jwt.claims',
+                       json_build_object('email', v_unauth_email)::text, true);
+    -- Wrapped so we surface unexpected SQLSTATE, not swallow it. The
+    -- gate is specifically "returns 0 rows, does NOT throw."
+    BEGIN
+      SELECT COUNT(*) INTO v_seen
+        FROM public.space_payments WHERE id = v_probe_id;
+    EXCEPTION WHEN others THEN
+      EXECUTE 'RESET role';
+      RAISE EXCEPTION 'VQ13 FAIL: unauthorized role (%: %) SELECT RAISED (SQLSTATE=%). Expected 0 rows silently. RLS should filter, not throw.',
+        v_unauth_role, v_unauth_email, SQLSTATE;
+    END;
+    IF v_seen > 0 THEN
+      EXECUTE 'RESET role';
+      RAISE EXCEPTION 'VQ13 FAIL: unauthorized role (%: %) SAW % probe rows. RLS is not filtering — either a policy grants read to this role, or deny-by-default is broken.',
+        v_unauth_role, v_unauth_email, v_seen;
+    END IF;
+    RAISE NOTICE 'VQ13 PASS: unauthorized (%: %) saw 0 rows silently', v_unauth_role, v_unauth_email;
+    EXECUTE 'RESET role';
   END IF;
 
-  PERFORM set_config('role', 'authenticated', true);
-  PERFORM set_config('request.jwt.claims',
-                     json_build_object('email', v_unauth_email)::text, true);
-
-  -- Wrapped so we surface unexpected SQLSTATE, not swallow it. The
-  -- gate is specifically "returns 0 rows, does NOT throw."
-  BEGIN
-    SELECT COUNT(*) INTO v_seen
-      FROM public.space_payments
-     WHERE note LIKE '__V-COMMIT-2-PROBE-%';
-  EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'VQ13 FAIL: unauthorized role (%: %) SELECT RAISED (SQLSTATE=%). Expected zero rows silently. RLS should filter, not throw. Investigate the policy for role=%.', v_unauth_role, v_unauth_email, SQLSTATE, v_unauth_role;
-  END;
-  IF v_seen > 0 THEN
-    RAISE EXCEPTION 'VQ13 FAIL: unauthorized role (%: %) SAW % probe row(s). RLS is not filtering — either a policy grants read to this role, or the deny-by-default is broken.', v_unauth_role, v_unauth_email, v_seen;
-  END IF;
-  RAISE NOTICE 'VQ13: unauthorized role (%: %) correctly saw 0 probe rows (no error).', v_unauth_role, v_unauth_email;
+  -- ── CLEANUP inside the same block ─
+  DELETE FROM public.space_payments WHERE id = v_probe_id;
+  RAISE NOTICE 'CLEANUP: probe id=% deleted', v_probe_id;
 END $$;
 
 -- ── VQ14: schema audit row ──────────────────────────────────────────
@@ -465,12 +455,11 @@ BEGIN
   END IF;
 END $$;
 
--- ── CLEANUP — remove probe row(s) ───────────────────────────────────
--- Runs as service_role/postgres (bypasses RLS + grants).
-DO $$
-BEGIN
-  DELETE FROM public.space_payments WHERE note LIKE '__V-COMMIT-2-PROBE-%';
-END $$;
+-- (No separate CLEANUP block — cleanup is at the end of the
+-- consolidated execution block above. If any gate raised there, the
+-- whole block's transaction rolled back and the probe row was never
+-- committed; if all gates passed, the DELETE inside the block ran
+-- before the block exited and committed.)
 
 -- ── FINAL: one PASS row ─────────────────────────────────────────────
 SELECT
@@ -487,10 +476,11 @@ SELECT
     'VQ8  RLS enabled',
     'VQ9  authenticated has SELECT',
     'VQ10 authenticated does NOT have INSERT/UPDATE/DELETE',
-    'SETUP+FIXTURE probe row inserted AND independently verified present',
-    'VQ11 EXECUTION manager sees own probe row',
+    'SETUP linked manager+space at same property + probe inserted + same-txn fixture check',
+    'VQ11 EXECUTION manager sees own linked probe row (RLS admits)',
     'VQ12 EXECUTION manager INSERT rejected (insufficient_privilege)',
-    'VQ13 EXECUTION unauthorized role sees 0 rows without error',
+    'VQ13 EXECUTION unauthorized role sees 0 rows without error (RLS filters silently)',
+    'CLEANUP probe deleted in same transaction (or transaction rolled back on failure)',
     'VQ14 SCHEMA_SPACE_PAYMENTS_TABLE_V1 audit row'
   ]                                            AS gates_verified,
   now()                                        AS verified_at;
