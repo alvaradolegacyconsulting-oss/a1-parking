@@ -207,9 +207,15 @@ DECLARE
   v_res_name_ve9     TEXT;
   v_res_unit_ve9     TEXT;
 BEGIN
-  -- 🔴 SESSION GUARD (Aug 31, DEFENSIVE): set 'FAILED' at start,
-  -- 'PASSED' only at the very end (last statement before END $$).
+  -- 🔴 SESSION GUARD (Aug 31, DEFENSIVE): set FAILED at start,
+  -- PASSED only at the very end (last statement before block-end).
   -- LOCAL=false so it survives transaction rollback on any RAISE.
+  --
+  -- (Comment intentionally avoids literal dollar-dollar marker in
+  -- the body — some SQL editor parsers see it as end-of-dollar-quote
+  -- and terminate this DO block early, throwing 42601 on the next
+  -- statement. Postgres itself handles comments correctly, but
+  -- Supabase SQL Editor's client-side parser does not.)
   -- Terminal SELECT at end of file reads this guard — if PASSED
   -- is never reached (any gate raised), terminal reports FAIL
   -- instead of emitting a misleading PASS row.
