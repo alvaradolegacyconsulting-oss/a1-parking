@@ -116,6 +116,58 @@ export default function Landing() {
         <p style={{ color: MUTED, fontSize: 12, marginTop: 12 }}>Licensed for Texas operations · Harris County jurisdiction</p>
       </section>
 
+      {/* ── 🟢 2026-08-31 90-second commercial (HeyGen embed) ────────
+          Below the hero, above audiences — cold visitor watches the
+          overview then arrives at pricing knowing what it's for. Not
+          in the hero (too much commitment before we've earned it),
+          not at the bottom (nobody scrolls).
+
+          Four discipline points applied from the raw HeyGen embed:
+            1. title="How ShieldMyLot works" — screen-reader accessible
+               name. HeyGen's default "Check out a new AI Video I just
+               made!" was in the DOM, unfinished on a B2B page.
+            2. Responsive: aspect-ratio 16/9 wrapper + absolutely-
+               positioned iframe. Fixed 560×315 broke on mobile.
+            3. loading="lazy" — third-party iframe otherwise slows
+               first paint for every visitor including non-scrollers.
+            4. Caption beneath the frame — survives if the embed
+               fails to load (HeyGen down/slow), and useful copy
+               either way. Same class as the payments arc's
+               "loading ≠ error ≠ empty" discipline: a failed load
+               must not be indistinguishable from nothing existing.
+
+          Dropped: `frameborder` (deprecated HTML4 attribute) — CSS
+          border: 0 on the iframe instead.
+
+          Cookie check pending: HeyGen embeds typically set analytics
+          cookies from the third-party domain. Static inspection
+          can't confirm which; devtools check is Jose's call. If
+          any set, the July-final privacy policy may need a line
+          about a third-party embed loader on the homepage. Not
+          acting on that here.
+
+          Filed for later: self-hosted MP4 (no HeyGen dependency,
+          player control). This is the fastest path to shipping today. */}
+      <section id="overview" style={{ padding: '80px 24px' }}>
+        <div style={{ maxWidth: 900, margin: '0 auto' }}>
+          <p style={{ textAlign: 'center', color: GOLD, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px', fontWeight: 700 }}>See how it works</p>
+          <p style={{ textAlign: 'center', color: MUTED, fontSize: 14, margin: '0 0 24px' }}>90 seconds</p>
+          <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 12, overflow: 'hidden' }}>
+            <iframe
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
+              src="https://app.heygen.com/embeds/dc86d66c0dc243059d5277547a72e078"
+              title="How ShieldMyLot works"
+              loading="lazy"
+              allow="encrypted-media; fullscreen"
+              allowFullScreen
+            />
+          </div>
+          <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, margin: '16px 0 0', lineHeight: 1.55 }}>
+            A quick look at permits, spaces, visitor parking and enforcement in one place.
+          </p>
+        </div>
+      </section>
+
       {/* ── ONE PRODUCT, THREE OFFERINGS — audience-mapped intro ──
           Replaces the B62.2 "two kinds of operators" split. Each offering
           has a clear buyer persona; cards anchor-scroll to the matching
