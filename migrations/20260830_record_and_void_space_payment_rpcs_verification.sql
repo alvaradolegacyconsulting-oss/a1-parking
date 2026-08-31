@@ -43,14 +43,30 @@
 --          all NULL (no arbitrary precedence). Unblocked by 20260831
 --          fixture expansion (bundled space "B-1" with 2 space_residents ties)
 --
---   🔴 SESSION GUARD (Aug 31 fix):
+--   🔴 SESSION GUARD (Aug 31 — DEFENSIVE, not root-cause fix):
 --     Terminal SELECT only emits PASS if the consolidated DO block
 --     set app.commit3a_verif_status='PASSED' at its last line. Any
 --     RAISE aborts the block before that line runs, guard stays
---     'FAILED', and terminal reports FAIL. Closes the bug where
---     autocommit made the terminal PASS row emit regardless of
---     mid-block raises (Jose's 2026-08-31 VE4 pass — the raise fired
---     but PASS still emitted).
+--     'FAILED', and terminal reports FAIL.
+--
+--     🔴 CORRECTION 2026-08-31 evening (Mateo §1): I initially wrote
+--     that Jose's earlier VE4 PASS was caused by SQL Editor
+--     continuing past a mid-block raise. That was WRONG. Jose's
+--     history has multiple prior gate raises (VQ3, VQ11, btrim type
+--     error) — every one produced an error AND no PASS row. If the
+--     editor continued past exceptions, PASS would have appeared
+--     alongside each. VE4 didn't raise-and-get-overridden; it didn't
+--     raise, because ~100 orphaned spaces at 'Test Legacy
+--     Property--- checkers ground' (a July-15 property-rename
+--     artifact — the property is gone from `properties` but the
+--     spaces still point at it) supplied a legitimate cross-property
+--     fixture. Same-company, not in legacy-manager's property list.
+--     Cross-property enforcement IS verified.
+--
+--     The session guard is kept — cheap defense against a future
+--     scenario where multiple DO blocks with mid-block raises could
+--     interact with terminal-SELECT emission. But do NOT read it as
+--     evidence that the specific Aug 31 morning bug existed.
 -- ══════════════════════════════════════════════════════════════════════
 
 -- ── VS1: record_space_payment signature ─────────────────────────────
@@ -191,20 +207,21 @@ DECLARE
   v_res_name_ve9     TEXT;
   v_res_unit_ve9     TEXT;
 BEGIN
-  -- 🔴 SESSION GUARD (Mateo Aug 31 §1 fix): set 'FAILED' at start,
+  -- 🔴 SESSION GUARD (Aug 31, DEFENSIVE): set 'FAILED' at start,
   -- 'PASSED' only at the very end (last statement before END $$).
   -- LOCAL=false so it survives transaction rollback on any RAISE.
   -- Terminal SELECT at end of file reads this guard — if PASSED
   -- is never reached (any gate raised), terminal reports FAIL
   -- instead of emitting a misleading PASS row.
   --
-  -- The bug this closes: under Supabase SQL Editor autocommit, a
-  -- RAISE inside this DO block rolls back the block's transaction
-  -- but the editor CONTINUES to the next statement. The terminal
-  -- SELECT at end of file runs unconditionally and emits PASS
-  -- regardless of which gates raised. Jose's 2026-08-31 VE4 pass
-  -- was that class — the FIXTURE FAIL raise fired but the PASS
-  -- row still emitted from the terminal SELECT.
+  -- Kept as defense-in-depth. The original diagnosis for adding
+  -- this ("SQL Editor continues past raise, emits PASS from
+  -- terminal SELECT") was WRONG — see header §CORRECTION. Jose's
+  -- Aug 31 morning VE4 PASS was a real pass caused by orphaned
+  -- spaces at a July-15-renamed property supplying an accidental
+  -- cross-property fixture. The guard is still cheap + correct in
+  -- principle; leaving it here as backstop against a hypothetical
+  -- future scenario, NOT as fix for an observed bug.
   PERFORM set_config('app.commit3a_verif_status', 'FAILED', false);
 
   -- ── STEP 1: LINKED SETUP — one JOIN ─────────────────────────────
