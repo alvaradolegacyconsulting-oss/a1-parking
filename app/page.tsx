@@ -259,9 +259,18 @@ export default function Landing() {
                 <thead>
                   <tr style={{ background: 'rgba(201,162,39,0.06)', borderBottom: `1px solid ${BORDER}` }}>
                     <th style={{ textAlign: 'left',  padding: '14px 18px', color: MUTED, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Capability</th>
-                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT,  fontSize: 13, fontWeight: 700 }}>PM-Only</th>
+                    {/* 🔴 2026-08-31 rename per Mateo public-catalog rewrite —
+                        columns map: pmOnly key → PM Starter label; legacy key
+                        → Custom quote label. Data rows in tier-display.ts
+                        unchanged (Starter capabilities = one-property PM
+                        subset; Custom capabilities = both tracks combined =
+                        legacy). Comparison table describes CAPABILITIES per
+                        offering, not per-tier scope constraints (single-
+                        property Starter still gets the same "Resident portal"
+                        checkmark as multi-property PM). */}
+                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT,  fontSize: 13, fontWeight: 700 }}>PM Starter</th>
                     <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT,  fontSize: 13, fontWeight: 700 }}>Enforcement-Only</th>
-                    <th style={{ textAlign: 'center', padding: '14px 18px', color: GOLD,  fontSize: 13, fontWeight: 700 }}>Legacy</th>
+                    <th style={{ textAlign: 'center', padding: '14px 18px', color: GOLD,  fontSize: 13, fontWeight: 700 }}>Custom quote</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -289,9 +298,12 @@ export default function Landing() {
       <section id="pricing" style={{ padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
-            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Three offerings, one platform</h2>
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Simple pricing, two selectable tiers</h2>
             <p style={{ color: MUTED, fontSize: 16, margin: '0 0 8px', maxWidth: 640, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
-              Base + per-property. PM-Only meters approved permits on a graduated schedule — you only pay for permits you actually approve. Legacy is custom-priced per proposal.
+              Flat monthly rate for a single-property manager, per-property pricing for towing operators, and a custom quote for everything else.
+            </p>
+            <p style={{ color: MUTED, fontSize: 13, margin: '10px 0 0', maxWidth: 640, marginLeft: 'auto', marginRight: 'auto' }}>
+              <strong style={{ color: TEXT }}>Texas only</strong>, for now &nbsp;·&nbsp; <strong style={{ color: TEXT }}>14-day money back</strong> on the first month
             </p>
             <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '20px auto 0' }} />
           </div>
@@ -304,21 +316,48 @@ export default function Landing() {
                   <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>
                     {tier.includesEnforcement && tier.includesPM ? 'PM + Enforcement' : tier.includesEnforcement ? 'Enforcement' : 'Property Management'}
                   </p>
-                  <h3 style={{ color: TEXT, fontSize: 24, fontWeight: 700, margin: '0 0 16px' }}>{tier.name}</h3>
+                  <h3 style={{ color: TEXT, fontSize: 24, fontWeight: 700, margin: '0 0 4px' }}>{tier.name}</h3>
+                  {tier.taglineOneLine && (
+                    <p style={{ color: MUTED, fontSize: 13, margin: '0 0 16px', lineHeight: 1.55 }}>{tier.taglineOneLine}</p>
+                  )}
 
                   {isCustom ? (
                     <div style={{ marginBottom: 24 }}>
-                      <p style={{ color: GOLD, fontSize: 22, fontWeight: 800, margin: '0 0 4px' }}>Custom pricing</p>
-                      <p style={{ color: MUTED, fontSize: 12, margin: 0, lineHeight: 1.55 }}>Negotiated per proposal for hybrid, larger, or non-standard deployments.</p>
+                      <p style={{ color: GOLD, fontSize: 22, fontWeight: 800, margin: '0 0 8px' }}>Custom pricing</p>
+                      {tier.customPitch && (
+                        <p style={{ color: MUTED, fontSize: 13, margin: 0, lineHeight: 1.6 }}>{tier.customPitch}</p>
+                      )}
                     </div>
                   ) : (
                     <>
                       <div style={{ marginBottom: 8 }}>
                         <span style={{ color: GOLD, fontSize: 36, fontWeight: 800 }}>${tier.base}</span>
-                        <span style={{ color: MUTED, fontSize: 14 }}>/mo base</span>
+                        <span style={{ color: MUTED, fontSize: 14 }}>/mo{tier.perProp == null ? ' flat' : ' base'}</span>
                       </div>
-                      <p style={{ color: MUTED, fontSize: 12, margin: '0 0 12px' }}>+ ${tier.perProp}/mo per property</p>
+                      {/* Per-property line only when perProp is a positive number.
+                          Starter is flat (perProp: null); Enforcement-Only shows the line. */}
+                      {tier.perProp != null && tier.perProp > 0 && (
+                        <p style={{ color: MUTED, fontSize: 12, margin: '0 0 12px' }}>+ ${tier.perProp}/mo per property</p>
+                      )}
 
+                      {/* Permit allowance (Starter shape) */}
+                      {tier.permitAllowance && (
+                        <div style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '10px 12px', marginBottom: 20 }}>
+                          <p style={{ color: TEXT, fontSize: 12, margin: '0 0 4px', fontWeight: 600 }}>
+                            {tier.permitAllowance.includedUpTo} active permits included
+                          </p>
+                          <p style={{ color: MUTED, fontSize: 12, margin: '0 0 6px' }}>
+                            Then ${tier.permitAllowance.overageRate.toFixed(2)} per additional permit.
+                          </p>
+                          <p style={{ color: '#4a5568', fontSize: 10, margin: 0, fontStyle: 'italic', lineHeight: 1.45 }}>
+                            You&apos;ll be warned at 90%, 95%, and 99% of your allowance before anything is charged. No surprise bills.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Graduated permit meter (retired from public offerings
+                          in Aug 31 rewrite, but the branch stays for future
+                          consumers that opt back in). */}
                       {tier.permitTiers && tier.permitTiers.length > 0 && (
                         <div style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '10px 12px', marginBottom: 20 }}>
                           <p style={{ color: MUTED, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px', fontWeight: 600 }}>Per approved permit</p>
@@ -336,28 +375,38 @@ export default function Landing() {
                         </div>
                       )}
 
-                      {!tier.permitTiers && <div style={{ marginBottom: 20 }} />}
+                      {!tier.permitTiers && !tier.permitAllowance && <div style={{ marginBottom: 20 }} />}
                     </>
                   )}
 
-                  <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 20, marginBottom: 24 }}>
-                    {tier.features.map((f, j) => (
-                      <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-                        <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 1 }}>✓</span>
-                        <span style={{ color: '#94a3b8', fontSize: 14 }}>{f}</span>
-                      </div>
-                    ))}
-                  </div>
+                  {/* Custom-quote card: skip feature checklist (customPitch above
+                      is the messaging). Priced cards render features[]. */}
+                  {!isCustom && (
+                    <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 20, marginBottom: 24 }}>
+                      {tier.features.map((f, j) => (
+                        <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+                          <span style={{ color: GOLD, fontSize: 14, flexShrink: 0, marginTop: 1 }}>✓</span>
+                          <span style={{ color: '#94a3b8', fontSize: 14 }}>{f}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {isCustom && <div style={{ marginBottom: 24 }} />}
 
+                  {/* 🔴 CTAs (Mateo 2026-08-31): every card routes to #contact
+                      while public_signup_open=false. Advertising a price + a
+                      dead "Get started" button loses leads. When signup opens,
+                      swap the two priced cards to real signup buttons — one
+                      line per card, right here. */}
                   <a href="#contact" style={{ display: 'block', textAlign: 'center', background: isCustom ? GOLD : CARD_BG, color: isCustom ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${isCustom ? GOLD : BORDER}` }}>
-                    {isCustom ? 'Request a proposal' : 'Get started'} →
+                    Get in touch →
                   </a>
                 </div>
               )
             })}
           </div>
           <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 28 }}>
-            Self-serve signup for PM-Only and Enforcement-Only. Legacy is proposal-code onboarded — reach out via Contact below.
+            Every account is set up personally right now — reach out via Contact below and we&apos;ll follow up within one business day.
           </p>
         </div>
       </section>

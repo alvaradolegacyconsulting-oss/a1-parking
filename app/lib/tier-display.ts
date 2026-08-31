@@ -44,6 +44,14 @@ export type PermitBand = {
   ratePerPermit: number
 }
 
+// PM Starter permit-allowance shape (2026-08-31 public-catalog rewrite):
+// N permits included at flat rate, then $X per additional. Renders
+// differently from the graduated permitTiers meter.
+export type PermitAllowance = {
+  includedUpTo: number
+  overageRate:  number
+}
+
 export type TierDisplay = {
   name: string
   // B2-5 C2 (2026-07-21) — explicit slug field. Was previously derived
@@ -54,14 +62,28 @@ export type TierDisplay = {
   // Latent because public_signup_open has never been true; still a bug.
   // Callers MUST use this field, never derive from the display name.
   // Union kept narrow so a typo like 'pm-only' is caught at compile time.
-  slug: 'pm_only' | 'enforcement_only' | 'legacy'
+  slug: 'pm_only' | 'enforcement_only' | 'legacy' | 'pm_starter' | 'custom_quote'
   // Optional because Legacy hides its price on marketing surfaces
   // (customPrice: true replaces the numeric with "Custom pricing").
   base?: number
-  perProp?: number
+  // null = flat fee, no per-property line rendered (PM Starter).
+  perProp?: number | null
   // PM-Only per-approved-permit graduated meter. Rendered as a small
   // table under the base + per-property lines when present.
   permitTiers?: PermitBand[]
+  // PM Starter shape (2026-08-31): N permits included, then $X per
+  // additional. Simpler than the graduated schedule; rendered as
+  // one line + reassurance note. NEVER both permitTiers AND
+  // permitAllowance on the same offering.
+  permitAllowance?: PermitAllowance
+  // One-line subtitle under the offering name — sets the audience
+  // in one sentence. Optional (older offerings didn't have it).
+  taglineOneLine?: string
+  // Marketing sub-copy shown in place of the ✓ features list on
+  // customPrice offerings (2026-08-31 pricing-page rewrite —
+  // "Every portfolio is different, so we quote those directly.").
+  // Optional; falls back to features[] rendering if unset.
+  customPitch?: string
   // When true, marketing surfaces hide numeric price and render
   // "Custom pricing" + a "Request a proposal" CTA. Locked on Legacy
   // (Jose 2026-07-02).
@@ -89,34 +111,45 @@ export type TierDisplay = {
   enterprise?: boolean
 }
 
-// ── The canonical 3 offerings ────────────────────────────────────────
+// ── The canonical 3 offerings (public catalog) ───────────────────────
+//
+// 🔴 2026-08-31 REWRITE per Mateo — public catalog collapsed to what's
+// actually sold publicly:
+//   1. PM Starter        ($149/mo flat, 1 property, 500 permits + $1.25)
+//   2. Enforcement-Only  ($199 + $15/property — unchanged shape)
+//   3. Custom quote      (everything else, contact-for-quote)
+//
+// Retired from public per Mateo (kept in tier-config.ts as internal
+// anchors for existing proposal codes — this file is DISPLAY only):
+//   - PM-Only ($179 + $20/property)  → replaced by Starter (Public);
+//                                       PM-Only stays negotiated-only
+//                                       via proposal codes
+//   - Legacy display                  → renamed to "Custom quote" for
+//                                       the marketing shelf; underlying
+//                                       negotiated-tier machinery stays
+//
+// 🔴 CTA note (2026-08-31): public_signup_open=false, so all three
+// cards route to the contact form (#contact), NOT to a signup flow.
+// Cards render without any "Get started" button — the CTA text +
+// href are chosen at render time in page.tsx (single source of truth
+// there so a signup-open flip is one edit per card, not one per
+// tier-display constant).
 
 export const OFFERINGS: TierDisplay[] = [
   {
-    name: 'PM-Only',
-    slug: 'pm_only',
-    base: 179,
-    perProp: 20,
-    // Graduated per-approved-permit meter. Rate declines as volume
-    // grows. Meter fires on approved resident vehicles; declined and
-    // pending vehicles are free.
-    permitTiers: [
-      { upTo: 50,   ratePerPermit: 2.00 },
-      { upTo: 200,  ratePerPermit: 1.75 },
-      { upTo: 500,  ratePerPermit: 1.50 },
-      { upTo: null, ratePerPermit: 1.25 },
-    ],
+    name: 'PM Starter',
+    slug: 'pm_starter',
+    base: 149,
+    perProp: null,               // flat fee, no per-property line
+    taglineOneLine: 'For a single property.',
+    permitAllowance: { includedUpTo: 500, overageRate: 1.25 },
     includesEnforcement: false,
     includesPM: true,
     features: [
-      'Resident portal',
-      'Resident self-registration',
-      'Self-serve visitor passes',
-      'Reserved space management',
-      'Detailed reporting & analytics',
-      'Unlimited visitor capacity (free)',
-      'Unlimited property manager accounts',
-      'Email support',
+      'One property',
+      '500 active permits included, then $1.25 each',
+      'Residents, permits, reserved spaces, visitor passes, house rules',
+      'Reserved-space fee tracking',
     ],
   },
   {
@@ -124,42 +157,31 @@ export const OFFERINGS: TierDisplay[] = [
     slug: 'enforcement_only',
     base: 199,
     perProp: 15,
+    taglineOneLine: 'For towing and enforcement operators.',
     includesEnforcement: true,
     includesPM: false,
     features: [
-      'Full enforcement (plate scan, video evidence, tow tickets)',
-      'Driver mobile app + scan workflow',
-      'QR-code visitor pass entry',
-      'Manager-added residents',
-      'Basic reporting',
-      'Unlimited driver accounts (no per-driver fee)',
-      'Unlimited property manager accounts',
-      'Email support',
+      'Unlimited properties',
+      'No permit charges',
+      'Violations, tow tickets, plate scanning, enforcement reporting',
+      'Texas Chapter 2308 compliance built in',
     ],
   },
   {
-    name: 'Legacy',
-    slug: 'legacy',
+    name: 'Custom quote',
+    slug: 'custom_quote',
     customPrice: true,
-    // B2-5 C1 (2026-07-21) — hidden from /signup self-serve picker.
-    // Legacy is negotiated per proposal code by Jose (custom prices at
-    // issue time, no standard catalog rows); self-serve checkout would
-    // 503 on catalog resolution. Landing page still shows it via
-    // OFFERINGS (marketing needs prospects to know it exists).
     hiddenFromSelfServe: true,
+    taglineOneLine: 'More than one property? Both sides of the business?',
+    customPitch: 'Every portfolio is different, so we quote those directly. Multi-property PM, combined PM + enforcement, non-standard deployments — talk to us.',
     includesEnforcement: true,
     includesPM: true,
     features: [
-      'Everything in PM-Only AND Enforcement-Only',
-      'Full PM functionality for serviced properties',
-      'Full enforcement (plate scan, video, tow tickets)',
-      'Resident self-registration + self-serve visitor passes',
-      'Reserved space management',
-      'Detailed reporting & analytics',
-      'Unlimited visitor capacity (free)',
-      'Unlimited property manager accounts',
-      'Priority email support',
-      'Dedicated escalation path',
+      // Kept minimal; the customPitch above is the messaging. Rendered
+      // as fallback for consumers that read features[].
+      'Multi-property PM',
+      'Combined PM + enforcement',
+      'Custom terms + priority support',
     ],
   },
 ]
@@ -191,12 +213,27 @@ export function tiersForTrack(track: TierTrack): TierDisplay[] {
 //
 // Per Jose's spec 2026-06-24. Shared as a const so a future docs page
 // or sales sheet can render the same data without duplication.
+//
+// 🔴 2026-08-31 rename in column semantics per Mateo pricing rewrite:
+//   pmOnly           column now describes  PM Starter capabilities
+//                    (Starter = one-property PM; feature set matches
+//                    what the old PM-Only offered, minus multi-property
+//                    which is behind Custom quote)
+//   enforcementOnly  unchanged
+//   legacy           column now describes  Custom quote capabilities
+//                    (Custom = both tracks combined, same feature
+//                    coverage as legacy)
+//
+// Column KEYS kept as `pmOnly`/`legacy` to avoid renaming every row +
+// re-verifying the mapping — the RENDER at page.tsx maps the keys to
+// the new display labels ("PM Starter" / "Custom quote"). Data
+// unchanged; only the header labels and this comment.
 
 export type ComparisonRow = {
   capability: string
-  pmOnly:           string  // — / ✓ / value
+  pmOnly:           string  // — / ✓ / value — rendered as "PM Starter" column
   enforcementOnly:  string
-  legacy:           string
+  legacy:           string  // rendered as "Custom quote" column
 }
 
 export const FEATURE_COMPARISON: ComparisonRow[] = [
