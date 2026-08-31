@@ -4,17 +4,18 @@
 -- Paired verification for 20260831_get_space_payments_report_rpc.
 -- v2 pattern + session guard (same discipline as Commit 3a verif).
 --
--- ── 10 GATES ─────────────────────────────────────────────────────────
+-- ── 11 GATES (v2 adds VE8) ───────────────────────────────────────────
 --   STRUCTURAL
 --     VS1  get_space_payments_report(text, date) exists
 --     VS2  🔴 SECURITY INVOKER (not DEFINER — the whole design choice
 --          for this function is that RLS applies inside)
 --     VS3  search_path pinned
 --     VS4  authenticated has EXECUTE; PUBLIC + anon do NOT
---     VS5  schema audit row present
+--     VS5  schema audit row present (v1 OR v2 — whichever was last applied)
 --   EXECUTION (one consolidated block, session-guarded)
 --     VE1  fee-bearing space with 0 payments in the period → status
---          = 'outstanding', recorded_total = 0
+--          = 'no_payment_recorded' (v2 rename per Mateo Aug 31 §3 —
+--          we don''t assert unpaid), recorded_total = 0
 --     VE2  fee-bearing space with a payment matching monthly_fee →
 --          status = 'paid', recorded_total = fee
 --     VE3  fee-bearing space with a partial payment → status =
@@ -27,6 +28,12 @@
 --          in the result (fee_filter works)
 --     VE7  Space at a DIFFERENT property does NOT appear (property
 --          scope works — INVOKER + RLS test in one)
+--     VE8  🟢 v2 — assigned_residents roster. Bundled B-1 space
+--          (2 ties per fixture) temporarily fee-flagged; report row
+--          must include BOTH residents in assigned_residents. Multi-
+--          tie NULL suppression does NOT apply to roster — record_
+--          space_payment nulls the payment snapshot; the report shows
+--          the truth.
 -- ══════════════════════════════════════════════════════════════════════
 
 -- ── VS1: signature exists ───────────────────────────────────────────
@@ -83,16 +90,23 @@ BEGIN
   END IF;
 END $$;
 
--- ── VS5: schema audit row ───────────────────────────────────────────
+-- ── VS5: schema audit row (v1 OR v2 present) ───────────────────────
+-- After the v2 amendment (20260831_get_space_payments_report_rpc_v2)
+-- lands, the v2 SCHEMA_ action is written. If Jose applied v1 first
+-- then v2, both audit rows exist. Either alone satisfies this gate.
 DO $$
 DECLARE v_count INT;
 BEGIN
   SELECT COUNT(*) INTO v_count
     FROM public.audit_logs
-   WHERE action = 'SCHEMA_GET_SPACE_PAYMENTS_REPORT_V1'
-     AND new_values->>'migration' = '20260831_get_space_payments_report_rpc';
+   WHERE action IN ('SCHEMA_GET_SPACE_PAYMENTS_REPORT_V1',
+                    'SCHEMA_GET_SPACE_PAYMENTS_REPORT_V2')
+     AND new_values->>'migration' IN (
+       '20260831_get_space_payments_report_rpc',
+       '20260831_get_space_payments_report_rpc_v2'
+     );
   IF v_count < 1 THEN
-    RAISE EXCEPTION 'VS5 FAIL: schema audit row missing';
+    RAISE EXCEPTION 'VS5 FAIL: no schema audit row for get_space_payments_report (V1 or V2)';
   END IF;
 END $$;
 
@@ -181,13 +195,17 @@ BEGIN
   PERFORM set_config('request.jwt.claims',
                      json_build_object('email', v_mgr_email)::text, true);
 
-  -- ── VE1: B — no payments in period → outstanding, total = 0 ──────
+  -- ── VE1: B — no payments in period → no_payment_recorded, total = 0 ─
+  -- Status v2 rename per Mateo Aug 31 §3 — never "outstanding"
+  -- (we don't assert unpaid; money likely went through rent system
+  -- we don't see).
   SELECT * INTO v_report_row
     FROM public.get_space_payments_report(v_test_property, v_period)
    WHERE space_id = v_space_b_id;
-  IF v_report_row.status <> 'outstanding' OR v_report_row.recorded_total <> 0 THEN
+  IF v_report_row.status <> 'no_payment_recorded' OR v_report_row.recorded_total <> 0 THEN
     EXECUTE 'RESET role';
-    RAISE EXCEPTION 'VE1 FAIL: B (no payments) status=% total=% (want outstanding, 0)', v_report_row.status, v_report_row.recorded_total;
+    RAISE EXCEPTION 'VE1 FAIL: B (no payments) status=% total=% (want no_payment_recorded, 0). If status is "outstanding" — the v2 amendment (20260831_get_space_payments_report_rpc_v2) has not been applied yet.',
+      v_report_row.status, v_report_row.recorded_total;
   END IF;
 
   -- ── VE2: C — full-fee payment → paid, total = 100 ───────────────
@@ -250,6 +268,60 @@ BEGIN
 
   EXECUTE 'RESET role';
 
+  -- ── VE8: 🟢 v2 — assigned_residents roster (multi-tie case) ─────
+  -- Bundled space B-1 at Test Legacy Property has 2 space_residents
+  -- ties per the Aug 31 fixture. Temporarily give it a monthly_fee so
+  -- it appears in the report; assert BOTH residents come back in
+  -- assigned_residents. Multi-tie NULL suppression from record_space_
+  -- payment does NOT apply to roster (Mateo Aug 31 §2).
+  --
+  -- Runs as service_role/postgres — the UPDATE on spaces + the
+  -- direct SELECT don't need impersonation; the RPC still runs as
+  -- INVOKER but the current role can see everything.
+  DECLARE
+    v_b1_id BIGINT;
+    v_report_b1 RECORD;
+    v_tie_count INT;
+  BEGIN
+    SELECT id INTO v_b1_id
+      FROM public.spaces
+     WHERE company = 'Test-LEGACY'
+       AND property = 'Test Legacy Property'
+       AND label = 'B-1';
+    IF v_b1_id IS NULL THEN
+      EXECUTE 'RESET role';
+      RAISE EXCEPTION 'VE8 FIXTURE FAIL: bundled space B-1 not found. Apply 20260831_test_legacy_fixture_expansion.sql first.';
+    END IF;
+    -- Snapshot current fee so we can restore.
+    UPDATE public.spaces SET monthly_fee = 42.00 WHERE id = v_b1_id;
+
+    -- Call the report scoped to Test Legacy Property (B-1's property).
+    -- Uses v_period from VE1-VE7 setup (3 months out).
+    SELECT * INTO v_report_b1
+      FROM public.get_space_payments_report('Test Legacy Property', v_period)
+     WHERE space_id = v_b1_id;
+
+    IF v_report_b1.space_id IS NULL THEN
+      UPDATE public.spaces SET monthly_fee = NULL WHERE id = v_b1_id;
+      EXECUTE 'RESET role';
+      RAISE EXCEPTION 'VE8 FAIL: B-1 row not in report despite monthly_fee=42. Check fee_filter or property parameter.';
+    END IF;
+    IF v_report_b1.assigned_residents IS NULL THEN
+      UPDATE public.spaces SET monthly_fee = NULL WHERE id = v_b1_id;
+      EXECUTE 'RESET role';
+      RAISE EXCEPTION 'VE8 FAIL: assigned_residents is NULL (want JSONB array []). COALESCE(..., ''[]''::jsonb) is broken.';
+    END IF;
+    v_tie_count := jsonb_array_length(v_report_b1.assigned_residents);
+    IF v_tie_count <> 2 THEN
+      UPDATE public.spaces SET monthly_fee = NULL WHERE id = v_b1_id;
+      EXECUTE 'RESET role';
+      RAISE EXCEPTION 'VE8 FAIL: assigned_residents length=% (want 2). B-1 has 2 space_residents ties per fixture. Multi-tie suppression should NOT apply to roster — record_space_payment nulls the payment snapshot, the report shows the truth.',
+        v_tie_count;
+    END IF;
+    -- Restore B-1 to feeless (Aug 31 fixture default)
+    UPDATE public.spaces SET monthly_fee = NULL WHERE id = v_b1_id;
+  END;
+
   -- CLEANUP: delete probe payments + probe spaces
   DELETE FROM public.space_payments
    WHERE id IN (v_payment_id_1, v_payment_id_2, v_payment_id_4a, v_payment_id_4b);
@@ -271,13 +343,14 @@ SELECT
     'VS2  SECURITY INVOKER (not DEFINER)',
     'VS3  search_path pinned',
     'VS4  authenticated EXECUTE; PUBLIC + anon deny',
-    'VS5  schema audit row present',
-    'VE1  fee-bearing + no payments → outstanding, 0',
+    'VS5  schema audit row present (v1 or v2)',
+    'VE1  fee-bearing + no payments → no_payment_recorded, 0 (v2 rename)',
     'VE2  full-fee payment → paid',
     'VE3  partial payment → partial',
     'VE4  voided payment EXCLUDED from recorded_total',
     'VE5  no ties → is_vacant TRUE',
     'VE6  non-fee-bearing space excluded (fee filter)',
-    'VE7  RPC at different property does not return this scope''s rows (INVOKER+RLS proof)'
+    'VE7  RPC at different property does not return this scope''s rows (INVOKER+RLS proof)',
+    'VE8  assigned_residents JSONB roster — 2 ties returned (v2, no multi-tie NULL suppression)'
   ] AS gates_verified,
   now() AS verified_at;
