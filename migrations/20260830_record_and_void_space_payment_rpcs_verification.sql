@@ -471,7 +471,7 @@ SELECT
     'VE1  EXECUTION manager records + snapshots + recorded_by_email = JWT',
     'VE2  EXECUTION mid-month input normalizes to first-of-month',
     'VE3  EXECUTION amount=0 rejected with amount_not_positive',
-    'VE4  EXECUTION cross-property manager rejected with space_not_in_your_properties (or SKIPPED with NOTICE)',
+    'VE4  EXECUTION cross-property manager rejected with space_not_in_your_properties (RAISES FIXTURE FAIL if no cross-property space seeded — no skip path)',
     'VE5  EXECUTION double-submit within 60s rejected with duplicate_payment_suspected',
     'VE6  EXECUTION void sets triple, amount + period untouched',
     'VE7  EXECUTION second void rejected with already_voided',
