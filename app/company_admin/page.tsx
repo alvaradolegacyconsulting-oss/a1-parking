@@ -110,6 +110,7 @@ import {
 } from '../lib/spaces'
 import SearchableResidentPicker, { type SearchableResidentPickerResult } from '../components/SearchableResidentPicker'
 import SpaceDetailModal from '../components/SpaceDetailModal'
+import SpacePaymentsReport from '../components/SpacePaymentsReport'
 import HouseRulesRenderer from '../components/HouseRulesRenderer'
 import { uploadVideoResumable } from '../lib/video-upload'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
@@ -5514,6 +5515,20 @@ export default function CompanyAdminPortal() {
                     })}
                   </div>
                 </div>
+
+                {/* 🟢 2026-08-31 Commit 4b — SpacePaymentsReport (CA mount).
+                    Mirrors manager mount. onOpenSpace uses caSpacesList
+                    (same pattern as manager's spacesList lookup) to find
+                    the full Space object and open the CA SpaceDetailModal. */}
+                {caSelectedSpacesProperty && (
+                  <SpacePaymentsReport
+                    property={caSelectedSpacesProperty}
+                    onOpenSpace={(spaceId) => {
+                      const s = caSpacesList.find(row => row.id === spaceId)
+                      if (s) setCaTargetSpaceDetail(s)
+                    }}
+                  />
+                )}
 
                 {/* Visitor metric */}
                 <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'14px' }}>

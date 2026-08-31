@@ -154,6 +154,61 @@ export async function fetchSpacePayments(
   return (data ?? []) as Payment[]
 }
 
+// ── Report row (Commit 4b, 2026-08-31) ──────────────────────────────
+// Matches the RETURNS TABLE of public.get_space_payments_report v2:
+// one row per fee-bearing space at a property, for a period.
+export interface AssignedResident {
+  email: string | null
+  name:  string | null
+  unit:  string | null
+}
+export interface SpacePaymentsReportRow {
+  space_id:              number
+  space_label:           string
+  space_type:            string | null
+  monthly_fee:           number
+  recorded_total:        number
+  status:                'paid' | 'partial' | 'overpaid' | 'no_payment_recorded'
+  is_vacant:             boolean
+  is_decommissioned:     boolean
+  assigned_residents:    AssignedResident[]   // [], never null (COALESCE in RPC)
+  latest_resident_email: string | null
+  latest_resident_name:  string | null
+  latest_resident_unit:  string | null
+}
+
+export async function fetchSpacePaymentsReport(
+  supabase: SupabaseClient,
+  property: string,
+  periodMonth: string,   // YYYY-MM or YYYY-MM-DD; server normalizes to first-of-month
+): Promise<SpacePaymentsReportRow[]> {
+  // Normalize YYYY-MM to YYYY-MM-01 for the DATE param.
+  const periodDate = /^\d{4}-\d{2}$/.test(periodMonth) ? `${periodMonth}-01` : periodMonth
+  const { data, error } = await supabase.rpc('get_space_payments_report', {
+    p_property:     property,
+    p_period_month: periodDate,
+  })
+  if (error) throw new Error(error.message)
+  return (data ?? []) as SpacePaymentsReportRow[]
+}
+
+// Status code → display string. Codes from the v2 RPC; UI never
+// renders the raw code (users don't need to see snake_case).
+// 🔴 "outstanding" was renamed to "no_payment_recorded" in v2 —
+// we don't assert unpaid (money may have gone through the rent
+// system we don't see; Mateo Aug 31 §3).
+export function paymentStatusDisplay(
+  status: SpacePaymentsReportRow['status'],
+): string {
+  switch (status) {
+    case 'paid':                return 'Paid'
+    case 'partial':             return 'Partial'
+    case 'overpaid':            return 'Overpaid'
+    case 'no_payment_recorded': return 'No payment recorded'
+    default:                    return status
+  }
+}
+
 // ── Named-error → user copy mapping (Commit 3b) ─────────────────────
 // The record + void RPCs raise a fixed set of named errors. Map each
 // to a readable sentence for surface display — never surface raw

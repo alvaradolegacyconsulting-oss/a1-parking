@@ -80,6 +80,7 @@ import AddVehicleForResidentModal, { type AddVehiclePayload, type AddVehicleSubm
 import PropertyWarningsPanel from '../components/PropertyWarningsPanel'
 import { computePropertyWarnings } from '../lib/property-warnings'
 import SpaceDetailModal from '../components/SpaceDetailModal'
+import SpacePaymentsReport from '../components/SpacePaymentsReport'
 import HouseRulesRenderer from '../components/HouseRulesRenderer'
 import CredentialsModal from '../components/CredentialsModal'
 // PM Resident CRM (slice 1) — replaces the Residents tab with a unified
@@ -4111,6 +4112,22 @@ export default function ManagerPortal() {
                 })}
               </div>
             </div>
+
+            {/* 🟢 2026-08-31 Commit 4b — SpacePaymentsReport sub-panel.
+                Roster-first month view (property fees + assigned residents +
+                recorded totals + status). Read-only + CSV export. Per-row
+                View opens SpaceDetailModal for that space, reusing the
+                payments section already there — no duplicate record form.
+                See app/components/SpacePaymentsReport.tsx for design locks. */}
+            {manager?.name && (
+              <SpacePaymentsReport
+                property={manager.name}
+                onOpenSpace={(spaceId) => {
+                  const s = spacesList.find(row => row.id === spaceId)
+                  if (s) setTargetSpaceDetail(s)
+                }}
+              />
+            )}
 
             {/* ② VISITOR — one number, never rows (per locked design) */}
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 14px', marginBottom:'14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
