@@ -19,26 +19,38 @@
 --   8. Failure messages state observations, list candidate causes,
 --      never assert a cause the gate did not test
 --
--- ── 12 GATES ────────────────────────────────────────────────────────
+-- ── 14 GATES + SESSION GUARD ────────────────────────────────────────
 --   STRUCTURAL
 --     VS1  record_space_payment(BIGINT, DATE, NUMERIC, TEXT, TEXT) exists
 --     VS2  void_space_payment(BIGINT, TEXT) exists
 --     VS3  both are SECURITY DEFINER with search_path pinned
 --     VS4  grants: authenticated has EXECUTE on both; PUBLIC/anon do NOT
 --     VS5  schema audit row present
---   EXECUTION (in one consolidated block)
+--   EXECUTION (in one consolidated block, session-guarded)
 --     VE1  manager records: row lands with all snapshots correct +
 --          recorded_by_email = JWT email (unforgeable-attribution proof)
 --     VE2  period_month non-first-of-month INPUT normalizes to first-of-month
 --     VE3  amount = 0 rejected with amount_not_positive
 --     VE4  cross-property manager rejected with space_not_in_your_properties
+--          (FIXTURE FAILs if no cross-property space seeded — 20260831
+--          fixture expansion supplies "Test VE4 Cross-Prop")
 --     VE5  double-submit within 60s rejected with duplicate_payment_suspected
 --     VE6  void sets voided_at + voided_by_email + void_reason; other
 --          columns untouched
 --     VE7  second void rejected with already_voided
 --     VE8  void with blank reason rejected with void_reason_required
---     (NOT tested here — filed as manual/follow-up:
---      • 2+ tied resident case for NULL snapshots — needs specific seed)
+--     VE9  2+ tied residents on a bundled space → resident_email/name/unit
+--          all NULL (no arbitrary precedence). Unblocked by 20260831
+--          fixture expansion (bundled space "B-1" with 2 space_residents ties)
+--
+--   🔴 SESSION GUARD (Aug 31 fix):
+--     Terminal SELECT only emits PASS if the consolidated DO block
+--     set app.commit3a_verif_status='PASSED' at its last line. Any
+--     RAISE aborts the block before that line runs, guard stays
+--     'FAILED', and terminal reports FAIL. Closes the bug where
+--     autocommit made the terminal PASS row emit regardless of
+--     mid-block raises (Jose's 2026-08-31 VE4 pass — the raise fired
+--     but PASS still emitted).
 -- ══════════════════════════════════════════════════════════════════════
 
 -- ── VS1: record_space_payment signature ─────────────────────────────
@@ -152,28 +164,49 @@ END $$;
 
 DO $$
 DECLARE
-  v_mgr_email       TEXT;
-  v_mgr_properties  TEXT[];
-  v_space_id        BIGINT;
-  v_space_property  TEXT;
-  v_space_company   TEXT;
-  v_other_space_id  BIGINT;
-  v_other_property  TEXT;
-  v_period_input    DATE;  -- non-first-of-month input for VE2
-  v_period_expected DATE;  -- expected normalized value
-  v_payment_id      BIGINT;
-  v_payment_id_2    BIGINT;
-  v_amount_stored   NUMERIC(10,2);
-  v_recorded_by     TEXT;
-  v_snap_property   TEXT;
-  v_snap_label      TEXT;
-  v_voided_at       TIMESTAMPTZ;
-  v_voided_by       TEXT;
-  v_void_reason     TEXT;
-  v_amount_after    NUMERIC(10,2);
-  v_period_after    DATE;
-  v_expected_raise  BOOLEAN;
+  v_mgr_email        TEXT;
+  v_mgr_properties   TEXT[];
+  v_space_id         BIGINT;
+  v_space_property   TEXT;
+  v_space_company    TEXT;
+  v_other_space_id   BIGINT;
+  v_other_property   TEXT;
+  v_bundled_space_id BIGINT;
+  v_period_input     DATE;  -- non-first-of-month input for VE2
+  v_period_expected  DATE;  -- expected normalized value
+  v_payment_id       BIGINT;
+  v_payment_id_2     BIGINT;
+  v_payment_id_ve9   BIGINT;
+  v_amount_stored    NUMERIC(10,2);
+  v_recorded_by      TEXT;
+  v_snap_property    TEXT;
+  v_snap_label       TEXT;
+  v_voided_at        TIMESTAMPTZ;
+  v_voided_by        TEXT;
+  v_void_reason      TEXT;
+  v_amount_after     NUMERIC(10,2);
+  v_period_after     DATE;
+  v_expected_raise   BOOLEAN;
+  v_res_email_ve9    TEXT;
+  v_res_name_ve9     TEXT;
+  v_res_unit_ve9     TEXT;
 BEGIN
+  -- 🔴 SESSION GUARD (Mateo Aug 31 §1 fix): set 'FAILED' at start,
+  -- 'PASSED' only at the very end (last statement before END $$).
+  -- LOCAL=false so it survives transaction rollback on any RAISE.
+  -- Terminal SELECT at end of file reads this guard — if PASSED
+  -- is never reached (any gate raised), terminal reports FAIL
+  -- instead of emitting a misleading PASS row.
+  --
+  -- The bug this closes: under Supabase SQL Editor autocommit, a
+  -- RAISE inside this DO block rolls back the block's transaction
+  -- but the editor CONTINUES to the next statement. The terminal
+  -- SELECT at end of file runs unconditionally and emits PASS
+  -- regardless of which gates raised. Jose's 2026-08-31 VE4 pass
+  -- was that class — the FIXTURE FAIL raise fired but the PASS
+  -- row still emitted from the terminal SELECT.
+  PERFORM set_config('app.commit3a_verif_status', 'FAILED', false);
+
   -- ── STEP 1: LINKED SETUP — one JOIN ─────────────────────────────
   -- user_roles.property is text[]. get_my_properties() reads it directly.
   -- Space.property is text. Match via lower(trim()) = ANY(unnest()).
@@ -450,17 +483,84 @@ BEGIN
   END IF;
   RAISE NOTICE 'VE8 PASS: void with blank reason rejected with void_reason_required';
 
+  -- ── VE9: 2+ tied residents → resident_email/name/unit all NULL ───
+  -- Unblocked by the 20260831 fixture expansion (bundled space "B-1" at
+  -- Test Legacy Property with 2 active space_residents ties). Records
+  -- a payment against that space and asserts all three resident snapshot
+  -- columns landed as NULL — the "no arbitrary precedence" rule.
+  --
+  -- Manager was linked to Test Legacy Property in SETUP, so the RPC's
+  -- property-scope check admits. Uses period offset by 2 months from
+  -- CURRENT_DATE so it doesn't collide with VE1/VE2/VE5's periods for
+  -- the double-submit guard.
+  SELECT id INTO v_bundled_space_id
+    FROM public.spaces
+   WHERE company = 'Test-LEGACY'
+     AND property = 'Test Legacy Property'
+     AND label = 'B-1'
+     AND is_active
+   LIMIT 1;
+  IF v_bundled_space_id IS NULL THEN
+    EXECUTE 'RESET role';
+    RAISE EXCEPTION 'VE9 FIXTURE FAIL: bundled space "B-1" at Test Legacy Property not found. Apply 20260831_test_legacy_fixture_expansion.sql first.';
+  END IF;
+
+  PERFORM set_config('role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claims',
+                     json_build_object('email', v_mgr_email)::text, true);
+
+  BEGIN
+    v_payment_id_ve9 := public.record_space_payment(
+      p_space_id     => v_bundled_space_id,
+      p_period_month => (date_trunc('month', CURRENT_DATE) + interval '2 months')::date,
+      p_amount       => 77.77,
+      p_method       => 've9-probe',
+      p_note         => 'VE9 probe (2+ tie NULL snapshots)'
+    );
+  EXCEPTION WHEN others THEN
+    EXECUTE 'RESET role';
+    RAISE EXCEPTION 'VE9 FAIL: record on bundled space raised %: %. Bundled space id=% at "Test Legacy Property".',
+      SQLSTATE, SQLERRM, v_bundled_space_id;
+  END;
+  SELECT resident_email, resident_name, unit
+    INTO v_res_email_ve9, v_res_name_ve9, v_res_unit_ve9
+    FROM public.space_payments WHERE id = v_payment_id_ve9;
+  IF v_res_email_ve9 IS NOT NULL OR v_res_name_ve9 IS NOT NULL OR v_res_unit_ve9 IS NOT NULL THEN
+    EXECUTE 'RESET role';
+    RAISE EXCEPTION 'VE9 FAIL: bundled space (2 ties) produced non-NULL resident snapshot(s). email=% name=% unit=%. Expected all three NULL (no arbitrary precedence). This is a wrong-attribution defect on a permanent financial record.',
+      v_res_email_ve9, v_res_name_ve9, v_res_unit_ve9;
+  END IF;
+  RAISE NOTICE 'VE9 PASS: 2-tied bundled space produced NULL resident snapshots (payment id=%)', v_payment_id_ve9;
+
   -- ── RESET role back to superuser for cleanup ────────────────────
   EXECUTE 'RESET role';
 
-  -- ── CLEANUP: delete both probe payments ─────────────────────────
-  DELETE FROM public.space_payments WHERE id IN (v_payment_id, v_payment_id_2);
-  RAISE NOTICE 'CLEANUP: deleted probe payments id=% id=%', v_payment_id, v_payment_id_2;
+  -- ── CLEANUP: delete probe payments ──────────────────────────────
+  DELETE FROM public.space_payments
+   WHERE id IN (v_payment_id, v_payment_id_2, v_payment_id_ve9);
+  RAISE NOTICE 'CLEANUP: deleted probe payments id=% id=% id=%',
+    v_payment_id, v_payment_id_2, v_payment_id_ve9;
+
+  -- ── 🔴 SESSION GUARD: mark PASSED (last step before block exits) ─
+  -- Only reached if every gate above succeeded. Terminal SELECT
+  -- checks this and emits PASS iff PASSED. If any earlier gate
+  -- raised, this line never runs, the guard stays 'FAILED', and
+  -- the terminal SELECT reports FAIL rather than a misleading PASS.
+  PERFORM set_config('app.commit3a_verif_status', 'PASSED', false);
 END $$;
 
--- ── FINAL: one PASS row ─────────────────────────────────────────────
+-- ── FINAL: SESSION-GUARDED PASS row ─────────────────────────────────
+-- 🔴 Mateo Aug 31 §1 fix: gate on the session GUC set at the end of
+-- the consolidated execution block. If any DO block above raised
+-- (including VE4 FIXTURE FAIL), the guard stays 'FAILED' and this
+-- SELECT emits a distinct FAIL row rather than a misleading PASS.
+-- LOCAL=false in set_config makes the value survive transaction
+-- rollback, so this cross-statement check works under autocommit.
 SELECT
-  'PASS'::TEXT AS status,
+  CASE current_setting('app.commit3a_verif_status', true)
+    WHEN 'PASSED' THEN 'PASS'
+    ELSE           'FAIL — execution block did not complete; see error pane above for the specific gate that raised'
+  END AS status,
   'record_space_payment + void_space_payment'::TEXT AS target,
   ARRAY[
     'VS1  record_space_payment signature exists',
@@ -471,13 +571,14 @@ SELECT
     'VE1  EXECUTION manager records + snapshots + recorded_by_email = JWT',
     'VE2  EXECUTION mid-month input normalizes to first-of-month',
     'VE3  EXECUTION amount=0 rejected with amount_not_positive',
-    'VE4  EXECUTION cross-property manager rejected with space_not_in_your_properties (RAISES FIXTURE FAIL if no cross-property space seeded — no skip path)',
+    'VE4  EXECUTION cross-property manager rejected with space_not_in_your_properties (FIXTURE FAILs if no cross-property space seeded)',
     'VE5  EXECUTION double-submit within 60s rejected with duplicate_payment_suspected',
     'VE6  EXECUTION void sets triple, amount + period untouched',
     'VE7  EXECUTION second void rejected with already_voided',
-    'VE8  EXECUTION void with blank reason rejected with void_reason_required'
+    'VE8  EXECUTION void with blank reason rejected with void_reason_required',
+    'VE9  EXECUTION 2+ tied residents → NULL resident_email/name/unit snapshots (unblocked by 20260831 fixture)'
   ] AS gates_verified,
-  'NOT tested here (manual/follow-up): 2+ tied resident case for NULL snapshots — needs specific seed'::TEXT AS deferred,
+  'Session guard: only "PASS" if the consolidated DO block set app.commit3a_verif_status=PASSED at its end. Any raise leaves it FAILED and this row reports FAIL.'::TEXT AS guard_note,
   now() AS verified_at;
 
 -- ══════════════════════════════════════════════════════════════════════
