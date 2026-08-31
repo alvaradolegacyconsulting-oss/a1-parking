@@ -303,8 +303,17 @@ BEGIN
   RAISE NOTICE 'VE3 PASS: amount=0 rejected with amount_not_positive';
 
   -- ── VE4: cross-property manager rejected ────────────────────────
+  -- 🔴 2026-08-30 Mateo §1 correction: this gate must NOT skip
+  -- itself with a NOTICE. VE4 is the gate covering the property-
+  -- scope enforcement we deliberately chose NOT to inherit from
+  -- update_space_metadata's company-only gap — the most security-
+  -- relevant gate in this verification. A gate that passes by not
+  -- running is the VQ2-false-pass shape again. Absence of a fixture
+  -- is a finding, not a pass.
   IF v_other_space_id IS NULL THEN
-    RAISE NOTICE 'VE4 SKIPPED: no active Test-LEGACY space at a property outside manager (%) scope. Manual test recommended: seed a space at a different property.', v_mgr_email;
+    EXECUTE 'RESET role';
+    RAISE EXCEPTION 'VE4 FIXTURE FAIL: could not find an active Test-LEGACY space at a property OUTSIDE manager %''s assignment (%). Cross-property rejection was NOT tested — the property-scope enforcement gate did not execute. Test-LEGACY has multiple properties; verify one exists outside this manager''s scope, or seed a space at a different property. If Test-LEGACY genuinely has only one property in scope for this manager, THIS ENVIRONMENT CANNOT VERIFY THE CROSS-PROPERTY REJECTION and that must be reported explicitly.',
+      v_mgr_email, v_mgr_properties;
   ELSE
     v_expected_raise := FALSE;
     BEGIN
