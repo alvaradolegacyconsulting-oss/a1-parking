@@ -4514,6 +4514,15 @@ export default function ManagerPortal() {
                 // Commit 4 (separate mount site in company_admin).
                 showDesignation={true}
                 canEditDesignation={!isReadOnly}
+                // 🟢 2026-08-30 Reserved-space payments Commit 3b —
+                // capability-per-action props (Mateo Aug 30 §3).
+                // Manager can record + void. Leasing agent (isReadOnly=true)
+                // can record but NOT void — void is a correction, narrower
+                // than a front-desk act. Server (RPC bodies in Commit 3a)
+                // enforces regardless; UI hides what the RPC would refuse.
+                showPayments={true}
+                canRecordPayment={true}
+                canVoidPayment={!isReadOnly}
               />
             )}
 

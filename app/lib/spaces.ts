@@ -114,6 +114,96 @@ export interface Space {
 export const PAGE_SIZE_MOBILE  = 25
 export const PAGE_SIZE_DESKTOP = 50
 
+// ── Reserved-space payments (Commit 3b, 2026-08-30) ─────────────────
+// Ledger rows for space_payments. Snapshots captured at INSERT time by
+// the record_space_payment RPC — do NOT resolve resident_email/name/unit
+// by lookup at read time (that's the vehicles.company value-join drift
+// class the whole snapshot design refuses). Every column here is a
+// historical fact about what was true when the payment was recorded.
+export interface Payment {
+  id:                number
+  space_id:          number
+  company:           string      // snapshot
+  property:          string      // snapshot
+  space_label:       string      // snapshot
+  period_month:      string      // ISO date, first-of-month
+  amount:            number
+  method:            string | null
+  resident_email:    string | null  // snapshot — NULL for 0/multi-tie
+  resident_name:     string | null  // snapshot
+  unit:              string | null  // snapshot
+  note:              string | null
+  recorded_by_email: string
+  recorded_at:       string      // ISO timestamp
+  voided_at:         string | null
+  voided_by_email:   string | null
+  void_reason:       string | null
+}
+
+export async function fetchSpacePayments(
+  supabase: SupabaseClient,
+  spaceId: number,
+): Promise<Payment[]> {
+  const { data, error } = await supabase
+    .from('space_payments')
+    .select('*')
+    .eq('space_id', spaceId)
+    .order('period_month', { ascending: false })
+    .order('recorded_at', { ascending: false })
+  if (error) throw new Error(error.message)
+  return (data ?? []) as Payment[]
+}
+
+// ── Named-error → user copy mapping (Commit 3b) ─────────────────────
+// The record + void RPCs raise a fixed set of named errors. Map each
+// to a readable sentence for surface display — never surface raw
+// Postgres text to an operator (per Mateo Aug 30 §3.4, and the class
+// rule that "duplicate_payment_suspected" and its siblings ARE the
+// operator-actionable info). Falls back to the raw message if the
+// error doesn't match a known code, so nothing gets swallowed.
+export function paymentErrorText(rawError: string | null | undefined): string {
+  if (!rawError) return 'An unknown error occurred.'
+  if (rawError.includes('amount_not_positive')) {
+    return 'Amount must be greater than zero.'
+  }
+  if (rawError.includes('duplicate_payment_suspected')) {
+    return 'A payment for this space, period and amount was recorded moments ago. If this is a second payment, wait a moment and try again.'
+  }
+  if (rawError.includes('space_not_in_your_properties')) {
+    return 'This space is at a property you are not assigned to.'
+  }
+  if (rawError.includes('space_not_in_company')) {
+    return 'This space does not belong to your company.'
+  }
+  if (rawError.includes('already_voided')) {
+    return 'This payment has already been voided.'
+  }
+  if (rawError.includes('void_reason_required')) {
+    return 'A void reason is required.'
+  }
+  if (rawError.includes('space_not_found')) {
+    return 'This space no longer exists.'
+  }
+  if (rawError.includes('payment_not_found')) {
+    return 'This payment no longer exists.'
+  }
+  if (rawError.includes('role_not_allowed')) {
+    return 'Your role cannot perform this action.'
+  }
+  if (rawError.includes('period_required')) {
+    return 'A period is required.'
+  }
+  if (rawError.includes('no_property_assignments')) {
+    return 'Your account has no property assignments.'
+  }
+  if (rawError.includes('unauthenticated')) {
+    return 'Session expired. Please sign in again.'
+  }
+  // Unknown — return the raw so nothing gets swallowed. Not ideal, but
+  // silent unknown-error handling would hide new failure modes.
+  return rawError
+}
+
 // ── Dashboard read (aggregate, ~6-24 rows max) ──────────────────────
 
 export interface OccupancyDashboard {

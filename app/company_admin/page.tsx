@@ -5825,6 +5825,12 @@ export default function CompanyAdminPortal() {
                     // RPC's role gate accepts both manager + company_admin.
                     showDesignation={true}
                     canEditDesignation={true}
+                    // 🟢 2026-08-30 Reserved-space payments Commit 3b —
+                    // CA has full access (record + void). Server (Commit
+                    // 3a RPC role gates) allows CA on both.
+                    showPayments={true}
+                    canRecordPayment={true}
+                    canVoidPayment={true}
                   />
                 )}
 

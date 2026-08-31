@@ -34,9 +34,12 @@ import {
   type Space,
   type ResidentOption,
   type VehicleSummary,
+  type Payment,
   fetchSpaceResidents,
   fetchSpaceVehicles,
+  fetchSpacePayments,
   setSpaceDesignatedVehicle,
+  paymentErrorText,
   TYPE_LABELS,
 } from '../lib/spaces'
 import SearchableResidentPicker, { type SearchableResidentPickerResult } from './SearchableResidentPicker'
@@ -59,6 +62,25 @@ interface Props {
   // Address for the "Don't see the vehicle? Register it first" affordance.
   // Optional — the affordance falls back to a plain text hint if omitted.
   onOpenAddVehicle?: (residentEmail: string) => void
+
+  // 🟢 2026-08-30 Reserved-space payments Commit 3b —
+  // capability-per-action props (not role) per Mateo Aug 30 §3.
+  // Rationale: the modal must not encode the role-to-capability
+  // mapping — that mapping lives in the RPC bodies (Commit 3a). Two
+  // copies in different languages is the same drift shape as the
+  // companies_tier_valid CHECK and get_company_property_limit CASE.
+  // Mount sites know the role; computing these booleans there is
+  // one line each. Both default false so callers that haven't wired
+  // the section keep old behavior.
+  //
+  //   showPayments:      render the payments section at all
+  //   canRecordPayment:  show the Record Payment button + form
+  //   canVoidPayment:    show per-row Void button (else no void UI —
+  //                      rendering a control that would 403 is worse
+  //                      than hiding it)
+  showPayments?: boolean
+  canRecordPayment?: boolean
+  canVoidPayment?: boolean
 }
 
 export default function SpaceDetailModal({
@@ -66,6 +88,9 @@ export default function SpaceDetailModal({
   showDesignation = false,
   canEditDesignation = false,
   onOpenAddVehicle,
+  showPayments = false,
+  canRecordPayment = false,
+  canVoidPayment = false,
 }: Props) {
   const [residents,      setResidents]      = useState<ResidentOption[]>(space.residents ?? [])
   const [vehiclesByEmail, setVehiclesByEmail] = useState<Map<string, VehicleSummary[]>>(new Map())
@@ -134,6 +159,35 @@ export default function SpaceDetailModal({
   // — is fixed independently in manager/page.tsx onMutate. This
   // invariant is the defense against the CLASS.
   const [designatedInfoForId, setDesignatedInfoForId] = useState<number | null>(null)
+
+  // 🟢 2026-08-30 Reserved-space payments Commit 3b — state block.
+  //
+  // paymentsStatus tracks THREE DISTINCT states (per Mateo Aug 30 §3.3):
+  //   'idle'    — showPayments=false or fetch never started
+  //   'loading' — fetch in flight; render "Loading payments…"
+  //   'error'   — fetch failed; render error + retry (never render as "no rows")
+  //   'loaded'  — fetch settled successfully; payments[] reflects state
+  //
+  // The class rule this closes: "where a value can be absent legitimately,
+  // absence must not also be the failure output." A failed fetch rendering
+  // as "no payments recorded" would tell a manager their records are gone.
+  const [payments, setPayments] = useState<Payment[]>([])
+  const [paymentsStatus, setPaymentsStatus] =
+    useState<'idle' | 'loading' | 'error' | 'loaded'>('idle')
+  const [paymentsError, setPaymentsError] = useState<string>('')
+  // Record form state
+  const [showRecordForm, setShowRecordForm] = useState(false)
+  const [recAmount, setRecAmount] = useState<string>('')
+  const [recPeriod, setRecPeriod] = useState<string>('')  // YYYY-MM
+  const [recMethod, setRecMethod] = useState<string>('')
+  const [recNote, setRecNote] = useState<string>('')
+  const [recBusy, setRecBusy] = useState(false)
+  const [recError, setRecError] = useState<string>('')
+  // Void state
+  const [voidingPayment, setVoidingPayment] = useState<Payment | null>(null)
+  const [voidReasonText, setVoidReasonText] = useState<string>('')
+  const [voidBusy, setVoidBusy] = useState(false)
+  const [voidError, setVoidError] = useState<string>('')
 
   // Fetch fresh residents + vehicles whenever the modal opens or the
   // residents set changes (post-mutation reload). Doing it inside the
@@ -241,6 +295,126 @@ export default function SpaceDetailModal({
     setDesignatedId(space.designated_vehicle_id ?? null)
     setPendingDesignationId(space.designated_vehicle_id ?? null)
   }, [space.id, space.designated_vehicle_id])
+
+  // 🟢 2026-08-30 Commit 3b — payments fetch. Runs whenever the modal
+  // opens OR the space id changes. Independent of residents/vehicles
+  // reload so a payments-fetch failure doesn't hide residents.
+  //
+  // Sets paymentsStatus to 'loading' → 'loaded' | 'error' explicitly.
+  // On error, paymentsError holds the raw message; render maps to
+  // paymentErrorText or falls back to raw. NEVER conflate "0 rows" with
+  // "load failed."
+  useEffect(() => {
+    if (!showPayments) { setPaymentsStatus('idle'); return }
+    let cancelled = false
+    async function loadPayments() {
+      setPaymentsStatus('loading'); setPaymentsError('')
+      try {
+        const rows = await fetchSpacePayments(supabase, space.id)
+        if (cancelled) return
+        setPayments(rows)
+        setPaymentsStatus('loaded')
+      } catch (e) {
+        if (cancelled) return
+        setPaymentsError((e as Error).message ?? 'Unknown error loading payments.')
+        setPaymentsStatus('error')
+      }
+    }
+    loadPayments()
+    return () => { cancelled = true }
+  }, [space.id, showPayments])
+
+  // Open the record form with defaults: amount prefilled from
+  // space.monthly_fee (the common case is recording exactly the fee),
+  // period defaulted to current month. Cancel just clears error + hides.
+  function openRecordForm() {
+    setRecAmount(space.monthly_fee != null ? String(space.monthly_fee) : '')
+    const now = new Date()
+    const yyyy = now.getFullYear()
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    setRecPeriod(`${yyyy}-${mm}`)
+    setRecMethod('')
+    setRecNote('')
+    setRecError('')
+    setShowRecordForm(true)
+  }
+  function closeRecordForm() {
+    setShowRecordForm(false)
+    setRecError('')
+  }
+
+  // Handler: record a payment. Amount + period required; RPC does the
+  // scope checks + normalization. Error strings passed through
+  // paymentErrorText for display. Submit button disabled while in-flight
+  // (first line against double-submit; RPC's 60s guard is the backstop).
+  async function handleRecordPayment() {
+    setRecError('')
+    const amt = parseFloat(recAmount)
+    if (!Number.isFinite(amt) || amt <= 0) {
+      setRecError('Amount must be a number greater than zero.')
+      return
+    }
+    if (!recPeriod || !/^\d{4}-\d{2}$/.test(recPeriod)) {
+      setRecError('Period is required (YYYY-MM).')
+      return
+    }
+    setRecBusy(true)
+    try {
+      // Convert YYYY-MM → YYYY-MM-01 for DATE param.
+      const periodDate = `${recPeriod}-01`
+      const { error } = await supabase.rpc('record_space_payment', {
+        p_space_id:     space.id,
+        p_period_month: periodDate,
+        p_amount:       amt,
+        p_method:       recMethod || null,
+        p_note:         recNote || null,
+      })
+      if (error) {
+        setRecError(paymentErrorText(error.message))
+        return
+      }
+      // Success — reload payments list, close form, tell parent.
+      const rows = await fetchSpacePayments(supabase, space.id)
+      setPayments(rows)
+      closeRecordForm()
+      await onMutate()
+    } catch (e) {
+      setRecError(paymentErrorText((e as Error).message))
+    } finally {
+      setRecBusy(false)
+    }
+  }
+
+  // Handler: void a payment. Reason required + non-blank. RPC does
+  // already-voided + scope checks. On success, refetch + close void modal.
+  async function handleVoidPayment() {
+    if (!voidingPayment) return
+    setVoidError('')
+    const reason = voidReasonText.trim()
+    if (reason.length === 0) {
+      setVoidError('A void reason is required.')
+      return
+    }
+    setVoidBusy(true)
+    try {
+      const { error } = await supabase.rpc('void_space_payment', {
+        p_payment_id: voidingPayment.id,
+        p_reason:     reason,
+      })
+      if (error) {
+        setVoidError(paymentErrorText(error.message))
+        return
+      }
+      const rows = await fetchSpacePayments(supabase, space.id)
+      setPayments(rows)
+      setVoidingPayment(null)
+      setVoidReasonText('')
+    } catch (e) {
+      setVoidError(paymentErrorText((e as Error).message))
+    } finally {
+      setVoidBusy(false)
+    }
+  }
 
   // 2026-08-19 Commit 3 — save picker selection via the DEFINER RPC.
   // NULL vehicleId clears. On success, refresh local state + parent.
@@ -793,9 +967,230 @@ export default function SpaceDetailModal({
                 )}
               </div>
             )}
+
+            {/* ══════════════════════════════════════════════════════════
+                🟢 2026-08-30 Reserved-space payments — Commit 3b.
+                Renders only when showPayments prop is true. Three
+                DISTINCT states: loading, error, empty (no rows).
+                Never conflate them (Mateo Aug 30 §3.3).
+                ══════════════════════════════════════════════════════════ */}
+            {showPayments && (
+              <div style={{ marginTop:'18px', paddingTop:'14px', borderTop:'1px solid #2a2f3d' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'10px' }}>
+                  <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:0, fontWeight:'bold' }}>
+                    Payments
+                  </p>
+                  <span style={{ color:'#888', fontSize:'11px' }}>
+                    {space.monthly_fee != null
+                      ? <>Fee: <span style={{ color:'#eee', fontWeight:'bold' }}>${space.monthly_fee.toFixed(2)}</span> / month</>
+                      : <>No fee set</>}
+                  </span>
+                </div>
+
+                {/* Loading */}
+                {paymentsStatus === 'loading' && (
+                  <div style={{ padding:'18px 12px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'6px', textAlign:'center', color:'#888', fontSize:'12px' }}>
+                    Loading payments…
+                  </div>
+                )}
+
+                {/* Error — visually DISTINCT from empty. Never render as "no rows" —
+                    on a money view that would tell the manager their records are gone. */}
+                {paymentsStatus === 'error' && (
+                  <div style={{ padding:'12px', background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'6px' }}>
+                    <p style={{ color:'#f44336', fontSize:'12px', margin:'0 0 6px', fontWeight:'bold' }}>Could not load payments.</p>
+                    <p style={{ color:'#f88', fontSize:'11px', margin:'0 0 8px' }}>{paymentsError || 'Unknown error.'}</p>
+                    <button
+                      onClick={() => setPaymentsStatus('idle')}
+                      style={{ padding:'6px 12px', background:'#1e2535', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'5px', cursor:'pointer', fontSize:'11px', fontWeight:'bold' }}>
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                {/* Loaded — either empty state OR payment rows */}
+                {paymentsStatus === 'loaded' && payments.length === 0 && (
+                  <div style={{ padding:'14px 12px', background:'#0f1117', border:'1px dashed #2a2f3d', borderRadius:'6px', textAlign:'center', color:'#888', fontSize:'12px' }}>
+                    No payments recorded for this space yet.
+                  </div>
+                )}
+
+                {paymentsStatus === 'loaded' && payments.length > 0 && (
+                  <div style={{ maxHeight:'240px', overflowY:'auto', border:'1px solid #2a2f3d', borderRadius:'6px' }}>
+                    {payments.map(p => {
+                      const isVoided = !!p.voided_at
+                      const periodLabel = new Date(p.period_month + 'T00:00:00').toLocaleDateString('en-US', { year:'numeric', month:'long' })
+                      const recordedDate = new Date(p.recorded_at).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' })
+                      return (
+                        <div key={p.id} style={{
+                          padding:'10px 12px',
+                          borderBottom:'1px solid #2a2f3d',
+                          background: isVoided ? '#1a1400' : 'transparent',
+                          opacity: isVoided ? 0.85 : 1,
+                        }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:'10px' }}>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ display:'flex', alignItems:'baseline', gap:'8px', flexWrap:'wrap' }}>
+                                <span style={{ color:'#eee', fontSize:'13px', fontWeight:'bold' }}>${Number(p.amount).toFixed(2)}</span>
+                                <span style={{ color:'#888', fontSize:'11px' }}>· {periodLabel}</span>
+                                {p.method && <span style={{ color:'#888', fontSize:'11px' }}>· {p.method}</span>}
+                                {isVoided && (
+                                  <span style={{ padding:'2px 6px', background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'3px', color:'#f44336', fontSize:'10px', fontWeight:'bold', textTransform:'uppercase' }}>
+                                    Voided
+                                  </span>
+                                )}
+                              </div>
+                              <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>
+                                Recorded by {p.recorded_by_email} on {recordedDate}
+                              </p>
+                              {p.resident_email && (
+                                <p style={{ color:'#666', fontSize:'11px', margin:'2px 0 0' }}>
+                                  Resident: {p.resident_name || p.resident_email}{p.unit ? ` · unit ${p.unit}` : ''}
+                                </p>
+                              )}
+                              {p.note && (
+                                <p style={{ color:'#aaa', fontSize:'11px', margin:'4px 0 0', fontStyle:'italic' }}>
+                                  Note: {p.note}
+                                </p>
+                              )}
+                              {isVoided && (
+                                <p style={{ color:'#f88', fontSize:'11px', margin:'4px 0 0' }}>
+                                  Voided by {p.voided_by_email} · reason: {p.void_reason}
+                                </p>
+                              )}
+                            </div>
+                            {canVoidPayment && !isVoided && (
+                              <button
+                                onClick={() => { setVoidingPayment(p); setVoidReasonText(''); setVoidError('') }}
+                                style={{ padding:'4px 8px', background:'#1e2535', color:'#f44336', border:'1px solid #991b1b', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:'bold', flexShrink:0 }}>
+                                Void
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Record-a-payment affordance */}
+                {canRecordPayment && paymentsStatus !== 'loading' && (
+                  <div style={{ marginTop:'10px' }}>
+                    {showRecordForm ? (
+                      <div style={{ padding:'12px', background:'#0a1628', border:'1px solid #1e3a5f', borderRadius:'6px' }}>
+                        <p style={{ color:'#3b82f6', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 10px', fontWeight:'bold' }}>Record a payment</p>
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'8px' }}>
+                          <div>
+                            <label style={{ display:'block', color:'#aaa', fontSize:'10px', textTransform:'uppercase', marginBottom:'3px' }}>Amount (USD) *</label>
+                            <input
+                              type='number' step='0.01' min='0'
+                              value={recAmount}
+                              onChange={e => setRecAmount(e.target.value)}
+                              disabled={recBusy}
+                              style={{ width:'100%', padding:'6px 8px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'5px', color:'#eee', fontSize:'13px', boxSizing:'border-box' }}
+                              placeholder='0.00' />
+                          </div>
+                          <div>
+                            <label style={{ display:'block', color:'#aaa', fontSize:'10px', textTransform:'uppercase', marginBottom:'3px' }}>Period *</label>
+                            <input
+                              type='month'
+                              value={recPeriod}
+                              onChange={e => setRecPeriod(e.target.value)}
+                              disabled={recBusy}
+                              style={{ width:'100%', padding:'6px 8px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'5px', color:'#eee', fontSize:'13px', boxSizing:'border-box' }} />
+                          </div>
+                        </div>
+                        <label style={{ display:'block', color:'#aaa', fontSize:'10px', textTransform:'uppercase', marginBottom:'3px' }}>Method (optional — e.g. cash, check #123, Zelle)</label>
+                        <input
+                          type='text'
+                          value={recMethod}
+                          onChange={e => setRecMethod(e.target.value)}
+                          disabled={recBusy}
+                          style={{ width:'100%', padding:'6px 8px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'5px', color:'#eee', fontSize:'13px', marginBottom:'8px', boxSizing:'border-box' }} />
+                        <label style={{ display:'block', color:'#aaa', fontSize:'10px', textTransform:'uppercase', marginBottom:'3px' }}>Note (optional)</label>
+                        <textarea
+                          value={recNote}
+                          onChange={e => setRecNote(e.target.value)}
+                          disabled={recBusy}
+                          style={{ width:'100%', padding:'6px 8px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'5px', color:'#eee', fontSize:'13px', marginBottom:'8px', minHeight:'40px', resize:'vertical', fontFamily:'Arial', boxSizing:'border-box' }} />
+                        {recError && (
+                          <div style={{ padding:'8px 10px', background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'5px', marginBottom:'8px' }}>
+                            <p style={{ color:'#f44336', fontSize:'11px', margin:0 }}>{recError}</p>
+                          </div>
+                        )}
+                        <div style={{ display:'flex', gap:'8px' }}>
+                          <button
+                            onClick={closeRecordForm}
+                            disabled={recBusy}
+                            style={{ flex:1, padding:'8px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'5px', cursor: recBusy ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleRecordPayment}
+                            disabled={recBusy}
+                            style={{ flex:1, padding:'8px', background:'#3b82f6', color:'#fff', border:'none', borderRadius:'5px', cursor: recBusy ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                            {recBusy ? 'Recording…' : 'Record payment'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={openRecordForm}
+                        style={{ width:'100%', padding:'9px', background:'transparent', color:'#3b82f6', border:'1px dashed #1e3a5f', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold' }}>
+                        + Record a payment
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
+
+      {/* Void-payment confirmation modal (nested inside overlay so it renders
+          above the SpaceDetailModal content). */}
+      {voidingPayment && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+          <div style={{ background:'#161b26', border:'1px solid #b71c1c', borderRadius:'14px', padding:'22px', maxWidth:'420px', width:'100%' }}>
+            <p style={{ color:'#f44336', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px', fontWeight:'bold' }}>
+              Void payment
+            </p>
+            <p style={{ color:'#eee', fontSize:'13px', margin:'0 0 10px' }}>
+              Void ${Number(voidingPayment.amount).toFixed(2)} recorded {new Date(voidingPayment.recorded_at).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' })} by {voidingPayment.recorded_by_email}?
+            </p>
+            <p style={{ color:'#888', fontSize:'11px', margin:'0 0 10px' }}>
+              A void records that a correction happened. The original row stays; the void is visible with reason on the payment list.
+            </p>
+            <label style={{ display:'block', color:'#aaa', fontSize:'10px', textTransform:'uppercase', marginBottom:'3px' }}>Void reason * (required)</label>
+            <textarea
+              value={voidReasonText}
+              onChange={e => setVoidReasonText(e.target.value)}
+              disabled={voidBusy}
+              placeholder='e.g. entered wrong amount; recorded twice; wrong space'
+              style={{ width:'100%', padding:'8px', background:'#0f1117', border:'1px solid #2a2f3d', borderRadius:'5px', color:'#eee', fontSize:'13px', marginBottom:'10px', minHeight:'60px', resize:'vertical', fontFamily:'Arial', boxSizing:'border-box' }} />
+            {voidError && (
+              <div style={{ padding:'8px 10px', background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'5px', marginBottom:'10px' }}>
+                <p style={{ color:'#f44336', fontSize:'11px', margin:0 }}>{voidError}</p>
+              </div>
+            )}
+            <div style={{ display:'flex', gap:'8px' }}>
+              <button
+                onClick={() => { setVoidingPayment(null); setVoidReasonText(''); setVoidError('') }}
+                disabled={voidBusy}
+                style={{ flex:1, padding:'9px', background:'#1e2535', color:'#aaa', border:'1px solid #3a4055', borderRadius:'6px', cursor: voidBusy ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                Cancel
+              </button>
+              <button
+                onClick={handleVoidPayment}
+                disabled={voidBusy}
+                style={{ flex:1, padding:'9px', background:'#b71c1c', color:'#fff', border:'none', borderRadius:'6px', cursor: voidBusy ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:'bold' }}>
+                {voidBusy ? 'Voiding…' : 'Confirm void'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
