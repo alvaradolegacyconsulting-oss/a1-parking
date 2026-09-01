@@ -75,31 +75,28 @@ BEGIN
 END $$;
 
 -- ── VS4: UPDATE company name to `_` → 23514 ─────────────────────────
--- 🔴 The UPDATE we're testing changes name to a metachar-bearing value
--- on an EXISTING company row. If the CHECK ever fails to fire (defect
--- shape we're testing for), the UPDATE would succeed and permanently
--- corrupt a real company name. The RAISE-after-success path IS the
--- "undo before we corrupt anything" path — MUST run BEFORE we raise.
--- This DO block runs in autocommit; a raise WOULD roll back, but only
--- if we correctly reach it. Belt + suspenders: undo, then raise.
+-- 🔴 Uses a FRESH PROBE row rather than the first existing company —
+-- any pre-existing row can carry defenses (rename-block triggers,
+-- RLS, etc.) that fire BEFORE the CHECK and mask what we're
+-- verifying. See VS6 note.
+-- The whole DO block is atomic: on the correct-behavior path, the
+-- inner BEGIN/EXCEPTION swallows check_violation, we fall through
+-- to DELETE the probe row. On any raise path, the block rolls back
+-- (INSERT undone too) — net zero rows in either case.
 DO $$
 DECLARE
-  v_test_id BIGINT;
-  v_original_name TEXT;
+  v_probe_id BIGINT;
+  v_probe_name TEXT;
   v_sqlstate TEXT;
   v_msg TEXT;
 BEGIN
-  SELECT id, name INTO v_test_id, v_original_name
-    FROM public.companies ORDER BY id LIMIT 1;
-  IF v_test_id IS NULL THEN
-    RAISE EXCEPTION 'VS4 FIXTURE FAIL: no companies exist to test UPDATE against';
-  END IF;
+  v_probe_name := '__vs4_probe_' || floor(extract(epoch from now()))::TEXT;
+  INSERT INTO public.companies (name, tier, tier_type, is_active)
+  VALUES (v_probe_name, 'legacy', 'enforcement', false)
+  RETURNING id INTO v_probe_id;
   BEGIN
-    UPDATE public.companies SET name = '__vs4_probe_' || floor(extract(epoch from now()))::TEXT || '_'
-     WHERE id = v_test_id;
-    -- Should NOT reach here. If we do, undo NOW, then raise.
-    UPDATE public.companies SET name = v_original_name WHERE id = v_test_id;
-    RAISE EXCEPTION 'VS4 FAIL: UPDATE with _ in name SUCCEEDED (row restored) — CHECK constraint not blocking';
+    UPDATE public.companies SET name = v_probe_name || '_' WHERE id = v_probe_id;
+    RAISE EXCEPTION 'VS4 FAIL: UPDATE with _ in name SUCCEEDED — CHECK constraint not blocking (probe id=%s)', v_probe_id;
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
     IF v_sqlstate <> '23514' THEN
@@ -109,6 +106,8 @@ BEGIN
       RAISE EXCEPTION 'VS4 FAIL: got 23514 but from wrong constraint. msg=%', v_msg;
     END IF;
   END;
+  -- CHECK fired correctly; clean up probe row.
+  DELETE FROM public.companies WHERE id = v_probe_id;
 END $$;
 
 -- ── VS5: INSERT property with `\` in name → 23514 ───────────────────
@@ -138,24 +137,43 @@ BEGIN
 END $$;
 
 -- ── VS6: UPDATE property setting name containing `%_` → 23514 ───────
--- Same corrupt-if-CHECK-fails-to-fire concern as VS4; undo before raise.
+-- 🔴 Uses a FRESH PROBE property rather than the first existing row.
+-- Rationale (surfaced in v1 apply Sep 1 2026): every existing property
+-- with count>0 active user assignments trips
+-- trg_properties_name_block_rename (migration 20260715) BEFORE the CHECK
+-- fires — the trigger raises with sqlstate 23514 too (matching CHECK by
+-- design so callers can't distinguish "blocked by name policy" from
+-- "blocked by assignment policy"), which masks whether OUR CHECK
+-- constraint is actually working. Fresh probe row has 0 assignments →
+-- rename-block trigger returns count=0 → passes → CHECK fires → we
+-- observe cleanly.
+--
+-- Whole DO block is atomic: correct behavior swallows check_violation
+-- and DELETEs the probe row. Any raise path rolls back INSERT + all —
+-- net zero rows.
+--
+-- Same trigger doesn't exist on companies, but VS4 uses the same
+-- fresh-probe pattern for defense: any future trigger we didn't
+-- anticipate can't mask the verification.
 DO $$
 DECLARE
-  v_test_id BIGINT;
-  v_original_name TEXT;
+  v_probe_id BIGINT;
+  v_probe_name TEXT;
+  v_company_name TEXT;
   v_sqlstate TEXT;
   v_msg TEXT;
 BEGIN
-  SELECT id, name INTO v_test_id, v_original_name
-    FROM public.properties ORDER BY id LIMIT 1;
-  IF v_test_id IS NULL THEN
-    RAISE EXCEPTION 'VS6 FIXTURE FAIL: no properties exist to test UPDATE against';
+  SELECT name INTO v_company_name FROM public.companies ORDER BY id LIMIT 1;
+  IF v_company_name IS NULL THEN
+    RAISE EXCEPTION 'VS6 FIXTURE FAIL: no companies exist to attach a probe property to';
   END IF;
+  v_probe_name := '__vs6_probe_' || floor(extract(epoch from now()))::TEXT;
+  INSERT INTO public.properties (name, company, is_active)
+  VALUES (v_probe_name, v_company_name, false)
+  RETURNING id INTO v_probe_id;
   BEGIN
-    UPDATE public.properties SET name = '__vs6_probe_' || floor(extract(epoch from now()))::TEXT || '_%'
-     WHERE id = v_test_id;
-    UPDATE public.properties SET name = v_original_name WHERE id = v_test_id;
-    RAISE EXCEPTION 'VS6 FAIL: UPDATE with %%_ in name SUCCEEDED (row restored) — CHECK constraint not blocking';
+    UPDATE public.properties SET name = v_probe_name || '_%' WHERE id = v_probe_id;
+    RAISE EXCEPTION 'VS6 FAIL: UPDATE with %%_ in name SUCCEEDED — CHECK constraint not blocking (probe id=%s)', v_probe_id;
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
     IF v_sqlstate <> '23514' THEN
@@ -165,6 +183,8 @@ BEGIN
       RAISE EXCEPTION 'VS6 FAIL: got 23514 but from wrong constraint. msg=%', v_msg;
     END IF;
   END;
+  -- CHECK fired correctly; clean up probe row.
+  DELETE FROM public.properties WHERE id = v_probe_id;
 END $$;
 
 -- ── VS7: 🔴 GUARDRAIL — legitimate chars must still SUCCEED ─────────
