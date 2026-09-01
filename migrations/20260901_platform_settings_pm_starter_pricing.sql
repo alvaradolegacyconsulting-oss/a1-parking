@@ -27,10 +27,17 @@
 --   - starter_permit_tiers        JSONB with rate_cents inner fields
 --                                 (integer cents; $0.00 = 0, $1.25 = 125)
 --
--- ── NO PER-PROPERTY COLUMN ─────────────────────────────────────────
--- Starter is FLAT $149 for one property (hard limit enforced by cap
--- sequence Commits A → B → C → A₀). No per_property column because
--- the tier doesn't have per-property pricing.
+-- ── NO PER-PROPERTY COLUMN — BY DESIGN, NOT OMISSION ───────────────
+-- Starter is ONE PROPERTY BY DEFINITION. The hard limit is enforced
+-- by cap sequence Commits A → B → C → A₀ (helper returns 1 the moment
+-- A₀ widens companies_tier_valid). A per-property price isn't a value
+-- we chose not to seed — it's an axis the tier doesn't have.
+--
+-- 🔴 Don't add a price_pm_starter_per_property column later. If a
+-- future reader assumes it's an oversight and adds one, that becomes
+-- dead config someone else eventually mistakes for a live lever.
+-- The tier has no per-property axis; the price row has no per-property
+-- column. Missing column is the CORRECT shape.
 --
 -- ── APPLY ORDER ────────────────────────────────────────────────────
 -- This migration first. Then Jose runs the create-stripe-prices
