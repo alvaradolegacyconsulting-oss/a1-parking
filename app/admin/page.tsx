@@ -5,7 +5,7 @@ import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useResolvedLogo } from '../lib/logo'
-import { escapeIlikeValue } from '../lib/supabase-query-escape'
+import { escapeIlikeValue, nameMetacharError } from '../lib/supabase-query-escape'
 import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
 import CredentialsModal from '../components/CredentialsModal'
 import { generateTempPassword } from '../lib/temp-password'
@@ -354,6 +354,8 @@ export default function AdminPortal() {
 
   async function addCompany() {
     if (!newCompany.name) { alert('Name is required'); return }
+    const nameErr = nameMetacharError(newCompany.name, 'company')
+    if (nameErr) { alert(nameErr); return }
     const { data, error } = await supabase.from('companies').insert([newCompany]).select().single()
     if (error) { alert('Error: ' + error.message); return }
     await auditLog(adminEmail, 'ADD_COMPANY', 'companies', data.id, newCompany)
@@ -363,6 +365,8 @@ export default function AdminPortal() {
   }
 
   async function saveCompany() {
+    const nameErr = nameMetacharError(editingCompany.name || '', 'company')
+    if (nameErr) { alert(nameErr); return }
     const { error } = await supabase.from('companies').update({
       name: editingCompany.name, address: editingCompany.address,
       phone: editingCompany.phone, email: editingCompany.email, is_active: editingCompany.is_active,
@@ -397,6 +401,8 @@ export default function AdminPortal() {
 
   async function addProperty() {
     if (!newProperty.name) { alert('Name is required'); return }
+    const nameErr = nameMetacharError(newProperty.name, 'property')
+    if (nameErr) { alert(nameErr); return }
     // B217 — guard against double-click duplicate INSERT (Jose UAT repro).
     setAddPropertySubmitting(true)
     try {
@@ -413,6 +419,8 @@ export default function AdminPortal() {
   }
 
   async function saveProperty() {
+    const nameErr = nameMetacharError(editingProperty.name || '', 'property')
+    if (nameErr) { alert(nameErr); return }
     // B217 — guard against double-click duplicate UPDATE.
     setSavePropertySubmitting(true)
     try {

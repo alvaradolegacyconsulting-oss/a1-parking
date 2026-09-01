@@ -13,7 +13,7 @@ import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 // only) — this component's header + empty-state copy carry the whole
 // boundary distinguishing standing authorization from tow protection.
 import AuthorizedPlatesManager from '../components/AuthorizedPlatesManager'
-import { escapeIlikeValue } from '../lib/supabase-query-escape'
+import { escapeIlikeValue, nameMetacharError } from '../lib/supabase-query-escape'
 import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId } from '../lib/tier'
@@ -1501,6 +1501,8 @@ export default function CompanyAdminPortal() {
     // stored value.
     const trimmedName = (newProperty.name || '').trim()
     if (!trimmedName) { setPropMsg('Property name is required'); return }
+    const nameErr = nameMetacharError(trimmedName, 'property')
+    if (nameErr) { setPropMsg(nameErr); return }
     const ctx = getCompanyContext()
     const activeCount = properties.filter(p => p.is_active).length
     if (!isUnderLimit(FEATURE_FLAGS.MAX_PROPERTIES, activeCount, ctx)) {
@@ -1590,6 +1592,10 @@ export default function CompanyAdminPortal() {
       visitor_capacity: fields.visitor_capacity ? parseInt(fields.visitor_capacity) : null,
       authorization_expiration_date: fields.authorization_expiration_date || null,
       authorization_notes: fields.authorization_notes || null,
+    }
+    if (typeof normalizedFields.name === 'string') {
+      const nameErr = nameMetacharError(normalizedFields.name, 'property')
+      if (nameErr) { setPropMsg(nameErr); return }
     }
 
     // Rename-lock (2026-07-16, count-based) — for non-admin: if there

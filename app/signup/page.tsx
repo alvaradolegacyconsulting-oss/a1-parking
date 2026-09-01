@@ -25,6 +25,7 @@ import {
   PRIVACY_DISPLAY_DATE,
 } from '../lib/legal-versions'
 import { validatePassword } from '../lib/password-rules'
+import { nameMetacharError } from '../lib/supabase-query-escape'
 import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 import LegalGateAccordion, { type GateSpec } from '../components/LegalGateAccordion'
 import TermsBody from '../components/TermsBody'
@@ -157,9 +158,15 @@ export default function SignupTierPicker() {
   const propertyCountOk = pCount >= 1 && !propertyLimitReached
   const driverCountOk = track === 'pm' || (dCount >= 1 && !driverLimitReached)
   const companyNameOk = companyName.trim().length > 0
+  // Metachar rejection lives in the shared write-time helper — same
+  // characters (%, _, \) blocked by the DB CHECK constraint (migration
+  // 20260901_companies_and_properties_name_metachar_check). Client
+  // check surfaces the error inline BEFORE submit; server CHECK is
+  // the enforcement boundary.
+  const companyNameMetacharErr = nameMetacharError(companyName, 'company')
   // captchaToken added to allOk so Submit disables until the widget callback fires.
   // ToS + Privacy are now gate-signed (accordion) — signed = non-null reviewed_at.
-  const allOk = companyNameOk && emailOk && !passwordErr && propertyCountOk && driverCountOk
+  const allOk = companyNameOk && !companyNameMetacharErr && emailOk && !passwordErr && propertyCountOk && driverCountOk
     && attestChecked && !!tosReviewedAt && !!privacyReviewedAt && !!captchaToken
 
   // ── Submit ────────────────────────────────────────────────────────
@@ -377,6 +384,7 @@ export default function SignupTierPicker() {
           <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>5. Account details</p>
           <label style={labelStyle}>Company name</label>
           <input type="text" value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Acme Towing LLC" style={inputStyle} />
+          {companyName && companyNameMetacharErr && <p style={{ color: '#f44336', fontSize: 11, margin: '4px 0 0' }}>{companyNameMetacharErr}</p>}
           <label style={labelStyle}>Email</label>
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" style={inputStyle} />
           {email && !emailOk && <p style={{ color: '#f44336', fontSize: 11, margin: '4px 0 0' }}>Enter a valid email address.</p>}
