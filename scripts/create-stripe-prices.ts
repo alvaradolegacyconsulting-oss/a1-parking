@@ -7,7 +7,7 @@
 // (orphaned post-Commit 1 stripe_prices clear); see commit 3's §2 for
 // the archive decision (deferred until after this run).
 //
-// NEW BUILD MATRIX (10 prices / 5 products):
+// NEW BUILD MATRIX (14 prices / 7 products):
 //   PM-Only (track=property_management, tier_name=pm_only):
 //     base         flat       × monthly + annual  = 2
 //     per_property flat       × monthly + annual  = 2
@@ -17,14 +17,23 @@
 //     base         flat       × monthly + annual  = 2
 //     per_property flat       × monthly + annual  = 2
 //     = 4 prices on 2 products
+//   PM Starter (track=property_management, tier_name=pm_starter):
+//     base         flat       × monthly + annual  = 2
+//     per_permit   GRADUATED  × monthly + annual  = 2  (reads starter_permit_tiers)
+//     🔴 NO per_property — one property by definition (cap sequence A→A₀).
+//        Missing line-item is the correct shape, not an omission.
+//     = 4 prices on 2 products
 //   Legacy: ZERO standard rows (negotiated-only via proposal-code path)
 //   ─────────────────────────────────────────────────────────────────
-//   Total: 10 Prices / 5 Products (Pattern B — monthly+annual share Product)
+//   Total: 14 Prices / 7 Products (Pattern B — monthly+annual share Product)
 //
 // THE GRADUATED PATH (per_permit only):
 //   Stripe Price with billing_scheme:'tiered', tiers_mode:'graduated',
-//   tiers[] built from platform_settings.permit_tiers JSONB. Each band:
+//   tiers[] built from a per-tier permit-schedule JSONB. Each band:
 //     { up_to: <n | 'inf'>, unit_amount: <rate_cents [× 10 if annual]> }
+//   Source column depends on tier_name:
+//     pm_only     → platform_settings.permit_tiers        (4-band $2.00→$1.25)
+//     pm_starter  → platform_settings.starter_permit_tiers (2-band $0→$1.25)
 //   Annual graduated: tier thresholds (up_to) UNCHANGED — those are
 //   per-permit-count buckets, not time-scaled. Per-tier unit_amount
 //   gets × ANNUAL_MULTIPLIER like flat prices do.
@@ -33,13 +42,23 @@
 //   for audit — the DB row reflects what's at Stripe, no recomputation
 //   needed to verify.
 //
+//   🔴 ZERO-RATE ALLOWANCE — NARROW, NOT GLOBAL:
+//   graduatedTiers()'s rate_cents > 0 check is relaxed for pm_starter's
+//   FIRST band only (the included allowance: 500 permits at $0.00).
+//   Every other band on every other tier still rejects rate_cents = 0.
+//   A global relaxation would let a typo produce a zero-rate band on
+//   any tier — customer billed nothing for permits, no error anywhere
+//   in the pipeline. The narrow condition (tier=pm_starter && i===0)
+//   is the exact case where zero is deliberate; anywhere else it's a
+//   bug the validator exists to catch.
+//
 // UNIT CONVENTION (locked, slice 1):
 //   - platform_settings flat scalar columns store INTEGER DOLLARS
-//     (price_pm_only_base etc. as NUMERIC). Multiplied × 100 here →
-//     cents to Stripe.
-//   - platform_settings.permit_tiers JSONB inner-band rates use
-//     rate_cents (integer). Already in cents — no multiply for monthly;
-//     × ANNUAL_MULTIPLIER for annual.
+//     (price_pm_only_base, price_pm_starter_base etc. as NUMERIC).
+//     Multiplied × 100 here → cents to Stripe.
+//   - platform_settings.permit_tiers + starter_permit_tiers JSONB
+//     inner-band rates use rate_cents (integer). Already in cents —
+//     no multiply for monthly; × ANNUAL_MULTIPLIER for annual.
 //   - stripe_prices.tiers JSONB uses Stripe's term `unit_amount`
 //     (cents) so the DB row is naming-parity with the Stripe API.
 //     Slight deliberate divergence from platform_settings.permit_tiers'
@@ -90,13 +109,21 @@
 //     FROM public.stripe_prices
 //    WHERE proposal_code_id IS NULL AND mode='test'
 //    ORDER BY tier_track, tier_name, line_item, cycle;
-//   -- Expect 10 rows: 6 pm_only (2 per_permit = graduated, has_tiers=true,
-//   --                            unit_amount_cents=NULL),
-//   --                 4 enforcement_only (all flat).
+//   -- Expect 14 rows:
+//   --   6 pm_only         (2 per_permit = graduated, has_tiers=true,
+//   --                      unit_amount_cents=NULL)
+//   --   4 enforcement_only (all flat)
+//   --   4 pm_starter      (2 base = flat, 2 per_permit = graduated with
+//   --                      first band unit_amount=0 for the 500-included
+//   --                      allowance — expected, not a defect)
 //
 //   SELECT COUNT(*) FROM public.stripe_prices
 //    WHERE line_item='per_permit' AND tier_track='enforcement';
 //   -- Expect 0 (commit 1 CHECK enforces; sanity).
+//
+//   SELECT COUNT(*) FROM public.stripe_prices
+//    WHERE line_item='per_property' AND tier_name='pm_starter';
+//   -- Expect 0 (Starter has no per_property axis — see buildAddresses).
 //
 // Notes on the existing implementation we preserve:
 //   • Pattern A (B110 close-out) — tax_code='txcd_10103001' stamped on
@@ -114,10 +141,13 @@ import { createClient } from '@supabase/supabase-js'
 
 // ── Types ────────────────────────────────────────────────────────────
 type Track = 'enforcement' | 'property_management'
-// Slice 1 Commit 1 tightened the DB CHECK to these 3 values; commit 3
-// only creates standard rows for the 2 self-serve tiers. Legacy is
-// proposal-code-only.
-type TierName = 'pm_only' | 'enforcement_only' | 'legacy'
+// Slice 1 Commit 1 tightened the DB CHECK to 3 values (pm_only,
+// enforcement_only, legacy). Bar-2 launch prep adds pm_starter — the
+// companies_tier_valid widening lands in Cap Sequence Commit A₀
+// (after A/B/C). This script creates standard rows for the 3 self-
+// serve tiers (pm_only, enforcement_only, pm_starter); legacy stays
+// proposal-code-only (negotiated).
+type TierName = 'pm_only' | 'enforcement_only' | 'pm_starter' | 'legacy'
 // Slice 1 Commit 1 added 'per_permit'; 'per_driver' kept VALID for
 // back-compat but commit 3 creates ZERO new per_driver rows.
 type LineItem = 'base' | 'per_property' | 'per_driver' | 'per_permit'
@@ -192,13 +222,18 @@ function resolveSupabase(): { url: string; key: string } {
 }
 
 // ── Catalog construction ────────────────────────────────────────────
-// Slice 1 Commit 3 — 10 addresses total. PM-Only has 3 line_items;
+// Bar-2 launch prep — 14 addresses total. PM-Only has 3 line_items;
 // Enforcement-Only has 2 (no per_permit per commit 1's permit_pm_only
-// CHECK constraint). Legacy excluded — negotiated-only.
+// CHECK constraint). PM Starter has 2 line_items (base + per_permit —
+// NO per_property; one property by definition, enforced by cap
+// sequence A→A₀). Legacy excluded — negotiated-only.
 function buildAddresses(): LogicalAddress[] {
   const addrs: LogicalAddress[] = []
   const PM_LINE_ITEMS: LineItem[] = ['base', 'per_property', 'per_permit']
   const ENF_LINE_ITEMS: LineItem[] = ['base', 'per_property']
+  // 🔴 STARTER: base + per_permit only. NO per_property. Missing
+  // line-item is by design — see the "NEW BUILD MATRIX" header block.
+  const STARTER_LINE_ITEMS: LineItem[] = ['base', 'per_permit']
   const CYCLES: Cycle[] = ['monthly', 'annual']
 
   for (const li of PM_LINE_ITEMS) {
@@ -211,6 +246,11 @@ function buildAddresses(): LogicalAddress[] {
       addrs.push({ tier_track: 'enforcement', tier_name: 'enforcement_only', line_item: li, cycle: c })
     }
   }
+  for (const li of STARTER_LINE_ITEMS) {
+    for (const c of CYCLES) {
+      addrs.push({ tier_track: 'property_management', tier_name: 'pm_starter', line_item: li, cycle: c })
+    }
+  }
   return addrs
 }
 
@@ -219,17 +259,24 @@ function formatLookupKey(a: LogicalAddress): string {
 }
 
 function formatProductName(a: LogicalAddress): string {
-  const trackLabel = a.tier_track === 'property_management' ? 'PM-Only' : 'Enforcement-Only'
+  // Tier-name based (not track-based) — pm_only and pm_starter both
+  // ride property_management but need distinct Product labels for the
+  // Stripe dashboard.
+  const tierLabel = a.tier_name === 'pm_only'          ? 'PM-Only'
+                  : a.tier_name === 'pm_starter'       ? 'PM Starter'
+                  : a.tier_name === 'enforcement_only' ? 'Enforcement-Only'
+                  : 'Legacy'   // unreachable — legacy has no standard rows
   const liLabel = a.line_item === 'base' ? 'Base'
               : a.line_item === 'per_property' ? 'Per-Property'
               : a.line_item === 'per_permit' ? 'Per-Permit (Graduated)'
               : 'Per-Driver'   // unreachable in v3 build but keeps the type total
-  return `ShieldMyLot ${trackLabel} — ${liLabel}`
+  return `ShieldMyLot ${tierLabel} — ${liLabel}`
 }
 
 // FLAT line items only. Maps (track, tier_name, line_item) → the
-// platform_settings dollar column. Per-permit reads permit_tiers JSONB
-// instead — handled in main() outside this function.
+// platform_settings dollar column. Per-permit reads permit_tiers /
+// starter_permit_tiers JSONB instead — handled in main() outside
+// this function.
 function flatPriceColumn(a: LogicalAddress): string {
   if (a.tier_track === 'property_management' && a.tier_name === 'pm_only') {
     if (a.line_item === 'base') return 'price_pm_only_base'
@@ -238,6 +285,11 @@ function flatPriceColumn(a: LogicalAddress): string {
   if (a.tier_track === 'enforcement' && a.tier_name === 'enforcement_only') {
     if (a.line_item === 'base') return 'price_enforcement_only_base'
     if (a.line_item === 'per_property') return 'price_enforcement_only_per_property'
+  }
+  if (a.tier_track === 'property_management' && a.tier_name === 'pm_starter') {
+    if (a.line_item === 'base') return 'price_pm_starter_base'
+    // Starter has no per_property (see buildAddresses). Any per_property
+    // address on this tier is a build-matrix bug — fall through to throw.
   }
   throw new Error(`[create-stripe-prices] flatPriceColumn: no mapping for ${JSON.stringify(a)} — this is a build-matrix bug, not a config issue.`)
 }
@@ -274,39 +326,60 @@ function unitAmountCents(monthlyDollars: number, cycle: Cycle): number {
   return Math.round(dollars * 100)
 }
 
-// GRADUATED helper — Slice 1 Commit 3.
-// Takes platform_settings.permit_tiers (source: rate_cents) and a
-// cycle; returns the AS-SENT array we both send Stripe and store in
-// stripe_prices.tiers. Annual gets each band's unit_amount × ANNUAL_
-// MULTIPLIER; up_to thresholds are UNCHANGED (per-permit-count
-// buckets, not time-scaled).
+// GRADUATED helper — Slice 1 Commit 3 + Bar-2 launch prep (pm_starter).
+// Takes a permit-schedule source (platform_settings.permit_tiers for
+// pm_only, .starter_permit_tiers for pm_starter), a cycle, and the
+// tier the price is being built for; returns the AS-SENT array we
+// both send Stripe and store in stripe_prices.tiers. Annual gets each
+// band's unit_amount × ANNUAL_MULTIPLIER; up_to thresholds are
+// UNCHANGED (per-permit-count buckets, not time-scaled).
 //
-// Validation: ascending up_to, exactly one trailing null up_to, all
-// rate_cents > 0. Same rules as the admin Pricing tab's
-// validatePermitTiers() — duplicated here so the script can fail-
-// closed if platform_settings somehow got malformed JSONB past the
-// UI (defense in depth).
-function graduatedTiers(source: SourcePermitTier[], cycle: Cycle): WirePermitTier[] {
+// Validation: ascending up_to, exactly one trailing null up_to. Same
+// rules as the admin Pricing tab's validatePermitTiers() — duplicated
+// here so the script can fail-closed if platform_settings somehow got
+// malformed JSONB past the UI (defense in depth).
+//
+// 🔴 rate_cents rule (narrow zero-rate allowance):
+//   Every band on every tier MUST have rate_cents > 0 EXCEPT
+//   pm_starter's FIRST band, where rate_cents = 0 is the included-
+//   allowance (500 permits at $0.00, then $1.25 overage). NEGATIVE
+//   rates always reject.
+//
+//   Do NOT loosen this globally. Zero-rate on any non-starter tier —
+//   or on any band past the first even on starter — is a typo that
+//   would result in a customer billed nothing for permits with no
+//   error surface. The validator exists precisely to catch that.
+//   The narrow condition matches the exact case where zero is
+//   deliberate; anywhere else it's a bug.
+function graduatedTiers(source: SourcePermitTier[], cycle: Cycle, tierName: TierName): WirePermitTier[] {
   if (!Array.isArray(source) || source.length === 0) {
-    throw new Error(`[create-stripe-prices] permit_tiers is empty or not an array — cannot build graduated price.`)
+    throw new Error(`[create-stripe-prices] permit-tier source is empty or not an array — cannot build graduated price.`)
   }
   for (let i = 0; i < source.length - 1; i++) {
     if (source[i].up_to == null) {
-      throw new Error(`[create-stripe-prices] permit_tiers band ${i + 1}: only the LAST band may have up_to=null.`)
+      throw new Error(`[create-stripe-prices] permit-tier band ${i + 1}: only the LAST band may have up_to=null.`)
     }
     if (!(source[i].up_to! > 0)) {
-      throw new Error(`[create-stripe-prices] permit_tiers band ${i + 1}: up_to must be > 0.`)
+      throw new Error(`[create-stripe-prices] permit-tier band ${i + 1}: up_to must be > 0.`)
     }
     if (i > 0 && source[i].up_to! <= source[i - 1].up_to!) {
-      throw new Error(`[create-stripe-prices] permit_tiers band ${i + 1}: up_to (${source[i].up_to}) must be > previous (${source[i - 1].up_to}).`)
+      throw new Error(`[create-stripe-prices] permit-tier band ${i + 1}: up_to (${source[i].up_to}) must be > previous (${source[i - 1].up_to}).`)
     }
   }
   if (source[source.length - 1].up_to !== null) {
-    throw new Error(`[create-stripe-prices] permit_tiers last band must have up_to=null (covers permits above the last bounded up_to).`)
+    throw new Error(`[create-stripe-prices] permit-tier last band must have up_to=null (covers permits above the last bounded up_to).`)
   }
   for (let i = 0; i < source.length; i++) {
-    if (!(source[i].rate_cents > 0)) {
-      throw new Error(`[create-stripe-prices] permit_tiers band ${i + 1}: rate_cents must be > 0.`)
+    const rate = source[i].rate_cents
+    if (!Number.isFinite(rate) || rate < 0) {
+      throw new Error(`[create-stripe-prices] permit-tier band ${i + 1}: rate_cents must be a non-negative number (got ${JSON.stringify(rate)}).`)
+    }
+    const isStarterFirstBand = tierName === 'pm_starter' && i === 0
+    if (rate === 0 && !isStarterFirstBand) {
+      throw new Error(
+        `[create-stripe-prices] permit-tier band ${i + 1}: rate_cents=0 is only permitted for pm_starter's FIRST band (included-allowance semantics). ` +
+        `Got tier=${tierName}, band index=${i}. Zero rate anywhere else would silently bill $0/permit — treated as a typo.`
+      )
     }
   }
   const multiplier = cycle === 'monthly' ? 1 : ANNUAL_MULTIPLIER
@@ -351,22 +424,30 @@ async function main() {
     process.exit(1)
   }
 
-  // Validate permit_tiers ONCE upfront (the same JSONB feeds both
-  // monthly + annual graduated rows; bad shape fails before any
-  // Stripe call).
-  const permitTiersSource = (ps.permit_tiers ?? []) as SourcePermitTier[]
-  // graduatedTiers() throws on malformed shape; do a dry monthly call
-  // here so the failure happens at startup, not mid-loop.
+  // Validate BOTH permit-tier sources ONCE upfront (each JSONB feeds
+  // both monthly + annual graduated rows for its tier; bad shape fails
+  // before any Stripe call). pm_starter's schedule permits a $0 first
+  // band; pm_only's does not — validator narrows by tierName.
+  const permitTiersSource        = (ps.permit_tiers ?? [])         as SourcePermitTier[]
+  const starterPermitTiersSource = (ps.starter_permit_tiers ?? []) as SourcePermitTier[]
+
   try {
-    graduatedTiers(permitTiersSource, 'monthly')
+    graduatedTiers(permitTiersSource, 'monthly', 'pm_only')
   } catch (e) {
-    console.error(`[create-stripe-prices] permit_tiers validation failed: ${(e as Error).message}`)
+    console.error(`[create-stripe-prices] permit_tiers (pm_only) validation failed: ${(e as Error).message}`)
     console.error(`  Fix via admin Pricing tab → Save All Pricing (validates before writing JSONB).`)
+    process.exit(1)
+  }
+  try {
+    graduatedTiers(starterPermitTiersSource, 'monthly', 'pm_starter')
+  } catch (e) {
+    console.error(`[create-stripe-prices] starter_permit_tiers (pm_starter) validation failed: ${(e as Error).message}`)
+    console.error(`  Seeded by migration 20260901_platform_settings_pm_starter_pricing.sql — if malformed, that migration didn't apply or was later modified.`)
     process.exit(1)
   }
 
   const addresses = buildAddresses()
-  const EXPECTED_TOTAL = 10
+  const EXPECTED_TOTAL = 14
   if (addresses.length !== EXPECTED_TOTAL) {
     console.error(`[create-stripe-prices] Internal error: built ${addresses.length} addresses, expected ${EXPECTED_TOTAL}.`)
     process.exit(1)
@@ -390,8 +471,14 @@ async function main() {
     let amountCentsForDb: number | null = null
     let wireTiersForDb: WirePermitTier[] | null = null
     if (isGraduated) {
-      // Already validated upfront; re-call returns the cycle-correct array.
-      wireTiersForDb = graduatedTiers(permitTiersSource, addr.cycle)
+      // Already validated upfront (both sources); re-call returns the
+      // cycle-correct array. Source column depends on tier:
+      //   pm_only     → permit_tiers          (4-band $2.00→$1.25)
+      //   pm_starter  → starter_permit_tiers  (2-band $0→$1.25 included allowance)
+      const graduatedSource = addr.tier_name === 'pm_starter'
+        ? starterPermitTiersSource
+        : permitTiersSource
+      wireTiersForDb = graduatedTiers(graduatedSource, addr.cycle, addr.tier_name)
     } else {
       const colName = flatPriceColumn(addr)
       const rawMonthly = ps[colName as keyof typeof ps]
