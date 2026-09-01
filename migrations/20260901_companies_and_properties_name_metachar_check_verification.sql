@@ -54,12 +54,18 @@ BEGIN
 END $$;
 
 -- ── VS3: INSERT %-named company → 23514 ─────────────────────────────
+-- 🔴 Probe name uses ONLY letters+digits in the prefix (no `_` — the
+-- CHECK we're testing rejects it) and appends exactly `%` at the end.
+-- That way the ONLY metachar in the name is the one we want the
+-- CHECK to trip on. Underscore-separators in probe names would fire
+-- the CHECK for the wrong reason (or trip it before the test char
+-- even matters).
 DO $$
 DECLARE v_sqlstate TEXT; v_msg TEXT;
 BEGIN
   BEGIN
     INSERT INTO public.companies (name, tier, tier_type, is_active)
-    VALUES ('__vs3_probe_' || floor(extract(epoch from now()))::TEXT || '_%', 'legacy', 'enforcement', false);
+    VALUES ('vs3probe' || floor(extract(epoch from now()))::TEXT || '%', 'legacy', 'enforcement', false);
     RAISE EXCEPTION 'VS3 FAIL: INSERT with %% in name SUCCEEDED — CHECK constraint not blocking';
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
@@ -90,7 +96,10 @@ DECLARE
   v_sqlstate TEXT;
   v_msg TEXT;
 BEGIN
-  v_probe_name := '__vs4_probe_' || floor(extract(epoch from now()))::TEXT;
+  -- 🔴 Probe name is CLEAN (letters+digits only) — the CHECK we're
+  -- testing rejects `_`, so an underscore-separator would trip the
+  -- CHECK on the INSERT itself and never let us test the UPDATE.
+  v_probe_name := 'vs4probe' || floor(extract(epoch from now()))::TEXT;
   INSERT INTO public.companies (name, tier, tier_type, is_active)
   VALUES (v_probe_name, 'legacy', 'enforcement', false)
   RETURNING id INTO v_probe_id;
@@ -122,8 +131,11 @@ BEGIN
     RAISE EXCEPTION 'VS5 FIXTURE FAIL: no companies exist to attach a probe property to';
   END IF;
   BEGIN
+    -- 🔴 Clean prefix + append single backslash to trip the CHECK
+    -- (same rationale as VS3 — the metachar in the name is the ONE
+    -- we want the constraint to fire on).
     INSERT INTO public.properties (name, company, is_active)
-    VALUES ('__vs5_probe_' || floor(extract(epoch from now()))::TEXT || E'_\\', v_company_name, false);
+    VALUES ('vs5probe' || floor(extract(epoch from now()))::TEXT || E'\\', v_company_name, false);
     RAISE EXCEPTION 'VS5 FAIL: INSERT with \ in name SUCCEEDED — CHECK constraint not blocking';
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
@@ -167,12 +179,15 @@ BEGIN
   IF v_company_name IS NULL THEN
     RAISE EXCEPTION 'VS6 FIXTURE FAIL: no companies exist to attach a probe property to';
   END IF;
-  v_probe_name := '__vs6_probe_' || floor(extract(epoch from now()))::TEXT;
+  -- 🔴 Clean probe name (letters+digits only) so INSERT passes the
+  -- CHECK — same rationale as VS4 — then UPDATE appends `%_` to
+  -- trigger the check on the rename attempt.
+  v_probe_name := 'vs6probe' || floor(extract(epoch from now()))::TEXT;
   INSERT INTO public.properties (name, company, is_active)
   VALUES (v_probe_name, v_company_name, false)
   RETURNING id INTO v_probe_id;
   BEGIN
-    UPDATE public.properties SET name = v_probe_name || '_%' WHERE id = v_probe_id;
+    UPDATE public.properties SET name = v_probe_name || '%_' WHERE id = v_probe_id;
     RAISE EXCEPTION 'VS6 FAIL: UPDATE with %%_ in name SUCCEEDED — CHECK constraint not blocking (probe id=%s)', v_probe_id;
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
@@ -199,8 +214,12 @@ DO $$
 DECLARE
   v_new_id BIGINT;
 BEGIN
+  -- 🔴 Probe name uses NO metachars (no `_`, `%`, or `\`) — everything
+  -- else (apostrophe, ampersand, hyphen, period, space) is expressly
+  -- allowed and must NOT trigger the CHECK. camelCase prefix + legit
+  -- chars is the shape.
   INSERT INTO public.companies (name, tier, tier_type, is_active)
-  VALUES ('__vs7_probe_' || floor(extract(epoch from now()))::TEXT || ' O''Brien & Co. - Ltd.', 'legacy', 'enforcement', false)
+  VALUES ('vs7probe' || floor(extract(epoch from now()))::TEXT || ' O''Brien & Co. - Ltd.', 'legacy', 'enforcement', false)
   RETURNING id INTO v_new_id;
   -- Legit; clean up probe row.
   DELETE FROM public.companies WHERE id = v_new_id;
