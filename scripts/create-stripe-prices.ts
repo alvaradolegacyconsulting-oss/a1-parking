@@ -101,7 +101,16 @@
 //                              under service-role; bypasses RLS)
 //
 // Run:
-//   STRIPE_MODE=test npx tsx scripts/create-stripe-prices.ts
+//   STRIPE_MODE=test npx tsx --env-file=.env.local scripts/create-stripe-prices.ts
+//   STRIPE_MODE=live npx tsx --env-file=.env.local scripts/create-stripe-prices.ts
+//
+// `--env-file=.env.local` matches project-wide convention (see
+// scripts/probe-*.ts headers). The script uses process.env.X directly
+// (no dotenv.config()); tsx loads the file. Live run requires
+// STRIPE_LIVE_SECRET_KEY (a temp restricted key with Products r+w and
+// Prices r+w; revoke after). Test run reads STRIPE_TEST_SECRET_KEY.
+// SUPABASE_SERVICE_ROLE_KEY + NEXT_PUBLIC_SUPABASE_URL required for
+// both modes (writes to public.stripe_prices under service role).
 //
 // Verification post-run:
 //   SELECT tier_track, tier_name, line_item, cycle, price_model,
