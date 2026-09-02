@@ -1544,7 +1544,18 @@ export default function CompanyAdminPortal() {
       authorization_expiration_date: newProperty.authorization_expiration_date || null,
       authorization_notes: newProperty.authorization_notes || null,
     }]).select().single()
-    if (insErr) { setPropMsg('Error: ' + insErr.message); return }
+    if (insErr) {
+      // A3 UNIQUE INDEX properties_company_name_ci_unique fires 23505
+      // when (lower(trim(company)), lower(trim(name))) collides. Friendly
+      // message names the collision + the normalization so the CA
+      // understands why a "different" name matched.
+      if (insErr.code === '23505' && (insErr.message || '').includes('properties_company_name_ci_unique')) {
+        setPropMsg(`A property named "${trimmedName}" already exists at "${role?.company || 'your company'}". Names are compared without case or spacing differences.`)
+        return
+      }
+      setPropMsg('Error: ' + insErr.message)
+      return
+    }
     await auditLog('create_property', 'properties', data.id, { name: trimmedName, company: role?.company })
 
     // B147 3b — sync to Stripe AFTER DB write succeeds. Non-throwing per

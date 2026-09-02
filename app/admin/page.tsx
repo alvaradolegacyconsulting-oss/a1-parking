@@ -408,7 +408,18 @@ export default function AdminPortal() {
     try {
       const payload = { ...newProperty, visitor_capacity: parseInt(newProperty.visitor_capacity) || null }
       const { data, error } = await supabase.from('properties').insert([payload]).select().single()
-      if (error) { alert('Error: ' + error.message); return }
+      if (error) {
+        // A3 UNIQUE INDEX properties_company_name_ci_unique fires 23505
+        // when (lower(trim(company)), lower(trim(name))) collides. Server
+        // is the enforcement; this friendly message replaces the raw
+        // Postgres text so the operator understands the normalization.
+        if (error.code === '23505' && (error.message || '').includes('properties_company_name_ci_unique')) {
+          alert(`A property named "${newProperty.name}" already exists at "${newProperty.company}". Names are compared without case or spacing differences.`)
+          return
+        }
+        alert('Error: ' + error.message)
+        return
+      }
       await auditLog(adminEmail, 'ADD_PROPERTY', 'properties', data.id, payload)
       setShowAddProperty(false)
       setNewProperty({ name:'', company:'', address:'', city:'', state:'TX', zip:'', visitor_capacity:'', pm_name:'', pm_phone:'', pm_email:'', is_active:true })
