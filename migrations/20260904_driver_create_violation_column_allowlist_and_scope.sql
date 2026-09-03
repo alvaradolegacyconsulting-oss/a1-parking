@@ -376,8 +376,16 @@ BEGIN
   IF v_body NOT LIKE '%tier_not_permitted%' THEN
     v_offenders := v_offenders || 'body missing tier_not_permitted RAISE (Commit 2 gate REGRESSION); ';
   END IF;
-  IF v_body LIKE '%jsonb_populate_record%' THEN
-    v_offenders := v_offenders || 'body still contains jsonb_populate_record (mass-assignment vector NOT closed); ';
+  -- 🔴 Match the CALL specifically (identifier + opening paren) —
+  -- NOT the bare identifier. pg_get_functiondef preserves comments
+  -- in its output; the section-header comment inside the new body
+  -- ("-- Explicit INSERT — no jsonb_populate_record") tripped the
+  -- prior wide `LIKE '%jsonb_populate_record%'` check even though
+  -- the actual code no longer calls it. Sep 3 lesson: negative
+  -- substring checks against pg_get_functiondef must match the
+  -- CALL syntax, not the identifier alone.
+  IF v_body LIKE '%jsonb_populate_record(%' THEN
+    v_offenders := v_offenders || 'body still CALLS jsonb_populate_record (mass-assignment vector NOT closed); ';
   END IF;
 
   IF v_offenders <> '' THEN

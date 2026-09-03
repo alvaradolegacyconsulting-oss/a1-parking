@@ -141,9 +141,12 @@ BEGIN
     RAISE EXCEPTION 'VS5 FAIL: body missing tier_not_permitted RAISE — Commit 2 gate REGRESSION';
   END IF;
 
-  -- Retired vector MUST BE ABSENT
-  IF v_body LIKE '%jsonb_populate_record%' THEN
-    RAISE EXCEPTION 'VS5 FAIL: body still contains jsonb_populate_record — mass-assignment vector NOT closed';
+  -- Retired vector MUST BE ABSENT (as a CALL — comments referencing
+  -- the identifier are fine; pg_get_functiondef preserves both).
+  -- Match `identifier(` for call-shape; bare `%identifier%` false-
+  -- positived on the section-header comment inside the new body.
+  IF v_body LIKE '%jsonb_populate_record(%' THEN
+    RAISE EXCEPTION 'VS5 FAIL: body still CALLS jsonb_populate_record — mass-assignment vector NOT closed';
   END IF;
 END $vs5$;
 
