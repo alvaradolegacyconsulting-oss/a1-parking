@@ -175,8 +175,10 @@ BEGIN
      AND ur.is_active = TRUE
    ORDER BY ur.id LIMIT 1;
   IF v_email IS NULL THEN
-    RAISE NOTICE 'VS6 SKIP: no active driver in user_roles. Cannot exercise unrecognized_keys.';
-    RETURN;
+    -- 🔴 2026-09-03 Sep 3 followup §1: absence of fixture is a
+    -- finding, not a pass. VE4 taught this — skips let a gate
+    -- report green for checks it couldn't perform. Raise instead.
+    RAISE EXCEPTION 'VS6 FIXTURE FAIL: no active driver in user_roles. Cannot verify unrecognized_keys rejection — this is a security-claim gate; treating absence as pass would let the gate report green for a check it couldn''t perform.';
   END IF;
 
   -- Pick a property they're assigned to so we get PAST the scope guard
@@ -234,8 +236,11 @@ BEGIN
      AND array_length(d.assigned_properties, 1) IS NOT NULL
    ORDER BY ur.id LIMIT 1;
   IF v_email IS NULL THEN
-    RAISE NOTICE 'VS7 SKIP: no active driver with assigned_properties + matching user_roles. Cannot exercise scope guard.';
-    RETURN;
+    -- 🔴 2026-09-03 Sep 3 followup §1: same rule as VS6. This gate
+    -- proves the property scope guard actually rejects unassigned
+    -- properties — the security claim. Skipping on missing fixture
+    -- would let the gate green-light a check it couldn't perform.
+    RAISE EXCEPTION 'VS7 FIXTURE FAIL: no active driver with assigned_properties + matching user_roles. Cannot verify property_not_authorized_for_driver rejection — security-claim gate cannot be silently skipped. Seed a test driver + assignments OR fix the drivers/user_roles data before treating Commit 3B as verified.';
   END IF;
 
   PERFORM set_config('request.jwt.claims', json_build_object('email', v_email)::TEXT, true);
@@ -286,8 +291,8 @@ SELECT
     'VS3  signature (args + result) UNCHANGED — parity',
     'VS4  GRANTs — authenticated EXECUTE, anon REVOKEd',
     'VS5  body markers: new (unrecognized_keys + get_my_driver_assigned_properties + property_not_authorized_for_driver + driver_no_properties_assigned + property_not_authorized_for_ca) + retained (my_tier_enforcement_capable + tier_not_permitted) + retired (NO jsonb_populate_record)',
-    'VS6  🔴 execution — driver + unknown key → unrecognized_keys (or SKIP)',
-    'VS7  🔴 execution — driver + unassigned property → property_not_authorized_for_driver (or SKIP)',
+    'VS6  🔴 execution — driver + unknown key → unrecognized_keys (FIXTURE FAIL if no driver — security-claim gate)',
+    'VS7  🔴 execution — driver + unassigned property → property_not_authorized_for_driver (FIXTURE FAIL if no driver with assignments)',
     'VS8  SCHEMA_DRIVER_CREATE_VIOLATION_ALLOWLIST_AND_SCOPE audit row',
     'LIVE A1 SMOKE (post-push, before flip): Test-LEGACY driver full flow — scan, confirm, stamp — see header'
   ] AS gates_verified,
