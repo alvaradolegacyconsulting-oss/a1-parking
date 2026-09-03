@@ -3,6 +3,11 @@ import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { getStripe, getStripeMode } from '../../../lib/stripe'
 import { getStripeBillingEnabled, getPublicSignupOpen } from '../../../lib/platform-flags'
 import { getStandardCatalogLines } from '../../../lib/stripe-catalog'
+import {
+  TOS_VERSION,
+  PRIVACY_VERSION,
+  TEXAS_ATTESTATION_VERSION,
+} from '../../../lib/legal-versions'
 
 // B66.3 — Stripe Checkout session creator. Called from /signup/verify
 // when the user clicks "Continue to Checkout" after email verification.
@@ -59,6 +64,62 @@ export async function POST() {
   }
   if (!user.email_confirmed_at) {
     return NextResponse.json({ error: 'email not verified' }, { status: 403 })
+  }
+
+  // ── 🔴 Legal consent gate (2026-09-03, Mateo Sep 3 §1 flip blocker) ─
+  // Verifies that /api/signup/attest was called successfully and
+  // persisted tos_acceptances rows at the CURRENT pinned versions.
+  // Without this, a caller who skips /signup/verify (never hitting
+  // /api/signup/attest) can POST here and create a paid subscription
+  // with zero recorded consent — the entire B118 arc bypassed.
+  //
+  // Version-pinned: a row against a superseded TOS_VERSION /
+  // PRIVACY_VERSION / TEXAS_ATTESTATION_VERSION doesn't count as
+  // consent to the CURRENT terms. Server pins from lib/legal-versions.ts
+  // are the source of truth (same file /api/signup/attest reads from,
+  // so the two endpoints agree on "current").
+  //
+  // RLS on tos_acceptances (tos_acceptances_self_select policy from
+  // 20260520_b65_self_serve_signup_schema.sql) filters to the user's
+  // own rows — the cookie-bound session client above provides auth.uid()
+  // so this read is naturally scoped without a service-role escalation.
+  //
+  // Missing any → 400 pointing at re-attest. Doesn't distinguish
+  // WHICH pin failed to keep the error terse; the /signup/verify page
+  // owns the re-attest UX.
+  const { data: consentRows, error: consentErr } = await supabase
+    .from('tos_acceptances')
+    .select('document_type, tos_version, privacy_version, attestation_version')
+    .eq('user_id', user.id)
+    .in('document_type', ['tos', 'privacy', 'texas_attestation'])
+  if (consentErr) {
+    return NextResponse.json(
+      { error: 'legal consent verification failed: ' + consentErr.message },
+      { status: 500 }
+    )
+  }
+  const hasTos = (consentRows ?? []).some(
+    r => r.document_type === 'tos' && r.tos_version === TOS_VERSION
+  )
+  const hasPrivacy = (consentRows ?? []).some(
+    r => r.document_type === 'privacy' && r.privacy_version === PRIVACY_VERSION
+  )
+  const hasTexas = (consentRows ?? []).some(
+    r => r.document_type === 'texas_attestation' && r.attestation_version === TEXAS_ATTESTATION_VERSION
+  )
+  if (!hasTos || !hasPrivacy || !hasTexas) {
+    const missing: string[] = []
+    if (!hasTos) missing.push('terms_of_service')
+    if (!hasPrivacy) missing.push('privacy_policy')
+    if (!hasTexas) missing.push('texas_attestation')
+    return NextResponse.json(
+      {
+        error: 'legal consent not recorded at current versions',
+        missing,
+        hint: 'return to /signup/verify to record consent, then retry checkout',
+      },
+      { status: 400 }
+    )
   }
 
   // ── Dormancy guards ──────────────────────────────────────────────
@@ -164,14 +225,21 @@ export async function POST() {
   }
 
   // ── Build line items ─────────────────────────────────────────────
-  // 2026-07-01 — quantity map rewritten for the 3-tier catalog:
+  // 2026-07-01 — quantity map rewritten for the 3-tier catalog.
+  // 2026-09-03 — comment corrected: per_permit is LICENSED with a
+  // ratcheted quantity, NOT metered. Prior wording ("billed by metered
+  // usage") was wrong — the Stripe Prices are created without
+  // usage_type (defaults to 'licensed'), and syncOnAdd calls
+  // stripe.subscriptionItems.update(itemId, { quantity }) to ratchet
+  // the count. No code path calls createUsageRecord / usage_records.
   //   base         → 1
   //   per_property → intended.property_count
-  //   per_permit   → 1 (graduated tiered Price; billed by metered usage
-  //                  via syncOnAdd on approval, not by upfront quantity.
-  //                  Stripe requires a numeric quantity for tiered lines
-  //                  at Checkout — 1 is the seat value; actual permits
-  //                  reported later via subscription-item usage).
+  //   per_permit   → 1 (LICENSED tiered Price; graduated tier 1 covers
+  //                  0-500 permits at $0.00 so a fresh subscriber's
+  //                  first invoice is $0 for permits regardless of
+  //                  starting quantity. Ratcheted upward by syncOnAdd
+  //                  as permits are approved; renewal-trim by the
+  //                  parallel syncOnRemove path.)
   //   per_driver   → retired with the 3-tier move; not in the catalog.
   // Previous fallthrough sent intended.driver_count for anything not
   // base/per_property — that would produce NaN for PM per_permit and
