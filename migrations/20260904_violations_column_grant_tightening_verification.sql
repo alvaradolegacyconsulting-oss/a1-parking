@@ -9,9 +9,11 @@
 --        allowlist columns
 --   VS2  UPDATE grant surface — authenticated has EXACTLY is_confirmed
 --   VS3  🔴 EXECUTION — direct INSERT of tow_ticket_generated as
---        authenticated → permission denied for column
+--        authenticated → "permission denied for table violations"
+--        (Postgres reports table-level even for column-scoped denials;
+--        empirically confirmed 2026-09-04 by R1/R2 probes)
 --   VS4  🔴 EXECUTION — direct UPDATE of status as authenticated →
---        permission denied for column
+--        "permission denied for table violations"
 --   VS5  🔴 LOAD-BEARING — DEFINER RPC (void_violation) still works;
 --        DEFINER-runs-as-owner premise verified
 --   VS6  service_role posture unchanged (INSERT + UPDATE full grants)
@@ -95,9 +97,20 @@ END $vs2$;
 
 -- ── VS3: 🔴 EXECUTION — direct INSERT of revoked column REJECTS ═══
 -- Impersonate a CA + attempt INSERT with tow_ticket_generated. Should
--- fail with "permission denied for column" (sqlstate 42501 for
--- privilege errors, though column-privilege denials render as
--- "permission denied for column X" specifically).
+-- fail with sqlstate 42501 msg="permission denied for table violations".
+--
+-- 🔴 2026-09-04 message-shape correction: prior version asserted
+-- "permission denied for COLUMN X". Empirically wrong (R1 probe).
+-- Postgres reports at TABLE level for INSERT and UPDATE denials
+-- even when the cause is a missing per-column grant. The column-
+-- named form ("permission denied for column X") appears in some
+-- other privilege paths (e.g. SELECT of a column the user can't
+-- read within a table they otherwise can) but NOT here.
+--
+-- Postgres's own HINT on this error suggests
+-- "GRANT INSERT ON public.violations TO authenticated" — WHICH
+-- WOULD UNDO COMMIT C ENTIRELY. If a future reader hits this
+-- error, DO NOT follow the hint.
 DO $vs3$
 DECLARE
   v_email TEXT;
@@ -137,13 +150,16 @@ BEGIN
     -- 🔴 Discriminate by MESSAGE_TEXT — sqlstate 42501 is shared
     -- across column-grant denials AND RLS violations AND custom
     -- tier-policy RAISEs. Only the specific phrase distinguishes.
-    IF v_msg ILIKE '%permission denied for column%' THEN
+    -- INSERT column-grant denial → "permission denied for table X"
+    -- (Postgres reports at relation level even for column-scoped
+    -- denials — empirically confirmed 2026-09-04 R1 probe).
+    IF v_msg ILIKE '%permission denied for table%' THEN
       -- Expected shape — column grant fired. Pass.
       NULL;
     ELSIF v_msg ILIKE '%row-level security%' OR v_msg ILIKE '%violates row-level%' THEN
       RAISE EXCEPTION 'VS3 FIXTURE FAIL: RLS INSERT policy rejected the probe before column-grant check ran. Property + CA combination doesn''t admit — fix probe fixture to use CA + property in the same company. sqlstate=% msg=%', v_sqlstate, v_msg;
     ELSE
-      RAISE EXCEPTION 'VS3 FAIL: expected column-grant denial ("permission denied for column tow_ticket_generated"); got sqlstate=% msg=%', v_sqlstate, v_msg;
+      RAISE EXCEPTION 'VS3 FAIL: expected column-grant denial ("permission denied for table violations"); got sqlstate=% msg=%', v_sqlstate, v_msg;
     END IF;
   END;
 END $vs3$;
@@ -177,10 +193,12 @@ BEGIN
     GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
     EXECUTE 'RESET role';
     -- 🔴 Same discriminator as VS3 — MESSAGE_TEXT alone.
-    IF v_msg ILIKE '%permission denied for column%' THEN
+    -- UPDATE column-grant denial → "permission denied for table X"
+    -- (same relation-level rendering as INSERT — R2 probe confirmed).
+    IF v_msg ILIKE '%permission denied for table%' THEN
       NULL;   -- Expected: column grant fired.
     ELSE
-      RAISE EXCEPTION 'VS4 FAIL: expected column-grant denial ("permission denied for column status"); got sqlstate=% msg=%. sqlstate 42501 shared across column/RLS/tier RAISEs — message text discriminates.', v_sqlstate, v_msg;
+      RAISE EXCEPTION 'VS4 FAIL: expected column-grant denial ("permission denied for table violations"); got sqlstate=% msg=%. sqlstate 42501 shared across column/RLS/tier RAISEs — message text discriminates.', v_sqlstate, v_msg;
     END IF;
   END;
 END $vs4$;
@@ -270,12 +288,15 @@ BEGIN
     EXECUTE 'RESET role';
     -- 🔴 DISCRIMINATOR: MESSAGE_TEXT alone. sqlstate 42501 is used by
     -- both column-grant denials AND our Commit 2 tier RAISE — sqlstate
-    -- alone doesn't distinguish them. "permission denied for column"
-    -- is Postgres's specific phrase for column-grant denials.
-    IF v_msg ILIKE '%permission denied for column%' THEN
-      RAISE EXCEPTION 'VS5 FAIL (LOAD-BEARING): DEFINER premise BROKEN. void_violation surfaced column-permission denial (sqlstate=% msg=%). Commit C rolled back the ability of DEFINER RPCs to write revoked columns — this hits every enforcement RPC. Immediate revert of Commit C required.', v_sqlstate, v_msg;
+    -- alone doesn't distinguish them. If DEFINER premise broke, the
+    -- RPC's internal INSERT/UPDATE would fail with "permission denied
+    -- for table violations" (relation-level rendering — R1/R2 probes
+    -- 2026-09-04 confirmed both INSERT and UPDATE report this way,
+    -- not "for column X").
+    IF v_msg ILIKE '%permission denied for table%' THEN
+      RAISE EXCEPTION 'VS5 FAIL (LOAD-BEARING): DEFINER premise BROKEN. void_violation surfaced table-level permission denial (sqlstate=% msg=%). Commit C rolled back the ability of DEFINER RPCs to write revoked columns — this hits every enforcement RPC. Immediate revert of Commit C required.', v_sqlstate, v_msg;
     ELSE
-      RAISE EXCEPTION 'VS5 UNEXPECTED: void_violation raised sqlstate=% msg=% (tier=% CA). Not the DEFINER-premise failure shape (msg does NOT contain "permission denied for column"). Another regression worth investigating.', v_sqlstate, v_msg, v_tier;
+      RAISE EXCEPTION 'VS5 UNEXPECTED: void_violation raised sqlstate=% msg=% (tier=% CA). Not the DEFINER-premise failure shape (msg does NOT contain "permission denied for table"). Another regression worth investigating.', v_sqlstate, v_msg, v_tier;
     END IF;
   END;
 END $vs5$;
@@ -386,9 +407,9 @@ SELECT
   ARRAY[
     'VS1  authenticated INSERT grants = exactly the 19 allowlist cols',
     'VS2  authenticated UPDATE grants = exactly [is_confirmed]',
-    'VS3  🔴 execution — direct INSERT of tow_ticket_generated → 42501 permission denied',
-    'VS4  🔴 execution — direct UPDATE of status → 42501 permission denied',
-    'VS5  🔴 LOAD-BEARING — void_violation DEFINER RPC still works (returns not_found for garbage id, NOT permission denied)',
+    'VS3  🔴 execution — direct INSERT of tow_ticket_generated → 42501 "permission denied for table violations"',
+    'VS4  🔴 execution — direct UPDATE of status → 42501 "permission denied for table violations"',
+    'VS5  🔴 LOAD-BEARING — void_violation DEFINER RPC still works (returns not_found for garbage id, NOT "permission denied for table")',
     'VS6  service_role posture unchanged',
     'VS7  anon has no INSERT/UPDATE column grants',
     'VS8  DELETE policies post-apply parity (3 + is_confirmed in each qual + 0 admin-prefixed)',

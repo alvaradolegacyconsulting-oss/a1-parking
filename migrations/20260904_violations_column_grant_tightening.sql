@@ -59,8 +59,23 @@
 --
 -- 🔴 VS5 in the paired verification asserts this by calling
 -- void_violation with a garbage id — expects { error: 'not_found' },
--- would fail with "permission denied for column voided_at" if the
--- DEFINER premise were wrong.
+-- would fail with "permission denied for table violations" if the
+-- DEFINER premise were wrong (Postgres reports column-grant denials
+-- at the RELATION level for both INSERT and UPDATE — confirmed
+-- empirically 2026-09-04 by R1/R2 probes).
+--
+-- ⚠ POSTGRES HINT WARNING ⚠
+-- The 42501 "permission denied for table violations" error carries a
+-- Postgres HINT that reads roughly:
+--   HINT: To grant, use "GRANT INSERT ON public.violations TO authenticated"
+-- WHICH WOULD UNDO COMMIT C ENTIRELY. If a future reader hits this
+-- error while diagnosing a Track-gating issue, DO NOT follow the
+-- HINT. The wide grant was deliberately revoked in Part 2 in favor
+-- of the 19-column allowlist in Part 3. The right response is
+-- either (a) the allowlist is incomplete for a legitimate new column
+-- and needs extending in Part 3, or (b) a client path is trying to
+-- write a column that Commit C intended to lock down (verify with
+-- the mass-assignment vector).
 --
 -- ── DELETE + SELECT UNCHANGED ──────────────────────────────────────
 --
