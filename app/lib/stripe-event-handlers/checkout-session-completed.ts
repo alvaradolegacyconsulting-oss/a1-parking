@@ -5,9 +5,16 @@ import { getStripe } from '../stripe'
 import { sendEmail } from '../resend-client'
 import type { HandlerResult } from './types'
 
+// 🔴 2026-09-03 (Picker §2) — tier union narrowed to the two values
+// the self-serve picker can send. Old 6-value list was a carryover
+// from the pre-pivot catalog never updated for the 3-tier + pm_starter
+// move. See feedback_cast_at_vocabulary_boundary — the boundary CAST
+// silenced the drift the picker-research pass surfaced.
+// Legacy self-serve doesn't exist (proposal-code path is separate);
+// legacy webhook events flow through a different metadata shape.
 export interface IntendedTier {
   track: 'enforcement' | 'property_management'
-  tier: 'starter' | 'growth' | 'legacy' | 'essential' | 'professional' | 'enterprise'
+  tier: 'pm_starter' | 'enforcement_only'
   cycle: 'monthly' | 'annual'
   property_count: number
   driver_count: number

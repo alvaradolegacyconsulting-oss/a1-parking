@@ -194,10 +194,10 @@ SELECT
   ARRAY[
     'VS1  stripe_prices_tier_name_valid CHECK present (exactly 1)',
     'VS2  definition includes pm_only + enforcement_only + legacy + pm_starter',
-    'VS3  🔴 execution — pm_starter INSERT SUCCEEDS',
+    'VS3  🔴 real-data proof — pm_starter rows exist + all on property_management track',
     'VS4  🔴 execution — invalid tier_name → 23514 (constraint still enforcing)',
     'VS5  existing pm_only + enforcement_only rows preserved',
-    'VS6  pm_starter rows post-apply = 0 (or logged as info)',
+    'VS6  pm_starter catalog shape — exactly 4 rows per mode (base m/a + per_permit m/a)',
     'VS7  SCHEMA_STRIPE_PRICES_TIER_NAME_WIDEN audit row'
   ] AS gates_verified,
   now() AS verified_at;

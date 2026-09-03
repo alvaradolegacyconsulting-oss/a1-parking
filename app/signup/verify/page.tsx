@@ -58,9 +58,18 @@ const BORDER = 'rgba(255,255,255,0.06)'
 const TEXT = '#e2e8f0'
 const MUTED = '#64748b'
 
+// 🔴 2026-09-03 (Picker §2) — tier narrowed from `string` to the
+// two-value union the self-serve picker sends. Matches
+// checkout-session-completed.ts + create-checkout-session/route.ts.
+// See feedback_cast_at_vocabulary_boundary. The `as IntendedTier`
+// cast at line ~116 still parses untrusted JSON; if it carries an
+// old vocabulary value from stale user_metadata (unlikely — no live
+// self-serve users exist yet), the downstream picker rewrite will
+// route it to missing_tier via the guard on line ~112. Filed as
+// a follow-up to add a runtime discriminator.
 interface IntendedTier {
   track: 'enforcement' | 'property_management'
-  tier: string
+  tier: 'pm_starter' | 'enforcement_only'
   cycle: 'monthly' | 'annual'
   property_count: number
   driver_count: number

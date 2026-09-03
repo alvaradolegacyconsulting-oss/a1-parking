@@ -32,9 +32,18 @@ import { getStandardCatalogLines } from '../../../lib/stripe-catalog'
 export const runtime = 'nodejs'
 export const maxDuration = 30
 
+// 🔴 2026-09-03 (Picker §2) — tier union narrowed to the two values
+// the self-serve picker can actually send. Old 6-value list was a
+// carryover from B66.2a's pre-pivot catalog + never updated when the
+// picker moved to 3-tier + pm_starter. Narrow makes the next vocab
+// drift a BUILD error rather than the 503 the picker-research pass
+// found here (intended.tier as IntendedTier['tier'] silenced the
+// comparison). See feedback_cast_at_vocabulary_boundary.
+// Legacy self-serve doesn't exist — legacy is proposal-code-only,
+// which uses a different route entirely.
 interface IntendedTier {
   track: 'enforcement' | 'property_management'
-  tier: 'starter' | 'growth' | 'legacy' | 'essential' | 'professional' | 'enterprise'
+  tier: 'pm_starter' | 'enforcement_only'
   cycle: 'monthly' | 'annual'
   property_count: number
   driver_count: number
@@ -120,20 +129,33 @@ export async function POST() {
   try {
     catalog = await getStandardCatalogLines(
       intended.track,
-      intended.tier as IntendedTier['tier'],
+      intended.tier,   // 🔴 cast removed 2026-09-03 (Picker §2); union is now catalog-compatible
       intended.cycle,
       mode,
     )
   } catch (e) {
     return NextResponse.json({ error: 'catalog lookup failed: ' + (e as Error).message }, { status: 503 })
   }
-  // 2026-07-01 — expectedCount inverted from the original ternary.
-  // Post-3-tier catalog (Slice 1 Commit 3): PM has 3 lines (base +
-  // per_property + per_permit graduated); Enforcement has 2 (base +
-  // per_property; per_driver retired). Previous ternary returned 2
-  // for PM (would drop per_permit and 503 "catalog missing") and 3
-  // for Enforcement (would 503 on the current 2-line catalog).
-  const expectedCount = intended.track === 'property_management' ? 3 : 2
+  // 🔴 2026-09-03 (Picker §2) — expectedCount keyed off TIER via
+  // Record<IntendedTier['tier'], number>. Prior `track === 'pm' ? 3 : 2`
+  // would 503 pm_starter as "catalog missing" (pm_starter is PM but
+  // has only 2 lines — base + per_permit; NO per_property per
+  // feedback_missing_column_is_correct_shape).
+  //
+  // Record shape forces build-time exhaustiveness: adding a tier to
+  // IntendedTier['tier'] fails this Record<> if the new tier isn't
+  // added here too. No chained ternary silence.
+  //
+  // pm_starter → 2 (base + per_permit graduated; NO per_property)
+  // enforcement_only → 2 (base + per_property; per_driver retired)
+  // pm_only is NOT in this map — self-serve picker doesn't send it
+  // (proposal-code path uses a different route). If pm_only ever
+  // becomes self-serve, add here.
+  const expectedCountByTier: Record<IntendedTier['tier'], number> = {
+    pm_starter: 2,
+    enforcement_only: 2,
+  }
+  const expectedCount = expectedCountByTier[intended.tier]
   if (catalog.length !== expectedCount) {
     return NextResponse.json(
       { error: `standard catalog missing rows for (${intended.track}.${intended.tier}.${intended.cycle}.${mode}): expected ${expectedCount}, got ${catalog.length}. Run scripts/create-stripe-prices.ts.` },
