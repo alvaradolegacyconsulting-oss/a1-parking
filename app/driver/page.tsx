@@ -1308,22 +1308,76 @@ export default function DriverPortal() {
       p_violation: violationPayload,
       p_snapshot: snapshotPayload,
     })
-    // Silent-write discipline: RPCs can return errors two ways —
-    // transport/SQL error on rpcRes.error, OR a {error: '...'} payload
-    // in rpcRes.data (the RPC's own validation guards). Both must be
-    // checked; either triggers the fallback.
+    // 🔴 2026-09-03 (Mateo Sep 3 followup §2) — three-branch fallback rule.
+    // Prior code fell back on ANY failure (rpcRes.error OR rpcDataError).
+    // Track gating Commit 2 (606cfe4 + 87fdb28) shipped tier_not_permitted
+    // as `RAISE EXCEPTION ... ERRCODE = 'insufficient_privilege'`, which
+    // lands in rpcRes.error — so the old fallback would fire for tier
+    // rejections and bypass the gate via direct .insert (RLS gates by
+    // role + property, NOT tier). Live bypass in place today; contained
+    // to A1/us but a flip blocker.
+    //
+    // New rule — distinguish DELIBERATE policy rejections from
+    // INCIDENTAL failures. Both can arrive as exceptions; sqlstate
+    // discriminates.
+    //
+    //   1. rpcRes.data.error set  → RPC deliberately returned jsonb
+    //                                error. Surface directly.
+    //   2. rpcRes.error with sqlstate '42501' → deliberate policy
+    //                                rejection via RAISE EXCEPTION
+    //                                (tier_not_permitted today; any
+    //                                future policy denial should use
+    //                                the same errcode). Surface directly.
+    //   3. rpcRes.error other sqlstate → snapshot capture failure OR
+    //                                DNT trigger's 23514 OR unrelated
+    //                                DB blip. Fall back → preserves
+    //                                both original loads (snapshot
+    //                                resilience + DNT-block detection
+    //                                surface).
     const rpcDataError = (rpcRes.data as { error?: string } | null)?.error ?? null
+    const rpcErrorCode = (rpcRes.error as unknown as { code?: string } | null)?.code ?? null
 
-    if (rpcRes.error || rpcDataError) {
-      console.error('[submitViolation] driver_create_violation_with_snapshot RPC failed; falling back to direct insert', {
-        rpc_error: rpcRes.error,
+    if (rpcDataError) {
+      // Branch 1 — deliberate rejection via jsonb return.
+      console.error('[submitViolation] driver_create_violation_with_snapshot RPC rejected deliberately (data.error); NOT falling back', {
         rpc_data_error: rpcDataError,
+        intended_violation_payload: violationPayload,
+      })
+      setSubmitting(false)
+      // Raw error never reaches user (feedback_raw_error_never_reaches_user);
+      // generic + actionable copy. The specific reason is in the log for
+      // support triage.
+      alert("Couldn't save the violation. Your account may not have permission for this action — contact your company admin.")
+      return
+    }
+
+    if (rpcRes.error && rpcErrorCode === '42501') {
+      // Branch 2 — deliberate policy rejection via RAISE EXCEPTION.
+      // sqlstate 42501 = insufficient_privilege (Postgres standard for
+      // "you can't do this"). Chosen for tier_not_permitted; stable
+      // marker for future policy raises.
+      console.error('[submitViolation] driver_create_violation_with_snapshot policy rejection (sqlstate 42501); NOT falling back', {
+        rpc_error: rpcRes.error,
+        intended_violation_payload: violationPayload,
+      })
+      setSubmitting(false)
+      alert("Couldn't save the violation. Your account may not have permission for this action — contact your company admin.")
+      return
+    }
+
+    if (rpcRes.error) {
+      // Branch 3 — incidental failure (snapshot capture broke, DNT
+      // trigger 23514, DB blip). Fall back to direct .insert with
+      // snapshot_status='failed' so the evidence gap is queryable.
+      // "Mateo lock: physical tow happens regardless of software;
+      // blocking violation creation to protect evidence quality gets
+      // the priority backwards." (2026-08-03 header)
+      console.error('[submitViolation] driver_create_violation_with_snapshot incidental failure; falling back to direct insert', {
+        rpc_error: rpcRes.error,
+        rpc_error_code: rpcErrorCode,
         intended_snapshot_payload: snapshotPayload,
         intended_violation_payload: violationPayload,
       })
-      // Direct-insert fallback with explicit snapshot_status='failed' so
-      // the evidence gap is queryable (not indistinguishable from
-      // none_present or from pre-feature NULL rows).
       const fallbackRes = await supabase.from('violations').insert([{
         ...violationPayload,
         snapshot_status: 'failed',
