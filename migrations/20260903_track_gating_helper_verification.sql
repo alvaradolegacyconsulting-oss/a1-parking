@@ -256,22 +256,18 @@ DECLARE
   v_msg TEXT;
   v_fn TEXT;
 BEGIN
-  -- Kill any impersonation carried over from VS6/VS7 (transaction-
-  -- scope LOCAL settings persist here). PERFORM set_config with an
-  -- empty string clears the value; a follow-up RESET wipes it fully.
+  -- 🔴 2026-09-03 second fix (Mateo Sep 3 followup §1): my previous
+  -- attempt used `set_config('role', '', true)` which fails with
+  -- `ERROR: 22023: role "" does not exist` — `role` is a real Postgres
+  -- setting, not a custom GUC; empty string isn't a valid role name.
+  -- Use `EXECUTE 'RESET role'` (already the correct pattern in the
+  -- space_payments consolidated block).
+  --
+  -- request.jwt.claims IS a custom GUC — clearing to empty string is
+  -- fine and gives us `auth.jwt() ->> 'email' → NULL`, which is the
+  -- no-session state VS8 needs.
+  EXECUTE 'RESET role';
   PERFORM set_config('request.jwt.claims', '', true);
-  PERFORM set_config('role', '', true);
-  -- Belt-and-suspenders — RESET both to their built-in defaults.
-  BEGIN
-    EXECUTE 'RESET request.jwt.claims';
-  EXCEPTION WHEN OTHERS THEN
-    NULL;  -- RESET on a never-SET custom GUC can raise; ignore.
-  END;
-  BEGIN
-    EXECUTE 'RESET role';
-  EXCEPTION WHEN OTHERS THEN
-    NULL;
-  END;
 
   FOREACH v_fn IN ARRAY ARRAY['my_tier_enforcement_capable', 'my_tier_pm_capable'] LOOP
     BEGIN

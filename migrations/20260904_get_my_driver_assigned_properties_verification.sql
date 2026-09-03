@@ -166,10 +166,14 @@ DECLARE
 BEGIN
   -- Reset any prior impersonation from VS5/VS6 (LOCAL settings
   -- persist across DO blocks in a single Supabase editor session).
+  -- `set_config('role', '', true)` FAILS with 22023 "role \"\" does
+  -- not exist" — role is a real Postgres setting, not a custom GUC.
+  -- Use `EXECUTE 'RESET role'` (per space_payments precedent + Mateo
+  -- Sep 3 followup §1). request.jwt.claims IS a custom GUC; clearing
+  -- to '' gives us auth.jwt() ->> 'email' → NULL, which is the
+  -- no-session state we want.
+  EXECUTE 'RESET role';
   PERFORM set_config('request.jwt.claims', '', true);
-  PERFORM set_config('role', '', true);
-  BEGIN EXECUTE 'RESET request.jwt.claims'; EXCEPTION WHEN OTHERS THEN NULL; END;
-  BEGIN EXECUTE 'RESET role'; EXCEPTION WHEN OTHERS THEN NULL; END;
 
   v_actual := public.get_my_driver_assigned_properties();
 
