@@ -45,7 +45,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../supabase'
 import { TIER_PRICING } from '../../lib/tier-config'
-import { ENFORCEMENT_TIERS, PROPERTY_MANAGEMENT_TIERS } from '../../lib/tier-display'
+import { OFFERINGS } from '../../lib/tier-display'
 import { isOtpExpiredOrUsed } from '../../lib/otp-errors'
 import { SAAS_VERSION, SAAS_DISPLAY_DATE } from '../../lib/legal-versions'
 import LegalReadthroughGate from '../../components/LegalReadthroughGate'
@@ -453,14 +453,13 @@ function ErrorCard({ title, body, primaryLabel, primaryHref }: { title: string; 
 
 function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: IntendedTier; proceeding: boolean; onProceed: () => void }) {
   const trackLabel = tier.track === 'enforcement' ? 'Enforcement' : 'Property Management'
-  // B2-5 C2 (2026-07-21) — lookup by slug field, not lowercased name.
-  // The picker at /signup now writes canonical slugs ('pm_only', etc.)
-  // into user_metadata.intended_tier.tier; earlier code compared against
-  // t.name.toLowerCase() which produced hyphens and never matched.
-  // Moved above tierTitle so we can prefer the display name over a
-  // capitalized-underscore rendering of the slug ("PM-Only" beats "Pm_only").
-  const tiers = tier.track === 'enforcement' ? ENFORCEMENT_TIERS : PROPERTY_MANAGEMENT_TIERS
-  const td = tiers.find(t => t.slug === tier.tier)
+  // 2026-09-03 (Picker §3, Mateo Sep 3 §1): tier lookup by slug from
+  // OFFERINGS directly. Prior filtered ENFORCEMENT_TIERS /
+  // PROPERTY_MANAGEMENT_TIERS by track (from tier-display's backwards-
+  // compat exports) — obsolete now that the picker sources 3 cards
+  // straight from OFFERINGS. Slug is the canonical key; scanning one
+  // list is equivalent to scanning two filtered lists and simpler.
+  const td = OFFERINGS.find(o => o.slug === tier.tier)
   const tierTitle = td?.name ?? (tier.tier.charAt(0).toUpperCase() + tier.tier.slice(1))
 
   // B118 Layer 2 Commit 3 — SaaS acceptance state for self-serve.

@@ -37,6 +37,26 @@ the company could provision without provable consent-at-time-of-provisioning.
 Not a live concern today. Filed for consideration when we want the same atomicity
 proposal-code has.
 
+## 🔴 Mid-deploy edge — the error direction
+
+If the TOS version bumps mid-signup (client bundle built at v1.2, server pin at v1.3
+between form submit and `/api/signup/attest` call), the row is recorded at v1.3 with
+`reviewed_at` timestamps captured against v1.2 content the user actually saw.
+
+**Direction: over-claiming.** The subscriber consented to v1.2 content, the row claims
+they consented to v1.3. Under-claiming (row records v1.2 while server has already
+migrated to v1.3) would be the safer failure — the checkout gate would 400, force re-
+attest at the current version, and the user would explicitly see v1.3.
+
+The fix differs depending on which way it errs: over-claiming needs the RPC to compare
+the *reviewed_at* timestamp against a versioned-release-at table (server-side truth
+about when v1.3 shipped) and reject if the user's reviewed_at pre-dates v1.3's ship
+time. Under-claiming needs no fix beyond the existing re-attest path.
+
+At Next.js SSR + client build atomicity the window is narrow. Recording the direction
+so if the window ever widens (e.g., split-client / split-server deploy, service worker
+caching the old bundle) the fix has a designed shape.
+
 ## Option 1 — 🔴 NEVER SHIP AS-STATED
 
 *Move consent-recording into the webhook handler at `checkout.session.completed`,
