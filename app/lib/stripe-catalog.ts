@@ -13,18 +13,22 @@ import { createSupabaseServiceClient } from './supabase-admin'
 // for callers that need it (e.g., B66.2b proposal-code creation reuses
 // the same Product).
 //
-// Expected row counts (post 3-tier move, Slice 1):
-//   • enforcement: 2 (base, per_property) — per_driver RETIRED with the
-//     3-tier move; historical DB rows may still exist but the catalog
-//     script no longer creates them.
-//   • property_management: 3 (base, per_property, per_permit graduated)
+// Expected row counts by (track, tier) — post Bar-2 launch prep §5:
+//   • enforcement / enforcement_only:  2 (base, per_property)
+//   • property_management / pm_only:   3 (base, per_property, per_permit)
+//   • property_management / pm_starter: 2 (base, per_permit) — 🔴 NO
+//     per_property; Starter is one property by definition (cap sequence
+//     A→A₀ enforces cap=1). Missing line-item is the correct shape,
+//     not an omission (see 20260901 migration header for the invariant).
+// per_driver RETIRED with the 3-tier move; historical DB rows may
+// still exist but the catalog script no longer creates them.
 // Callers should assert the expected count to catch catalog drift.
 
 type Track = 'enforcement' | 'property_management'
 type Tier =
   | 'starter' | 'growth' | 'legacy'                    // old 6-tier (historical rows)
   | 'essential' | 'professional' | 'enterprise'         // old 6-tier (historical rows)
-  | 'pm_only' | 'enforcement_only'                      // 3-tier (current)
+  | 'pm_only' | 'enforcement_only' | 'pm_starter'       // current self-serve (pm_starter added 2026-09-02, Bar-2 launch prep §5)
 // LineItem includes 'per_permit' (graduated meter, PM-only) added with
 // the 3-tier move. 'per_driver' kept in the union for historical rows
 // even though the current catalog script no longer creates it.
