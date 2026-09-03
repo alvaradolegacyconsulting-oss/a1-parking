@@ -9,13 +9,30 @@
 -- gate block inserted immediately AFTER its existing role check
 -- and BEFORE any subsequent scope/state check:
 --
---     IF NOT public.my_tier_enforcement_capable() THEN
+--     IF v_caller_role <> 'admin' AND NOT public.my_tier_enforcement_capable() THEN
 --       RAISE EXCEPTION 'tier_not_permitted'
 --         USING HINT = 'This subscription tier does not include
 --                      enforcement features. Contact support to
 --                      upgrade.',
 --               ERRCODE = 'insufficient_privilege';
 --     END IF;
+--
+-- 🔴 SUPER-ADMIN BYPASS (Mateo Sep 3 followup §1):
+-- Admin has company=NULL by design (not a tenant). A bare
+-- `IF NOT my_tier_enforcement_capable()` would raise no_company_context
+-- inside the helper's `IF v_company IS NULL OR v_company = '' THEN
+-- RAISE` guard and lock super-admin out of the 6 enforcement RPCs
+-- whose role gates admit admin (driver_create_violation_with_snapshot,
+-- stamp_tow_ticket, regenerate_tow_ticket, void_violation,
+-- set_violation_view_token, set_driver_regenerate_permission). The
+-- `<> 'admin' AND` prefix short-circuits before the helper call.
+-- Mirrors the existing `IF v_caller_role <> 'admin' THEN` scope-check
+-- pattern already in these 8 bodies — same house pattern, same
+-- reason (super-admin isn't a tenant).
+--
+-- Note: driver_create_violation_with_snapshot uses `v_role` (not
+-- `v_caller_role`); its gate is written accordingly. Body preservation
+-- discipline preserves each fn's variable naming.
 --
 -- ── 🔴 FOUR RULES INHERITED FROM COMMIT 1 (Mateo Sep 3 §2) ─────────
 --   1. legacy checked FIRST → BOTH TRUE regardless of tier_type
@@ -161,8 +178,16 @@ BEGIN
     RETURN jsonb_build_object('error', 'role_not_authorized');
   END IF;
 
-  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement
-  IF NOT public.my_tier_enforcement_capable() THEN
+  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement.
+  -- Super-admin bypass: admin has company=NULL by design (not a tenant), so a
+  -- bare `IF NOT my_tier_enforcement_capable()` would raise `no_company_context`
+  -- inside the helper and lock admin out of enforcement RPCs. Skip the tier
+  -- check for admin — mirrors the existing `IF v_caller_role <> 'admin'`
+  -- scope-check pattern already in these bodies. CA-only fns
+  -- (set_violation_status, update_my_company_tdlr) inert-include this branch
+  -- for uniformity (admin can't reach the role gate there anyway).
+  -- NOTE: this fn uses `v_role` (not `v_caller_role`); variable name matches.
+  IF v_role <> 'admin' AND NOT public.my_tier_enforcement_capable() THEN
     RAISE EXCEPTION 'tier_not_permitted'
       USING HINT = 'This subscription tier does not include enforcement features. Contact support to upgrade.',
             ERRCODE = 'insufficient_privilege';
@@ -263,8 +288,15 @@ BEGIN
     RETURN jsonb_build_object('error', 'role_not_authorized');
   END IF;
 
-  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement
-  IF NOT public.my_tier_enforcement_capable() THEN
+  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement.
+  -- Super-admin bypass: admin has company=NULL by design (not a tenant), so a
+  -- bare `IF NOT my_tier_enforcement_capable()` would raise `no_company_context`
+  -- inside the helper and lock admin out of enforcement RPCs. Skip the tier
+  -- check for admin — mirrors the existing `IF v_caller_role <> 'admin'`
+  -- scope-check pattern already in these bodies. CA-only fns
+  -- (set_violation_status, update_my_company_tdlr) inert-include this branch
+  -- for uniformity (admin can't reach the role gate there anyway).
+  IF v_caller_role <> 'admin' AND NOT public.my_tier_enforcement_capable() THEN
     RAISE EXCEPTION 'tier_not_permitted'
       USING HINT = 'This subscription tier does not include enforcement features. Contact support to upgrade.',
             ERRCODE = 'insufficient_privilege';
@@ -404,8 +436,15 @@ BEGIN
     RETURN jsonb_build_object('error', 'role_not_authorized');
   END IF;
 
-  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement
-  IF NOT public.my_tier_enforcement_capable() THEN
+  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement.
+  -- Super-admin bypass: admin has company=NULL by design (not a tenant), so a
+  -- bare `IF NOT my_tier_enforcement_capable()` would raise `no_company_context`
+  -- inside the helper and lock admin out of enforcement RPCs. Skip the tier
+  -- check for admin — mirrors the existing `IF v_caller_role <> 'admin'`
+  -- scope-check pattern already in these bodies. CA-only fns
+  -- (set_violation_status, update_my_company_tdlr) inert-include this branch
+  -- for uniformity (admin can't reach the role gate there anyway).
+  IF v_caller_role <> 'admin' AND NOT public.my_tier_enforcement_capable() THEN
     RAISE EXCEPTION 'tier_not_permitted'
       USING HINT = 'This subscription tier does not include enforcement features. Contact support to upgrade.',
             ERRCODE = 'insufficient_privilege';
@@ -564,8 +603,15 @@ BEGIN
     RETURN jsonb_build_object('error', 'role_not_authorized');
   END IF;
 
-  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement
-  IF NOT public.my_tier_enforcement_capable() THEN
+  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement.
+  -- Super-admin bypass: admin has company=NULL by design (not a tenant), so a
+  -- bare `IF NOT my_tier_enforcement_capable()` would raise `no_company_context`
+  -- inside the helper and lock admin out of enforcement RPCs. Skip the tier
+  -- check for admin — mirrors the existing `IF v_caller_role <> 'admin'`
+  -- scope-check pattern already in these bodies. CA-only fns
+  -- (set_violation_status, update_my_company_tdlr) inert-include this branch
+  -- for uniformity (admin can't reach the role gate there anyway).
+  IF v_caller_role <> 'admin' AND NOT public.my_tier_enforcement_capable() THEN
     RAISE EXCEPTION 'tier_not_permitted'
       USING HINT = 'This subscription tier does not include enforcement features. Contact support to upgrade.',
             ERRCODE = 'insufficient_privilege';
@@ -837,8 +883,15 @@ BEGIN
     RETURN jsonb_build_object('error', 'role_not_authorized');
   END IF;
 
-  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement
-  IF NOT public.my_tier_enforcement_capable() THEN
+  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement.
+  -- Super-admin bypass: admin has company=NULL by design (not a tenant), so a
+  -- bare `IF NOT my_tier_enforcement_capable()` would raise `no_company_context`
+  -- inside the helper and lock admin out of enforcement RPCs. Skip the tier
+  -- check for admin — mirrors the existing `IF v_caller_role <> 'admin'`
+  -- scope-check pattern already in these bodies. CA-only fns
+  -- (set_violation_status, update_my_company_tdlr) inert-include this branch
+  -- for uniformity (admin can't reach the role gate there anyway).
+  IF v_caller_role <> 'admin' AND NOT public.my_tier_enforcement_capable() THEN
     RAISE EXCEPTION 'tier_not_permitted'
       USING HINT = 'This subscription tier does not include enforcement features. Contact support to upgrade.',
             ERRCODE = 'insufficient_privilege';
@@ -958,8 +1011,15 @@ BEGIN
     RETURN jsonb_build_object('error', 'role_not_authorized');
   END IF;
 
-  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement
-  IF NOT public.my_tier_enforcement_capable() THEN
+  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement.
+  -- Super-admin bypass: admin has company=NULL by design (not a tenant), so a
+  -- bare `IF NOT my_tier_enforcement_capable()` would raise `no_company_context`
+  -- inside the helper and lock admin out of enforcement RPCs. Skip the tier
+  -- check for admin — mirrors the existing `IF v_caller_role <> 'admin'`
+  -- scope-check pattern already in these bodies. CA-only fns
+  -- (set_violation_status, update_my_company_tdlr) inert-include this branch
+  -- for uniformity (admin can't reach the role gate there anyway).
+  IF v_caller_role <> 'admin' AND NOT public.my_tier_enforcement_capable() THEN
     RAISE EXCEPTION 'tier_not_permitted'
       USING HINT = 'This subscription tier does not include enforcement features. Contact support to upgrade.',
             ERRCODE = 'insufficient_privilege';
@@ -1078,8 +1138,15 @@ BEGIN
     RETURN jsonb_build_object('error', 'role_not_authorized');
   END IF;
 
-  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement
-  IF NOT public.my_tier_enforcement_capable() THEN
+  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement.
+  -- Super-admin bypass: admin has company=NULL by design (not a tenant), so a
+  -- bare `IF NOT my_tier_enforcement_capable()` would raise `no_company_context`
+  -- inside the helper and lock admin out of enforcement RPCs. Skip the tier
+  -- check for admin — mirrors the existing `IF v_caller_role <> 'admin'`
+  -- scope-check pattern already in these bodies. CA-only fns
+  -- (set_violation_status, update_my_company_tdlr) inert-include this branch
+  -- for uniformity (admin can't reach the role gate there anyway).
+  IF v_caller_role <> 'admin' AND NOT public.my_tier_enforcement_capable() THEN
     RAISE EXCEPTION 'tier_not_permitted'
       USING HINT = 'This subscription tier does not include enforcement features. Contact support to upgrade.',
             ERRCODE = 'insufficient_privilege';
@@ -1238,8 +1305,15 @@ BEGIN
     RETURN jsonb_build_object('error', 'role_not_authorized');
   END IF;
 
-  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement
-  IF NOT public.my_tier_enforcement_capable() THEN
+  -- 🔴 2026-09-03 Track gating Commit 2 — reject if tier doesn't permit enforcement.
+  -- Super-admin bypass: admin has company=NULL by design (not a tenant), so a
+  -- bare `IF NOT my_tier_enforcement_capable()` would raise `no_company_context`
+  -- inside the helper and lock admin out of enforcement RPCs. Skip the tier
+  -- check for admin — mirrors the existing `IF v_caller_role <> 'admin'`
+  -- scope-check pattern already in these bodies. CA-only fns
+  -- (set_violation_status, update_my_company_tdlr) inert-include this branch
+  -- for uniformity (admin can't reach the role gate there anyway).
+  IF v_caller_role <> 'admin' AND NOT public.my_tier_enforcement_capable() THEN
     RAISE EXCEPTION 'tier_not_permitted'
       USING HINT = 'This subscription tier does not include enforcement features. Contact support to upgrade.',
             ERRCODE = 'insufficient_privilege';
@@ -1400,7 +1474,8 @@ VALUES (
       'pm_plate_lookup',
       'set_manager_approve_permission (PM Starter meter reason)'
     ),
-    'gate_shape', 'IF NOT public.my_tier_enforcement_capable() THEN RAISE EXCEPTION ''tier_not_permitted'' USING HINT = ''...'', ERRCODE = ''insufficient_privilege''; END IF;',
+    'gate_shape', 'IF v_caller_role <> ''admin'' AND NOT public.my_tier_enforcement_capable() THEN RAISE EXCEPTION ''tier_not_permitted'' USING HINT = ''...'', ERRCODE = ''insufficient_privilege''; END IF; (driver_create_violation_with_snapshot uses v_role instead of v_caller_role — variable name preserved per source)',
+    'admin_bypass_rationale', 'Super-admin has company=NULL by design (not a tenant). A bare IF NOT my_tier_enforcement_capable() would raise no_company_context inside the helper. The <> admin AND prefix short-circuits before the helper call — mirrors the existing scope-check pattern. Regression-guarded by verification file VS_ADMIN.',
     'insertion_point', 'immediately after each fn''s existing role_not_authorized END IF; before any scope/state check',
     'tier_before_scope_note', 'The gate fires AFTER role check + BEFORE scope check. A pm_only caller with the right role but wrong scope learns tier_not_permitted before existence/scope. Deliberate: tier is a subscription fact (safe to reveal to role-gated callers) and the alternative (scope-then-tier) leaks row-existence differentially to callers who shouldn''t reach enforcement paths.',
     'parity_discipline', 'Part 1 snapshotted args/result/prosecdef/proconfig/proacl BEFORE; Part 3 asserted equality AFTER + presence of gate substrings. Any drift rolled the txn back.',

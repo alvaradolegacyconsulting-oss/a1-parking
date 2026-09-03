@@ -3,7 +3,7 @@
 --
 -- Paired verification for the track-gating write-path gates
 -- (Commit 2 of 2). v2 pattern (no BEGIN/COMMIT wrap; terminal SELECT
--- returns PASS row). 9 gates.
+-- returns PASS row). 10 gates.
 --
 -- ── GATES ───────────────────────────────────────────────────────────
 --   VS1  all 8 fns exist via to_regprocedure (structural OID)
@@ -14,6 +14,12 @@
 --   VS6  🔴 EXECUTION LOAD-BEARING — A1 (legacy) → NO tier_not_permitted
 --   VS7  🔴 EXECUTION — enforcement_only tenant → NO tier_not_permitted
 --   VS8  🔴 EXECUTION — pm_only tenant (specific) → tier_not_permitted RAISED
+--   VS_ADMIN  🔴 EXECUTION LOAD-BEARING — super-admin → NEITHER
+--             tier_not_permitted NOR no_company_context (regression
+--             guard against Mateo Sep 3 followup §1 catch: admin has
+--             company=NULL by design; without the `<> 'admin' AND`
+--             bypass in the gate, the helper would raise
+--             no_company_context and lock Jose out of 6 of 8 fns)
 --   VS9  PASS row
 --
 -- ── FIXTURE STRATEGY (VS5–VS8) ──────────────────────────────────────
@@ -479,6 +485,102 @@ END $vs8$;
 
 
 -- ══════════════════════════════════════════════════════════════════════
+-- VS_ADMIN — 🔴 EXECUTION LOAD-BEARING: super-admin NOT locked out
+-- ══════════════════════════════════════════════════════════════════════
+-- Regression guard against the Mateo Sep 3 followup §1 catch: admin has
+-- company=NULL by design (not a tenant); a bare
+-- `IF NOT my_tier_enforcement_capable()` would raise no_company_context
+-- from inside the helper and lock super-admin out of 6 of the 8 fns
+-- whose role gates admit admin. The `<> 'admin' AND` prefix in the
+-- gate short-circuits before the helper call.
+--
+-- Impersonate an active super-admin, iterate all 8 fns, assert NEITHER
+-- 'tier_not_permitted' NOR 'no_company_context' surfaces. Other errors
+-- (not_found, invalid input, role_not_authorized for the 2 CA-only
+-- fns) are FINE — we're asserting the ABSENCE of the two specific
+-- lockout modes.
+--
+-- Load-bearing: Jose IS a super-admin. If this fails, Jose can't
+-- reach 6 of 8 enforcement RPCs the moment apply lands.
+DO $vs_admin$
+DECLARE
+  v_admin_email TEXT;
+  v_fn          TEXT;
+  v_msg         TEXT;
+  v_offenders   TEXT := '';
+  v_seen        TEXT := '';
+BEGIN
+  SELECT email INTO v_admin_email
+    FROM public.user_roles
+   WHERE role = 'admin' AND is_active = TRUE
+   ORDER BY id LIMIT 1;
+  IF v_admin_email IS NULL THEN
+    RAISE EXCEPTION 'VS_ADMIN FIXTURE FAIL: no active super-admin found in user_roles. Cannot verify super-admin bypass.';
+  END IF;
+
+  FOREACH v_fn IN ARRAY ARRAY[
+    'driver_create_violation_with_snapshot',
+    'set_violation_status',
+    'stamp_tow_ticket',
+    'regenerate_tow_ticket',
+    'void_violation',
+    'set_violation_view_token',
+    'set_driver_regenerate_permission',
+    'update_my_company_tdlr'
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('email', v_admin_email)::TEXT, true);
+    PERFORM set_config('role', 'authenticated', true);
+
+    v_msg := '<no_raise>';
+    BEGIN
+      IF v_fn = 'driver_create_violation_with_snapshot' THEN
+        PERFORM public.driver_create_violation_with_snapshot('{}'::jsonb, '{}'::jsonb);
+      ELSIF v_fn = 'set_violation_status' THEN
+        PERFORM public.set_violation_status(1::BIGINT, 'probe');
+      ELSIF v_fn = 'stamp_tow_ticket' THEN
+        PERFORM public.stamp_tow_ticket(1::BIGINT, 1::BIGINT, 1::NUMERIC);
+      ELSIF v_fn = 'regenerate_tow_ticket' THEN
+        PERFORM public.regenerate_tow_ticket(1::BIGINT, 1::BIGINT, 1::NUMERIC, 'other'::TEXT, 'probe'::TEXT);
+      ELSIF v_fn = 'void_violation' THEN
+        PERFORM public.void_violation(1::BIGINT, 'probe');
+      ELSIF v_fn = 'set_violation_view_token' THEN
+        PERFORM public.set_violation_view_token(1::BIGINT);
+      ELSIF v_fn = 'set_driver_regenerate_permission' THEN
+        PERFORM public.set_driver_regenerate_permission('probe@example.com', false);
+      ELSIF v_fn = 'update_my_company_tdlr' THEN
+        PERFORM public.update_my_company_tdlr('probe');
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+    END;
+
+    EXECUTE 'RESET role';
+
+    v_seen := v_seen || format('%s → %L; ', v_fn, v_msg);
+
+    IF v_msg LIKE '%tier_not_permitted%' THEN
+      v_offenders := v_offenders || format(
+        '%s: super-admin hit tier_not_permitted (bypass predicate missing or wrong — msg=%L); ',
+        v_fn, v_msg
+      );
+    END IF;
+    IF v_msg LIKE '%no_company_context%' THEN
+      v_offenders := v_offenders || format(
+        '%s: super-admin hit no_company_context (bypass predicate did not short-circuit — msg=%L); ',
+        v_fn, v_msg
+      );
+    END IF;
+  END LOOP;
+
+  RAISE NOTICE 'VS_ADMIN super-admin per-fn results (email=%): %', v_admin_email, v_seen;
+
+  IF v_offenders <> '' THEN
+    RAISE EXCEPTION 'VS_ADMIN FAIL — super-admin locked out of enforcement RPC(s): %', v_offenders;
+  END IF;
+END $vs_admin$;
+
+
+-- ══════════════════════════════════════════════════════════════════════
 -- VS9 — PASS row
 -- ══════════════════════════════════════════════════════════════════════
 SELECT
@@ -493,6 +595,7 @@ SELECT
     'VS6  🔴 execution LOAD-BEARING — A1 (legacy) CA → NO tier_not_permitted',
     'VS7  🔴 execution — enforcement_only CA → NO tier_not_permitted (or SKIP)',
     'VS8  🔴 execution — pm_only CA → tier_not_permitted RAISED (or SKIP)',
+    'VS_ADMIN  🔴 execution LOAD-BEARING — super-admin → NEITHER tier_not_permitted NOR no_company_context (Mateo Sep 3 followup §1)',
     'VS9  PASS row'
   ] AS gates_verified,
   now() AS verified_at;
