@@ -134,11 +134,16 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
     EXECUTE 'RESET role';
-    IF v_sqlstate <> '42501' THEN
-      RAISE EXCEPTION 'VS3 FAIL: expected sqlstate 42501 (insufficient_privilege); got sqlstate=% msg=%', v_sqlstate, v_msg;
-    END IF;
-    IF v_msg NOT ILIKE '%permission denied%' AND v_msg NOT ILIKE '%tow_ticket_generated%' THEN
-      RAISE EXCEPTION 'VS3 FAIL: expected column-grant denial for tow_ticket_generated; got sqlstate=% msg=%', v_sqlstate, v_msg;
+    -- 🔴 Discriminate by MESSAGE_TEXT — sqlstate 42501 is shared
+    -- across column-grant denials AND RLS violations AND custom
+    -- tier-policy RAISEs. Only the specific phrase distinguishes.
+    IF v_msg ILIKE '%permission denied for column%' THEN
+      -- Expected shape — column grant fired. Pass.
+      NULL;
+    ELSIF v_msg ILIKE '%row-level security%' OR v_msg ILIKE '%violates row-level%' THEN
+      RAISE EXCEPTION 'VS3 FIXTURE FAIL: RLS INSERT policy rejected the probe before column-grant check ran. Property + CA combination doesn''t admit — fix probe fixture to use CA + property in the same company. sqlstate=% msg=%', v_sqlstate, v_msg;
+    ELSE
+      RAISE EXCEPTION 'VS3 FAIL: expected column-grant denial ("permission denied for column tow_ticket_generated"); got sqlstate=% msg=%', v_sqlstate, v_msg;
     END IF;
   END;
 END $vs3$;
@@ -171,11 +176,11 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
     EXECUTE 'RESET role';
-    IF v_sqlstate <> '42501' THEN
-      RAISE EXCEPTION 'VS4 FAIL: expected sqlstate 42501; got sqlstate=% msg=%', v_sqlstate, v_msg;
-    END IF;
-    IF v_msg NOT ILIKE '%permission denied%' AND v_msg NOT ILIKE '%status%' THEN
-      RAISE EXCEPTION 'VS4 FAIL: expected column-grant denial for status; got sqlstate=% msg=%', v_sqlstate, v_msg;
+    -- 🔴 Same discriminator as VS3 — MESSAGE_TEXT alone.
+    IF v_msg ILIKE '%permission denied for column%' THEN
+      NULL;   -- Expected: column grant fired.
+    ELSE
+      RAISE EXCEPTION 'VS4 FAIL: expected column-grant denial ("permission denied for column status"); got sqlstate=% msg=%. sqlstate 42501 shared across column/RLS/tier RAISEs — message text discriminates.', v_sqlstate, v_msg;
     END IF;
   END;
 END $vs4$;
@@ -191,24 +196,61 @@ END $vs4$;
 -- with "permission denied for column" instead of the expected business
 -- error (not_found for garbage id).
 --
--- Probe: impersonate a CA + call void_violation(9999999999, 'probe').
+-- ── 🔴 2026-09-04 fix (first run FIXTURE + DISCRIMINATOR both wrong) ─
+--
+-- FIXTURE: prior version picked ANY active CA. On first run this
+-- hit a CA on pm_only or pm_starter tier — void_violation's OWN
+-- Commit 2 tier gate raised 'tier_not_permitted' BEFORE ever
+-- reaching the UPDATE that tests the DEFINER premise. Fix: filter
+-- fixture to tier IN ('legacy', 'enforcement_only') so
+-- my_tier_enforcement_capable returns TRUE and the RPC proceeds to
+-- the DEFINER-premise-testing UPDATE.
+--
+-- DISCRIMINATOR: prior version used
+--   IF v_sqlstate = '42501' OR v_msg ILIKE '%permission denied for column%'
+-- The OR was wrong. sqlstate 42501 (insufficient_privilege) is used
+-- by BOTH column-grant denials (Postgres core) AND our own Commit 2
+-- 'tier_not_permitted' RAISE (we chose that ERRCODE). Only the
+-- MESSAGE_TEXT discriminates — column-grant denials say "permission
+-- denied for column X" specifically. Fix: check MESSAGE_TEXT alone
+-- for the column-denial phrase; treat any other 42501 as unrelated.
+--
+-- Filed as memory rule: sqlstate 42501 is shared across
+-- column/table-grant denials AND custom-policy RAISEs that chose
+-- insufficient_privilege as their errcode. Discriminate by
+-- MESSAGE_TEXT, not sqlstate alone.
+--
+-- Probe: impersonate a legacy/enforcement_only CA + call
+-- void_violation(9999999999, 'probe').
 -- Expected: { error: 'not_found' } (the RPC's own guard).
--- FAIL: sqlstate 42501 + "permission denied" text (DEFINER premise
+-- FAIL: msg contains "permission denied for column" (DEFINER premise
 -- broken; Commit C rolled back to production immediately).
 DO $vs5$
 DECLARE
   v_email TEXT;
+  v_tier TEXT;
   v_result JSONB;
   v_err TEXT;
   v_sqlstate TEXT;
   v_msg TEXT;
 BEGIN
-  SELECT email INTO v_email
-    FROM public.user_roles
-   WHERE role = 'company_admin' AND is_active = TRUE
-   ORDER BY id LIMIT 1;
+  -- Filter to CA whose tier passes the enforcement check (legacy or
+  -- enforcement_only). Prefer enforcement_only over legacy — legacy
+  -- is A1 (load-bearing); avoid coupling this test to A1's fixture.
+  SELECT ur.email, c.tier
+    INTO v_email, v_tier
+    FROM public.user_roles ur
+    JOIN public.companies c
+      ON lower(trim(c.name)) = lower(trim(ur.company))
+   WHERE ur.role = 'company_admin'
+     AND ur.is_active = TRUE
+     AND c.tier IN ('legacy', 'enforcement_only')
+   ORDER BY
+     CASE c.tier WHEN 'enforcement_only' THEN 1 ELSE 2 END,
+     ur.id
+   LIMIT 1;
   IF v_email IS NULL THEN
-    RAISE EXCEPTION 'VS5 FIXTURE FAIL: no active CA to impersonate. LOAD-BEARING gate cannot verify DEFINER premise.';
+    RAISE EXCEPTION 'VS5 FIXTURE FAIL: no active CA on legacy or enforcement_only tier. LOAD-BEARING gate needs a CA whose tier gate PASSES so void_violation reaches the DEFINER-premise-testing UPDATE.';
   END IF;
 
   PERFORM set_config('request.jwt.claims', json_build_object('email', v_email)::TEXT, true);
@@ -218,18 +260,22 @@ BEGIN
     v_result := public.void_violation(9999999999::BIGINT, 'vs5probe');
     EXECUTE 'RESET role';
     v_err := v_result ->> 'error';
-    -- Expected: 'not_found' (row doesn't exist). Anything ELSE that
-    -- names a column-permission issue = DEFINER premise broken.
+    -- Expected: 'not_found' (row doesn't exist). Any other jsonb
+    -- error surfaces a different regression (not DEFINER premise).
     IF v_err IS DISTINCT FROM 'not_found' THEN
-      RAISE EXCEPTION 'VS5 UNEXPECTED: void_violation returned error=%L (want ''not_found''). Full result: %. This is not the failure shape LOAD-BEARING gate is testing for — surfaces a different regression worth investigating.', v_err, v_result::TEXT;
+      RAISE EXCEPTION 'VS5 UNEXPECTED: void_violation returned error=%L (want ''not_found'') using tier=% CA. Full result: %. Not the DEFINER-premise failure shape — surfaces a different regression worth investigating.', v_err, v_tier, v_result::TEXT;
     END IF;
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
     EXECUTE 'RESET role';
-    IF v_sqlstate = '42501' OR v_msg ILIKE '%permission denied for column%' THEN
+    -- 🔴 DISCRIMINATOR: MESSAGE_TEXT alone. sqlstate 42501 is used by
+    -- both column-grant denials AND our Commit 2 tier RAISE — sqlstate
+    -- alone doesn't distinguish them. "permission denied for column"
+    -- is Postgres's specific phrase for column-grant denials.
+    IF v_msg ILIKE '%permission denied for column%' THEN
       RAISE EXCEPTION 'VS5 FAIL (LOAD-BEARING): DEFINER premise BROKEN. void_violation surfaced column-permission denial (sqlstate=% msg=%). Commit C rolled back the ability of DEFINER RPCs to write revoked columns — this hits every enforcement RPC. Immediate revert of Commit C required.', v_sqlstate, v_msg;
     ELSE
-      RAISE EXCEPTION 'VS5 UNEXPECTED: void_violation raised sqlstate=% msg=%. Not the DEFINER-premise failure shape; another regression.', v_sqlstate, v_msg;
+      RAISE EXCEPTION 'VS5 UNEXPECTED: void_violation raised sqlstate=% msg=% (tier=% CA). Not the DEFINER-premise failure shape (msg does NOT contain "permission denied for column"). Another regression worth investigating.', v_sqlstate, v_msg, v_tier;
     END IF;
   END;
 END $vs5$;
