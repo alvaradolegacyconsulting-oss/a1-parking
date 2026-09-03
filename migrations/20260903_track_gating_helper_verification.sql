@@ -232,16 +232,47 @@ BEGIN
 END $$;
 
 -- ── VS8: 🔴 EXECUTION — no session → RAISE no_company_context ───────
--- Fresh DO block starts with no JWT claim set. get_my_company()
--- reads auth.jwt()->>'email' (NULL when no claim), finds no
--- user_roles row (WHERE NULL matches nothing), returns NULL. Helper
--- raises no_company_context per spec.
+-- 🔴 2026-09-03 fix (Mateo Sep 3 followup §5): prior version assumed
+-- a "fresh" DO block starts with no JWT claim. Supabase SQL Editor
+-- runs the whole verification file as ONE implicit transaction; VS6
+-- and VS7 use set_config(..., true) [LOCAL] to impersonate, and
+-- LOCAL settings persist for the transaction — so VS7's A1 CA
+-- impersonation leaked into VS8. Helper then reads auth.jwt() →
+-- A1's email → gets A1 legacy company → returns TRUE (no raise) →
+-- VS8's "did not raise" fires.
+--
+-- Fix: explicitly RESET the JWT claim + role at the top of VS8 so
+-- "no session" actually means no session. RESET is more robust than
+-- set_config('', true) which sets the value to '' rather than
+-- unsetting it (auth.jwt()->>'email' on {} vs on NULL behaves
+-- differently in edge cases).
+--
+-- Jose confirmed direct SQL-editor call raises no_company_context
+-- with sqlstate 42501 — helper is correct; only VS8's expected
+-- fixture state was wrong.
 DO $$
 DECLARE
   v_sqlstate TEXT;
   v_msg TEXT;
   v_fn TEXT;
 BEGIN
+  -- Kill any impersonation carried over from VS6/VS7 (transaction-
+  -- scope LOCAL settings persist here). PERFORM set_config with an
+  -- empty string clears the value; a follow-up RESET wipes it fully.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('role', '', true);
+  -- Belt-and-suspenders — RESET both to their built-in defaults.
+  BEGIN
+    EXECUTE 'RESET request.jwt.claims';
+  EXCEPTION WHEN OTHERS THEN
+    NULL;  -- RESET on a never-SET custom GUC can raise; ignore.
+  END;
+  BEGIN
+    EXECUTE 'RESET role';
+  EXCEPTION WHEN OTHERS THEN
+    NULL;
+  END;
+
   FOREACH v_fn IN ARRAY ARRAY['my_tier_enforcement_capable', 'my_tier_pm_capable'] LOOP
     BEGIN
       IF v_fn = 'my_tier_enforcement_capable' THEN
@@ -249,7 +280,7 @@ BEGIN
       ELSE
         PERFORM public.my_tier_pm_capable();
       END IF;
-      RAISE EXCEPTION 'VS8 FAIL: % did not raise with no session context', v_fn;
+      RAISE EXCEPTION 'VS8 FAIL: % did not raise with no session context. LOCAL GUC pollution suspected — check RESET at top of block.', v_fn;
     EXCEPTION WHEN OTHERS THEN
       GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
       IF v_msg NOT LIKE '%no_company_context%' THEN
