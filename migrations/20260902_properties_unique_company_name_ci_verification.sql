@@ -38,28 +38,66 @@ BEGIN
 END $$;
 
 -- ── VS2: UNIQUE + expression + NOT partial ──────────────────────────
+-- 🔴 Structural checks over pg_index metadata (boolean/OID) — NOT
+-- source-text matching. Text-match `lower(trim(company))` false-
+-- failed because Postgres renders it as `lower(TRIM(BOTH FROM company))`
+-- (third instance in one week of the class in
+-- feedback_gates_must_assert_what_they_measured item 8).
+-- indisunique = the UNIQUE claim. indnatts = the two-column shape.
+-- indkey all-zeros = both columns are expressions (not plain columns).
+-- ILIKE presence-of-token asserts the key columns' names appear
+-- somewhere in the rendered def, tolerant of trim() vs TRIM(BOTH FROM).
+-- VS3-VS6 execution gates carry the behavior proof; VS2 needs only
+-- prove the artifact's shape exists.
 DO $$
 DECLARE
+  v_indisunique BOOLEAN;
+  v_indnatts INT;
   v_def TEXT;
 BEGIN
+  SELECT i.indisunique, i.indnatts
+    INTO v_indisunique, v_indnatts
+    FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+   WHERE c.relname = 'properties_company_name_ci_unique';
+
+  IF v_indisunique IS NULL THEN
+    RAISE EXCEPTION 'VS2 FAIL: pg_index row for properties_company_name_ci_unique not found';
+  END IF;
+  IF NOT v_indisunique THEN
+    RAISE EXCEPTION 'VS2 FAIL: index exists but is not UNIQUE (indisunique=false)';
+  END IF;
+  IF v_indnatts <> 2 THEN
+    RAISE EXCEPTION 'VS2 FAIL: expected 2-column index (indnatts); got %', v_indnatts;
+  END IF;
+
+  -- The "columns are expressions (not plain refs)" check falls out of
+  -- the ILIKE %lower% + %trim% checks below — a plain column ref
+  -- wouldn't render either token. Skip int2vector indexing (varies
+  -- by Postgres version).
+  -- ILIKE presence-of-token — tolerant to Postgres's trim() vs
+  -- TRIM(BOTH FROM ...) rendering + case-variance.
   SELECT indexdef INTO v_def
     FROM pg_indexes
    WHERE schemaname='public' AND tablename='properties'
      AND indexname='properties_company_name_ci_unique';
   IF v_def IS NULL THEN
-    RAISE EXCEPTION 'VS2 FAIL: index definition unreadable';
+    RAISE EXCEPTION 'VS2 FAIL: pg_indexes indexdef unreadable';
   END IF;
-  IF v_def NOT LIKE '%UNIQUE INDEX%' THEN
-    RAISE EXCEPTION 'VS2 FAIL: index is not UNIQUE. def=%', v_def;
+  IF v_def NOT ILIKE '%company%' THEN
+    RAISE EXCEPTION 'VS2 FAIL: def missing company reference. def=%', v_def;
   END IF;
-  IF v_def NOT LIKE '%lower(btrim(company))%' AND v_def NOT LIKE '%lower(trim(company))%' THEN
-    RAISE EXCEPTION 'VS2 FAIL: index expression missing normalized company. def=%', v_def;
+  IF v_def NOT ILIKE '%name%' THEN
+    RAISE EXCEPTION 'VS2 FAIL: def missing name reference. def=%', v_def;
   END IF;
-  IF v_def NOT LIKE '%lower(btrim(name))%' AND v_def NOT LIKE '%lower(trim(name))%' THEN
-    RAISE EXCEPTION 'VS2 FAIL: index expression missing normalized name. def=%', v_def;
+  IF v_def NOT ILIKE '%lower%' THEN
+    RAISE EXCEPTION 'VS2 FAIL: def missing lower() normalization. def=%', v_def;
+  END IF;
+  IF v_def NOT ILIKE '%trim%' THEN
+    RAISE EXCEPTION 'VS2 FAIL: def missing trim/TRIM normalization. def=%', v_def;
   END IF;
   IF v_def ILIKE '%WHERE%' THEN
-    RAISE EXCEPTION 'VS2 FAIL: index is PARTIAL (has WHERE clause). Migration header specifies FULL index — see partial_rationale. def=%', v_def;
+    RAISE EXCEPTION 'VS2 FAIL: index is PARTIAL (has WHERE). Migration header specifies FULL. def=%', v_def;
   END IF;
 END $$;
 

@@ -160,17 +160,25 @@ BEGIN
 END $$;
 
 -- ── VS8: schema audit row + pre_apply_limits populated ──────────────
+-- 🔴 Postgres has no max() aggregate for jsonb. Split into two
+-- statements: COUNT for existence + ORDER BY created_at DESC LIMIT 1
+-- for latest row's JSONB. Same shape as VS5 uses to read the snapshot.
 DO $$
 DECLARE v_count INT; v_pre_apply JSONB;
 BEGIN
-  SELECT COUNT(*), MAX(new_values->'pre_apply_limits')
-    INTO v_count, v_pre_apply
+  SELECT COUNT(*) INTO v_count
     FROM public.audit_logs
    WHERE action = 'SCHEMA_CAP_SEQUENCE_COMMIT_B'
      AND new_values->>'migration' = '20260902_cap_sequence_commit_b_else_raises';
   IF v_count < 1 THEN
     RAISE EXCEPTION 'VS8 FAIL: schema audit row missing';
   END IF;
+
+  SELECT new_values->'pre_apply_limits' INTO v_pre_apply
+    FROM public.audit_logs
+   WHERE action = 'SCHEMA_CAP_SEQUENCE_COMMIT_B'
+     AND new_values->>'migration' = '20260902_cap_sequence_commit_b_else_raises'
+   ORDER BY created_at DESC LIMIT 1;
   IF v_pre_apply IS NULL OR jsonb_typeof(v_pre_apply) <> 'object' THEN
     RAISE EXCEPTION 'VS8 FAIL: pre_apply_limits JSONB missing or wrong type in audit row (got %)', jsonb_typeof(v_pre_apply);
   END IF;

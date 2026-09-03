@@ -54,31 +54,38 @@ BEGIN
   IF v_def NOT LIKE '%pm_starter%' THEN RAISE EXCEPTION 'VS2 FAIL: definition missing pm_starter (the whole point of this migration). def=%', v_def; END IF;
 END $$;
 
--- ── VS3: 🔴 execution — pm_starter INSERT SUCCEEDS ─────────────────
--- Probe row deleted before block ends. Uses letters+digits-only
--- lookup_key + stripe ids to avoid tripping any other CHECK
--- (learned from feedback_fresh_probe_rows_for_check_verification).
+-- ── VS3: 🔴 real-data proof — pm_starter rows exist in stripe_prices
+-- 🔴 Sep 3 2026 rewrite: was an INSERT probe; probe collided with real
+-- data (23505 unique on stripe_prices_unique_combo_standard) after
+-- Jose ran create-stripe-prices.ts and real pm_starter rows landed.
+-- Per feedback_probes_collide_with_production_state: when real rows
+-- exist at the probe's address, don't probe — assert the real data.
+-- Real rows are the stronger proof (CHECK accepted the value in
+-- production, at scale, from the actual writer path).
 DO $$
 DECLARE
-  v_probe_id BIGINT;
+  v_pm_starter_count INT;
+  v_wrong_track INT;
 BEGIN
-  INSERT INTO public.stripe_prices (
-    tier_track, tier_name, line_item, cycle, mode,
-    unit_amount_cents, price_model, tiers,
-    lookup_key, stripe_price_id, stripe_product_id, is_active
-  )
-  VALUES (
-    'property_management', 'pm_starter', 'base', 'monthly', 'test',
-    14900, 'flat', NULL,
-    'vs3probe' || floor(extract(epoch from now()))::TEXT,
-    'price_vs3probe' || floor(extract(epoch from now()))::TEXT,
-    'prod_vs3probe' || floor(extract(epoch from now()))::TEXT,
-    false
-  )
-  RETURNING id INTO v_probe_id;
-  DELETE FROM public.stripe_prices WHERE id = v_probe_id;
-EXCEPTION WHEN OTHERS THEN
-  RAISE EXCEPTION 'VS3 FAIL: pm_starter INSERT REJECTED — widening did not enable the value it claims to. SQLSTATE=% MSG=%', SQLSTATE, SQLERRM;
+  SELECT COUNT(*) INTO v_pm_starter_count
+    FROM public.stripe_prices
+   WHERE tier_name = 'pm_starter'
+     AND proposal_code_id IS NULL;
+
+  IF v_pm_starter_count < 1 THEN
+    RAISE EXCEPTION 'VS3 FAIL: no pm_starter rows in stripe_prices — create-stripe-prices.ts has not run since the tier_name CHECK widen. Cannot prove the CHECK accepts pm_starter without either real data or a probe. Run the amended script and re-verify.';
+  END IF;
+
+  -- All pm_starter rows must be on property_management track
+  -- (Bar-2 catalog invariant; scoping mismatch would indicate a
+  -- script bug or manual DB tampering).
+  SELECT COUNT(*) INTO v_wrong_track
+    FROM public.stripe_prices
+   WHERE tier_name = 'pm_starter'
+     AND tier_track <> 'property_management';
+  IF v_wrong_track > 0 THEN
+    RAISE EXCEPTION 'VS3 FAIL: % pm_starter row(s) have unexpected tier_track (want property_management)', v_wrong_track;
+  END IF;
 END $$;
 
 -- ── VS4: 🔴 execution — invalid tier_name REJECTS with 23514 ────────
@@ -132,19 +139,38 @@ BEGIN
   END IF;
 END $$;
 
--- ── VS6: pm_starter row count is 0 ──────────────────────────────────
--- This migration widens the CHECK; it doesn't insert Price rows —
--- create-stripe-prices.ts does that. VS3's probe is deleted. So the
--- pm_starter row count post-apply should be 0 (aside from any rows
--- the script may have left before this migration ran — expected 0
--- from the aborted Sep 2 test-mode rehearsal, but tolerant of any
--- state the script left).
+-- ── VS6: pm_starter catalog shape (4 rows per mode) ────────────────
+-- 🔴 Sep 3 2026 rewrite: was "expect 0 or informational" — stale the
+-- moment Jose ran create-stripe-prices.ts (both modes). Flipped to
+-- assert the catalog's real shape post-run:
+--   4 pm_starter rows per mode (base × 2 cycles + per_permit × 2 cycles)
+-- Per feedback_probes_collide_with_production_state: post-apply
+-- counts that assumed empty must flip when the real writer runs.
+--
+-- If Jose ran only test mode (not live yet), the live half of this
+-- gate raises — that's the correct behavior (surfaces the incomplete
+-- state rather than passing silently on partial catalog).
 DO $$
-DECLARE v_count INT;
+DECLARE
+  v_test INT;
+  v_live INT;
 BEGIN
-  SELECT COUNT(*) INTO v_count FROM public.stripe_prices WHERE tier_name='pm_starter';
-  IF v_count > 0 THEN
-    RAISE NOTICE 'VS6 INFO: pm_starter row count = % (not 0 — expected only if create-stripe-prices.ts ran between this migration apply and this verification). Not a failure — surfacing for awareness.', v_count;
+  SELECT COUNT(*) INTO v_test
+    FROM public.stripe_prices
+   WHERE tier_name = 'pm_starter'
+     AND mode = 'test'
+     AND proposal_code_id IS NULL;
+  SELECT COUNT(*) INTO v_live
+    FROM public.stripe_prices
+   WHERE tier_name = 'pm_starter'
+     AND mode = 'live'
+     AND proposal_code_id IS NULL;
+
+  IF v_test <> 4 THEN
+    RAISE EXCEPTION 'VS6 FAIL: pm_starter test-mode rows = % (want 4: base m/a + per_permit m/a). Test rehearsal may not have completed or may have collided.', v_test;
+  END IF;
+  IF v_live <> 4 THEN
+    RAISE EXCEPTION 'VS6 FAIL: pm_starter live-mode rows = % (want 4). Live catalog run has not been performed yet — re-run this verification AFTER STRIPE_MODE=live create-stripe-prices.ts.', v_live;
   END IF;
 END $$;
 

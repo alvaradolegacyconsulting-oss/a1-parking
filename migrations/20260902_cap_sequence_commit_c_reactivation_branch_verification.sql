@@ -290,17 +290,24 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 
 -- ── VS10: schema audit row + pre_apply_snap ────────────────────────
+-- 🔴 Postgres has no max() aggregate for jsonb. Split into COUNT +
+-- ORDER BY created_at DESC LIMIT 1 (same shape VS6 uses).
 DO $$
 DECLARE v_count INT; v_snap JSONB;
 BEGIN
-  SELECT COUNT(*), MAX(new_values->'pre_apply_snap')
-    INTO v_count, v_snap
+  SELECT COUNT(*) INTO v_count
     FROM public.audit_logs
    WHERE action = 'SCHEMA_CAP_SEQUENCE_COMMIT_C'
      AND new_values->>'migration' = '20260902_cap_sequence_commit_c_reactivation_branch';
   IF v_count < 1 THEN
     RAISE EXCEPTION 'VS10 FAIL: schema audit row missing';
   END IF;
+
+  SELECT new_values->'pre_apply_snap' INTO v_snap
+    FROM public.audit_logs
+   WHERE action = 'SCHEMA_CAP_SEQUENCE_COMMIT_C'
+     AND new_values->>'migration' = '20260902_cap_sequence_commit_c_reactivation_branch'
+   ORDER BY created_at DESC LIMIT 1;
   IF v_snap IS NULL OR jsonb_typeof(v_snap) <> 'object' THEN
     RAISE EXCEPTION 'VS10 FAIL: pre_apply_snap missing or wrong type';
   END IF;
