@@ -303,4 +303,4 @@ If a deactivated resident returns to the property, you can reactivate them from 
 - **Residents:** Log in at https://www.shieldmylot.com/login to check your status or use your portal
 - **Managers:** See [Resident Management](../property-management-track/10-resident-management.md) for the full resident lifecycle workflow
 
-Need help? For residents — contact your property manager first. For property managers — email support@shieldmylot.com.
+Need help? For residents — contact your property manager first. For property managers — email hello@shieldmylot.com.

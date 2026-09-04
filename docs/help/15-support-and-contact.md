@@ -53,7 +53,7 @@ Only contact ShieldMyLot if:
 - Your property manager has been unresponsive for more than a week
 - You've identified a security vulnerability
 
-Email **support@shieldmylot.com**. Include your name, your property's name, and clear details of the issue.
+Email **hello@shieldmylot.com**. Include your name, your property's name, and clear details of the issue.
 
 ---
 
@@ -78,7 +78,7 @@ Driver-direct contact to ShieldMyLot is uncommon but appropriate for:
 - Performance issues affecting your ability to work
 - Security concerns
 
-Email **support@shieldmylot.com** with: your name, your company's name, and reproducible details. Your company admin will be notified that you've reached out.
+Email **hello@shieldmylot.com** with: your name, your company's name, and reproducible details. Your company admin will be notified that you've reached out.
 
 ---
 
@@ -88,7 +88,7 @@ You're ShieldMyLot's direct customer. We support you directly.
 
 ### How to contact us
 
-**support@shieldmylot.com**
+**hello@shieldmylot.com**
 
 Email is our primary support channel. It works well because:
 - It creates a written record both parties can refer to
@@ -126,7 +126,7 @@ A complete first message often resolves issues in one round-trip. A vague "it do
 | **Enforcement-Only** | Email support |
 | **Legacy** | Priority email support + dedicated escalation path |
 
-**What "email support" means:** Send an email to support@shieldmylot.com and we'll respond during business hours. Complex issues may take longer to fully resolve, but you'll get an acknowledgment.
+**What "email support" means:** Send an email to hello@shieldmylot.com and we'll respond during business hours. Complex issues may take longer to fully resolve, but you'll get an acknowledgment.
 
 **What "priority email support + dedicated escalation path" means (Legacy):** Faster first-response targeting during business hours and a specific escalation contact for production-blocking issues, detailed in your service agreement.
 
@@ -138,7 +138,7 @@ A complete first message often resolves issues in one round-trip. A vague "it do
 
 For genuine emergencies (active data breach, all operations blocked, security incident in progress), contact ShieldMyLot immediately:
 
-**Email:** support@shieldmylot.com with **URGENT** in the subject line
+**Email:** hello@shieldmylot.com with **URGENT** in the subject line
 
 Emergency response is best-effort outside business hours but prioritized within business hours. For non-emergency issues, the normal response time applies.
 
@@ -227,7 +227,7 @@ We don't publish a general support phone number — email is the contact channel
 For Legacy customers, scheduled video calls are part of the priority-support arrangement. For PM-Only and Enforcement-Only, we'll do our best via email. If you really need a call, mention it in your request and we'll see what we can arrange.
 
 **How do I report a security vulnerability?**
-Email support@shieldmylot.com with **SECURITY** in the subject line. We treat security reports as priority regardless of tier. Please don't publicly disclose vulnerabilities before we've had a chance to respond.
+Email hello@shieldmylot.com with **SECURITY** in the subject line. We treat security reports as priority regardless of tier. Please don't publicly disclose vulnerabilities before we've had a chance to respond.
 
 **Can I give feedback that isn't a bug or feature request?**
 Yes, always. Email us. We genuinely want to hear what's working and what isn't. ShieldMyLot is built by a small team that listens.
@@ -239,4 +239,4 @@ Yes, always. Email us. We genuinely want to hear what's working and what isn't. 
 - **Set up your support contact in your account:** [Account Setup](../getting-started/02-account-setup.md)
 - **Review your security practices:** [Account Security](14-account-security.md)
 
-When in doubt, email support@shieldmylot.com.
+When in doubt, email hello@shieldmylot.com.

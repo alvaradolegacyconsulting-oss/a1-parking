@@ -134,7 +134,7 @@ Same pattern as the manager. If a driver reports they can't void a mis-issued ti
 
 **Only company admins.** The server enforces this — the DEFINER RPCs behind the toggle check the caller's role (`role_not_authorized: only company admins can change this permission`). Managers, drivers, leasing agents, and residents cannot grant themselves authority, and they cannot grant it to others.
 
-Super-admin (the ShieldMyLot team) can also grant on behalf of a company via internal tooling, in support situations where a company admin is temporarily unavailable. We only do that on your explicit request via support@shieldmylot.com.
+Super-admin (the ShieldMyLot team) can also grant on behalf of a company via internal tooling, in support situations where a company admin is temporarily unavailable. We only do that on your explicit request via hello@shieldmylot.com.
 
 ---
 
@@ -189,4 +189,4 @@ No. Approval authority is a single grant covering both.
 - [Property Management Overview](08-property-management-overview.md) — where manager approval fits in the PM workflow
 - [Tow Tickets and Evidence](07-tow-tickets-and-evidence.md) — where driver regenerate fits in the enforcement workflow
 
-Questions? Email support@shieldmylot.com.
+Questions? Email hello@shieldmylot.com.

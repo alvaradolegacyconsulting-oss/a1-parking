@@ -99,14 +99,14 @@ Most customers pick a tier at signup and stay there. When you need to change:
 
 ### Between the two self-serve tiers (PM-Only ↔ Enforcement-Only)
 
-These are separate products with different feature sets. Switching between them is not a "tier upgrade" — it's effectively changing what your account is for. Contact support@shieldmylot.com and we'll discuss whether:
+These are separate products with different feature sets. Switching between them is not a "tier upgrade" — it's effectively changing what your account is for. Contact hello@shieldmylot.com and we'll discuss whether:
 
 - A tier switch on your existing account makes sense, or
 - A Legacy configuration (both tracks combined) fits better
 
 ### To or from Legacy
 
-Contact support@shieldmylot.com. Legacy configurations are negotiated per-account; there's no self-serve path.
+Contact hello@shieldmylot.com. Legacy configurations are negotiated per-account; there's no self-serve path.
 
 ### Effective dates
 
@@ -130,7 +130,7 @@ If ShieldMyLot changes pricing for your tier (rare, but possible), you'll receiv
 If you decide to cancel:
 
 1. Open **Company Admin → Billing** → **Manage Billing** to reach the Stripe portal. From there you can schedule cancellation at end of your current billing period.
-2. Or email support@shieldmylot.com if you'd prefer a support-assisted cancellation.
+2. Or email hello@shieldmylot.com if you'd prefer a support-assisted cancellation.
 3. Your account stays active through the end of your current billing period (monthly or annual).
 4. After the cancellation effective date, your account is deactivated.
 
@@ -163,7 +163,7 @@ If something on an invoice doesn't look right:
 
 1. Check your Billing tab to see current subscription status and next billing date.
 2. Compare the invoice to your service agreement (Legacy accounts especially).
-3. If there's a discrepancy, email support@shieldmylot.com with the invoice number and your concern.
+3. If there's a discrepancy, email hello@shieldmylot.com with the invoice number and your concern.
 
 Common questions:
 
@@ -181,7 +181,7 @@ Yes, via the Stripe customer portal on your Billing tab. Both credit card and AC
 Not currently. Monthly and annual are the two options.
 
 **What if my company changes name or business structure?**
-Contact support@shieldmylot.com. We can update the billing entity but it requires verification (we don't want to accidentally transfer your account to someone unrelated to your business).
+Contact hello@shieldmylot.com. We can update the billing entity but it requires verification (we don't want to accidentally transfer your account to someone unrelated to your business).
 
 **Can I have multiple billing contacts?**
 Your primary billing email is used for invoice receipts. Additional contacts CC'd on billing emails can be set up in your Stripe portal.
@@ -203,4 +203,4 @@ Tier changes affect feature access and billing, never existing data. Properties,
 - **Add a property (and see the billing impact):** [Adding Properties](04-adding-properties.md)
 - **Get support:** [Support and Contact](15-support-and-contact.md)
 
-Questions about billing? Email support@shieldmylot.com.
+Questions about billing? Email hello@shieldmylot.com.

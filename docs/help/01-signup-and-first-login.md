@@ -61,7 +61,7 @@ Different roles see different home pages:
 | Resident | `/resident` | Your vehicles, violations, visitor passes |
 | Super Admin | `/admin` | Platform-wide controls (Alvarado Legacy Consulting only) |
 
-If you land on a page that doesn't match what you expected, double-check that your role is correct. Contact your company admin or support@shieldmylot.com if something looks off.
+If you land on a page that doesn't match what you expected, double-check that your role is correct. Contact your company admin or hello@shieldmylot.com if something looks off.
 
 ---
 
@@ -98,7 +98,7 @@ If you land on a page that doesn't match what you expected, double-check that yo
 Double-check the email address — make sure there are no extra spaces, and that you're using the exact email the invitation was sent to. If you're sure the email is right, the temporary password may have expired or been used already.
 
 **"Account not found" error**
-The invitation may not have been processed yet, or your account may have been deactivated. Contact your company admin or support@shieldmylot.com.
+The invitation may not have been processed yet, or your account may have been deactivated. Contact your company admin or hello@shieldmylot.com.
 
 **Stuck on the password change screen**
 Make sure your new password meets the requirements (8+ characters). If the screen won't submit, try refreshing the page and entering the new password again.
@@ -125,4 +125,4 @@ Sharing accounts breaks the audit trail (we won't know who took which action) an
 - **Company Admins:** Continue to [Account Setup](02-account-setup.md)
 - **Everyone else:** Find the doc that matches your role from the [Help Center index](/help)
 
-If you run into anything not covered here, email support@shieldmylot.com.
+If you run into anything not covered here, email hello@shieldmylot.com.

@@ -212,4 +212,4 @@ You can technically select any property in the dropdown, but you shouldn't. The 
 - If a tow is later challenged off-system, the violation record + photos + video + audit trail are your evidence package
 - For property-specific configuration: [Adding Properties](04-adding-properties.md)
 
-Questions not covered? Email support@shieldmylot.com.
+Questions not covered? Email hello@shieldmylot.com.

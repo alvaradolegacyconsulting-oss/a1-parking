@@ -214,4 +214,4 @@ Yes — deactivate their account in your manager portal. This removes their vehi
 - **Manage your resident roster:** [Resident Management](10-resident-management.md)
 - **Provide QR codes to new residents:** [Resident Self-Registration](../shared/11-resident-self-registration.md)
 
-Questions about PM-track setup? Email support@shieldmylot.com.
+Questions about PM-track setup? Email hello@shieldmylot.com.

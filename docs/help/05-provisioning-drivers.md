@@ -221,4 +221,4 @@ Currently, driver scope is company-wide — drivers can submit violations at any
 - **Understand evidence retention and post-confirmation workflow:** [Tow Tickets and Evidence](07-tow-tickets-and-evidence.md)
 - **Need to upgrade to add more drivers:** [Understanding Your Tier](../getting-started/03-understanding-your-tier.md)
 
-Questions about driver management? Email support@shieldmylot.com.
+Questions about driver management? Email hello@shieldmylot.com.

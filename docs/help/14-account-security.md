@@ -101,7 +101,7 @@ The reset email comes from a ShieldMyLot system address. If you don't see it wit
 
 **If you don't have access to the registered email:**
 - For drivers / managers / leasing agents: contact your company admin
-- For company admins: contact support@shieldmylot.com
+- For company admins: contact hello@shieldmylot.com
 - For residents: contact your property manager
 
 We can verify your identity through alternative means and reset the password manually.
@@ -116,7 +116,7 @@ If you think someone else may have accessed your account:
 
 1. **Change your password immediately**
 2. **Check the audit trail** for any suspicious activity (see "Reviewing audit trails" below)
-3. **Notify ShieldMyLot** at support@shieldmylot.com with details of what you observed
+3. **Notify ShieldMyLot** at hello@shieldmylot.com with details of what you observed
 4. **Review your other accounts** that might share the same password (change those too if so)
 
 ### What ShieldMyLot will do
@@ -218,7 +218,7 @@ When someone leaves your company or property:
 
 **Don't delete accounts** unless explicitly required. Deletion creates orphan records and breaks audit trails. Deactivation is the right tool for the routine case.
 
-For the rare case where deletion is required (e.g., a GDPR-style data subject deletion request, though this isn't currently a Texas legal requirement), contact support@shieldmylot.com to discuss the right approach.
+For the rare case where deletion is required (e.g., a GDPR-style data subject deletion request, though this isn't currently a Texas legal requirement), contact hello@shieldmylot.com to discuss the right approach.
 
 ---
 
@@ -271,4 +271,4 @@ We'd notify affected customers per Texas data breach notification laws and appli
 - **Get help if you've had a security incident:** [Support and Contact](15-support-and-contact.md)
 - **Review who has access to your account:** [Account Setup](../getting-started/02-account-setup.md)
 
-Security questions? Email support@shieldmylot.com.
+Security questions? Email hello@shieldmylot.com.

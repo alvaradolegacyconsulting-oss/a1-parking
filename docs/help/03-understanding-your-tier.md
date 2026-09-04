@@ -131,7 +131,7 @@ The **Plan** tab in your Company Admin portal shows:
 
 Each usage number shows what's currently active. Your bill reflects the same active resources.
 
-If any tier or feature information looks incorrect, contact support@shieldmylot.com.
+If any tier or feature information looks incorrect, contact hello@shieldmylot.com.
 
 ---
 
@@ -149,7 +149,7 @@ Regardless of tier, every customer gets:
 
 ## Changing tiers
 
-Most customers pick a tier that fits their operation and stay there. If your needs change materially — a PM firm starts running its own enforcement, or an enforcement operator wants PM features — contact us at support@shieldmylot.com and we'll discuss a Legacy configuration.
+Most customers pick a tier that fits their operation and stay there. If your needs change materially — a PM firm starts running its own enforcement, or an enforcement operator wants PM features — contact us at hello@shieldmylot.com and we'll discuss a Legacy configuration.
 
 See [Billing and Tier Changes](13-billing-and-tier-changes.md) for the full process.
 
@@ -161,4 +161,4 @@ See [Billing and Tier Changes](13-billing-and-tier-changes.md) for the full proc
 - **Add your first property:** [Adding Properties](04-adding-properties.md)
 - **Understand billing:** [Billing and Tier Changes](13-billing-and-tier-changes.md)
 
-Questions? Email support@shieldmylot.com.
+Questions? Email hello@shieldmylot.com.

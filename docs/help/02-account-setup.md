@@ -133,7 +133,7 @@ What to verify:
 - **Active driver count** (Enforcement-Only) matches your operational team size
 - **Feature flags** shown on the Plan tab match your tier's included set
 
-If something looks wrong, contact support@shieldmylot.com immediately. Tier configuration errors are easier to fix at setup than after you've started using the platform heavily.
+If something looks wrong, contact hello@shieldmylot.com immediately. Tier configuration errors are easier to fix at setup than after you've started using the platform heavily.
 
 See [Understanding Your Tier](03-understanding-your-tier.md) for more on what each tier includes.
 
@@ -187,4 +187,4 @@ If all six are checked, you're ready to start adding properties and drivers.
 - **Property Management customers:** [Property Management Overview](../property-management-track/08-property-management-overview.md)
 - **Want to understand your tier in depth:** [Understanding Your Tier](03-understanding-your-tier.md)
 
-Questions about account setup not covered here? Email support@shieldmylot.com.
+Questions about account setup not covered here? Email hello@shieldmylot.com.

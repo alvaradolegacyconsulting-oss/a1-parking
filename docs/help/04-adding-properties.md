@@ -169,7 +169,7 @@ They remain visible to everyone who could see them before deactivation (managers
 **Can a property name be changed after creation?**
 Only until the first manager or leasing agent is assigned to it. Once at least one non-admin user is assigned, the name is locked — attempting to save a rename will fail with a database error. This is intentional: the property name is referenced across historical audit rows, and mid-flight renames after user assignments cause cross-portal display drift.
 
-**What if I need to rename after users are assigned?** Contact support@shieldmylot.com. Renames are still possible with coordination, but the guardrail prevents them from happening accidentally during onboarding.
+**What if I need to rename after users are assigned?** Contact hello@shieldmylot.com. Renames are still possible with coordination, but the guardrail prevents them from happening accidentally during onboarding.
 
 Otherwise (no users yet): click the property in the Manage tab, edit the name, save. Historical violations reflect the new name on display; the underlying database links are preserved.
 
@@ -181,4 +181,4 @@ Otherwise (no users yet): click the property in the Manage tab, edit the name, s
 - Configure violation submission workflow: [Submitting Violations](06-submitting-violations.md)
 - Set up exempt plates for property owner vehicles
 
-Stuck on something not covered here? Email support@shieldmylot.com.
+Stuck on something not covered here? Email hello@shieldmylot.com.

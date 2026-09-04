@@ -169,4 +169,4 @@ The manager can decline the original request with a note ("This space was assign
 - [Resident Management](10-resident-management.md) — how spaces tie to resident onboarding
 - [Understanding Your Tier](03-understanding-your-tier.md) — pricing model and what's included
 
-Questions? Email support@shieldmylot.com.
+Questions? Email hello@shieldmylot.com.

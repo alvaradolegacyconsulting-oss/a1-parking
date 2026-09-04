@@ -226,7 +226,7 @@ For most companies, a CSV export with up to 1,000 violations generates in under 
 Encrypted cloud storage with strict access controls. The platform is the only way to access them — you can't get a "raw" file URL or share access externally. This is intentional for chain-of-custody protection.
 
 **Can I delete a violation entirely?**
-Not as a customer-side action. Confirmed violations are part of the permanent record. If a violation was created in error and you need it removed (e.g., a test that accidentally got marked real), contact support@shieldmylot.com with the details and the platform team can advise on the appropriate path.
+Not as a customer-side action. Confirmed violations are part of the permanent record. If a violation was created in error and you need it removed (e.g., a test that accidentally got marked real), contact hello@shieldmylot.com with the details and the platform team can advise on the appropriate path.
 
 ---
 
@@ -235,4 +235,4 @@ Not as a customer-side action. Confirmed violations are part of the permanent re
 - Train your team on the submission workflow: [Submitting Violations](06-submitting-violations.md)
 - Set up support contact channels for your customers: [Support and Contact](15-support-and-contact.md)
 
-Questions about tow tickets, evidence handling, or exports? Email support@shieldmylot.com.
+Questions about tow tickets, evidence handling, or exports? Email hello@shieldmylot.com.

@@ -226,7 +226,7 @@ Not currently available — deactivations are one-at-a-time. For end-of-semester
 
 ### Bulk import
 
-For new properties onboarding many existing residents at once, contact support@shieldmylot.com. We can help with a one-time bulk import to get you set up faster.
+For new properties onboarding many existing residents at once, contact hello@shieldmylot.com. We can help with a one-time bulk import to get you set up faster.
 
 ---
 
@@ -261,7 +261,7 @@ Yes. Click on their record, edit the unit number, save. The change is logged in 
 Yes. Each resident has their own account, both linked to the same unit. They share the unit but have separate login credentials and separate visitor pass quotas.
 
 **A former resident wants their data deleted. What do I do?**
-Texas doesn't currently have a comprehensive privacy law requiring deletion on request, but treating reasonable requests reasonably is good business. Contact support@shieldmylot.com to discuss the right path. We can help with data export and (in appropriate cases) deletion while preserving audit-trail integrity.
+Texas doesn't currently have a comprehensive privacy law requiring deletion on request, but treating reasonable requests reasonably is good business. Contact hello@shieldmylot.com to discuss the right path. We can help with data export and (in appropriate cases) deletion while preserving audit-trail integrity.
 
 **A resident's plate matches multiple violations. Can I see all their history?**
 Yes. From the resident's record, you can see all violations linked to their plates. Useful for context when a resident contacts you with questions.
@@ -290,4 +290,4 @@ Edit the resident's record and remove the vehicle. If you're not sure (the resid
 - **Manage visitor passes:** [Visitor Passes](09-visitor-passes.md)
 - **Understand resident self-service:** [Resident Self-Registration](../shared/11-resident-self-registration.md)
 
-Questions about resident management? Email support@shieldmylot.com.
+Questions about resident management? Email hello@shieldmylot.com.

@@ -250,4 +250,4 @@ Yes — the pass is for a plate, not a person. But the resident is responsible f
 - **Understand resident self-service:** [Resident Self-Registration](../shared/11-resident-self-registration.md)
 - **Configure your property settings:** [Property Management Overview](08-property-management-overview.md)
 
-Questions about visitor pass management? Email support@shieldmylot.com.
+Questions about visitor pass management? Email hello@shieldmylot.com.
