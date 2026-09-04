@@ -3,7 +3,7 @@ title: "Support and Contact"
 category: "Shared"
 audience: ["company_admin", "manager", "leasing_agent", "driver", "resident"]
 tier_required: "any"
-last_updated: "2026-05-19"
+last_updated: "2026-09-04"
 related: ["account-security", "billing-and-tier-changes"]
 ---
 
@@ -130,7 +130,7 @@ A complete first message often resolves issues in one round-trip. A vague "it do
 
 **What "priority email support + dedicated escalation path" means (Legacy):** Faster first-response targeting during business hours and a specific escalation contact for production-blocking issues, detailed in your service agreement.
 
-**Business hours:** Monday–Friday, 9 AM – 6 PM Central Time, excluding US federal holidays. For after-hours emergencies, see "Emergency contact" below.
+**Business hours:** Monday–Friday, 8 AM – 5 PM Central Time, excluding US federal holidays. For after-hours emergencies, see "Emergency contact" below.
 
 ---
 
