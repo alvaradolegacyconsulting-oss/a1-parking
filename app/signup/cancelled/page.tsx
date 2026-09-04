@@ -30,7 +30,7 @@ export default function SignupCancelled() {
             Change my selection
           </a>
         </div>
-        <a href="mailto:support@shieldmylot.com" style={{ color: MUTED, fontSize: 12, textDecoration: 'none' }}>
+        <a href="mailto:hello@shieldmylot.com" style={{ color: MUTED, fontSize: 12, textDecoration: 'none' }}>
           Need help? Contact support
         </a>
       </div>

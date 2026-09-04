@@ -573,7 +573,7 @@ function SignupClosedPlaceholder() {
           Already have a proposal code? Use the link in your proposal email to activate your account.
         </p>
         <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '24px auto 0' }} />
-        <a href="mailto:support@shieldmylot.com" style={{ display: 'inline-block', marginTop: 24, color: GOLD, fontSize: 14, textDecoration: 'none' }}>Contact support →</a>
+        <a href="mailto:hello@shieldmylot.com" style={{ display: 'inline-block', marginTop: 24, color: GOLD, fontSize: 14, textDecoration: 'none' }}>Contact support →</a>
       </div>
     </main>
   )

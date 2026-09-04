@@ -78,17 +78,17 @@ function invalidCopy(reason: string): { title: string; body: string } {
   // a typo'd code.
   switch (reason) {
     case 'missing_code':
-      return { title: 'We can’t find your proposal code', body: 'Your account doesn’t have a proposal code attached. Contact support@shieldmylot.com and we’ll sort it out.' }
+      return { title: 'We can’t find your proposal code', body: 'Your account doesn’t have a proposal code attached. Contact hello@shieldmylot.com and we’ll sort it out.' }
     case 'redeemed':
-      return { title: 'This code was already redeemed', body: 'It looks like activation completed in another session. Try signing in — if that doesn’t work, contact support@shieldmylot.com.' }
+      return { title: 'This code was already redeemed', body: 'It looks like activation completed in another session. Try signing in — if that doesn’t work, contact hello@shieldmylot.com.' }
     case 'expired':
-      return { title: 'Your proposal code expired', body: 'The window for activating this code has closed. Contact support@shieldmylot.com and we’ll issue a new one.' }
+      return { title: 'Your proposal code expired', body: 'The window for activating this code has closed. Contact hello@shieldmylot.com and we’ll issue a new one.' }
     case 'revoked':
     case 'not_issued':
     case 'tier_not_set':
     case 'not_found':
     default:
-      return { title: 'This code can’t be redeemed right now', body: 'Something about your proposal code changed since signup. Contact support@shieldmylot.com and we’ll get you set up.' }
+      return { title: 'This code can’t be redeemed right now', body: 'Something about your proposal code changed since signup. Contact hello@shieldmylot.com and we’ll get you set up.' }
   }
 }
 
@@ -338,8 +338,8 @@ export default function VerifyLanding() {
       const raw = error.message || 'Activation failed. Please try again.'
       const friendly =
         raw.includes('company name already in use') ? 'That company name is already in use. Try a slight variation.'
-        : raw.includes('code not redeemable') ? 'This code is no longer redeemable. Contact support@shieldmylot.com.'
-        : raw.includes('code expired') ? 'This code expired while you were filling out the form. Contact support@shieldmylot.com.'
+        : raw.includes('code not redeemable') ? 'This code is no longer redeemable. Contact hello@shieldmylot.com.'
+        : raw.includes('code expired') ? 'This code expired while you were filling out the form. Contact hello@shieldmylot.com.'
         : raw.includes('unauthenticated') || raw.includes('auth.uid mismatch') ? 'Your session expired. Please sign in again.'
         : raw
       setSubmission({ kind: 'error', message: friendly })
@@ -467,7 +467,7 @@ export default function VerifyLanding() {
             <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 14px' }}>
               Your account is active and you can use the dashboard, but the payment-method step
               didn&apos;t complete. Continue to your dashboard now, or contact{' '}
-              <a href="mailto:support@shieldmylot.com" style={{ color: GOLD }}>support@shieldmylot.com</a>
+              <a href="mailto:hello@shieldmylot.com" style={{ color: GOLD }}>hello@shieldmylot.com</a>
               {' '}and we&apos;ll finish the billing setup for you.
             </p>
             <p style={{ color: MUTED, fontSize: 12, lineHeight: 1.5, margin: '0 0 22px', padding: '10px 14px', background: 'rgba(220,53,69,0.08)', border: '1px solid rgba(220,53,69,0.25)', borderRadius: 8, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-word' }}>
@@ -506,7 +506,7 @@ export default function VerifyLanding() {
               or tab, sign in to continue activating your company. Otherwise, contact support — your
               proposal code can only be re-issued by our team.
             </p>
-            <a href="mailto:support@shieldmylot.com?subject=Need%20new%20proposal%20link"
+            <a href="mailto:hello@shieldmylot.com?subject=Need%20new%20proposal%20link"
               style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, marginBottom: 12, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
               Contact support
             </a>
@@ -527,7 +527,7 @@ export default function VerifyLanding() {
               <h2 style={{ color: GOLD, fontSize: 20, fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>{copy.title}</h2>
               <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 22px' }}>{copy.body}</p>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
-                <a href="mailto:support@shieldmylot.com" style={{ background: GOLD, color: '#0a0d14', borderRadius: 10, padding: '10px 16px', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>Contact support</a>
+                <a href="mailto:hello@shieldmylot.com" style={{ background: GOLD, color: '#0a0d14', borderRadius: 10, padding: '10px 16px', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>Contact support</a>
                 <a href="/login" style={{ background: CARD_BG, color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 16px', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Sign in</a>
               </div>
             </div>

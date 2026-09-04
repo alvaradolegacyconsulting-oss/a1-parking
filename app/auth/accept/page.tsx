@@ -415,7 +415,7 @@ export default function AuthAcceptPage() {
               {copy.alreadyUsedDetail}
             </p>
             {type === 'invite' ? (
-              <a href="mailto:support@shieldmylot.com?subject=Invite%20expired%20%E2%80%94%20need%20new%20invite"
+              <a href="mailto:hello@shieldmylot.com?subject=Invite%20expired%20%E2%80%94%20need%20new%20invite"
                 style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0f1117', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, marginBottom: 12, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
                 Contact your administrator
               </a>

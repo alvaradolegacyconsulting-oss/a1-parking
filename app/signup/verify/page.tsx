@@ -345,7 +345,7 @@ export default function SignupVerify() {
               this may be your existing account, or we can help you register with a distinguishing variant.
               <strong style={{ color: TEXT }}> No payment has been taken.</strong>
             </p>
-            <a href="mailto:support@shieldmylot.com" style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+            <a href="mailto:hello@shieldmylot.com" style={{ display: 'block', width: '100%', padding: 13, background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, border: 'none', borderRadius: 8, textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
               Contact support
             </a>
             {/* Trap-closing copy per Mateo 2026-07-21 amendment #2:
@@ -445,7 +445,7 @@ function ErrorCard({ title, body, primaryLabel, primaryHref }: { title: string; 
       <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 22px' }}>{body}</p>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
         <a href={primaryHref} style={{ background: GOLD, color: '#0a0d14', borderRadius: 10, padding: '10px 18px', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>{primaryLabel}</a>
-        <a href="mailto:support@shieldmylot.com" style={{ background: CARD_BG, color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 18px', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Contact support</a>
+        <a href="mailto:hello@shieldmylot.com" style={{ background: CARD_BG, color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 18px', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Contact support</a>
       </div>
     </div>
   )

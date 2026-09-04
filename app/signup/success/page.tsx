@@ -180,7 +180,7 @@ export default function SignupSuccess() {
               style={{ background: GOLD, color: '#0a0d14', borderRadius: 10, padding: '10px 18px', border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer', marginRight: 10 }}>
               Refresh
             </button>
-            <a href="mailto:support@shieldmylot.com" style={{ color: GOLD, fontSize: 13, textDecoration: 'none' }}>
+            <a href="mailto:hello@shieldmylot.com" style={{ color: GOLD, fontSize: 13, textDecoration: 'none' }}>
               Contact support →
             </a>
           </div>

@@ -83,9 +83,9 @@ export default function AccountCancelled() {
           </div>
           <p style={{ margin: '0 0 8px' }}>
             <strong style={{ color: '#e2e8f0' }}>Within 30 days:</strong> contact{' '}
-            <a href="mailto:support@shieldmylot.com?subject=Restore%20cancelled%20account"
+            <a href="mailto:hello@shieldmylot.com?subject=Restore%20cancelled%20account"
               style={{ color: GOLD, textDecoration: 'none' }}>
-              support@shieldmylot.com
+              hello@shieldmylot.com
             </a>
             {' '}and we&apos;ll help you restore your account without losing existing data.
           </p>
@@ -131,8 +131,8 @@ export default function AccountCancelled() {
               <li>Historical violations and tow tickets remain in our records</li>
               <li>
                 To restore: contact{' '}
-                <a href="mailto:support@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none' }}>
-                  support@shieldmylot.com
+                <a href="mailto:hello@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none' }}>
+                  hello@shieldmylot.com
                 </a>
                 {' '}from your company admin email
               </li>

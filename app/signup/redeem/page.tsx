@@ -50,16 +50,16 @@ function invalidCopy(reason: string): { title: string; body: string } {
     case 'missing_code':
       return { title: 'No code in this link', body: 'Use the link from your proposal email, or contact support if you need a new one.' }
     case 'not_found':
-      return { title: 'Code not recognized', body: 'Double-check the link from your proposal email. If it still doesn’t work, contact support@shieldmylot.com.' }
+      return { title: 'Code not recognized', body: 'Double-check the link from your proposal email. If it still doesn’t work, contact hello@shieldmylot.com.' }
     case 'redeemed':
-      return { title: 'This code has already been used', body: 'If you already have an account, sign in. If you think this is a mistake, contact support@shieldmylot.com.' }
+      return { title: 'This code has already been used', body: 'If you already have an account, sign in. If you think this is a mistake, contact hello@shieldmylot.com.' }
     case 'expired':
-      return { title: 'This code has expired', body: 'Contact support@shieldmylot.com and we’ll issue a new one.' }
+      return { title: 'This code has expired', body: 'Contact hello@shieldmylot.com and we’ll issue a new one.' }
     case 'revoked':
     case 'not_issued':
     case 'tier_not_set':
     default:
-      return { title: 'This code can’t be redeemed right now', body: 'Contact support@shieldmylot.com and we’ll get you set up.' }
+      return { title: 'This code can’t be redeemed right now', body: 'Contact hello@shieldmylot.com and we’ll get you set up.' }
   }
 }
 
@@ -286,7 +286,7 @@ function RedeemInner() {
               Continue →
             </button>
             <p style={{ color: MUTED, fontSize: 12, textAlign: 'center', margin: '16px 0 0' }}>
-              Can’t find your code? <a href="mailto:support@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none' }}>Contact support</a>
+              Can’t find your code? <a href="mailto:hello@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none' }}>Contact support</a>
             </p>
           </div>
         )}
@@ -300,7 +300,7 @@ function RedeemInner() {
               <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', lineHeight: 1.6, margin: '0 0 24px' }}>{copy.body}</p>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
                 <a href="/login" style={{ background: CARD_BG, color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 16px', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Sign in</a>
-                <a href="mailto:support@shieldmylot.com" style={{ background: GOLD, color: '#0a0d14', borderRadius: 10, padding: '10px 16px', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>Contact support</a>
+                <a href="mailto:hello@shieldmylot.com" style={{ background: GOLD, color: '#0a0d14', borderRadius: 10, padding: '10px 16px', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>Contact support</a>
               </div>
             </div>
           )
@@ -404,7 +404,7 @@ function RedeemInner() {
             </button>
             <p style={{ color: MUTED, fontSize: 11, margin: '20px 0 0', lineHeight: 1.6 }}>
               Wrong email? <a href="/signup/redeem" style={{ color: GOLD, textDecoration: 'none' }}>Start over</a>{' '}·{' '}
-              Need help? <a href="mailto:support@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none' }}>Contact support</a>
+              Need help? <a href="mailto:hello@shieldmylot.com" style={{ color: GOLD, textDecoration: 'none' }}>Contact support</a>
             </p>
           </div>
         )}
@@ -418,7 +418,7 @@ function RedeemInner() {
             </p>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
               <a href="/login" style={{ background: GOLD, color: '#0a0d14', borderRadius: 10, padding: '10px 18px', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>Sign in</a>
-              <a href="mailto:support@shieldmylot.com" style={{ background: CARD_BG, color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 18px', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Contact support</a>
+              <a href="mailto:hello@shieldmylot.com" style={{ background: CARD_BG, color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 18px', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Contact support</a>
             </div>
           </div>
         )}
