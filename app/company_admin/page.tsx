@@ -8610,14 +8610,53 @@ export default function CompanyAdminPortal() {
                   <div style={{ color:'#C9A227', fontSize:'22px', fontWeight:800, lineHeight:1 }}>{propertyCount}</div>
                   <div style={{ color:'#aaa', fontSize:'11.5px', marginTop:'5px' }}>Properties</div>
                 </div>
-                <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
-                  <div style={{ color: isPM ? '#C9A227' : '#555', fontSize:'22px', fontWeight:800, lineHeight:1 }}>
-                    {isPM ? approvedPermitCount : '—'}
-                  </div>
-                  <div style={{ color:'#aaa', fontSize:'11.5px', marginTop:'5px' }}>
-                    Approved permits {isPM && <span style={{ color:'#555', fontSize:'10.5px' }}>· metered</span>}
-                  </div>
-                </div>
+                {/* 🔴 2026-09-04 (Mateo Sep 4 Commit 0.5) — permit tile
+                    now shows active count against allowance for tiers
+                    that have one (pm_starter's 500-included shape).
+                    Allowance sourced from OFFERINGS (same as plan card
+                    at L8586) — no hardcoded 500. Amber past 90% of
+                    allowance as a heads-up signal.
+                    ⚠ LABEL DISCIPLINE: this is the CURRENT ACTIVE DB
+                    count, NOT the billed-cycle-peak quantity. syncOnAdd
+                    ratchets billed quantity UP during the cycle and
+                    reconcileAtRenewal (invoice.payment_succeeded) trims
+                    it down at renewal, so mid-cycle deactivations show
+                    here immediately but don't affect the current cycle's
+                    bill until renewal. Explicit "active" wording chosen
+                    to avoid a repeat of the pricing-page 90/95/99 promise
+                    class — labels a real number honestly rather than
+                    implying an invoice amount. Billed-quantity read
+                    would require exposing snapshotSubscription via a
+                    CA-facing API — not shipped; would be a separate
+                    commit if we later want the "X billed / Y active"
+                    dual-value form. */}
+                {(() => {
+                  const allowance = offering?.permitAllowance?.includedUpTo
+                  const overAllowance = typeof allowance === 'number' && approvedPermitCount >= allowance
+                  const nearAllowance = typeof allowance === 'number' && !overAllowance && approvedPermitCount >= allowance * 0.9
+                  const numberColor = !isPM ? '#555'
+                                    : overAllowance ? '#f4a027'
+                                    : nearAllowance ? '#f4a027'
+                                    : '#C9A227'
+                  const subtitle = isPM && typeof allowance === 'number'
+                    ? `Approved permits of ${allowance} included`
+                    : isPM
+                    ? 'Approved permits'
+                    : 'Approved permits'
+                  const meterNote = isPM && typeof allowance !== 'number'
+                    ? <span style={{ color:'#555', fontSize:'10.5px' }}>· metered</span>
+                    : null
+                  return (
+                    <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px' }}>
+                      <div style={{ color: numberColor, fontSize:'22px', fontWeight:800, lineHeight:1 }}>
+                        {isPM ? approvedPermitCount : '—'}
+                      </div>
+                      <div style={{ color:'#aaa', fontSize:'11.5px', marginTop:'5px' }}>
+                        {subtitle} {meterNote}
+                      </div>
+                    </div>
+                  )
+                })()}
                 <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', display:'flex', flexDirection:'column', gap:'6px', justifyContent:'space-between' }}>
                   <div style={{ color:'#aaa', fontSize:'11.5px' }}>QR signs</div>
                   <button onClick={printAllPropertyQRSigns} disabled={propertyCount === 0}
