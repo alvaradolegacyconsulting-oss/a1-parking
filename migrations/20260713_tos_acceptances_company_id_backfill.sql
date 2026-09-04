@@ -30,12 +30,22 @@
 --   -- by construction (WHERE company_id IS NULL).
 --
 -- POST-APPLY POSTURE
---   Residual NULLs are permitted ONLY in one shape:
+--   Residual NULLs are permitted ONLY in these shapes:
 --     • accept_signup_consents at self-serve pre-checkout (user_roles
 --       doesn't exist yet → derivation genuinely can't resolve).
---   No such rows exist in prod today (no self-serve signup has ever
---   completed pre-A1). Post-migration null_rows should be ZERO.
---   Non-zero residuals must be triaged case-by-case — do not rationalize.
+--     • accept_saas_agreement at self-serve pre-checkout — added
+--       2026-09-04 by 20260904_accept_saas_agreement_relax_selfserve_preflight.
+--       Same shape: SaaS gate MUST precede checkout (consent before
+--       payment), so user_roles doesn't exist yet.
+--   Pre-2026-09-04 posture said "no such rows exist in prod today (no
+--   self-serve signup has ever completed pre-A1)". Post-2026-09-04
+--   flip (public_signup_open=true), residual NULLs from these two
+--   RPCs are the expected shape and count 4 rows per completed
+--   self-serve signup (3 from accept_signup_consents + 1 from
+--   accept_saas_agreement). Linkability via the join at Part 1
+--   (auth.users → user_roles → companies) — same chain this backfill
+--   uses. Non-zero residuals from ANY OTHER source must be triaged
+--   case-by-case — do not rationalize.
 --
 -- IDEMPOTENCY
 --   WHERE company_id IS NULL means a re-run finds fewer candidates
