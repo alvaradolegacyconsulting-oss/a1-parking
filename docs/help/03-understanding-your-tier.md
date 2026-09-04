@@ -3,39 +3,40 @@ title: "Understanding Your Tier"
 category: "Getting Started"
 audience: ["company_admin", "manager"]
 tier_required: "any"
-last_updated: "2026-07-02"
+last_updated: "2026-09-04"
 related: ["account-setup", "billing-and-tier-changes", "adding-properties"]
 ---
 
 # Understanding Your Tier
 
-Your tier determines what your ShieldMyLot™ account can do — which surfaces you see, which features are available, and what drives your bill. This guide explains how to read your Plan tab and confirm your account is set up correctly.
+Your plan determines what your ShieldMyLot™ account can do — which surfaces you see, which features are available, and what drives your bill. This guide explains how to read your Plan tab and confirm your account is set up correctly.
 
-## The three tiers
+## The three plans
 
-ShieldMyLot offers three subscription tiers. You're on exactly one of them:
+ShieldMyLot offers three plans. You're on exactly one of them:
 
-| Tier | Best for |
+| Plan | Best for |
 |---|---|
-| **PM-Only** | Property management firms managing residential communities: resident registration, assigned parking, visitor passes, guest authorizations. Self-serve. |
-| **Enforcement-Only** | Towing and enforcement operators serving multiple properties: violation intake, tow tickets, plate lookup, driver management. Self-serve. |
-| **Legacy** | Custom-negotiated pricing for larger deployments or hybrid needs (property management + enforcement combined, or non-standard terms). Onboarded via a proposal code from ShieldMyLot. |
+| **PM Starter** | A property manager running a single community: residents, permits, reserved parking, visitor passes, house rules. Self-serve signup. |
+| **Enforcement-Only** | Towing and enforcement operators serving one or many properties: violation intake, tow tickets, plate lookup, driver management. Self-serve signup. |
+| **Custom quote** | Multi-property PM, combined PM + enforcement, or non-standard terms. Onboarded via a proposal code from ShieldMyLot. Included features and pricing are set at proposal time. |
 
-You picked your tier at signup (or Legacy customers, via the proposal code you were sent). Your tier stays the same until you or ShieldMyLot changes it deliberately.
+You picked your plan at signup (or, for Custom quote customers, via the proposal code you were sent). Your plan stays the same until you or ShieldMyLot changes it deliberately.
 
 ---
 
-## What each tier includes
+## What each plan includes
 
-### PM-Only
+### PM Starter
 
-For property management firms. The surfaces you'll use:
+For a property manager running a single community. The surfaces you'll use:
 
-- **Add and manage properties** — one or many
+- **One property** — PM Starter is for a single location. Contact us to expand.
 - **Resident management** — invite residents, approve new registrations, view resident vehicles
 - **Reserved parking (Spaces)** — assign residents to parking spaces; residents can request specific spaces
-- **Visitor passes** — issue and monitor visitor passes per property
+- **Visitor passes** — issue and monitor visitor passes
 - **Guest authorizations** — multi-week authorized guest vehicles vetted by the property manager
+- **House rules** — set property-specific parking and vehicle authorization rules
 - **Property managers** — invite as many property manager accounts as you need; no cap
 
 You do **not** have:
@@ -58,12 +59,12 @@ You do **not** have:
 - Visitor pass issuance (that's a PM-track feature)
 - Guest authorization
 
-### Legacy
+### Custom quote
 
-Custom deployments that don't fit the two standard tracks. Legacy accounts are onboarded via a proposal code from ShieldMyLot, and pricing and included features are set at proposal time.
+Custom deployments that don't fit either standard plan. Custom quote accounts are onboarded via a proposal code from ShieldMyLot, and pricing and included features are set at proposal time.
 
-Depending on how your Legacy account was configured, you may have:
-- PM-Only surfaces, Enforcement-Only surfaces, or both
+Depending on how your account was configured, you may have:
+- PM Starter surfaces, Enforcement-Only surfaces, or both
 - Any combination of features from the two tracks
 
 Your Plan tab reflects your actual configuration.
@@ -74,20 +75,15 @@ Your Plan tab reflects your actual configuration.
 
 ShieldMyLot's pricing is designed so **you only pay for what you use**.
 
-### PM-Only
+### PM Starter
 
-- **Monthly base** — $179 per month
-- **Per property** — $20 per active property per month
-- **Per approved permit (graduated)** — Only PM-Only meters permits. A "permit" is an approved resident vehicle. Rate scales down as volume grows:
+- **Monthly base** — $149 per month, flat
+- **Properties** — one property is included. PM Starter is for a single location.
+- **Approved permits** — first **500 approved permits per month included** in your $149 base. Permits beyond 500 bill at **$1.25 each**.
 
-  | Approved permits | Rate per permit |
-  |---|---|
-  | 1 – 50 | $2.00 |
-  | 51 – 200 | $1.75 |
-  | 201 – 500 | $1.50 |
-  | 501 + | $1.25 |
+A "permit" is an approved resident vehicle. Pending vehicles and declined vehicles do not count toward the meter.
 
-  The meter fires when a manager approves a resident's vehicle. Declined vehicles are free. Pending vehicles are free.
+**Your billed permit count reflects the highest number active during the cycle** and adjusts to the current active count at your next renewal. If you approve 600 permits in March and deactivate back to 400 in April, March's invoice reflects 600 permits and April's invoice adjusts to the current active count at renewal.
 
 ### Enforcement-Only
 
@@ -95,16 +91,33 @@ ShieldMyLot's pricing is designed so **you only pay for what you use**.
 - **Per property** — $15 per active property per month
 - **No per-permit meter, no per-driver charge** — Add as many drivers as your operation needs at no additional charge.
 
-### Legacy
+### Custom quote
 
 - Custom pricing set at proposal-code issue time. Numbers vary by contract.
 
 ### Cost drivers, in plain terms
 
-- **Adding a property** raises your bill by the per-property amount, immediately reflected on your next invoice.
-- **Approving a resident vehicle (PM-Only only)** counts as one permit. Rate depends on which bracket you're in.
+- **Adding a property (Enforcement-Only)** raises your bill by $15/mo, immediately reflected on your next invoice.
+- **Approving a resident vehicle (PM Starter)** counts toward your 500-permit monthly allowance. Overages bill at $1.25 per additional permit.
 - **Adding drivers, property managers, or leasing agents** does not affect your bill.
 - **Declining a vehicle** does not affect your bill.
+
+---
+
+## Annual billing
+
+Annual billing is available at **10 months' rate — approximately 17% off**.
+
+- **PM Starter** — $1,490 per year (equivalent to ~$124/mo)
+- **Enforcement-Only** — $1,990 per year plus $150 per property per year (equivalent to ~$166/mo base + ~$12.50/property)
+
+Monthly billing is more flexible if you're still figuring out fit; annual is the better rate once you're sure.
+
+---
+
+## Refunds
+
+**14-day money back on the first month** if PM Starter or Enforcement-Only isn't the right fit. Contact hello@shieldmylot.com within 14 days of your first charge.
 
 ---
 
@@ -112,10 +125,10 @@ ShieldMyLot's pricing is designed so **you only pay for what you use**.
 
 Some limits from prior ShieldMyLot versions have been retired:
 
-- **No property-manager cap** on any tier. Invite as many property manager accounts as you need.
+- **No property-manager cap** on any plan. Invite as many property manager accounts as you need.
 - **No driver cap** on Enforcement-Only. Add as many drivers as your operation needs.
 - **No per-driver charge.**
-- **No per-space charge.** Reserved parking is a PM-Only feature at no additional cost.
+- **No per-space charge.** Reserved parking is included at no additional cost on plans that offer it.
 
 ---
 
@@ -123,21 +136,21 @@ Some limits from prior ShieldMyLot versions have been retired:
 
 The **Plan** tab in your Company Admin portal shows:
 
-- Your current tier
+- Your current plan
 - Active property count
 - (Enforcement-Only) Active driver count
-- (PM-Only) Visitor pass usage per property this month
-- Feature availability for your tier
+- (PM Starter) Approved permit count against your 500-permit allowance
+- Feature availability for your plan
 
-Each usage number shows what's currently active. Your bill reflects the same active resources.
+Each usage number shows what's currently active. Your bill reflects the same active resources (with the permit-count semantics noted above — the meter reflects the highest active count during the cycle, resetting to the current count at renewal).
 
-If any tier or feature information looks incorrect, contact hello@shieldmylot.com.
+If any plan or feature information looks incorrect, contact hello@shieldmylot.com.
 
 ---
 
-## What stays the same across all tiers
+## What stays the same across all plans
 
-Regardless of tier, every customer gets:
+Regardless of plan, every customer gets:
 
 - **Full audit trails** — Every action is logged
 - **Texas Chapter 2308 workflow support** — Available on all tracks (compliance with the law remains the operator's responsibility)
@@ -147,9 +160,9 @@ Regardless of tier, every customer gets:
 
 ---
 
-## Changing tiers
+## Changing plans
 
-Most customers pick a tier that fits their operation and stay there. If your needs change materially — a PM firm starts running its own enforcement, or an enforcement operator wants PM features — contact us at hello@shieldmylot.com and we'll discuss a Legacy configuration.
+Most customers pick a plan that fits their operation and stay there. If your needs change materially — a PM operator wants a second property, a PM firm starts running its own enforcement, or an enforcement operator wants PM features — contact us at hello@shieldmylot.com and we'll discuss a Custom quote configuration.
 
 See [Billing and Tier Changes](13-billing-and-tier-changes.md) for the full process.
 
@@ -158,7 +171,7 @@ See [Billing and Tier Changes](13-billing-and-tier-changes.md) for the full proc
 ## Next steps
 
 - **Set up the rest of your account:** [Account Setup](02-account-setup.md)
-- **Add your first property:** [Adding Properties](04-adding-properties.md)
+- **Add your first property (Enforcement-Only) or confirm your single property (PM Starter):** [Adding Properties](04-adding-properties.md)
 - **Understand billing:** [Billing and Tier Changes](13-billing-and-tier-changes.md)
 
 Questions? Email hello@shieldmylot.com.
