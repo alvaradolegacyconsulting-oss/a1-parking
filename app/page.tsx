@@ -398,12 +398,25 @@ export default function Landing() {
                           <p style={{ color: TEXT, fontSize: 12, margin: '0 0 4px', fontWeight: 600 }}>
                             {tier.permitAllowance.includedUpTo} active permits included
                           </p>
-                          <p style={{ color: MUTED, fontSize: 12, margin: '0 0 6px' }}>
+                          <p style={{ color: MUTED, fontSize: 12, margin: 0 }}>
                             Then ${tier.permitAllowance.overageRate.toFixed(2)} per additional permit.
                           </p>
-                          <p style={{ color: '#4a5568', fontSize: 10, margin: 0, fontStyle: 'italic', lineHeight: 1.45 }}>
-                            You&apos;ll be warned at 90%, 95%, and 99% of your allowance before anything is charged. No surprise bills.
-                          </p>
+                          {/* 🔴 2026-09-04 (Mateo Sep 4 §0 Commit 0) — REMOVED
+                              "You'll be warned at 90%, 95%, and 99% of your
+                              allowance before anything is charged. No surprise
+                              bills." — public promise had ZERO backing code
+                              (no threshold evaluator, no email/notification
+                              path, no cron; grep sweep confirmed). Meter
+                              itself bills correctly (syncOnAdd('permit') at
+                              stripe-mutations.ts:320 updates the graduated
+                              subscription-item quantity on approve_vehicle;
+                              Stripe applies the 0-500 @ $0 / 501+ @ $1.25
+                              graduated pricing). What was missing was the
+                              warning ahead of the charge. Removed without
+                              replacement — the "Then $X per additional permit"
+                              line above already states the overage rate. If
+                              the warning path is later built, add the sentence
+                              back in a follow-up commit. */}
                         </div>
                       )}
 
