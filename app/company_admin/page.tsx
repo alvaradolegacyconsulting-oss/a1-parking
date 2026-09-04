@@ -1560,6 +1560,34 @@ export default function CompanyAdminPortal() {
         setPropMsg(`A property named "${trimmedName}" already exists at "${role?.company || 'your company'}". Names are compared without case or spacing differences.`)
         return
       }
+      // 🔴 2026-09-04 (Mateo Sep 4 §1 fix b) — Cap Commit B's
+      // enforce_property_limit trigger raises with sqlstate P0001 and
+      // message "Property limit exceeded: tier allows N active
+      // properties for X". Sep 4 rehearsal surfaced the raw engineer-
+      // facing text to a paying subscriber. Translate to tier-aware
+      // friendly copy that names the upgrade path.
+      //
+      // Discriminator: sqlstate P0001 alone is Postgres's generic
+      // raise_exception errcode (shared with any custom RAISE without
+      // ERRCODE), so match sqlstate + MESSAGE_TEXT phrase (same
+      // discipline as feedback_sqlstate_42501_shared_across_causes).
+      //
+      // Downstream-only fix: catches every path to this error (the
+      // form-state race, stale count, direct API call, whatever the
+      // UI-side atLimit check missed). The pre-flight friendly copy
+      // at L1516 stays as the fast path when atLimit is caught early.
+      const rawMsg = insErr.message || ''
+      if (insErr.code === 'P0001' && rawMsg.includes('Property limit exceeded')) {
+        // Preserve raw message in console for diagnosis — the surfaced
+        // copy is the only thing that changes.
+        console.warn('[property-cap] enforce_property_limit rejected INSERT — raw:', rawMsg)
+        const friendly =
+          ctx.tier === 'pm_starter'
+            ? 'PM Starter includes one property. To add another, contact us about upgrading — hello@shieldmylot.com.'
+            : `Your plan's property limit was reached. Contact us about expanding — hello@shieldmylot.com.`
+        setPropMsg(friendly)
+        return
+      }
       setPropMsg('Error: ' + insErr.message)
       return
     }
