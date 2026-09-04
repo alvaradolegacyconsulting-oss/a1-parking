@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { OFFERINGS, TierTrack } from '../lib/tier-display'
-import { TIER_CONFIG, TIER_PRICING } from '../lib/tier-config'
+import { TIER_CONFIG, TIER_PRICING, getTierPricing } from '../lib/tier-config'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import {
   TEXAS_ATTESTATION_VERSION,
@@ -149,7 +149,10 @@ export default function SignupTierPicker() {
   // for the in-form preview only.
   const tk = trackKey(track)
   const selectedTier = OFFERINGS.find(o => o.slug === tier)
-  const baseMonthly = TIER_PRICING[tk]?.[tier] ?? selectedTier?.base ?? 0
+  // 2026-09-04 TIER_PRICING shape change: { base, perProperty }.
+  // getTierPricing() widens the union-keyed map at the call site
+  // (runtime lookup — signup can pass any string tier).
+  const baseMonthly = getTierPricing(tk, tier)?.base ?? selectedTier?.base ?? 0
   const perPropMonthly = selectedTier?.perProp ?? 0
   const perDriverMonthly = selectedTier?.perDriver ?? 0
 

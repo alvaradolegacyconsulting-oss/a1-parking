@@ -1,5 +1,5 @@
 import { FeatureFlag, FEATURE_FLAGS, isNumericFlag } from './feature-flags'
-import { TIER_CONFIG, TIER_PRICING, TIER_LADDER, TIER_DISPLAY_NAME, Tier, TierType } from './tier-config'
+import { TIER_CONFIG, TIER_PRICING, TIER_LADDER, TIER_DISPLAY_NAME, Tier, TierType, TierPricingEntry, getTierPricing } from './tier-config'
 import { supabase } from '../supabase'
 
 export type { FeatureFlag, Tier, TierType }
@@ -172,8 +172,17 @@ export function getUpgradePrompt(
     // TIER_DISPLAY_NAME but are deliberately absent from TIER_PRICING —
     // surfacing them as a "$0/mo" upgrade target would be garbage. Sales-
     // driven contact path lives outside this self-serve upgrade prompt.
-    const price = TIER_PRICING[tt]?.[candidate]
-    if (price === undefined) continue
+    // 2026-09-04 shape change: TIER_PRICING is { base, perProperty }.
+    // base can be null (contact-sales / negotiated — Premium, Legacy).
+    // Skip candidates with no PUBLISHED base — surfacing "$0/mo" as an
+    // upgrade target would be garbage (B89 rule generalized: applies to
+    // both explicit null AND undefined entries).
+    // tt is a runtime TierType; use getTierPricing to widen the
+    // per-track union at the call site (ladder[i] came from the same
+    // table so the lookup is always safe at runtime).
+    const priceEntry = getTierPricing(tt, candidate)
+    if (priceEntry === undefined || priceEntry.base === null) continue
+    const price = priceEntry.base
     const value = tierMap?.[candidate]?.[flag]
     let qualifies = false
     if (isNumericFlag(flag)) {

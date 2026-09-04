@@ -25,7 +25,15 @@ export type TierType = 'enforcement' | 'property_management'
 // the companion migration (commit 5 Part 1), so NO company row carries
 // old values post-migration. New code paths key off the new 3 tiers.
 export type EnforcementTier = 'starter' | 'growth' | 'legacy' | 'premium' | 'enforcement_only'
-export type PropertyManagementTier = 'essential' | 'professional' | 'enterprise' | 'pm_only' | 'legacy'
+// pm_starter added 2026-09-04 — first self-serve PM tier post Aug 31
+// public-catalog rewrite. Sep 4 rehearsal caught the portal-gap: the
+// tier existed in signup + catalog + SQL CHECK constraints + cap
+// helper but was missing from the runtime feature-gating maps here,
+// producing a $0/mo card + hidden add-property affordance for a
+// paying subscriber. Union widening + PM_PM_STARTER + TIER_PRICING
+// entry + TIER_DISPLAY_NAME + TIER_LADDER all fired at once to close
+// the gap.
+export type PropertyManagementTier = 'essential' | 'professional' | 'enterprise' | 'pm_only' | 'pm_starter' | 'legacy'
 export type Tier = EnforcementTier | PropertyManagementTier
 
 export type TierConfigShape = Record<FeatureFlag, boolean | number>
@@ -404,6 +412,32 @@ const ENF_ENFORCEMENT_ONLY: TierConfigShape = {
 }
 
 const PM_PM_ONLY: TierConfigShape = { ...PM_ENTERPRISE }
+
+// PM: pm_starter ───────────────────────────────────────────────────────
+// 2026-09-04 — first self-serve PM tier ($149/mo flat + 500 permits
+// included, then $1.25 each). Feature set is IDENTICAL to PM-Only
+// per Mateo Sep 4 §1 (Starter is the whole PM product for one
+// property, not a cut-down version). Capacity is the only difference.
+//
+// 🔴 MAX_PROPERTIES = 1 is a SECOND COPY of the value that
+// get_company_property_limit() returns from the database. The DB is
+// enforcement; this TS value only decides whether the "+ Add Property"
+// button renders. They MUST agree.
+//
+// DB companion: 20260901_pm_starter_property_cap_a_helper_widening.sql
+// (Cap Commit A, 7b67ff8) — get_company_property_limit CASE has an
+// explicit pm_starter → 1 branch. Cap Commit A₀ (67624ff) widened
+// companies_tier_valid to accept 'pm_starter'; A₀'s VS3 verified the
+// helper returns 1 for a pm_starter INSERT. Cap Commits B + C build
+// on that with the enforce_property_limit RAISE.
+//
+// Drift class: same as companies_tier_valid CHECK ↔ helper CASE
+// (feedback_enforce_property_limit_tier_case_gap). If this cap
+// changes, update BOTH sides and re-run Cap A/B/C/A₀ verifications.
+const PM_PM_STARTER: TierConfigShape = {
+  ...PM_PM_ONLY,
+  [F.MAX_PROPERTIES]: 1,
+}
 // PM_LEGACY (2026-07-05 all-on flip) — Legacy is Legacy regardless of
 // track. Prior shape ({...PM_ENTERPRISE}) had all Enforcement flags off
 // inherited from PM_ESSENTIAL. The 15 additions below close that gap:
@@ -445,9 +479,10 @@ export const TIER_CONFIG: Record<TierType, Record<string, TierConfigShape>> = {
     premium: ENF_PREMIUM,
   },
   property_management: {
-    // Slice 1 Commit 5 — new 3-tier model:
-    pm_only: PM_PM_ONLY,
-    legacy:  PM_LEGACY,
+    // Slice 1 Commit 5 — new 3-tier model + Sep 4 Starter addition:
+    pm_starter: PM_PM_STARTER,   // 2026-09-04 — first self-serve PM tier
+    pm_only:    PM_PM_ONLY,
+    legacy:     PM_LEGACY,
     // Old 6-tier values kept BACK-COMPAT for display of existing
     // proposal_codes' base_tier; not used for any new company:
     essential:    PM_ESSENTIAL,
@@ -461,20 +496,97 @@ export const TIER_CONFIG: Record<TierType, Record<string, TierConfigShape>> = {
 // Matches Pricing v2 (May 8, 2026). If pricing changes, also update the
 // landing page tiers in app/page.tsx.
 //
-// B89: Premium is intentionally OMITTED from enforcement here. Contact-sales
-// tiers have bespoke pricing, not a published number. getUpgradePrompt()
-// guards against undefined TIER_PRICING entries by skipping such tiers as
-// upgrade targets — see app/lib/tier.ts:155-167.
-// Slice 1 Commit 5 — new 3-tier prices (commit 2 platform_settings seed):
-//   pm_only          = $179/mo
-//   enforcement_only = $199/mo
-// Legacy is negotiated — INTENTIONALLY OMITTED from TIER_PRICING so
-// getUpgradePrompt() skips it (same pattern as Premium per B89 + this
-// file's L272-275). Old 6-tier prices retained as BACK-COMPAT display
-// values for existing proposal_codes; not for any new company.
-export const TIER_PRICING: Record<TierType, Record<string, number>> = {
-  enforcement: { starter: 129, growth: 149, legacy: 199, enforcement_only: 199 },
-  property_management: { essential: 129, professional: 199, enterprise: 279, pm_only: 179 },
+// ── 2026-09-04 SHAPE CHANGE (Mateo Sep 4 §1) ────────────────────────
+// Prior shape: Record<TierType, Record<string, number>> — string key +
+// omission semantics meant a missing tier silently rendered $0 via
+// `?? 0` fallthrough at every call site. This exact pattern caused the
+// Sep 4 pm_starter portal gap: TIER_PRICING had no pm_starter entry,
+// consumer computed `baseMonthly = 0`, plan card displayed "$0/mo".
+//
+// New shape: keyed by track-specific tier UNIONS (EnforcementTier /
+// PropertyManagementTier), value is { base: number | null, perProperty:
+// number }. Union keying makes omission a build-time error rather than
+// a runtime $0. Adding a Tier to a union now REQUIRES adding a
+// TIER_PRICING entry — same discipline Mateo used two days ago with
+// Record<IntendedTier['tier'], number> in create-checkout-session,
+// which caught the same class the moment it was introduced.
+//
+// base: null encodes "no published price" (contact-sales / custom /
+// negotiated). Renders NOT as $0 but as an explicit "custom pricing"
+// branch at the consumer — see isLegacy gate at company_admin/page.tsx:8466
+// for the pattern. Consumers that don't recognize null (`.base ?? 0`
+// fallback) render $0 — matches prior behavior for legacy (which was
+// silently absent) and is still preferable to a fabricated number.
+//
+// perProperty is the flat per-property monthly rate. Was hardcoded as
+// `isPM ? 20 : 15` at company_admin/page.tsx:8452 — one of the two
+// defects Sep 4 caught. Now sourced here.
+//
+// ── PRICING VALUES ──────────────────────────────────────────────────
+//   enforcement:
+//     enforcement_only { base: 199, perProperty: 15 }   — Slice 1 Commit 5
+//     legacy           { base: 199, perProperty: 0 }    — internal display value; marketing (tier-display.ts) renders customPrice
+//     premium          { base: null, perProperty: 0 }   — B89 contact-sales; explicit null (was silent omission)
+//     starter / growth — BACK-COMPAT for retired 6-tier proposal_codes; not used for any new company post-Jun 26 remap
+//   property_management:
+//     pm_starter { base: 149, perProperty: 0 }          — 2026-09-04 first self-serve PM tier; flat + per-permit meter (see permitAllowance in OFFERINGS), no per-property line
+//     pm_only    { base: 179, perProperty: 20 }         — Slice 1 Commit 5; negotiated-only post Aug 31 rewrite
+//     legacy     { base: null, perProperty: 0 }         — negotiated via proposal_code; explicit null (was silent omission)
+//     essential / professional / enterprise — BACK-COMPAT retired
+export interface TierPricingEntry {
+  /** Base monthly fee in USD. `null` = contact-sales / negotiated /
+   * custom pricing — consumers must branch explicitly, NEVER default
+   * to a number. Renders as isLegacy / customPrice / "Contact support"
+   * copy depending on surface. */
+  base: number | null
+  /** Flat per-property monthly rate in USD. 0 = no per-property line
+   * (e.g. pm_starter uses a per-permit meter instead). Was hardcoded
+   * `isPM ? 20 : 15` at company_admin/page.tsx:8452 pre-2026-09-04. */
+  perProperty: number
+}
+
+export type TierPricingByTrack = {
+  enforcement: Record<EnforcementTier, TierPricingEntry>
+  property_management: Record<PropertyManagementTier, TierPricingEntry>
+}
+
+export const TIER_PRICING: TierPricingByTrack = {
+  enforcement: {
+    enforcement_only: { base: 199,  perProperty: 15 },
+    legacy:           { base: 199,  perProperty: 0  },   // internal display; marketing renders customPrice via tier-display.ts
+    premium:          { base: null, perProperty: 0  },   // B89 contact-sales — explicit null
+    // Back-compat for retired 6-tier proposal_codes (Jun 26 remap):
+    starter:          { base: 129,  perProperty: 0  },
+    growth:           { base: 149,  perProperty: 0  },
+  },
+  property_management: {
+    pm_starter:   { base: 149,  perProperty: 0  },       // 2026-09-04 first self-serve PM tier; 500 permits included, then $1.25 each (permit meter, no per-property)
+    pm_only:      { base: 179,  perProperty: 20 },
+    legacy:       { base: null, perProperty: 0  },       // custom via proposal_code — explicit null
+    // Back-compat for retired 6-tier proposal_codes (Jun 26 remap):
+    essential:    { base: 129,  perProperty: 0  },
+    professional: { base: 199,  perProperty: 0  },
+    enterprise:   { base: 279,  perProperty: 0  },
+  },
+}
+
+// 2026-09-04 — runtime lookup helper. TIER_PRICING is union-keyed
+// per-track (Record<EnforcementTier, ...> | Record<PropertyManagementTier, ...>)
+// for compile-time enforcement AT THE DEFINITION SITE (adding a tier
+// requires adding an entry — this catches the pm_starter class of
+// bug). But TS can't narrow that union when the tier comes from a
+// runtime string (from DB, JWT, etc.). Consumers use this helper
+// instead of indexing directly.
+//
+// Returns undefined when the tier isn't in the map (unknown / stale
+// value from an older row). base can be null for known tiers whose
+// price isn't published (contact-sales / negotiated). Consumers must
+// distinguish undefined (unknown tier — fail-closed) from null base
+// (known tier, custom pricing — render "custom" copy).
+export function getTierPricing(tierType: TierType | string, tier: string): TierPricingEntry | undefined {
+  const map = TIER_PRICING[tierType as TierType]
+  if (!map) return undefined
+  return (map as unknown as Record<string, TierPricingEntry | undefined>)[tier]
 }
 
 // Slice 1 Commit 5 — TIER_LADDER updated to the new model. Per-track
@@ -489,7 +601,14 @@ export const TIER_PRICING: Record<TierType, Record<string, number>> = {
 // getUpgradePrompt anyway.
 export const TIER_LADDER: Record<TierType, Tier[]> = {
   enforcement: ['enforcement_only'],
-  property_management: ['pm_only'],
+  // 2026-09-04 — pm_starter is the singleton for self-serve PM.
+  // pm_only is negotiated-only post Aug 31 rewrite (not reachable via
+  // /signup); keeping it here would misdirect getUpgradePrompt on a
+  // Starter cap-hit. Starter → contact-support for expansion, which
+  // is what nextWithinTrackTier('pm_starter', 'property_management')
+  // returning null already produces via the "Contact support to
+  // expand" fallback at company_admin/page.tsx:1515.
+  property_management: ['pm_starter'],
 }
 
 // Slice 1 Commit 5 — new tier display names added. Old 6-tier display
@@ -504,8 +623,9 @@ export const TIER_DISPLAY_NAME: Record<TierType, Record<string, string>> = {
     premium: 'Premium',
   },
   property_management: {
-    pm_only: 'PM-Only',
-    legacy:  'Legacy',
+    pm_starter: 'PM Starter',   // 2026-09-04 — first self-serve PM tier
+    pm_only:    'PM-Only',
+    legacy:     'Legacy',
     // Back-compat for old proposal_codes:
     essential:    'Essential',
     professional: 'Professional',

@@ -148,6 +148,18 @@ BEGIN
   -- proposal_code max_properties override exists. If this branch
   -- ever returns anything other than -1, A1 gets capped on their Q4
   -- 10-15 property rollout with no override backstop. Do not change.
+  -- 🔴 2026-09-04 RECIPROCAL: these tier→limit values are MIRRORED
+  -- in TypeScript at app/lib/tier-config.ts (TIER_CONFIG.property_management.pm_starter.MAX_PROPERTIES,
+  -- TIER_CONFIG.property_management.pm_only.MAX_PROPERTIES, etc.).
+  -- SQL is enforcement (this function runs in enforce_property_limit
+  -- trigger + read paths); TS is display (decides whether the "+ Add
+  -- Property" button renders). They MUST agree. If you edit a limit
+  -- here, edit the TS side too (or the CA portal's cap-hit modal
+  -- fires against a DB that already refused the write, or the button
+  -- stays hidden past a limit the DB would allow).
+  --
+  -- Cap Commit B's enforce_property_limit RAISE is the load-bearing
+  -- gate that makes this drift LOUD (would fire on a mismatch attempt).
   RETURN CASE
     WHEN v_tier = 'pm_only'          THEN -1
     WHEN v_tier = 'enforcement_only' THEN -1

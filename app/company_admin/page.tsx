@@ -63,7 +63,8 @@ async function callSyncOnAdd(
     return { ok: false, reason: (e as Error).message }
   }
 }
-import { TIER_DISPLAY_NAME, TIER_PRICING, TIER_CONFIG, type TierType } from '../lib/tier-config'
+import { TIER_DISPLAY_NAME, TIER_PRICING, TIER_CONFIG, getTierPricing, type TierType } from '../lib/tier-config'
+import { OFFERINGS } from '../lib/tier-display'
 
 // CA CRM redesign (Slice 1+) — mirrors PM_CRM_ENABLED precedent from the
 // resident CRM arc. Flipped true once Slices 1-5 land + UAT clears. Old
@@ -1522,10 +1523,16 @@ export default function CompanyAdminPortal() {
     // invoice will reflect the new property. Tier-conditional copy:
     // legacy shows "custom rate applies" since per-property $ is
     // negotiated per proposal-code.
+    // 2026-09-04 fail-closed default (was silent fall-through to
+    // legacy copy — pm_starter would have inherited Legacy's
+    // "negotiated contract" messaging on a $149 flat subscription).
+    // Explicit per-tier branches + named-tier default.
     const perPropCopy =
-      ctx.tier === 'pm_only'            ? '$20/mo per property (PM-Only base)'
+      ctx.tier === 'pm_starter'         ? 'no per-property fee — usage is metered as approved permits (first 500/mo included, then $1.25 each)'
+      : ctx.tier === 'pm_only'          ? '$20/mo per property (PM-Only base)'
       : ctx.tier === 'enforcement_only' ? '$15/mo per property (Enforcement-Only base)'
-      : /* legacy */                     'the custom per-property rate on your negotiated contract'
+      : ctx.tier === 'legacy'           ? 'the custom per-property rate on your negotiated contract'
+      : /* fail-closed */                 `an unrecognised plan (${ctx.tier}). Please contact support before adding a property.`
     if (!window.confirm(`Adding "${trimmedName}" will change your bill: ${perPropCopy}.\n\nContinue?`)) {
       setPropMsg('')
       return
@@ -1849,7 +1856,12 @@ export default function CompanyAdminPortal() {
         return
       }
       const targetName = newUser.name.trim() || newUser.email.trim()
-      const isPmOnly = getCompanyContext().tier === 'pm_only'
+      // 2026-09-04 (Mateo Sep 4 §4 structural split): "Is this a PM
+      // subscriber?" branches key on tier_type, not on the specific
+      // tier name. pm_starter is PM too and needs the same behavior.
+      const ctxForPmCheck = getCompanyContext()
+      const isPM = ctxForPmCheck.tier_type === 'property_management' || ctxForPmCheck.tier_type === 'pm'
+      const isPmOnly = isPM   // legacy variable name kept for surrounding code readability; semantics widened
       const confirmMsg = newManagerCanApprove === false
         ? `${targetName} will not be able to approve permits.`
         : isPmOnly
@@ -2377,12 +2389,19 @@ export default function CompanyAdminPortal() {
   async function setManagerApprovePermission(manager: any, allowed: boolean) {
     const action = allowed ? 'grant' : 'revoke'
     const targetName = manager.name || manager.email
-    const isPmOnly = getCompanyContext().tier === 'pm_only'
+    // 2026-09-04 tier-specific billing copy per Mateo Sep 4 §2:
+    // PM Starter and PM-Only bill permits DIFFERENTLY (Starter =
+    // 500 included then $1.25; PM-Only = graduated $2.00→$1.25).
+    // Generic "each permit is billable" would be wrong for Starter's
+    // first 500. Enforcement track has no permit meter.
+    const _ctxTier = getCompanyContext().tier
+    const permitBillingCopy =
+      _ctxTier === 'pm_starter' ? ' The first 500 approved permits/month are included in your $149 base; permits beyond 500 bill at $1.25 each.'
+      : _ctxTier === 'pm_only'  ? ' Each approved permit is metered on your monthly bill.'
+      : ''
     const msg = !allowed
       ? `${targetName} will not be able to approve permits.`
-      : isPmOnly
-        ? `Authorize ${targetName} for permit / vehicle authorization? Each approved permit is metered on your monthly bill.`
-        : `Authorize ${targetName} for permit / vehicle authorization?`
+      : `Authorize ${targetName} for permit / vehicle authorization?${permitBillingCopy}`
     if (!window.confirm(msg)) return
 
     const { data, error } = await supabase.rpc('set_manager_approve_permission', {
@@ -4363,13 +4382,17 @@ export default function CompanyAdminPortal() {
                   gate could use hasFeature(VISITOR_PASS_SELF_SERVICE) but
                   the current gate compiles behavior — leave as-is until the
                   Bar-2 catalog-facing tier-picker rewrite. */}
-              {showPMExtras && ctx.tier === 'pm_only' && (
+              {/* 2026-09-04 (Mateo Sep 4 §4) — PM extras key on tier_type
+                  not the specific pm_only value. pm_starter is PM too
+                  and its subscribers need these tabs (residents, visitors,
+                  guest auth, spaces are the tier's core proposition). */}
+              {showPMExtras && ctx.tier_type === 'property_management' && (
                 <button style={styleFor(isSelected('visitors'))} onClick={() => goto('visitors')}>Visitors</button>
               )}
-              {showPMExtras && ctx.tier === 'pm_only' && (
+              {showPMExtras && ctx.tier_type === 'property_management' && (
                 <button style={styleFor(isSelected('guest-auth'))} onClick={() => goto('guest-auth')}>Guests</button>
               )}
-              {showPMExtras && ctx.tier === 'pm_only' && (
+              {showPMExtras && ctx.tier_type === 'property_management' && (
                 <button style={styleFor(isSelected('spaces'))} onClick={() => goto('spaces')}>Spaces</button>
               )}
               <button style={styleFor(isSelected('insights'))} onClick={() => goto('insights')}>Insights</button>
@@ -4392,20 +4415,22 @@ export default function CompanyAdminPortal() {
               Guests, and Spaces are PM-track surfaces. Hidden for
               enforcement_only + legacy CAs. Render-side only; server-
               side track-guards deferred to post-launch pass. */}
-          {getCompanyContext().tier === 'pm_only' && (
+          {/* 2026-09-04 (Mateo Sep 4 §4) — legacy-nav PM extras key on
+              tier_type not tier. pm_starter is PM and gets these tabs. */}
+          {getCompanyContext().tier_type === 'property_management' && (
             <button style={tab('visitors')} onClick={() => setActiveTab('visitors')}>Visitors</button>
           )}
           {/* B214 — manager-vetted multi-week guest authorizations. CA-portal
               variant scans cross-property (all company properties). Form's
               property dropdown sources from CA's own company's ACTIVE
               properties only (Jose lock 2026-06-20). */}
-          {getCompanyContext().tier === 'pm_only' && (
+          {getCompanyContext().tier_type === 'property_management' && (
             <button style={tab('guest-auth')} onClick={() => setActiveTab('guest-auth')}>Authorized Guests</button>
           )}
           {/* Spaces v1 commit 4 — CA cross-property single-view tab with
               property selector. Sibling to manager Spaces tab; uses the same
               app/lib/spaces.ts helpers + same 6 RPC mutation surfaces. */}
-          {getCompanyContext().tier === 'pm_only' && (
+          {getCompanyContext().tier_type === 'property_management' && (
             <button style={tab('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
           )}
           <button style={tab('qrcodes')} onClick={() => setActiveTab('qrcodes')}>QR Codes</button>
@@ -7056,8 +7081,13 @@ export default function CompanyAdminPortal() {
                         {(role?.role === 'admin' || hasFeature(FEATURE_FLAGS.LEASING_AGENT_ROLE, getCompanyContext()) === true) && (
                           <option value="leasing_agent">Leasing Agent</option>
                         )}
-                        {(role?.role === 'admin' || getCompanyContext().tier !== 'pm_only') && (<option value="driver">Driver</option>)}
-                        {(role?.role === 'admin' || getCompanyContext().tier === 'pm_only') && (<option value="resident">Resident</option>)}
+                        {/* 2026-09-04 (Mateo Sep 4 §4) — driver-hidden /
+                            resident-shown branches on tier_type, not on the
+                            specific pm_only value. Prior form inverted the
+                            options for pm_starter (offered Driver, hid
+                            Resident) — the tier's core feature unreachable. */}
+                        {(role?.role === 'admin' || getCompanyContext().tier_type !== 'property_management') && (<option value="driver">Driver</option>)}
+                        {(role?.role === 'admin' || getCompanyContext().tier_type === 'property_management') && (<option value="resident">Resident</option>)}
                       </select>
                       {newUser.role === 'manager' && (
                         <>
@@ -7069,8 +7099,16 @@ export default function CompanyAdminPortal() {
                             <option value="yes">Yes — can approve permits (tied to vehicles)</option>
                             <option value="no">No — cannot approve permits</option>
                           </select>
-                          {/* PM-Only inline billable note — track-aware.
-                              Enforcement track has no metered permit line. */}
+                          {/* 2026-09-04 (Mateo Sep 4 §2) — tier-specific
+                              billing note. PM Starter and PM-Only bill
+                              permits differently and generic wording would
+                              mislead Starter (first 500 are included).
+                              Enforcement track has no permit meter. */}
+                          {getCompanyContext().tier === 'pm_starter' && (
+                            <p style={{ color:'#888', fontSize:'11px', margin:'4px 0 0', lineHeight:'1.4' }}>
+                              Note: PM Starter includes the first 500 approved permits/month; permits beyond 500 bill at $1.25 each.
+                            </p>
+                          )}
                           {getCompanyContext().tier === 'pm_only' && (
                             <p style={{ color:'#888', fontSize:'11px', margin:'4px 0 0', lineHeight:'1.4' }}>
                               Note: on PM-Only, each approved permit is metered on your monthly bill.
@@ -7339,10 +7377,13 @@ export default function CompanyAdminPortal() {
                           still accept any role for a CA today; server-
                           side gate deferred with the rest of the
                           post-launch track-guard pass. */}
-                      {(role?.role === 'admin' || getCompanyContext().tier !== 'pm_only') && (
+                      {/* 2026-09-04 (Mateo Sep 4 §4) — second role-dropdown
+                          block; same tier_type fix as the first block above.
+                          Prior form inverted the options for pm_starter. */}
+                      {(role?.role === 'admin' || getCompanyContext().tier_type !== 'property_management') && (
                         <option value="driver">Driver</option>
                       )}
-                      {(role?.role === 'admin' || getCompanyContext().tier === 'pm_only') && (
+                      {(role?.role === 'admin' || getCompanyContext().tier_type === 'property_management') && (
                         <option value="resident">Resident</option>
                       )}
                     </select>
@@ -7372,7 +7413,14 @@ export default function CompanyAdminPortal() {
                           <option value="no">No — cannot approve permits</option>
                         </select>
                         <p style={{ color:'#555', fontSize:'11px', margin:'-6px 0 12px' }}>
-                          {getCompanyContext().tier === 'pm_only'
+                          {/* 2026-09-04 (Mateo Sep 4 §2) — tier-specific
+                              billing copy. PM Starter and PM-Only bill
+                              permits differently; generic wording would
+                              mislead Starter subscribers on their first
+                              500 included permits. */}
+                          {getCompanyContext().tier === 'pm_starter'
+                            ? 'PM Starter billing: first 500 approved permits/month are included in your $149 base; permits beyond 500 bill at $1.25 each. You can change this later in the user list.'
+                            : getCompanyContext().tier === 'pm_only'
                             ? 'PM-Only billing: each approved permit is metered on your monthly bill. You can change this later in the user list.'
                             : 'Required choice. You can change this later in the user list.'}
                         </p>
@@ -8442,15 +8490,33 @@ export default function CompanyAdminPortal() {
           const isLegacy = tierKey === 'legacy'
           const propertyCount = properties.length
 
-          // Plan label — track name, plus "Legacy" suffix when applicable.
+          // Plan label — pull from TIER_DISPLAY_NAME when available so
+          // pm_starter renders "PM Starter", not "Property Management".
+          // Retains the "Legacy" suffix for legacy subscribers.
           const trackLabel = isPM ? 'Property Management' : 'Enforcement'
-          const planLabel = isLegacy ? `${trackLabel} · Legacy` : trackLabel
+          const tierDisplayName = TIER_DISPLAY_NAME[tierTypeKey]?.[tierKey]
+          const planLabel = isLegacy
+            ? `${trackLabel} · Legacy`
+            : (tierDisplayName ?? trackLabel)
 
-          // Base + per-property — catalog tiers only. Legacy defers to
-          // Stripe portal for the real number ("Tailored rate").
-          const baseMonthly = TIER_PRICING[tierTypeKey]?.[tierKey] ?? 0
-          const perPropertyRate = isPM ? 20 : 15  // matches platform_settings seed for pm_only / enforcement_only
+          // 2026-09-04 — read base + per-property from TIER_PRICING
+          // via getTierPricing() (widens the union-keyed map for the
+          // runtime-string lookup). base=null encodes negotiated /
+          // contact-sales. Kills the prior `isPM ? 20 : 15` hardcode
+          // which rendered "$20/property" for pm_starter on a $149/mo
+          // flat. Legacy is still handled by the isLegacy gate below.
+          const pricingEntry = getTierPricing(tierTypeKey, tierKey)
+          const baseMonthly = pricingEntry?.base ?? 0
+          const perPropertyRate = pricingEntry?.perProperty ?? 0
           const catalogTotal = baseMonthly + perPropertyRate * propertyCount
+
+          // 2026-09-04 — pm_starter renders differently (flat + per-permit
+          // meter, no per-property line). Source the permit allowance
+          // from OFFERINGS so the CA portal card matches the marketing
+          // page a customer just paid from — one source of truth.
+          const offering = OFFERINGS.find(o => o.slug === tierKey)
+          const isPmStarter = tierKey === 'pm_starter'
+          const isKnownCatalogTier = tierKey === 'pm_starter' || tierKey === 'pm_only' || tierKey === 'enforcement_only' || tierKey === 'legacy'
 
           // Entitlements — driven by TIER_CONFIG; expandable "What's included".
           const tierCfg = TIER_CONFIG[tierTypeKey]?.[tierKey]
@@ -8463,13 +8529,32 @@ export default function CompanyAdminPortal() {
                   <div>
                     <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.1em', fontWeight:'bold', margin:'0 0 6px' }}>Your plan</p>
                     <h2 style={{ color:'white', fontSize:'22px', margin:'0', fontWeight:'bold' }}>{planLabel}</h2>
-                    {isLegacy
-                      ? <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>Tailored rate · see Stripe billing portal for the current amount.</p>
-                      : <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>
-                          ${baseMonthly}/mo base + ${perPropertyRate}/property × {propertyCount} = <b style={{ color:'#C9A227' }}>${catalogTotal}/mo</b>
-                          <span style={{ color:'#555', fontSize:'11px', marginLeft:'6px' }}>* plus applicable taxes</span>
-                        </p>
-                    }
+                    {/* 2026-09-04 (Mateo Sep 4 §1) — explicit per-tier
+                        branches instead of silent fall-through to a
+                        numeric formula. Prior form rendered
+                        "$0/mo base + $20/property × 0 = $0/mo" for
+                        pm_starter because the fallthrough hardcoded PM's
+                        per-property rate. Now: legacy → tailored copy;
+                        pm_starter → flat + permit allowance from OFFERINGS;
+                        pm_only / enforcement_only → base + per-property;
+                        unrecognised → fail-closed "contact support". */}
+                    {isLegacy ? (
+                      <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>Tailored rate · see Stripe billing portal for the current amount.</p>
+                    ) : isPmStarter && offering?.permitAllowance ? (
+                      <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>
+                        <b style={{ color:'#C9A227' }}>${baseMonthly}/mo flat</b> · first {offering.permitAllowance.includedUpTo} approved permits/month included, then ${offering.permitAllowance.overageRate.toFixed(2)} each
+                        <span style={{ color:'#555', fontSize:'11px', marginLeft:'6px' }}>* plus applicable taxes</span>
+                      </p>
+                    ) : isKnownCatalogTier && baseMonthly > 0 ? (
+                      <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>
+                        ${baseMonthly}/mo base + ${perPropertyRate}/property × {propertyCount} = <b style={{ color:'#C9A227' }}>${catalogTotal}/mo</b>
+                        <span style={{ color:'#555', fontSize:'11px', marginLeft:'6px' }}>* plus applicable taxes</span>
+                      </p>
+                    ) : (
+                      <p style={{ color:'#f4a027', fontSize:'13px', margin:'6px 0 0' }}>
+                        Unrecognised plan ({tierKey}). Please contact support — this state shouldn't happen and we want to know about it.
+                      </p>
+                    )}
                   </div>
                   <button onClick={openBillingPortal} disabled={portalLoading}
                     style={{ padding:'10px 16px', background: portalLoading ? '#2a2f3d' : '#C9A227', color: portalLoading ? '#555' : '#0f1117', fontWeight:'bold', fontSize:'12px', border:'none', borderRadius:'8px', cursor: portalLoading ? 'not-allowed' : 'pointer', fontFamily:'Arial', whiteSpace:'nowrap' }}>
@@ -8837,7 +8922,12 @@ export default function CompanyAdminPortal() {
                   const cycleEnd = billingData.current_period_end ? new Date(billingData.current_period_end) : null
                   const cycleStart = cycleEnd ? new Date(cycleEnd.getTime() - 30 * 24 * 60 * 60 * 1000) : null
                   const activeProps = properties.filter(p => p.is_active !== false).length
-                  const isPmOnly = getCompanyContext().tier === 'pm_only'
+                  // 2026-09-04 (Mateo Sep 4 §4 structural split): "Is this a PM
+      // subscriber?" branches key on tier_type, not on the specific
+      // tier name. pm_starter is PM too and needs the same behavior.
+      const ctxForPmCheck = getCompanyContext()
+      const isPM = ctxForPmCheck.tier_type === 'property_management' || ctxForPmCheck.tier_type === 'pm'
+      const isPmOnly = isPM   // legacy variable name kept for surrounding code readability; semantics widened
                   return (
                     <div style={{ background: '#1e2535', border: '1px solid #3a4055', borderRadius: 8, padding: 16, marginBottom: 16 }}>
                       <p style={{ color: '#888', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 4px', fontWeight: 700 }}>What impacts your next invoice</p>

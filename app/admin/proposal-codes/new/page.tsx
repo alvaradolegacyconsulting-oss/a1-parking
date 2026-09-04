@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../../supabase'
-import { TIER_CONFIG, TIER_PRICING, TIER_DISPLAY_NAME, TierType } from '../../../lib/tier-config'
+import { TIER_CONFIG, TIER_PRICING, TIER_DISPLAY_NAME, TierType, getTierPricing } from '../../../lib/tier-config'
 import { FEATURE_FLAGS, isNumericFlag, FeatureFlag } from '../../../lib/feature-flags'
 
 const VALID_FLAGS = new Set(Object.values(FEATURE_FLAGS))
@@ -116,7 +116,8 @@ export default function NewProposalCode() {
 
   const tierDefaults = useMemo(() => {
     const cfg = TIER_CONFIG[tierType]?.[tier]
-    const base = TIER_PRICING[tierType]?.[tier] ?? 0
+    // 2026-09-04 TIER_PRICING shape change: { base, perProperty }.
+    const base = getTierPricing(tierType, tier)?.base ?? 0
     return {
       base,
       perProperty: cfg && typeof cfg['max_properties' as FeatureFlag] === 'number' ? null : null, // placeholder lookup not needed

@@ -44,7 +44,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../supabase'
-import { TIER_PRICING } from '../../lib/tier-config'
+import { TIER_PRICING, getTierPricing } from '../../lib/tier-config'
 import { OFFERINGS } from '../../lib/tier-display'
 import { isOtpExpiredOrUsed } from '../../lib/otp-errors'
 import { SAAS_VERSION, SAAS_DISPLAY_DATE } from '../../lib/legal-versions'
@@ -499,7 +499,8 @@ function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: In
 
   // Preview from display constants (matches /signup form).
   // tiers + td already declared above for tierTitle lookup — reuse here.
-  const baseMonthly = TIER_PRICING[tier.track]?.[tier.tier] ?? td?.base ?? 0
+  // 2026-09-04 TIER_PRICING shape change: { base, perProperty }.
+  const baseMonthly = getTierPricing(tier.track, tier.tier)?.base ?? td?.base ?? 0
   const perProp = td?.perProp ?? 0
   const perDriver = td?.perDriver ?? 0
   const monthlyTotal = baseMonthly + (perProp * tier.property_count) + (perDriver * tier.driver_count)

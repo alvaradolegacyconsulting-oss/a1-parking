@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '../../../supabase'
-import { TIER_PRICING, TIER_DISPLAY_NAME, TierType } from '../../../lib/tier-config'
+import { TIER_PRICING, TIER_DISPLAY_NAME, TierType, getTierPricing } from '../../../lib/tier-config'
 import { FEATURE_FLAGS, isNumericFlag, FeatureFlag } from '../../../lib/feature-flags'
 // B233 — share the SAME lineItemsForCode used by the server-side
 // executor (proposal-code-stripe.ts) so the confirm-dialog preview
@@ -227,7 +227,10 @@ export default function ProposalCodeDetail() {
   const perDriverDefault = tierType === 'enforcement'
     ? (tier === 'starter' ? 10 : tier === 'growth' ? 8 : 6)
     : 0
-  const baseDefault = TIER_PRICING[tierType]?.[tier] ?? 0
+  // 2026-09-04 TIER_PRICING shape change: { base, perProperty }.
+  // Legacy/Premium have base=null; admin proposal-code path defaults
+  // to 0 for compute (proposal code overrides supply the real price).
+  const baseDefault = getTierPricing(tierType, tier)?.base ?? 0
 
   // B66.2b commit 2: lock-in validation mirrors the new/ form +
   // proposal_codes_lock_in_duration_valid CHECK (NULL OR 1-36).
