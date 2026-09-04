@@ -3,7 +3,7 @@ title: "Signup and First Login"
 category: "Getting Started"
 audience: ["company_admin", "manager", "leasing_agent", "driver", "resident"]
 tier_required: "any"
-last_updated: "2026-05-20"
+last_updated: "2026-09-04"
 related: ["account-setup", "understanding-your-tier", "account-security"]
 ---
 
@@ -13,23 +13,47 @@ This guide walks you through getting access to ShieldMyLot™ for the first time
 
 ## Three ways to get access
 
-**1. Company Admin signup (account owner)**
+**1. Self-serve signup (Company Admin, PM Starter or Enforcement-Only)**
 
-If you're the owner or operations lead of a towing company or property management firm, you received your service agreement and login credentials after our onboarding conversation. Your account is set up and ready for first login.
+If you're the owner or operations lead of a towing company or single-community property manager and you're setting up a new account yourself, sign up at:
 
-**2. Manager / Driver / Leasing Agent invitation**
+**https://www.shieldmylot.com/signup**
 
-If you work for a company that already uses ShieldMyLot, your company admin or a manager invited you. You'll receive an email with a temporary password and a link to log in. Your account is already provisioned — just sign in.
+You'll pick your plan (PM Starter or Enforcement-Only), verify your email, review and sign our SaaS Agreement, and pay through Stripe Checkout — all in one session, no phone call required. Full walkthrough below under [Self-serve signup — step by step](#self-serve-signup--step-by-step).
 
-**3. Resident self-registration**
+**2. Custom quote onboarding (proposal code)**
 
-If you live at a property managed by a ShieldMyLot customer, you'll typically receive a QR code from your property manager. Scanning it takes you to a registration form. See [Resident Self-Registration](../shared/11-resident-self-registration.md) for the full resident workflow.
+If your operation needs multi-property PM, combined PM + enforcement, or non-standard terms, we'll send you a proposal code after a short conversation. You'll redeem it at signup, which sets up your account with your negotiated configuration.
+
+**3. Team invitation (Manager / Driver / Leasing Agent / Resident)**
+
+If you work for a company that already uses ShieldMyLot, your company admin or a manager invited you. You'll receive an email with a temporary password and a link to log in. Your account is already provisioned — just sign in. Residents typically get a property QR code from their manager and register through a shorter flow; see [Resident Self-Registration](11-resident-self-registration.md).
 
 ---
 
-## First login
+## Self-serve signup — step by step
 
-Once you have your email and temporary password, log in at:
+The full flow from landing page to signed-in dashboard:
+
+1. **Pick your plan** at shieldmylot.com/signup. Three cards: **PM Starter** ($149/mo flat, one property), **Enforcement-Only** ($199/mo + $15/property, unlimited properties), or **Custom quote** (contact us for a proposal). PM Starter and Enforcement-Only continue directly; Custom quote routes to a contact form.
+2. **Create your account.** Enter your email, set a password, confirm your company name. You'll pass a Turnstile check (a click-through anti-bot verification) and receive a verification email.
+3. **Verify your email.** Click the link in the email (or enter the 6-8 digit token if the link doesn't open). You'll land back on the signup flow.
+4. **Read and sign the SaaS Subscription Agreement.** Full text is presented in-line; you scroll through, then click Sign. The date and time of your acceptance is recorded.
+5. **Review and pay.** You'll see your plan summary and estimated first invoice, then click Continue to Checkout — you're handed off to Stripe's hosted checkout page to enter payment details.
+6. **Post-payment.** Stripe brings you back to ShieldMyLot with a "Payment received · Setting up your account…" screen. Account provisioning happens in the background and usually completes within a few seconds.
+7. **You land in the Company Admin portal** at `/company_admin` once your account is ready.
+
+### If setup takes longer than expected
+
+Provisioning usually completes in under 10 seconds. If it takes more than 30, the setup screen shows a "Still processing" message with a **Refresh** button — click it once to re-check. Your payment has cleared and your account exists in our system; the delay is our billing platform catching up with our account platform.
+
+If the Refresh doesn't work, use the **Contact support** link on that screen or email hello@shieldmylot.com. Your payment is safe and we can complete the setup manually.
+
+---
+
+## First login (for invited team members)
+
+Once you have your email and temporary password from your invitation, log in at:
 
 **https://www.shieldmylot.com/login**
 
@@ -69,8 +93,8 @@ If you land on a page that doesn't match what you expected, double-check that yo
 
 ### If you're a Company Admin
 
-1. **Verify your tier** — Click the **Plan** tab. Confirm your tier shows correctly: **PM-Only**, **Enforcement-Only**, or **Legacy**.
-2. **Review your usage** — On the Plan tab, see your active properties, drivers (Enforcement-Only), or visitor-pass usage (PM-Only). Usage is what drives your bill; see [Understanding Your Tier](03-understanding-your-tier.md) for the pricing model.
+1. **Verify your plan** — Click the **Plan** tab. Confirm your plan shows correctly: **PM Starter**, **Enforcement-Only**, or your Custom quote configuration.
+2. **Review your usage** — On the Plan tab, see your active properties, drivers (Enforcement-Only), or approved permit count against your 500-permit allowance (PM Starter). Usage is what drives your bill; see [Understanding Your Tier](03-understanding-your-tier.md) for the pricing model.
 3. **Set up your company profile** — Head to [Account Setup](02-account-setup.md) to complete logo upload, support contact, and other settings.
 
 ### If you're a Manager
@@ -105,6 +129,9 @@ Make sure your new password meets the requirements (8+ characters). If the scree
 
 **Forgot the temporary password**
 Check your inbox (and spam folder) for the welcome email. If you can't find it, ask your company admin to re-send the invitation — they have an option in the admin portal to regenerate a temporary password.
+
+**Verification email didn't arrive (self-serve signup)**
+Check your spam folder. If the email doesn't arrive within a few minutes, use the "Resend verification email" option on the signup verify screen, or contact hello@shieldmylot.com.
 
 ---
 

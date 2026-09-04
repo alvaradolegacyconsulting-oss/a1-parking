@@ -3,7 +3,7 @@ title: "Adding Properties"
 category: "Shared"
 audience: ["company_admin", "manager"]
 tier_required: "any"
-last_updated: "2026-08-20"
+last_updated: "2026-09-04"
 related: ["provisioning-drivers", "submitting-violations", "understanding-your-tier", "billing-and-tier-changes"]
 ---
 
@@ -42,15 +42,25 @@ Click the "+ Add Property" button in the Manage tab.
 
 ### A note on billing
 
-Adding a property changes your bill. Per-property rate depends on your tier:
+Adding a property affects your bill differently depending on your plan:
 
-- **PM-Only** — $20/month per property (added to your base of $179/month)
-- **Enforcement-Only** — $15/month per property (added to your base of $199/month)
-- **Legacy** — the custom per-property rate set at proposal-code issue time; reflected on your invoices
+- **PM Starter** — Your one property is included in your $149/mo flat base. There's no per-property fee to add it. PM Starter is capped at one property; see the next section for what happens if you try to add a second.
+- **Enforcement-Only** — $15/month per property, added to your $199/month base. Applied to your next invoice automatically.
+- **Custom quote** — the custom per-property rate set at proposal-code issue time; reflected on your invoices.
 
-Before the property is created, the portal shows a confirmation with the per-property cost so you can double-check. You do not need approval from anyone else to add a property — you're the subscriber and the change applies to your next invoice automatically.
+Before the property is created, the portal shows a confirmation with the per-property cost (or, on PM Starter, a note that this is your included property) so you can double-check. You do not need approval from anyone else to add a property — you're the subscriber and the change applies to your next invoice automatically.
 
 See [Billing and Tier Changes](13-billing-and-tier-changes.md) for the full pricing model.
+
+### What happens if you try to add a second property on PM Starter
+
+PM Starter includes exactly one property. If you attempt to add a second, ShieldMyLot will refuse the create and show:
+
+> PM Starter includes one property. To add another, contact us about upgrading — hello@shieldmylot.com.
+
+This is the same message you'll see in the portal. If your operation has grown to need a second property, we'll help you move to a Custom quote configuration that fits — email hello@shieldmylot.com with your current property name and what you'd like to add.
+
+Enforcement-Only has no property cap; add as many as your operation needs.
 
 ### Step 3: Fill in the property form
 
@@ -127,9 +137,11 @@ A manager can be assigned to multiple properties. See [Provisioning Drivers](05-
 
 ## Property caps
 
-**PM-Only** and **Enforcement-Only** do not cap the number of properties. Add as many as your operation needs — the per-property monthly rate applies to each (see [Billing and Tier Changes](13-billing-and-tier-changes.md)).
+**PM Starter** is capped at **one property** — that's the shape of the plan. If your operation needs a second property, contact hello@shieldmylot.com about moving to a Custom quote configuration.
 
-**Legacy** accounts may have property caps as part of their proposal-code configuration. Your Plan tab reflects any cap that applies to your account.
+**Enforcement-Only** does not cap the number of properties. Add as many as your operation needs — the $15/mo per-property rate applies to each (see [Billing and Tier Changes](13-billing-and-tier-changes.md)).
+
+**Custom quote** accounts may have property caps set as part of their proposal-code configuration. Your Plan tab reflects any cap that applies to your account.
 
 ---
 
