@@ -34,7 +34,11 @@ export async function middleware(request: NextRequest) {
   // for anon traffic at middleware before the page renders — exactly the B65
   // production blocker (2026-05-20) that prompted /signup + /account-cancelled
   // being added below.
-  const publicPaths = ['/login', '/visitor', '/visitor-select', '/register', '/change-password', '/terms', '/privacy', '/signup', '/account-cancelled', '/deactivated', '/ticket/view', '/api/help-feedback', '/api/stripe/webhook', '/api/cron', '/api/signup', '/api/register/create-user', '/api/register/companion-vehicle', '/api/register/captcha-verify', '/api/visitor/create-pass', '/forgot-password', '/reset-password', '/auth/accept']
+  // /api/_tmp_alert_probe: Sept 4 2026 THROWAWAY probe route for
+  // provisioning-failure alert-email path verification. Guarded by
+  // PROVISIONING_ALERT_PROBE_KEY env var (returns 403 if unset or
+  // mismatched). Reverts SAME DAY — remove this entry with the route.
+  const publicPaths = ['/login', '/visitor', '/visitor-select', '/register', '/change-password', '/terms', '/privacy', '/signup', '/account-cancelled', '/deactivated', '/ticket/view', '/api/help-feedback', '/api/stripe/webhook', '/api/cron', '/api/signup', '/api/register/create-user', '/api/register/companion-vehicle', '/api/register/captcha-verify', '/api/visitor/create-pass', '/forgot-password', '/reset-password', '/auth/accept', '/api/_tmp_alert_probe']
   const isPublic = pathname === '/' || publicPaths.some(path => pathname.startsWith(path))
 
   // Not logged in — redirect to login
