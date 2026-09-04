@@ -329,6 +329,19 @@ export default function CompanyAdminPortal() {
   const [propMsg, setPropMsg] = useState('')
   const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
 
+  // 🔴 2026-09-04 (Mateo Sep 4 §1 fix a) — dismiss the property-msg
+  // banner on navigation. Prior: the banner (e.g. "Property limit
+  // reached", the P0001 friendly copy from §1(b), or a name-collision
+  // error) survived tab switches + property-list selections and read
+  // like a persistent broken-state indicator. Now it clears whenever
+  // the user meaningfully moves within the portal, matching what a
+  // customer would expect. Success copy ("Property added!") also
+  // clears — acceptable trade; the toast-style success is transient
+  // by design and the properties list re-render is the durable proof.
+  useEffect(() => {
+    setPropMsg('')
+  }, [activeTab, selectedPropertyId])
+
   const [companyUsers, setCompanyUsers] = useState<any[]>([])
   const [resetPwTarget, setResetPwTarget] = useState<string | null>(null)
   const [resetPwForm, setResetPwForm] = useState({ newPw: '', confirmPw: '' })
