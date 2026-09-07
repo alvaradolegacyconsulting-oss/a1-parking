@@ -1,13 +1,39 @@
 // Local-only proposal PDF render helper.
 //
-// Usage:
+// 🔴 2026-09-07 — RUNTIME SURFACE RETIRED.
+//
+// This script and its companion docs/hand-gen-pdf.md are retained as a
+// design artifact. The runtime path that CONSUMED the generated PDFs
+// (bucket `proposal-pdfs`, RLS policies `admin_all_proposal_pdfs` +
+// `company_admin_read_redeemed_proposal_pdf`, API route
+// `/api/proposal-codes/[id]/pdf-url`, admin UI "View PDF" affordance,
+// proposal_codes.pdf_url reads) was FULLY RETIRED on Sept 7 2026.
+//
+// Rationale: `proposal_codes` had 1 total row over the app's lifetime
+// and ZERO with pdf_url populated. The workflow was never executed in
+// production, the design routed around it, and the surface accumulated
+// broken policies while sitting unused.
+//
+// If a proposal-PDF workflow ever returns, treat this script + doc as
+// a starting point rather than something currently wired:
+//   • Create a fresh private bucket via migration (mirror
+//     20260519_b51a_storage_bucket_authorization.sql shape)
+//   • Write scoped RLS with SECURITY DEFINER helpers rather than
+//     cross-table EXISTS predicates (see
+//     feedback_permissive_wildcard_hides_scoped_policies)
+//   • Rebuild the API route + admin affordance
+//
+// Column proposal_codes.pdf_url is left in the schema (inert; no
+// access surface); a nullable unused column grants nothing.
+//
+// Usage (if you're deliberately rebuilding the workflow):
 //   export NEXT_PUBLIC_SUPABASE_URL=...
 //   export SUPABASE_SERVICE_ROLE_KEY=...
 //   export NEXT_PUBLIC_APP_URL=https://shieldmylot.com   # optional
 //   npx tsx scripts/render-proposal.ts <CODE>
 //
 // Output: ./output/<CODE>.html  — open in Chrome, ⌘P, Save as PDF.
-// See docs/hand-gen-pdf.md for the full workflow.
+// See docs/hand-gen-pdf.md for the historical workflow.
 
 import { createClient } from '@supabase/supabase-js'
 import { writeFileSync, mkdirSync } from 'node:fs'

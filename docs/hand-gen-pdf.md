@@ -1,5 +1,39 @@
 # Hand-Generating Proposal PDFs
 
+> 🔴 **2026-09-07 — RUNTIME SURFACE RETIRED.**
+>
+> This document is retained as a design artifact. The runtime path that
+> consumed hand-generated PDFs — bucket `proposal-pdfs`, RLS policies
+> (`admin_all_proposal_pdfs`, `company_admin_read_redeemed_proposal_pdf`),
+> API route (`/api/proposal-codes/[id]/pdf-url`), admin UI "View PDF"
+> affordance, and reads of `proposal_codes.pdf_url` — was **FULLY
+> RETIRED** on Sept 7 2026.
+>
+> Rationale: `proposal_codes` had 1 total row over the app's lifetime
+> and ZERO with `pdf_url` populated. The workflow was never executed in
+> production, the design routed around it, and the surface accumulated
+> broken policies (a cross-table EXISTS predicate that couldn't
+> evaluate correctly under RLS) while sitting unused.
+>
+> If a proposal-PDF workflow ever returns, treat this doc + the
+> `scripts/render-proposal.ts` helper as a starting point:
+>
+> 1. Create a fresh private bucket via migration (mirror
+>    `migrations/20260519_b51a_storage_bucket_authorization.sql`).
+> 2. Write scoped RLS with `SECURITY DEFINER` helpers rather than
+>    cross-table `EXISTS` predicates — see standing rule
+>    `feedback_permissive_wildcard_hides_scoped_policies` for why the
+>    original design broke.
+> 3. Rebuild the API route + admin affordance.
+>
+> The column `proposal_codes.pdf_url` remains in the schema (inert; a
+> nullable unused column grants nothing).
+>
+> Everything below is the historical workflow, preserved unchanged for
+> reference.
+
+---
+
 ## When this applies
 
 Until the Phase 2 web acceptance page lands, proposal PDFs cannot be

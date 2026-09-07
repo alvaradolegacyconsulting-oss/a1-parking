@@ -312,26 +312,10 @@ export default function ProposalCodeDetail() {
       return
     }
     const body = await res.json().catch(() => ({}))
-    setMsg(body.message || 'Code issued. PDF generation pending — see docs/hand-gen-pdf.md.')
+    // 🔴 2026-09-07 — Removed reference to retired hand-gen PDF workflow.
+    // See scripts/render-proposal.ts + docs/hand-gen-pdf.md headers.
+    setMsg(body.message || 'Code issued.')
     await load()
-  }
-
-  async function viewPdf() {
-    if (!row) return
-    if (!row.pdf_url) {
-      setMsg('PDF Pending — upload via the hand-gen workflow (see docs/hand-gen-pdf.md) and set pdf_url on the row.')
-      return
-    }
-    setBusy(true)
-    const res = await fetch(`/api/proposal-codes/${row.id}/pdf-url`, { method: 'GET' })
-    setBusy(false)
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      setMsg('View PDF failed: ' + (body.error || res.statusText))
-      return
-    }
-    const body = await res.json()
-    if (body.url) window.open(body.url, '_blank')
   }
 
   async function openApplyModal() {
@@ -437,24 +421,13 @@ export default function ProposalCodeDetail() {
           </div>
         )}
 
-        {/* PDF pending banner — shown whenever the row has progressed past
-            draft but pdf_url is still NULL (i.e., it was issued via the
-            current PDF-disabled endpoint and hasn't been hand-uploaded yet).
-            Disappears once pdf_url is set. */}
-        {!isDraft && !row.pdf_url && (
-          <div style={{ background: '#2a1f0a', border: '1px solid #a16207', borderRadius: '8px', padding: '12px 14px', marginBottom: '14px' }}>
-            <p style={{ color: '#fbbf24', fontSize: '12px', fontWeight: 'bold', margin: '0 0 6px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-              📄 PDF: Pending hand-generation
-            </p>
-            <p style={{ color: '#aaa', fontSize: '12px', margin: '0 0 4px', lineHeight: 1.6 }}>
-              The status transitioned but no PDF was generated. Run the local helper, upload the file, then update <code style={{ color: '#C9A227' }}>pdf_url</code>:
-            </p>
-            <pre style={{ background: '#0f1117', border: '1px solid #2a2f3d', borderRadius: '6px', padding: '8px 10px', fontFamily: 'Courier New', fontSize: '11px', color: '#C9A227', margin: '6px 0', overflow: 'auto' }}>npx tsx scripts/render-proposal.ts {row.code}</pre>
-            <p style={{ color: '#888', fontSize: '11px', margin: '4px 0 0', lineHeight: 1.6 }}>
-              Full workflow in <code style={{ color: '#C9A227' }}>docs/hand-gen-pdf.md</code>. After upload run <code style={{ color: '#C9A227' }}>UPDATE proposal_codes SET pdf_url = &apos;proposals/{row.code}.pdf&apos; WHERE code = &apos;{row.code}&apos;;</code>
-            </p>
-          </div>
-        )}
+        {/* 🔴 2026-09-07 — PDF pending banner + View PDF buttons + viewPdf()
+            handler + /api/proposal-codes/[id]/pdf-url route REMOVED. The
+            hand-gen PDF workflow was retired (0 proposal_codes rows with
+            pdf_url populated in the app's lifetime; runtime surface never
+            executed). See scripts/render-proposal.ts + docs/hand-gen-pdf.md
+            headers for the retirement narrative. Column
+            proposal_codes.pdf_url stays in the schema (inert). */}
 
         <div style={{ background: '#161b26', border: '1px solid #2a2f3d', borderRadius: '12px', padding: '20px', marginBottom: '14px' }}>
 
@@ -660,9 +633,6 @@ export default function ProposalCodeDetail() {
             )}
           </>)}
           {status === 'issued' && (<>
-            <button onClick={viewPdf} disabled={!row.pdf_url} style={{ ...btnGhost, opacity: row.pdf_url ? 1 : 0.5, cursor: row.pdf_url ? 'pointer' : 'not-allowed' }}>
-              {row.pdf_url ? 'View PDF' : 'PDF Pending'}
-            </button>
             <button onClick={openApplyModal} style={btnGold}>Apply to Company</button>
             <button onClick={() => setRevokeOpen(true)} style={btnDanger}>Revoke</button>
             {/* Redemption-link copy. Surfaces only on ISSUED codes (not drafts;
@@ -690,19 +660,11 @@ export default function ProposalCodeDetail() {
               {redeemUrlCopied ? '✓ Copied' : '📋 Copy Redeem Link'}
             </button>
           </>)}
-          {status === 'redeemed' && (<>
-            <button onClick={viewPdf} disabled={!row.pdf_url} style={{ ...btnGhost, opacity: row.pdf_url ? 1 : 0.5, cursor: row.pdf_url ? 'pointer' : 'not-allowed' }}>
-              {row.pdf_url ? 'View PDF' : 'PDF Pending'}
-            </button>
-            {row.company_id && (
-              <a href={`/admin?company_id=${row.company_id}`} style={{ ...btnGhost, textDecoration: 'none', display: 'inline-block' }}>View Company</a>
-            )}
-          </>)}
-          {(status === 'expired' || status === 'revoked') && (
-            <button onClick={viewPdf} disabled={!row.pdf_url} style={{ ...btnGhost, opacity: row.pdf_url ? 1 : 0.5, cursor: row.pdf_url ? 'pointer' : 'not-allowed' }}>
-              {row.pdf_url ? 'View PDF' : 'PDF Pending'}
-            </button>
+          {status === 'redeemed' && row.company_id && (
+            <a href={`/admin?company_id=${row.company_id}`} style={{ ...btnGhost, textDecoration: 'none', display: 'inline-block' }}>View Company</a>
           )}
+          {/* status='expired' | 'revoked': all action buttons in this row
+              were View PDF only (retired 2026-09-07); no CTA remains. */}
         </div>
 
         {/* Apply modal */}
