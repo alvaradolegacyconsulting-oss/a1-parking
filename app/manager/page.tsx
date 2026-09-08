@@ -2544,6 +2544,14 @@ export default function ManagerPortal() {
     const initState = initialVehicleState(ctx.tier)
 
     // 3. Insert vehicle
+    // 🟢 2026-09-07 vehicles.company arc parity — this handler
+    // (shipped 2026-08-08) was missed by the Aug 28 arc's writer
+    // sweep. NOT NULL constraint on vehicles.company (added Aug 28)
+    // fires without it. Same manager.company source the legacy
+    // addVehicle at L2462 and createResidentWithVehicle at L2826
+    // already use. Bug went unnoticed until Sep 7 A1/Green Acres
+    // customer report because this path fires only on "Add Vehicle
+    // for Resident" via PmResidentCrm's VehiclesPane.
     const { data: insertData, error: insertErr } = await supabase
       .from('vehicles')
       .insert([{
@@ -2555,6 +2563,7 @@ export default function ManagerPortal() {
         color:          payload.color,
         unit:           residentUnit,
         property:       propertyName,
+        company:        manager.company,
         resident_email: residentEmail,
         status:         initState.status,
         is_active:      initState.is_active,
