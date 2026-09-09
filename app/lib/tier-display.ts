@@ -164,7 +164,6 @@ export const OFFERINGS: TierDisplay[] = [
       'Unlimited properties',
       'No permit charges',
       'Violations, tow tickets, plate scanning, enforcement reporting',
-      'Texas Chapter 2308 compliance built in',
     ],
   },
   {
