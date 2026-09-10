@@ -47,7 +47,7 @@
 // ════════════════════════════════════════════════════════════════════
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../../supabase'
 import { getCompanyContext } from '../../../lib/tier'
 import { normalizePlate } from '../../../lib/plate'
@@ -121,6 +121,22 @@ export default function TowLogMobilePage() {
 
   // ── Submit ────────────────────────────────────────────────────────
   const [submitting, setSubmitting] = useState(false)
+  // 🔴 SYNCHRONOUS double-tap guard. `submitting` is state, so both taps
+  // of a fast double-tap run against the SAME render's closure and both
+  // read submitting === false — a state check cannot close this window,
+  // and neither can an early `if (submitting) return`. A ref mutates
+  // immediately, so the second tap is blocked before React re-renders.
+  // Same pattern and same reasoning as useResidentDecisionGuard in
+  // app/components/PmResidentCrm.tsx:251 and the B217 addVehicle guard.
+  //
+  // Blast radius if it were missing: TWO removal records for one tow, on
+  // a table whose entire purpose is being a log of record — and a
+  // duplicate is not obviously a duplicate to whoever reads it Monday.
+  //
+  // The operator "Save operator" button is NOT guarded this way on
+  // purpose: create_tow_operator is find-or-create, so a second call
+  // returns the same id with created:false. Idempotent at the RPC.
+  const submitInFlight = useRef(false)
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [success, setSuccess] = useState<{ id: number; plate: string; media: MediaUploadOutcome | null } | null>(null)
@@ -222,44 +238,53 @@ export default function TowLogMobilePage() {
   // removal id is half the storage path. A photo failure never fails
   // the record — the record is the thing that matters.
   async function handleSubmit() {
+    if (submitInFlight.current) return
+    submitInFlight.current = true
     setFormError(null); setSuccess(null)
-    if (!selectedProperty) { setFormError('No property selected.'); return }
+    if (!selectedProperty) { setFormError('No property selected.'); submitInFlight.current = false; return }
 
     setSubmitting(true)
-    const towedAt = timeIsNow ? new Date() : fromLocalInputValue(towedAtLocal)
-    const result = await recordVehicleRemoval(supabase, {
-      property: selectedProperty.name,
-      plate,
-      reasonCode,
-      towedAt,
-      authorizedByEmail,
-      towOperatorId: Number(operatorId),
-      authorizedByName: authorizedByName || null,
-      reasonNotes: reasonNotes || null,
-      notes: notes || null,
-    })
-
-    if (!result.ok) {
-      setSubmitting(false)
-      setFormError(result.message)
-      return
-    }
-
-    let media: MediaUploadOutcome | null = null
-    if (files.length > 0) {
-      setUploadProgress({ done: 0, total: files.length })
-      media = await uploadRemovalMedia(supabase, {
-        propertyId: selectedProperty.id,
-        removalId: result.id,
-        files,
-        onProgress: (done, total) => setUploadProgress({ done, total }),
+    try {
+      const towedAt = timeIsNow ? new Date() : fromLocalInputValue(towedAtLocal)
+      const result = await recordVehicleRemoval(supabase, {
+        property: selectedProperty.name,
+        plate,
+        reasonCode,
+        towedAt,
+        authorizedByEmail,
+        towOperatorId: Number(operatorId),
+        authorizedByName: authorizedByName || null,
+        reasonNotes: reasonNotes || null,
+        notes: notes || null,
       })
-      setUploadProgress(null)
-    }
 
-    setSubmitting(false)
-    setSuccess({ id: result.id, plate: normalizePlate(plate), media })
-    resetForm()
+      if (!result.ok) {
+        setSubmitting(false)
+        setFormError(result.message)
+        return
+      }
+
+      let media: MediaUploadOutcome | null = null
+      if (files.length > 0) {
+        setUploadProgress({ done: 0, total: files.length })
+        media = await uploadRemovalMedia(supabase, {
+          propertyId: selectedProperty.id,
+          removalId: result.id,
+          files,
+          onProgress: (done, total) => setUploadProgress({ done, total }),
+        })
+        setUploadProgress(null)
+      }
+
+      setSubmitting(false)
+      setSuccess({ id: result.id, plate: normalizePlate(plate), media })
+      resetForm()
+    } finally {
+      // Released either way. On success the success screen has already
+      // replaced the form, so reopening the window costs nothing; on
+      // failure the manager must be able to retry.
+      submitInFlight.current = false
+    }
   }
 
   const canSubmit =
