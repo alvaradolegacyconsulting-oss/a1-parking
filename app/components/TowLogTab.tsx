@@ -36,6 +36,13 @@ import { supabase } from '../supabase'
 import { normalizePlate } from '../lib/plate'
 import { displayTowReason } from '../lib/tow-reasons'
 import { formatTimestamp } from '../lib/format-time'
+import { logAudit } from '../lib/audit'
+import {
+  buildTowLogCsv,
+  buildTowLogExportFilename,
+  downloadCsv,
+  type ExportVariant,
+} from '../lib/tow-log-export'
 import {
   RANGE_PRESETS,
   DEFAULT_FILTERS,
@@ -48,6 +55,7 @@ import {
   type RemovalFilters,
   type RangeKey,
   type OperatorOption,
+  fetchRemovalsForExport,
   listVehicleRemovals,
   lookupRemovalsByPlate,
   listRemovalMedia,
@@ -149,6 +157,10 @@ export default function TowLogTab() {
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({})
   const [mediaLoading, setMediaLoading] = useState(false)
 
+  // Export
+  const [exportBusy, setExportBusy] = useState<ExportVariant | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
+
   // Void
   const [voidReason, setVoidReason] = useState('')
   const [voidBusy, setVoidBusy] = useState(false)
@@ -219,6 +231,61 @@ export default function TowLogTab() {
     // the list — a list of 25 rows would mint links nobody looks at.
     if (rows.length > 0) setMediaUrls(await signMediaUrls(rows.map(m => m.storage_path)))
     setMediaLoading(false)
+  }
+
+  // ── Export ────────────────────────────────────────────────────────
+  // Exports THE CURRENT FILTERED SET, exactly. What is on screen is what
+  // is in the file — same range, same operator, same reason, same voided
+  // toggle. A complete export is the All range with filters cleared, not
+  // a separate button that could disagree with the screen it came from.
+  async function handleExport(variant: ExportVariant) {
+    setExportError(null)
+    setExportBusy(variant)
+    const result = await fetchRemovalsForExport(supabase, filters)
+    setExportBusy(null)
+
+    // 🔴 Refuse rather than write a partial file. A silently truncated
+    // export is a wrong answer that looks complete, and the reader has
+    // no way to tell.
+    if (!result.ok) {
+      setExportError(
+        result.reason === 'too_many'
+          ? `${result.total.toLocaleString()} records match these filters — more than the ${result.limit.toLocaleString()} an export can produce in one file. Narrow the date range and export again.`
+          : 'The export could not be built. Nothing was downloaded — try again.',
+      )
+      return
+    }
+    if (result.rows.length === 0) {
+      setExportError('Nothing to export with these filters.')
+      return
+    }
+
+    const propertyLabel = filters.property
+      ?? (propertyOptions.length === 1 ? propertyOptions[0] : 'all-properties')
+    const filename = buildTowLogExportFilename(propertyLabel, filters, variant)
+    downloadCsv(filename, buildTowLogCsv(result.rows, variant))
+
+    // On a log of record, "who pulled a copy of this and when" is asked
+    // once and cannot be answered retroactively. Cheap now, impossible
+    // to backfill. Non-blocking: the file is already downloaded, and a
+    // failed audit write must not look like a failed export.
+    logAudit({
+      action: 'TOW_LOG_EXPORTED',
+      table_name: 'vehicle_removals',
+      new_values: {
+        variant,
+        row_count: result.rows.length,
+        filename,
+        filters: {
+          range: filters.range,
+          recorded_by: filters.recordedBy,
+          reason_code: filters.reasonCode,
+          tow_operator_id: filters.operatorId,
+          property: filters.property,
+          include_voided: filters.includeVoided,
+        },
+      },
+    }).catch(e => console.error('[tow-log] export audit failed', e))
   }
 
   // ── Void ──────────────────────────────────────────────────────────
@@ -375,8 +442,31 @@ export default function TowLogTab() {
       {/* Count NAMES THE WINDOW. "4 removals" implies four total; "4
           removals in September" is a filtered fact. */}
       {searchResults === null && (
-        <div style={{ color: C.muted, fontSize: '12px', marginBottom: '10px' }}>
-          {loading ? 'Loading…' : `${total} removal${total === 1 ? '' : 's'} ${rangeLabel(filters.range)}`}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+          <div style={{ color: C.muted, fontSize: '12px' }}>
+            {loading ? 'Loading…' : `${total} removal${total === 1 ? '' : 's'} ${rangeLabel(filters.range)}`}
+          </div>
+          {total > 0 && (
+            // 🔴 TWO BUTTONS, LABELLED AT THE POINT OF CLICKING. Not one
+            // export with a checkbox — the difference between these two
+            // files is "did a vendor just receive a manager's internal
+            // note about a resident", and that is not a default anyone
+            // should be able to leave wrong.
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              <button onClick={() => handleExport('shareable')} disabled={exportBusy !== null} style={exportBtn()}>
+                {exportBusy === 'shareable' ? 'Building…' : '↓ Export (share with operator)'}
+              </button>
+              <button onClick={() => handleExport('full')} disabled={exportBusy !== null} style={exportBtn()}>
+                {exportBusy === 'full' ? 'Building…' : '↓ Export (internal — includes notes)'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {exportError && (
+        <div style={{ background: C.redDark, border: `1px solid ${C.redBorder}`, borderRadius: '8px', padding: '10px', color: C.text, fontSize: '13px', lineHeight: 1.6, marginBottom: '10px' }}>
+          {exportError}
         </div>
       )}
 
@@ -585,6 +675,14 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span style={{ color: C.text, flex: '1 1 200px' }}>{children}</span>
     </div>
   )
+}
+
+function exportBtn(): React.CSSProperties {
+  return {
+    background: 'transparent', color: C.gold,
+    border: `1px solid ${C.border}`, borderRadius: '6px',
+    padding: '6px 10px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer',
+  }
 }
 
 function linkBtn(): React.CSSProperties {

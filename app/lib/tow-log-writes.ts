@@ -965,3 +965,45 @@ export async function signMediaUrls(paths: string[]): Promise<Record<string, str
     return {}
   }
 }
+
+
+// ════════════════════════════════════════════════════════════════════
+// Export fetch
+//
+// Same filters as the on-screen list, unpaginated. A CSV that shows a
+// different set than the screen it was exported from is a file nobody
+// can reconcile later.
+// ════════════════════════════════════════════════════════════════════
+
+// 🔴 A SILENTLY TRUNCATED EXPORT IS A WRONG ANSWER THAT LOOKS COMPLETE.
+// Past this bound the caller must REFUSE and say so — never write a
+// partial file. Same rule as a verification gate that cannot find its
+// fixture: fail loudly rather than skip quietly. At current volume this
+// never fires; the point is that the message exists before it does.
+export const EXPORT_ROW_LIMIT = 5000
+
+export type ExportFetch =
+  | { ok: true; rows: VehicleRemoval[]; total: number }
+  | { ok: false; reason: 'too_many'; total: number; limit: number }
+  | { ok: false; reason: 'failed' }
+
+export async function fetchRemovalsForExport(
+  supabase: SupabaseClient,
+  filters: RemovalFilters,
+): Promise<ExportFetch> {
+  // Count first, against the SAME filters, so the refusal can name a
+  // real number instead of "more than the limit".
+  const probe = await listVehicleRemovals(supabase, { page: 0, pageSize: 1, filters })
+  if (probe.total > EXPORT_ROW_LIMIT) {
+    return { ok: false, reason: 'too_many', total: probe.total, limit: EXPORT_ROW_LIMIT }
+  }
+
+  const result = await listVehicleRemovals(supabase, { page: 0, pageSize: EXPORT_ROW_LIMIT, filters })
+  // Distinguish "no rows matched" from "the fetch failed" — an empty
+  // file and a broken query must not look the same
+  // (feedback_absence_must_not_be_failure_output). listVehicleRemovals
+  // returns total 0 with rows [] on error, so a mismatch against the
+  // probe count is the discriminator.
+  if (result.rows.length === 0 && probe.total > 0) return { ok: false, reason: 'failed' }
+  return { ok: true, rows: result.rows, total: probe.total }
+}
