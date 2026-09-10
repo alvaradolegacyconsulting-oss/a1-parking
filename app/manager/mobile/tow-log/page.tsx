@@ -33,6 +33,15 @@
 // is below everything required. Property is FIXED from the manager's
 // assignment and shown in the header — never a picker mid-form.
 //
+// ── removal_type IS DELIBERATELY NOT ON THIS SCREEN ─────────────────
+// It defaults to 'tow'. The column and its CHECK constraint reserve
+// space for 'boot' and 'relocation', but those are rare enough that an
+// eighth field on a screen optimized for speed is the wrong trade —
+// reserving the space means adding it later costs no migration.
+// A boot logged as a tow is imperfect data; the notes field carries the
+// nuance. If it shows up in practice, the desktop edit in Commit 6 is
+// where it belongs, not the parking lot.
+//
 // All writes go through app/lib/tow-log-writes.ts. No RPC is called
 // from this file.
 // ════════════════════════════════════════════════════════════════════

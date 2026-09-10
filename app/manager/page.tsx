@@ -11,6 +11,7 @@ import { displayTowReason } from '../lib/tow-reasons'
 // scoping server-side regardless. Flag is true on every tier across
 // both tracks (B75 expanded from PM-only).
 import { hasFeature, getCompanyContext } from '../lib/tier'
+import { tierCanSeeTowLog } from '../lib/tow-log-writes'
 // Permit-Door Piece 1 §1/§2 — centralized vehicle-insert state helper
 // (PM-Only → pending → approval is the metering chokepoint; all other
 // tiers → active, preserving today's behavior).
@@ -3603,7 +3604,18 @@ export default function ManagerPortal() {
 
         <div style={{ marginBottom:'16px', textAlign:'center' }}>
           <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>{managerCompany || 'ShieldMyLot'}</h1>
-          <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Property Manager Portal · <a href="/manager/mobile" style={{ color:'#C9A227' }}>📱 Mobile approvals</a></p>
+          <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>
+            Property Manager Portal · <a href="/manager/mobile" style={{ color:'#C9A227' }}>📱 Mobile approvals</a>
+            {/* Tow log — create surface is mobile-only until the desktop
+                tab lands (Commit 6). Gated on the SAME check as the route
+                (tierCanSeeTowLog + admin bypass) so it never appears for a
+                tier that would land on the plan-locked screen. That gate is
+                narrower than the RPCs' on purpose — see the header of
+                app/lib/tow-log-writes.ts before changing either side. */}
+            {(isAdmin || tierCanSeeTowLog(String(getCompanyContext().tier))) && (
+              <> · <a href="/manager/mobile/tow-log" style={{ color:'#C9A227' }}>🚛 Tow log</a></>
+            )}
+          </p>
         </div>
 
         {allProperties.length > 1 && (

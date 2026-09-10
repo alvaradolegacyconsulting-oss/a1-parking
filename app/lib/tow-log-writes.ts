@@ -92,25 +92,59 @@ export const MEDIA_KINDS = ['photo', 'ticket', 'receipt'] as const
 export type MediaKind = typeof MEDIA_KINDS[number]
 
 // ── Reason vocabulary ───────────────────────────────────────────────
-// 🔴 REUSED, NOT REDEFINED. app/lib/tow-reasons.ts already documents a
-// deliberate two-vocabulary split (violations.violation_type vs
-// violations.decline_reason) and the reporting cost it carries: a query
-// that touches one column undercounts. A THIRD list keyed to
-// vehicle_removals.reason_code would repeat that cost, and the reason
-// list is a compliance posture — "adding a non-standard reason is a
-// legal-counsel question, not a product feature."
+// 🔴 THERE IS NO PM SUBSET, AND THERE SHOULD NOT BE ONE.
+// A property manager authorizes a removal for a fire lane, a handicap
+// space, a reserved space, an abandoned vehicle, no permit, an expired
+// pass — every code in TOW_REASONS applies. Excluding any of them does
+// not shorten the list for the manager who needs the excluded one; it
+// makes them pick something false, and a wrong reason on a record that
+// may end up in a defense file is worse than a longer list.
 //
-// So this is a FILTER over the canonical list, never a copy.
-// EXCLUDED_REMOVAL_REASONS is empty today: every code in TOW_REASONS is
-// reachable for a PM-initiated removal (a PM tows for fire lane,
-// handicap, reserved, abandoned, no permit, expired pass, all of it).
-// ⚠ A narrower PM subset was specified for this screen; narrowing it is
-// one line here once the exclusion list is decided. Do NOT narrow by
-// inventing a new array.
-export const EXCLUDED_REMOVAL_REASONS: ReadonlySet<string> = new Set([])
+// The vocabulary is SHARED with the enforcement side deliberately.
+// app/lib/tow-reasons.ts documents a two-vocabulary split
+// (violations.violation_type vs violations.decline_reason) and the
+// reporting cost it carries: a query touching one column undercounts.
+// A THIRD list keyed to vehicle_removals.reason_code would repeat that
+// cost for no gain — and the list is a compliance posture, since
+// "adding a non-standard reason is a legal-counsel question, not a
+// product feature."
+//
+// So: same seventeen codes, re-ORDERED for a thumb.
+//
+// ⚠ ORDERING NOTE — tow-reasons.ts says rendering surfaces iterate the
+// array as-is, "no client sort," so that file IS the order. That rule
+// exists so the enforcement pickers can't drift apart from each other.
+// This surface re-orders ON PURPOSE and does NOT redefine the
+// vocabulary: on a phone a native <select> renders as a scroll wheel,
+// so order is most of the ergonomics, and alphabetical puts "Abandoned
+// Vehicle" above "Fire Lane" for no reason a manager cares about at
+// 11pm. If the enforcement pickers ever want the same treatment, this
+// helper is the thing to lift — not a second array of codes.
+const REMOVAL_REASON_PRIORITY: readonly string[] = [
+  'fire_lane',
+  'handicap_zone',
+  'reserved_parking',
+  'no_parking_permit',
+  'blocking_access',
+  'expired_visitor_pass',
+]
 
-export const REMOVAL_REASONS: ReadonlyArray<TowReason> =
-  TOW_REASONS.filter(r => !EXCLUDED_REMOVAL_REASONS.has(r.code))
+// Priority codes first, everything else in the canonical order, `other`
+// pinned last. Built by PARTITIONING the source array rather than
+// listing members, so a code added to TOW_REASONS tomorrow still
+// appears here without anyone remembering to add it.
+function orderForPicker(all: ReadonlyArray<TowReason>): ReadonlyArray<TowReason> {
+  const byCode = new Map(all.map(r => [r.code, r]))
+  const head = REMOVAL_REASON_PRIORITY
+    .map(code => byCode.get(code))
+    .filter((r): r is TowReason => !!r && r.code !== 'other')
+  const headCodes = new Set(head.map(r => r.code))
+  const tail = all.filter(r => !headCodes.has(r.code) && r.code !== 'other')
+  const other = all.filter(r => r.code === 'other')
+  return [...head, ...tail, ...other]
+}
+
+export const REMOVAL_REASONS: ReadonlyArray<TowReason> = orderForPicker(TOW_REASONS)
 
 export { OTHER_NOTE_MIN_LENGTH }
 

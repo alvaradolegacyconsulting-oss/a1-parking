@@ -44,6 +44,7 @@ import { getCompanyContext } from '../../lib/tier'
 import { normalizePlate } from '../../lib/plate'
 import { escapeIlikeValue } from '../../lib/supabase-query-escape'
 import { buildBulkApproveSummary } from '../../lib/bulk-approve-summary'
+import { tierCanSeeTowLog } from '../../lib/tow-log-writes'
 import {
   listPendingVehiclesForUnit,
   approveVehiclesBatch,
@@ -102,6 +103,9 @@ export default function ManagerMobilePage() {
   const [companyIdForSync, setCompanyIdForSync] = useState<number | null>(null)
   const [canApprove, setCanApprove] = useState<boolean>(false)
   const [tier, setTier] = useState<string>('')
+  // Mirrors the tow-log route's admin bypass so the link and the route
+  // agree; without it an admin sees no link to a page they can open.
+  const [isAdmin, setIsAdmin] = useState<boolean>(false)
   const [screen, setScreen] = useState<'queue' | 'lookup'>('queue')
 
   // Queue state
@@ -182,6 +186,7 @@ export default function ManagerMobilePage() {
       // Admin: always allowed. Manager: per the column. leasing_agent
       // excluded above so this reduces to "manager sees the flag."
       setCanApprove(role === 'admin' || (roleRow?.can_approve_vehicles === true))
+      setIsAdmin(role === 'admin')
       setTier(getCompanyContext().tier || '')
 
       setGateStatus('ready')
@@ -448,7 +453,17 @@ export default function ManagerMobilePage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', gap: '10px' }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ color: C.gold, fontSize: '18px', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{property}</div>
-          <div style={{ color: C.muted, fontSize: '11px' }}>Resident &amp; vehicle approvals · <a href="/manager" style={{ color: C.gold }}>Desktop view →</a></div>
+          <div style={{ color: C.muted, fontSize: '11px' }}>
+            Resident &amp; vehicle approvals · <a href="/manager" style={{ color: C.gold }}>Desktop view →</a>
+            {/* Tow log entry point. Gated on the SAME tier check as the
+                route itself (tierCanSeeTowLog) so it never appears for a
+                tier that would land on the plan-locked screen. The gate
+                is narrower than the RPCs' — see the header of
+                app/lib/tow-log-writes.ts. */}
+            {(isAdmin || tierCanSeeTowLog(tier)) && (
+              <> · <a href="/manager/mobile/tow-log" style={{ color: C.gold }}>🚛 Tow log</a></>
+            )}
+          </div>
         </div>
         <button
           onClick={() => setScreen(screen === 'queue' ? 'lookup' : 'queue')}
