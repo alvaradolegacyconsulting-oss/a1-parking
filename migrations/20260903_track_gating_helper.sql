@@ -165,6 +165,33 @@ END;
 $func$;
 
 -- ── PART 3 — my_tier_pm_capable ────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════════════
+-- 📌 ANNOTATION ADDED 2026-09-10 — NO DDL CHANGE
+--
+-- 🔴 THE TOW LOG UI IS NARROWER THAN THIS HELPER, ON PURPOSE.
+--
+-- my_tier_pm_capable() returns TRUE for legacy, pm_only AND pm_starter,
+-- and the three tow-log RPCs (record_vehicle_removal,
+-- attach_removal_media, void_vehicle_removal) gate on it as written.
+--
+-- The CLIENT renders the tow log for pm_starter and pm_only ONLY —
+-- REMOVAL_UI_TIERS / tierCanSeeTowLog() in app/lib/tow-log-writes.ts.
+--
+-- Why the divergence: A1 is `legacy` and already produces tow tickets
+-- through enforcement. A second surface logging the same event would
+-- duplicate their workflow. Keeping the capability in the database means
+-- turning it on for a legacy customer later is a one-line UI change and
+-- no migration.
+--
+-- ⚠ DO NOT "harmonize" this in either direction on sight — not by
+-- removing the legacy branch here, and not by widening REMOVAL_UI_TIERS
+-- there. They are changed together, after the decision is revisited, or
+-- not at all. The matching note lives at the top of
+-- app/lib/tow-log-writes.ts.
+--
+-- This annotation is scoped to the TOW LOG. Every other consumer of this
+-- helper uses it as written, legacy included.
+-- ══════════════════════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public.my_tier_pm_capable()
 RETURNS BOOLEAN
 LANGUAGE plpgsql
