@@ -19,10 +19,26 @@
 --   4. Terminal PASS SELECT — LAST statement in the paste, AFTER the
 --      ROLLBACK, so its rows are what the SQL Editor returns.
 --
--- ⚠ The PASS row placement differs from the Commit 2 execution file,
--- which emits its PASS row BEFORE its ROLLBACK — where the last
--- statement is ROLLBACK, which returns nothing. That is the silent-
--- pass shape the v2 rule exists to prevent. Flagged, not fixed here.
+-- ── PASS ROW VISIBILITY — CORRECTED 2026-09-10 ──────────────────────
+-- An earlier draft of this header claimed the Commit 2 execution file
+-- was silently passing because it emits its PASS row BEFORE its
+-- ROLLBACK. That was WRONG. That file displayed all 11 gates when Jose
+-- ran it on 2026-09-09 at 21:32:03.
+--
+-- 🔴 THE RULE, so this does not get re-flagged every time someone reads
+-- a v2-shaped file: a verification file's PASS row is display-visible
+-- whether it sits INSIDE or OUTSIDE the transaction. Two reasons:
+--   1. The SQL Editor shows the last statement that RETURNED ROWS.
+--      ROLLBACK and COMMIT return none, so it falls back to the
+--      preceding SELECT.
+--   2. A rollback cannot retract output — the rows already streamed to
+--      the client before the transaction ended.
+-- (The same fallback explains the set_config row surfacing when a final
+-- SELECT came back empty, seen twice this week.)
+--
+-- Placement AFTER the ROLLBACK — as here — is still the better form,
+-- because it does not depend on editor fallback behaviour at all. Use
+-- it going forward. Do NOT retrofit applied files that already passed.
 --
 -- No false-green risk from the ordering: any RAISE aborts the whole
 -- multi-statement paste, so the terminal SELECT never runs after a
@@ -385,6 +401,16 @@ END $fixtures$;
 -- Pre-fix behaviour (Jose runbook, Sept 9):
 --   ERROR 22004 vehicle_removals.plate cannot be empty after
 --   normalization, raised from vehicle_removal_plate_normalize()
+--
+-- 📌 p_tow_operator_id := 1 IS DELIBERATE — DO NOT "FIX" IT.
+-- Operator id 1 may not exist. This gate reaches plate_required anyway
+-- because the RPC validates the plate BEFORE it resolves the tow
+-- operator, so E1 doubles as an assertion that cheap validation runs
+-- first. If someone reorders the validation block, this fails with
+--   expected {"error":"plate_required"}; got {"error":"tow_operator_not_found"}
+-- which names both the expectation and the reality — a legible failure,
+-- not a false green. Passing a valid operator id here would silently
+-- delete the ordering assertion.
 -- ══════════════════════════════════════════════════════════════════════
 DO $e1$
 DECLARE

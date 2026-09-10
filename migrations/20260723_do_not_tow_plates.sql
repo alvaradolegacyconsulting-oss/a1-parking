@@ -7,10 +7,14 @@
 -- Comment-only note appended after this migration was applied. Nothing
 -- below it changed; this is a warning for whoever builds the write path.
 --
--- 🔴 THERE IS NO WRITE PATH TO THIS TABLE TODAY. No app code and no RPC
--- inserts into do_not_tow_plates — rows are seeded via SQL. Whenever a
--- DNT add-UI or add-RPC lands, it inherits a trap that already drew
--- blood on the sibling table:
+-- 🔴 THERE IS NO WRITE PATH TO THIS TABLE TODAY, and that is deliberate:
+-- no app code and no RPC inserts here, and INSERT/UPDATE were REVOKED
+-- from authenticated on 2026-07-23 when the capability was parked
+-- (20260723_dnt_park_revoke_writes.sql). Only service_role can write.
+--
+-- Whenever the capability is un-parked and a DNT add-UI or add-RPC
+-- lands, it inherits a trap that already drew blood on the sibling
+-- table:
 --
 --   dnt_plate_normalize() (STEP 3 below) strips to alphanumeric and
 --   RAISES SQLSTATE 22004 when nothing survives. A caller that
