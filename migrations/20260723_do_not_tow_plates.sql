@@ -3,6 +3,35 @@
 -- ═══════════════════════════════════════════════════════════════════════
 -- DNT Commit 2 — Do Not Tow protected plates (schema only).
 --
+-- ── 📌 ANNOTATION ADDED 2026-09-10 — NO DDL CHANGE ─────────────────────
+-- Comment-only note appended after this migration was applied. Nothing
+-- below it changed; this is a warning for whoever builds the write path.
+--
+-- 🔴 THERE IS NO WRITE PATH TO THIS TABLE TODAY. No app code and no RPC
+-- inserts into do_not_tow_plates — rows are seeded via SQL. Whenever a
+-- DNT add-UI or add-RPC lands, it inherits a trap that already drew
+-- blood on the sibling table:
+--
+--   dnt_plate_normalize() (STEP 3 below) strips to alphanumeric and
+--   RAISES SQLSTATE 22004 when nothing survives. A caller that
+--   validates the plate with normalize_plate() — which strips
+--   WHITESPACE ONLY — will let a punctuation-only plate such as '---'
+--   through validation and detonate in this trigger, surfacing a raw
+--   22004 with the INSERT statement in the message text to whoever is
+--   holding the phone.
+--
+--   That exact bug shipped in record_vehicle_removal and was found by
+--   runbook on 2026-09-09. Fix: 20260910_record_vehicle_removal_plate_
+--   normalize_fix.sql.
+--
+-- ✅ THE RULE FOR ANY FUTURE DNT WRITE PATH: normalize FIRST with the
+-- aggressive strip, then validate the RESULT — never validate the raw
+-- input and let the trigger do the normalizing.
+--   Canonical shape: 20260723_ap_cascade_check_authorized_plate.sql:248-256
+--   Working client precedent: AuthorizedPlatesManager.tsx:126-127
+--   (authorized_plates is clean today precisely because its client
+--    normalizes with the same character set before checking emptiness.)
+--
 -- ── Why this exists ────────────────────────────────────────────────────
 -- The existing exempt_plates capability (properties.exempt_plates TEXT[])
 -- was misread as tow protection but only bypasses the annual visitor-
