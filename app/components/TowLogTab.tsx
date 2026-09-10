@@ -30,12 +30,24 @@
 // ════════════════════════════════════════════════════════════════════
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { normalizePlate } from '../lib/plate'
 import { displayTowReason } from '../lib/tow-reasons'
 import { formatTimestamp } from '../lib/format-time'
 import {
+  RANGE_PRESETS,
+  DEFAULT_FILTERS,
+  filtersAreDefault,
+  rangeLabel,
+  listRecordedByOptions,
+  listOperatorOptions,
+  listPropertyOptions,
+  REMOVAL_REASONS,
+  type RemovalFilters,
+  type RangeKey,
+  type OperatorOption,
   listVehicleRemovals,
   lookupRemovalsByPlate,
   listRemovalMedia,
@@ -61,11 +73,69 @@ const C = {
 }
 
 export default function TowLogTab() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
   const [rows, setRows] = useState<VehicleRemoval[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
-  const [includeVoided, setIncludeVoided] = useState(true)   // shown by default — it is a log
   const [loading, setLoading] = useState(false)
+
+  // ── Filter state lives in the URL, not in component state ─────────
+  // Three things fall out of that: back from a detail returns to the
+  // same filtered list; the view is shareable ("every handicap tow this
+  // year" is a link a PM can send an owner); and a refresh on a flaky
+  // connection doesn't lose it.
+  const filters = useMemo<RemovalFilters>(() => {
+    const rangeParam = searchParams.get('range')
+    const range = (RANGE_PRESETS.some(r => r.key === rangeParam) ? rangeParam : DEFAULT_FILTERS.range) as RangeKey
+    const operatorParam = searchParams.get('operator')
+    return {
+      range,
+      recordedBy: searchParams.get('by') || null,
+      reasonCode: searchParams.get('reason') || null,
+      operatorId: operatorParam === 'none' ? 'none'
+                : operatorParam && /^\d+$/.test(operatorParam) ? Number(operatorParam)
+                : null,
+      property: searchParams.get('property') || null,
+      // Default ON. Only an explicit voided=0 turns it off, so a clean
+      // URL means a clean state.
+      includeVoided: searchParams.get('voided') !== '0',
+    }
+  }, [searchParams])
+
+  // Option lists — built from rows the caller can see (see the write
+  // layer), so a dropdown never offers someone with nothing to show.
+  const [recordedByOptions, setRecordedByOptions] = useState<string[]>([])
+  const [operatorOptions, setOperatorOptions] = useState<OperatorOption[]>([])
+  const [propertyOptions, setPropertyOptions] = useState<string[]>([])
+  const [role, setRole] = useState<string>('')
+  // "Has this property ever recorded anything" — distinguishes the
+  // feature-is-new empty state from the nothing-in-this-window one.
+  const [everCount, setEverCount] = useState<number | null>(null)
+
+  // Writes the filter into the URL. Preserves params this component
+  // doesn't own, omits its own at their defaults so a clean URL means a
+  // clean state, and uses REPLACE rather than push — changing a filter
+  // should not stack history entries someone has to tap back through.
+  const applyFilters = useCallback((next: RemovalFilters) => {
+    const params = new URLSearchParams(searchParams.toString())
+    const set = (key: string, value: string | null) => {
+      if (value === null) params.delete(key); else params.set(key, value)
+    }
+    set('range',    next.range === DEFAULT_FILTERS.range ? null : next.range)
+    set('by',       next.recordedBy)
+    set('reason',   next.reasonCode)
+    set('operator', next.operatorId === null ? null : String(next.operatorId))
+    set('property', next.property)
+    set('voided',   next.includeVoided ? null : '0')
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+    setPage(0)
+  }, [router, pathname, searchParams])
+
+  const patch = (delta: Partial<RemovalFilters>) => applyFilters({ ...filters, ...delta })
 
   // Lookup
   const [search, setSearch] = useState('')
@@ -86,13 +156,38 @@ export default function TowLogTab() {
 
   const refetch = useCallback(async () => {
     setLoading(true)
-    const result = await listVehicleRemovals(supabase, { page, pageSize: PAGE_SIZE, includeVoided })
+    const result = await listVehicleRemovals(supabase, { page, pageSize: PAGE_SIZE, filters })
     setRows(result.rows)
     setTotal(result.total)
     setLoading(false)
-  }, [page, includeVoided])
+  }, [page, filters])
 
   useEffect(() => { refetch() }, [refetch])
+
+  // Option lists + role + the ever-count. Loaded once — they change only
+  // when a removal is recorded, and this surface doesn't record any.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const [by, ops, props, roleResult, ever] = await Promise.all([
+        listRecordedByOptions(supabase),
+        listOperatorOptions(supabase),
+        listPropertyOptions(supabase),
+        supabase.rpc('get_my_role'),
+        listVehicleRemovals(supabase, {
+          page: 0, pageSize: 1,
+          filters: { ...DEFAULT_FILTERS, range: 'all', includeVoided: true },
+        }),
+      ])
+      if (cancelled) return
+      setRecordedByOptions(by)
+      setOperatorOptions(ops)
+      setPropertyOptions(props)
+      setRole(String(roleResult.data ?? ''))
+      setEverCount(ever.total)
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   // ── Lookup ────────────────────────────────────────────────────────
   // The Monday-morning question: "was my car towed?" It sits above the
@@ -176,6 +271,15 @@ export default function TowLogTab() {
           {searchResults !== null && <button onClick={clearSearch} style={btn(false)}>Clear</button>}
         </div>
 
+        {/* 🔴 Load-bearing sentence. Search deliberately ignores every
+            filter. Without saying so, the first person who searches a
+            plate they KNOW exists and gets nothing reads it as a bug —
+            and stops trusting the screen for the exact question it
+            exists to answer. */}
+        <div style={{ color: C.faint, fontSize: '11px', marginTop: '6px' }}>
+          Searches every record, ignoring the filters below.
+        </div>
+
         {searchResults !== null && searchResults.length === 0 && (
           // A clean "no" is a useful answer to hand a resident, so say it
           // plainly rather than showing an empty table.
@@ -191,23 +295,118 @@ export default function TowLogTab() {
         )}
       </div>
 
-      {/* ── List controls ──────────────────────────────────────── */}
+      {/* ── Filters ────────────────────────────────────────────── */}
+      {/* Stacked, not a row. The manager portal is not phone-tuned (Fix
+          B filed, unshipped) and a horizontal filter bar is the first
+          thing to wrap badly at 390px. Presets wrap; the selects go full
+          width. Not a responsive pass — just not making it worse. */}
       {searchResults === null && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '10px', flexWrap: 'wrap' }}>
-          <div style={{ color: C.muted, fontSize: '12px' }}>
-            {loading ? 'Loading…' : `${total} record${total === 1 ? '' : 's'}`}
+        <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+            {RANGE_PRESETS.map(preset => (
+              <button
+                key={preset.key}
+                onClick={() => patch({ range: preset.key })}
+                style={{
+                  background: filters.range === preset.key ? C.gold : 'transparent',
+                  color: filters.range === preset.key ? '#0f1117' : C.muted,
+                  border: `1px solid ${filters.range === preset.key ? C.gold : C.border}`,
+                  borderRadius: '6px', padding: '6px 10px', fontSize: '12px',
+                  fontWeight: 'bold', cursor: 'pointer',
+                }}
+              >{preset.label}</button>
+            ))}
           </div>
-          <label style={{ color: C.muted, fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={includeVoided} onChange={e => { setIncludeVoided(e.target.checked); setPage(0) }} />
-            Show voided records
-          </label>
+
+          <select value={filters.recordedBy ?? ''} onChange={e => patch({ recordedBy: e.target.value || null })} style={input()}>
+            <option value="">Logged by — anyone</option>
+            {recordedByOptions.map(email => <option key={email} value={email}>{email}</option>)}
+          </select>
+
+          <select value={filters.reasonCode ?? ''} onChange={e => patch({ reasonCode: e.target.value || null })} style={input()}>
+            <option value="">Reason — any</option>
+            {/* Same order as the create picker, so the two agree. */}
+            {REMOVAL_REASONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
+          </select>
+
+          {/* Value is tow_operator_id; the label is the operator's name
+              NOW. A row in the results may display a DIFFERENT name —
+              its snapshot from when the tow happened. That is correct.
+              See the query-site note in tow-log-writes.ts. */}
+          {operatorOptions.length > 0 && (
+            <select
+              value={filters.operatorId === null ? '' : String(filters.operatorId)}
+              onChange={e => patch({
+                operatorId: e.target.value === '' ? null
+                          : e.target.value === 'none' ? 'none'
+                          : Number(e.target.value),
+              })}
+              style={input()}
+            >
+              <option value="">Operator — any</option>
+              {operatorOptions.map(o => <option key={String(o.id)} value={String(o.id)}>{o.label}</option>)}
+            </select>
+          )}
+
+          {/* Company admins only, and only with more than one property in
+              the log. A manager at a single property doesn't need a
+              control that can only take one value. */}
+          {role === 'company_admin' && propertyOptions.length > 1 && (
+            <select value={filters.property ?? ''} onChange={e => patch({ property: e.target.value || null })} style={input()}>
+              <option value="">Property — all</option>
+              {propertyOptions.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
+            <label style={{ color: C.muted, fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={filters.includeVoided} onChange={e => patch({ includeVoided: e.target.checked })} />
+              Show voided records
+            </label>
+            {!filtersAreDefault(filters) && (
+              <button onClick={() => applyFilters(DEFAULT_FILTERS)} style={{ background: 'none', border: 'none', color: C.gold, fontSize: '12px', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                Clear filters
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Count NAMES THE WINDOW. "4 removals" implies four total; "4
+          removals in September" is a filtered fact. */}
+      {searchResults === null && (
+        <div style={{ color: C.muted, fontSize: '12px', marginBottom: '10px' }}>
+          {loading ? 'Loading…' : `${total} removal${total === 1 ? '' : 's'} ${rangeLabel(filters.range)}`}
         </div>
       )}
 
       {/* ── List ───────────────────────────────────────────────── */}
+      {/* Three distinct causes, three distinct messages. An empty table
+          with no explanation is where someone concludes the screen is
+          broken. */}
       {listRows.length === 0 && !loading && searchResults === null && (
-        <div style={{ color: C.muted, fontSize: '13px', padding: '20px', textAlign: 'center' }}>
-          No removals recorded yet.
+        <div style={{ color: C.muted, fontSize: '13px', padding: '20px', textAlign: 'center', lineHeight: 1.7 }}>
+          {everCount === 0 ? (
+            <>
+              No vehicle removals have been recorded yet.
+              <br />
+              <span style={{ color: C.faint }}>Removals are logged from a phone at <strong>/manager/mobile/tow-log</strong>.</span>
+            </>
+          ) : filtersAreDefault(filters) ? (
+            <>
+              Nothing {rangeLabel(filters.range)}.
+              <br />
+              <button onClick={() => patch({ range: 'last_90' })} style={linkBtn()}>Try Last 90 days</button>
+              {' or '}
+              <button onClick={() => patch({ range: 'all' })} style={linkBtn()}>All</button>.
+            </>
+          ) : (
+            <>
+              No removals match these filters.
+              <br />
+              <button onClick={() => applyFilters(DEFAULT_FILTERS)} style={linkBtn()}>Clear filters</button>
+            </>
+          )}
         </div>
       )}
 
@@ -386,6 +585,10 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span style={{ color: C.text, flex: '1 1 200px' }}>{children}</span>
     </div>
   )
+}
+
+function linkBtn(): React.CSSProperties {
+  return { background: 'none', border: 'none', color: C.gold, fontSize: '13px', cursor: 'pointer', padding: 0, textDecoration: 'underline' }
 }
 
 function label(): React.CSSProperties {

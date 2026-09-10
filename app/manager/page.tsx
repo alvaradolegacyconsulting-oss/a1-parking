@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, Suspense } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
 import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { printQRSign } from '../lib/qr-print'
@@ -5863,7 +5863,15 @@ export default function ManagerPortal() {
             Gate repeated here so a stale activeTab (a tier change mid-
             session) cannot render the panel without the tab. */}
         {activeTab === 'tow-log' && (isAdmin || tierCanSeeTowLog(String(getCompanyContext().tier))) && (
-          <TowLogTab />
+          // Suspense boundary because TowLogTab reads useSearchParams —
+          // its filter state lives in the URL. Same shape as
+          // /register, /visitor and /consent. Next's guidance: a
+          // component calling useSearchParams renders client-side up to
+          // the nearest boundary, so give it one rather than pushing
+          // that up to the whole portal.
+          <Suspense fallback={<div style={{ color:'#888', fontSize:'13px', padding:'20px', textAlign:'center' }}>Loading tow log…</div>}>
+            <TowLogTab />
+          </Suspense>
         )}
 
         {activeTab === 'authorized-plates' && manager?.id && manager?.name && (
