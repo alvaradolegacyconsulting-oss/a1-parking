@@ -1,4 +1,63 @@
 -- ══════════════════════════════════════════════════════════════════════
+-- 🔴 SUPERSEDED — DO NOT RE-APPLY   (annotation added 2026-09-10)
+--
+-- THIS IS THE FILE THAT PROVED THE RULE. Read before touching it.
+--
+-- This migration created record_vehicle_removal with a 14-ARG signature.
+-- Hours later, 20260909_tow_log_vehicle_removals_notes_column.sql
+-- DROPPED that signature and created the 15-arg form (p_notes appended).
+-- The current definition lives in
+-- 20260910_record_vehicle_removal_plate_normalize_fix.sql.
+--
+-- This file does NOT drop before it creates. Re-applying it therefore
+-- RESURRECTS the 14-arg signature ALONGSIDE the live 15-arg one.
+--
+-- ── WHAT HAPPENED ON 2026-09-10 ─────────────────────────────────────
+--   1. This migration's verification file still asserted the 14-arg
+--      signature — true when written, false once the notes migration
+--      dropped it.
+--   2. Re-running that verification failed. Correctly.
+--   3. The natural response to a failing verification is to re-apply
+--      its migration. That ran this file.
+--   4. Both signatures were then live. Confirmed via PostgREST:
+--        PGRST203 — Could not choose the best candidate function
+--        between: record_vehicle_removal(... p_removal_type => text),
+--        record_vehicle_removal(... p_removal_type => text,
+--        p_notes => text)
+--      Every client call that omits p_notes would have failed.
+--   5. Corrective: DROP FUNCTION the 14-arg + NOTIFY pgrst.
+--
+-- A trap whose gradient pointed at restoring the superseded state: the
+-- stale gate rewarded exactly the action that broke the schema.
+--
+-- ── WHAT WAS CHANGED SO IT CANNOT RECUR ─────────────────────────────
+-- 20260909_tow_log_commit_4_rpcs_verification.sql now asserts the
+-- 15-ARG signature (what actually ships) and adds VS1b, which FAILS if
+-- the 14-arg exists. That file now DETECTS this re-apply instead of
+-- provoking it.
+--
+-- The other two RPCs in this file — attach_removal_media(BIGINT, TEXT,
+-- TEXT) and void_vehicle_removal(BIGINT, TEXT) — are unchanged since
+-- Commit 4 and their signatures still ship. They are not the hazard;
+-- record_vehicle_removal is.
+--
+-- ── STANDING RULE (2026-09-10) ──────────────────────────────────────
+-- A migration that creates a function signature a later migration drops
+-- is not idempotent — it is a landmine. Applying migrations in order
+-- from scratch works. Re-applying ONE in isolation does not.
+--
+-- Verification files (*_verification.sql) are re-runnable at will; they
+-- only read. Migration files are ONE-TIME unless a header says
+-- otherwise. When a verification fails, VERIFY AGAINST THE CATALOG
+-- first — re-applying the migration is the last resort, not the first:
+--   SELECT oid, pg_get_function_identity_arguments(oid), pronargs
+--     FROM pg_proc
+--    WHERE pronamespace = 'public'::regnamespace
+--      AND proname = 'record_vehicle_removal';
+--   -- expect exactly ONE row, pronargs = 15
+-- ══════════════════════════════════════════════════════════════════════
+
+-- ══════════════════════════════════════════════════════════════════════
 -- 20260909_tow_log_commit_4_rpcs.sql
 --
 -- 🟢 Tow Log arc — COMMIT 4 of N. Three DEFINER RPCs:

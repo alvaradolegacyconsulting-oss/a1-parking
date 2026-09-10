@@ -4,6 +4,35 @@
 -- STRUCTURAL gates for Tow Log Commit 4 (3 DEFINER RPCs). v2 pattern
 -- (no BEGIN/COMMIT wrap; terminal SELECT returns PASS row).
 --
+-- ── 🔴 SIGNATURE SUPERSEDED — UPDATED 2026-09-10 ────────────────────
+-- This file originally asserted the 14-arg record_vehicle_removal that
+-- 20260909_tow_log_commit_4_rpcs.sql created. That signature was
+-- DROPPED hours later by 20260909_tow_log_vehicle_removals_notes_column
+-- .sql, which created the 15-arg form (p_notes appended).
+--
+-- Leaving the old assertion in place built a trap with the gradient
+-- pointing the WRONG WAY:
+--   1. Re-run this file → VS1 fails, because the 14-arg is correctly gone
+--   2. Natural response to a failing verification → re-apply its
+--      migration
+--   3. 20260909_tow_log_commit_4_rpcs.sql does CREATE OR REPLACE on the
+--      14-arg → RESURRECTS the dropped signature
+--   4. Now BOTH exist. This stale gate passes; the current one fails;
+--      PostgREST returns PGRST203 "could not choose the best candidate"
+--      for every client call that omits p_notes.
+--
+-- That is exactly what happened on 2026-09-10 — confirmed live via
+-- PostgREST before the corrective DROP.
+--
+-- Gates now assert the 15-arg (what actually ships) AND that the 14-arg
+-- is gone, so this file DETECTS the resurrection instead of rewarding
+-- it. See the SUPERSEDED — DO NOT RE-APPLY header on
+-- 20260909_tow_log_commit_4_rpcs.sql.
+--
+-- Body-level assertions about record_vehicle_removal's plate handling
+-- live in 20260910_record_vehicle_removal_plate_normalize_fix_
+-- verification.sql, not here.
+--
 -- ── SCOPE ──────────────────────────────────────────────────────────
 -- Booleans and OIDs only. NO rendered SQL string assertions.
 -- Function signature gates use to_regprocedure() per
@@ -12,8 +41,10 @@
 -- feedback_information_schema_under_reports_grants.
 --
 -- ── GATES ──────────────────────────────────────────────────────────
---   VS1  record_vehicle_removal function exists with 14-arg signature
+--   VS1  record_vehicle_removal function exists with 15-arg signature
 --        + SECURITY DEFINER
+--   VS1b 🔴 the 14-arg signature this migration originally created is
+--        GONE — see the SUPERSEDED note below
 --   VS2  record_vehicle_removal grants — EXECUTE to authenticated only
 --   VS3  attach_removal_media function exists with 3-arg signature
 --        + SECURITY DEFINER
@@ -42,15 +73,32 @@ DECLARE
   v_oid    OID;
   v_secdef BOOLEAN;
 BEGIN
-  v_oid := to_regprocedure('public.record_vehicle_removal(TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT, TEXT)');
+  v_oid := to_regprocedure('public.record_vehicle_removal(TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT, TEXT, TEXT)');
   IF v_oid IS NULL THEN
-    RAISE EXCEPTION 'VS1 FAIL: public.record_vehicle_removal(14 args) not found';
+    RAISE EXCEPTION 'VS1 FAIL: public.record_vehicle_removal(15 args) not found';
   END IF;
   SELECT prosecdef INTO v_secdef FROM pg_proc WHERE oid = v_oid;
   IF v_secdef IS NOT TRUE THEN
     RAISE EXCEPTION 'VS1 FAIL: record_vehicle_removal is not SECURITY DEFINER (prosecdef=%)', v_secdef;
   END IF;
 END $vs1$;
+
+
+-- ── VS1b: 🔴 the superseded 14-arg signature is GONE ═══════════════
+-- The load-bearing gate of this file after 2026-09-10. If the 14-arg
+-- exists, someone re-applied 20260909_tow_log_commit_4_rpcs.sql and
+-- PostgREST now sees two candidates for every call that omits p_notes.
+-- Corrective: DROP FUNCTION the 14-arg, then NOTIFY pgrst.
+DO $vs1b$
+DECLARE v_old_oid OID;
+BEGIN
+  v_old_oid := to_regprocedure('public.record_vehicle_removal(TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT, TEXT)');
+  IF v_old_oid IS NOT NULL THEN
+    RAISE EXCEPTION
+      'VS1b FAIL: the SUPERSEDED 14-arg record_vehicle_removal exists again (oid=%). 20260909_tow_log_commit_4_rpcs.sql was re-applied — its CREATE OR REPLACE resurrects a signature that 20260909_tow_log_vehicle_removals_notes_column.sql dropped. PostgREST will return PGRST203 for every client call that omits p_notes. Fix: DROP FUNCTION public.record_vehicle_removal(TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT, TEXT); then NOTIFY pgrst, ''reload schema''.',
+      v_old_oid;
+  END IF;
+END $vs1b$;
 
 
 -- ── VS2: record_vehicle_removal grants ═════════════════════════════
@@ -61,7 +109,7 @@ DECLARE
   v_acl_str TEXT;
   v_bad     TEXT := '';
 BEGIN
-  v_oid := to_regprocedure('public.record_vehicle_removal(TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT, TEXT)');
+  v_oid := to_regprocedure('public.record_vehicle_removal(TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT, TEXT, TEXT)');
   IF v_oid IS NULL THEN
     RAISE EXCEPTION 'VS2 FAIL: function not found (VS1 should have caught)';
   END IF;
@@ -232,7 +280,8 @@ SELECT
   'PASS'::TEXT AS status,
   'Tow Log Commit 4 RPCs structural (3 DEFINER functions + grants + audit)'::TEXT AS target,
   ARRAY[
-    'VS1  record_vehicle_removal(14 args) exists + SECURITY DEFINER',
+    'VS1  record_vehicle_removal(15 args) exists + SECURITY DEFINER',
+    'VS1b 🔴 the superseded 14-arg signature is GONE (detects a re-apply of this migration)',
     'VS2  record_vehicle_removal grants — EXECUTE to authenticated only (no anon, no PUBLIC)',
     'VS3  attach_removal_media(BIGINT,TEXT,TEXT) exists + SECURITY DEFINER',
     'VS4  attach_removal_media grants — EXECUTE to authenticated only',
@@ -265,7 +314,12 @@ SELECT
 --   E38  manager @ property A submits property B → {error:'property_not_authorized_for_manager'}
 --   E39  plate that matches an active vehicles row → row.linked_vehicle_id populated
 --   E40  plate that doesn't match anything → row.linked_vehicle_id NULL
---   E41  plate with hyphen → row.plate stored alphanumeric-only (trigger)
+--   E41  plate with hyphen → row.plate stored alphanumeric-only.
+--        ⚠ REVISED 2026-09-10: the RPC now normalizes and inserts the
+--        normalized value, so the trigger NO-OPS. Proving the trigger
+--        still raises needs a direct service_role INSERT, not this RPC.
+--        Covered as E2/E3 in 20260910_record_vehicle_removal_plate_
+--        normalize_fix_verification.sql.
 --
 -- attach_removal_media:
 --   E42  manager attaches with correct prefix path → {ok:true, id:<n>}

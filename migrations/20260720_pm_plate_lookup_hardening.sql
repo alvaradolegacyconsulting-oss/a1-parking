@@ -1,3 +1,35 @@
+-- ══════════════════════════════════════════════════════════════════════
+-- ⚠ SUPERSEDED — DO NOT RE-APPLY   (annotation added 2026-09-10 — comment only, no DDL change)
+--
+-- A LATER migration DROPs a function this file creates. Re-applying this
+-- file IN ISOLATION is therefore NOT idempotent.
+--
+--   pm_plate_lookup()
+--     dropped by         : 20260724_pm_plate_lookup_viewing_property.sql
+--     current definition : 20260805_pm_plate_lookup_current_date_central_sweep.sql
+--     consequence        : ⚠ this file DROPs and recreates the function,
+--                          so re-applying silently REVERTS its body to
+--                          this older definition. No error, no ambiguity —
+--                          just the wrong code running.
+--
+-- 🔴 VERIFY AGAINST THE CATALOG, NOT THIS TREE, before re-applying anything:
+--   SELECT oid, pg_get_function_identity_arguments(oid), pronargs
+--     FROM pg_proc
+--    WHERE pronamespace = 'public'::regnamespace AND proname = '<fn>';
+--
+-- STANDING RULE (2026-09-10): applying migrations in order from scratch
+-- works; re-applying ONE in isolation does not. Verification files
+-- (*_verification.sql) are re-runnable at will — they only read. Migration
+-- files are ONE-TIME unless a header explicitly says otherwise.
+--
+-- PRECEDENT: record_vehicle_removal, 2026-09-10. A stale verification gate
+-- asserted a signature a later migration had dropped, so re-running it
+-- failed; the natural response — re-apply the migration behind it — brought
+-- the 14-arg form back alongside the 15-arg. Confirmed live via PostgREST
+-- (PGRST203) before the corrective DROP. The trap's gradient pointed at
+-- restoring the superseded state.
+-- ══════════════════════════════════════════════════════════════════════
+
 -- ════════════════════════════════════════════════════════════════════
 -- pm_plate_lookup — hardening pass (determinism + property-match safety)
 -- 2026-07-20 · B224 fast-follows for the manager surface
