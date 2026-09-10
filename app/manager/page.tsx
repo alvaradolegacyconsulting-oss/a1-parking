@@ -42,6 +42,7 @@ import SupportContact from '../components/SupportContact'
 // receives them directly. Multi-property gap inherited from exempt-plates
 // pattern; see docs/backlog/manager-multi-property-settings-selector.md.
 import AuthorizedPlatesManager from '../components/AuthorizedPlatesManager'
+import TowLogTab from '../components/TowLogTab'
 import {
   type GuestAuth,
   GUEST_AUTH_MAX_DAYS,
@@ -3731,6 +3732,16 @@ export default function ManagerPortal() {
           {(isAdmin || hasFeature(FEATURE_FLAGS.MANAGER_PLATE_LOOKUP, getCompanyContext()) === true) && (
             <button style={tabStyle('plate-lookup')} onClick={() => setActiveTab('plate-lookup')}>Plate Lookup</button>
           )}
+          {/* Tow Log (Commit 6) — read surface for vehicle removals.
+              Gated on the SAME expression as the mobile create route
+              (tierCanSeeTowLog + admin bypass), reused rather than
+              reimplemented so the two cannot drift. That gate is
+              deliberately NARROWER than the RPCs', which also accept
+              `legacy` — see the header of app/lib/tow-log-writes.ts
+              before changing either side. */}
+          {(isAdmin || tierCanSeeTowLog(String(getCompanyContext().tier))) && (
+            <button style={tabStyle('tow-log')} onClick={() => setActiveTab('tow-log')}>Tow Log</button>
+          )}
           <button style={tabStyle('settings')} onClick={() => setActiveTab('settings')}>Settings</button>
           {/* B210 (2026-06-24): Disputes tab button removed */}
           <button style={tabStyle('insights')} onClick={() => setActiveTab('insights')}>
@@ -5845,6 +5856,16 @@ export default function ManagerPortal() {
             + category filter + add/remove; page provides property scope
             via manager.id / manager.name from the VIEWING PROPERTY
             selector. onCountChange keeps the tab badge in sync. */}
+        {/* Tow Log panel. No props: vehicle_removals RLS scopes a manager
+            to assigned properties and a company_admin to their company,
+            so passing the viewing property would narrow the log to one
+            property AND put a second copy of the boundary in the client.
+            Gate repeated here so a stale activeTab (a tier change mid-
+            session) cannot render the panel without the tab. */}
+        {activeTab === 'tow-log' && (isAdmin || tierCanSeeTowLog(String(getCompanyContext().tier))) && (
+          <TowLogTab />
+        )}
+
         {activeTab === 'authorized-plates' && manager?.id && manager?.name && (
           <AuthorizedPlatesManager
             propertyId={manager.id}

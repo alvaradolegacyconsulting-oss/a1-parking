@@ -219,6 +219,12 @@ const FRIENDLY: Record<string, string> = {
   storage_path_required:        'The upload did not return a file location. Try attaching the photo again.',
   invalid_kind:                 'That attachment type is not supported.',
   removal_not_found:            'That removal record no longer exists.',
+  // void_vehicle_removal returns 'not_found', attach_removal_media
+  // returns 'removal_not_found'. Both map to the same sentence; the
+  // vocabularies differ and this file is where that is absorbed.
+  not_found:                    'That removal record no longer exists.',
+  already_voided:               'That record has already been voided.',
+  reason_required:              'Enter why this record is being voided.',
   removal_property_id_missing:  'That removal record is missing its property. Contact support before attaching photos.',
   out_of_scope:                 'That record belongs to a property you are not assigned to.',
   path_mismatch:                'The photo could not be linked to this record. It is saved but not attached — contact support.',
@@ -548,4 +554,201 @@ export async function uploadRemovalMedia(
 
   input.onProgress?.(input.files.length, input.files.length)
   return outcome
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// Void
+// ════════════════════════════════════════════════════════════════════
+
+// TERMINAL. There is no un-void RPC and there should not be one — the
+// correction path for a wrong record is a new record. The voided row
+// stays in every list, marked; hiding it is how a log stops being a log.
+export async function voidVehicleRemoval(
+  supabase: SupabaseClient,
+  input: { removalId: number; reason: string },
+): Promise<{ ok: true; removal: VehicleRemoval } | WriteFailure> {
+  // The RPC returns reason_required on empty. Checked here too so an
+  // obviously-empty reason never costs a round trip.
+  if (!input.reason?.trim()) {
+    return { ok: false, code: 'reason_required', message: friendlyRemovalError('reason_required') }
+  }
+  const { data, error } = await supabase.rpc('void_vehicle_removal', {
+    p_removal_id:  input.removalId,
+    p_void_reason: input.reason.trim(),
+  })
+  return normalizeRpcResult(data, error, 'void_vehicle_removal', d => ({
+    ok: true as const,
+    removal: d.removal as VehicleRemoval,
+  }))
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Reads
+//
+// 🔴 NO CLIENT-SIDE COMPANY OR PROPERTY FILTER. RLS on vehicle_removals
+// already scopes a manager to assigned properties and a company_admin to
+// their company. Re-filtering here would (a) duplicate the boundary in a
+// second place where it can drift, and (b) make an RLS regression
+// invisible — the client filter would keep hiding rows the database had
+// started leaking. The read returns what the caller is allowed to see.
+//
+// RLS denials arrive as `{data: [], error: null}` — an empty list, not
+// an error. Callers must not report "something went wrong" for zero rows.
+// ════════════════════════════════════════════════════════════════════
+
+export type VehicleRemoval = {
+  id: number
+  company: string
+  property: string
+  property_id: number | null
+  removal_type: string
+  plate: string
+  plate_state: string | null
+  make: string | null
+  model: string | null
+  color: string | null
+  linked_vehicle_id: number | null
+  reason_code: string
+  reason_notes: string | null
+  space_id: number | null
+  towed_at: string
+  authorized_by_email: string
+  authorized_by_name: string | null
+  tow_operator_id: number | null
+  operator_name: string
+  operator_phone: string | null
+  created_at: string
+  recorded_by_email: string
+  // INTERNAL manager-only narrative — added by
+  // 20260909_tow_log_vehicle_removals_notes_column.sql. Distinct from
+  // reason_notes, and NEVER surfaced to a resident or vehicle owner.
+  notes: string | null
+  voided_at: string | null
+  voided_by_email: string | null
+  void_reason: string | null
+}
+
+export type RemovalMedia = {
+  id: number
+  removal_id: number
+  storage_path: string
+  kind: string
+  created_at: string
+  created_by_email: string
+}
+
+const REMOVAL_COLUMNS =
+  'id, company, property, property_id, removal_type, plate, plate_state, make, model, color, ' +
+  'linked_vehicle_id, reason_code, reason_notes, space_id, towed_at, authorized_by_email, ' +
+  'authorized_by_name, tow_operator_id, operator_name, operator_phone, created_at, ' +
+  'recorded_by_email, notes, voided_at, voided_by_email, void_reason'
+
+export type RemovalPage = { rows: VehicleRemoval[]; total: number }
+
+export async function listVehicleRemovals(
+  supabase: SupabaseClient,
+  opts: { page: number; pageSize: number; includeVoided: boolean },
+): Promise<RemovalPage> {
+  const from = opts.page * opts.pageSize
+  const to   = from + opts.pageSize - 1
+
+  let q = supabase
+    .from('vehicle_removals')
+    .select(REMOVAL_COLUMNS, { count: 'exact' })
+    // Physical-event time, not entry time. A backdated record belongs
+    // where the tow happened in the timeline, not where it was typed.
+    .order('towed_at', { ascending: false })
+    .range(from, to)
+
+  // Voided rows are SHOWN by default. This filter is an opt-in narrowing
+  // for someone scanning live records, never the default state.
+  if (!opts.includeVoided) q = q.is('voided_at', null)
+
+  const { data, error, count } = await q
+  if (error) {
+    console.error('[tow-log] listVehicleRemovals failed', error)
+    return { rows: [], total: 0 }
+  }
+  return { rows: (data ?? []) as unknown as VehicleRemoval[], total: count ?? 0 }
+}
+
+// ⚠ INDEX NOTE. vehicle_removals_plate_lookup is on
+// (lower(trim(company)), normalize_plate(plate)) — an EXPRESSION index.
+// PostgREST cannot express `normalize_plate(plate) = $1` in a filter, so
+// this is plain equality on the stored column instead.
+//
+// The RESULTS are correct: since 2026-09-10 record_vehicle_removal
+// normalizes the plate itself and inserts the normalized value, and the
+// table trigger is the floor beneath it, so every stored plate is
+// already alphanumeric-uppercase. Equality against normalizePlate(input)
+// therefore matches exactly what the expression index would have.
+//
+// What is NOT guaranteed is that the planner uses that index for this
+// filter. At current volumes it is a small property-scoped scan. If it
+// ever matters, the fix is a DEFINER lookup RPC (which can use the
+// expression) or a plain index on (company, plate) — not a client-side
+// workaround.
+export async function lookupRemovalsByPlate(
+  supabase: SupabaseClient,
+  plate: string,
+): Promise<VehicleRemoval[]> {
+  const normalized = normalizePlate(plate)
+  if (!normalized) return []
+  const { data, error } = await supabase
+    .from('vehicle_removals')
+    .select(REMOVAL_COLUMNS)
+    .eq('plate', normalized)
+    .order('towed_at', { ascending: false })
+  if (error) {
+    console.error('[tow-log] lookupRemovalsByPlate failed', error)
+    return []
+  }
+  return (data ?? []) as unknown as VehicleRemoval[]
+}
+
+// Soft-deleted attachments are excluded — removed_at on THIS table means
+// the attachment was withdrawn, not that the tow was undone. The two
+// meanings live on different tables and must not be conflated.
+export async function listRemovalMedia(
+  supabase: SupabaseClient,
+  removalId: number,
+): Promise<RemovalMedia[]> {
+  const { data, error } = await supabase
+    .from('vehicle_removal_media')
+    .select('id, removal_id, storage_path, kind, created_at, created_by_email')
+    .eq('removal_id', removalId)
+    .is('removed_at', null)
+    .order('created_at')
+  if (error) {
+    console.error('[tow-log] listRemovalMedia failed', error)
+    return []
+  }
+  return (data ?? []) as RemovalMedia[]
+}
+
+// ── Signed URLs ─────────────────────────────────────────────────────
+// The bucket is PRIVATE and vehicle_removal_media stores a PATH, never a
+// URL — deliberately, so the storage scheme can change without a column
+// migration. Turning a path into something a browser can render goes
+// through /api/tow-log/media-url, which signs with the CALLER'S session
+// so the storage policies are the access control that actually runs.
+export async function signMediaUrls(paths: string[]): Promise<Record<string, string>> {
+  if (paths.length === 0) return {}
+  try {
+    const res = await fetch('/api/tow-log/media-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths }),
+    })
+    if (!res.ok) {
+      console.error('[tow-log] signMediaUrls failed', res.status, await res.text())
+      return {}
+    }
+    const body = await res.json()
+    return (body?.urls ?? {}) as Record<string, string>
+  } catch (e) {
+    console.error('[tow-log] signMediaUrls threw', e)
+    return {}
+  }
 }
