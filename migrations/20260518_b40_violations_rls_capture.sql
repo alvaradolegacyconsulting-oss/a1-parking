@@ -1,3 +1,39 @@
+-- ══════════════════════════════════════════════════════════════════════
+-- 🔴 SUPERSEDED — DO NOT RE-APPLY. GUARDED BELOW, NOT JUST COMMENTED.
+--    (annotation + guard added 2026-09-11)
+--
+-- This file defines get_my_role() with ILIKE:
+--     SELECT role FROM user_roles WHERE email ILIKE auth.jwt() ->> 'email'
+--
+-- 20260610_b155_2_f9_helper_lower_match.sql replaced it with equality:
+--     WHERE lower(email) = lower(auth.jwt() ->> 'email')
+--
+-- 🔴 WHY RE-APPLYING THIS FILE IS A SECURITY INCIDENT, NOT AN
+--    INCONVENIENCE. get_my_role() is the auth spine. With ILIKE, a
+--    caller whose own email contains a LIKE metacharacter matches
+--    SOMEONE ELSE'S user_roles row and inherits their role. An account
+--    at `%@gmail.com` matches whichever company_admin has a Gmail
+--    address. That is privilege ESCALATION, and it applies at once to
+--    every policy that calls this helper — which is most of them.
+--    (Established 2026-09-11 during the email ~~* audit.)
+--
+-- ⚠ THE SEPT 10 SUPERSEDED SWEEP COULD NOT CATCH THIS. That sweep
+--    flagged migrations whose function a LATER file DROPs. get_my_role
+--    is CREATE OR REPLACE in both files and DROPped in neither — a
+--    third landmine class: two CREATE OR REPLACEs of one signature with
+--    no DROP anywhere, where re-applying the older file silently
+--    reverts the newer body. See
+--    docs/backlog/superseded-migration-headers-sweep-2026-09-10.md.
+--
+-- A comment relies on being read. The guard below FAILS LOUDLY, same
+-- argument as the VS1b gate on the Commit 4 verification: detect the
+-- condition rather than provoke it.
+--
+-- ON A FROM-SCRATCH REPLAY the newer form does not exist yet, the guard
+-- passes, and 20260610 overwrites afterward as it should. On an
+-- isolated re-apply against a database that already has the fix, it
+-- refuses.
+-- ══════════════════════════════════════════════════════════════════════
 -- ════════════════════════════════════════════════════════════════════
 -- B40 + B43 — Capture-pass: RLS on violations table + 3 SECURITY
 -- DEFINER helpers it references
@@ -40,6 +76,23 @@
 -- ════════════════════════════════════════════════════════════════════
 
 BEGIN;
+
+-- ══════════════════════════════════════════════════════════════════════
+-- 🔴 RE-APPLY GUARD (2026-09-11) — refuses to revert the auth spine.
+-- Inside the transaction, so a fire aborts the whole paste and nothing
+-- in this file lands. See the SUPERSEDED header above.
+-- ══════════════════════════════════════════════════════════════════════
+DO $guard$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_proc
+     WHERE oid = to_regprocedure('public.get_my_role()')
+       AND prosrc LIKE '%lower(email)%'
+  ) THEN
+    RAISE EXCEPTION 'SUPERSEDED: get_my_role() already carries the 20260610 equality form. Re-applying this migration would restore ILIKE to the auth spine and reopen wildcard privilege escalation across every policy that calls it. Do not re-apply in isolation.';
+  END IF;
+END $guard$;
+
 
 -- ════════════════════════════════════════════════════════════════════
 -- PART B43 — SECURITY DEFINER helpers (defined first; referenced below)
