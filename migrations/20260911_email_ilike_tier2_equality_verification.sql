@@ -51,6 +51,31 @@ BEGIN
   -- fixture that fails takes the whole gate with it.
   INSERT INTO public.drivers (email, name, company, operator_license, assigned_properties, is_active)
   VALUES ('victim@tier2probe.invalid', 'Tier2 Probe Driver', 'Tier2Probe Co', 'TDLR-TIER2PROBE', '{}'::text[], true);
+
+  -- ── H1 fixture only, below ──────────────────────────────────────
+  -- 🔴 TWO user_roles rows, and the wildcard one is the whole point.
+  -- Group C's policies are gated on get_my_role() = 'resident'. A
+  -- wildcard caller with NO user_roles row gets NULL from that helper
+  -- and is refused BEFORE the subquery is ever reached — so the naive
+  -- version of H1 returns zero for a reason unrelated to RLS
+  -- inheritance and "confirms" the hypothesis vacuously.
+  --
+  -- get_my_role() matches lower(email) = lower(jwt) since 20260610. For
+  -- a caller whose JWT email IS the literal '%@tier2probe.invalid',
+  -- that equality is TRUE against a row storing the same literal — so
+  -- the wildcard caller legitimately holds role='resident' and reaches
+  -- the subquery, which is the only place the hypothesis lives.
+  INSERT INTO public.user_roles (email, role, company, property)
+  VALUES ('%@tier2probe.invalid',      'resident', 'Tier2Probe Co', '{}'::text[]),
+         ('victim@tier2probe.invalid', 'resident', 'Tier2Probe Co', '{}'::text[]);
+
+  -- Rows Group C WOULD return if its subquery matched. Without these,
+  -- H1 is vacuous a second way — zero because nothing exists.
+  INSERT INTO public.spaces (property, space_number, company, is_active)
+  VALUES ('Tier2 Probe Property', 'T2-1', 'Tier2Probe Co', true);
+
+  INSERT INTO public.vehicles (plate, property, unit, company, status, is_active, resident_read)
+  VALUES ('T2PROBE1', 'Tier2 Probe Property', '2B', 'Tier2Probe Co', 'active', true, false);
 END $fixture$;
 
 
@@ -187,6 +212,73 @@ BEGIN
   END IF;
 END $e4$;
 
+-- ══════════════════════════════════════════════════════════════════════
+-- H1 — 🔴 HYPOTHESIS TEST, NOT A GATE. Does RLS on `residents` filter
+--      the subqueries inside Tier 3's Group C policies?
+--
+-- Group C (spaces, vehicles, properties, visitor_passes, violations)
+-- does not match on its own table's email. It subqueries residents:
+--     property IN (SELECT residents.property FROM residents
+--                   WHERE residents.email ~~* (auth.jwt() ->> 'email'))
+--
+-- Postgres applies RLS to tables referenced inside policy expressions —
+-- the same behaviour behind the familiar "infinite recursion detected in
+-- policy for relation" error. If that holds, then once Tier 2 rewrites
+-- residents.resident_read_own to equality, the subquery is filtered
+-- TWICE: by its own ILIKE and by residents' RLS, which now returns only
+-- the caller's own row. A wildcard would get nothing regardless of the
+-- ILIKE still sitting in the outer policy.
+--
+-- ⚠ THE NAIVE VERSION OF THIS TEST LIES. A wildcard caller with no
+-- user_roles row fails `get_my_role() = 'resident'` and reads zero rows
+-- from spaces and vehicles WITHOUT THE SUBQUERY EVER RUNNING. Zero would
+-- look like confirmation and mean nothing. The fixture therefore gives
+-- the wildcard caller a real resident role AND seeds rows the policies
+-- would return on a match — so a zero here can only come from the
+-- subquery being empty.
+--
+-- READ THE NOTICE, NOT A PASS/FAIL. Both answers are useful:
+--   ZERO     → inheritance holds. Group C is already mitigated by Tier 2.
+--              Still rewrite it — safety resting on another table's
+--              policy is fragile — but the urgency drops.
+--   NON-ZERO → inheritance does not apply the way we think. Tier 3 is
+--              exactly as exposed as the tier list says, AND every
+--              nested policy in this codebase needs re-reading.
+-- ══════════════════════════════════════════════════════════════════════
+DO $h1$
+DECLARE
+  v_role_seen TEXT;
+  v_spaces    INT;
+  v_vehicles  INT;
+  v_residents INT;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"email":"%@tier2probe.invalid","role":"authenticated"}', true);
+  PERFORM set_config('request.jwt.claim',  '{"email":"%@tier2probe.invalid","role":"authenticated"}', true);
+  SET LOCAL ROLE authenticated;
+
+  -- Precondition. If the wildcard caller is NOT seen as a resident, the
+  -- counts below are role-gate refusals and say nothing about
+  -- inheritance. Reported, never folded silently into the answer.
+  v_role_seen := get_my_role();
+  SELECT COUNT(*) INTO v_residents FROM public.residents;
+  SELECT COUNT(*) INTO v_spaces    FROM public.spaces;
+  SELECT COUNT(*) INTO v_vehicles  FROM public.vehicles;
+  RESET ROLE;
+
+  IF v_role_seen IS DISTINCT FROM 'resident' THEN
+    RAISE NOTICE 'H1 INCONCLUSIVE: wildcard caller resolves get_my_role() = % (expected resident). spaces=% vehicles=% are role-gate refusals and prove NOTHING about RLS inheritance.',
+      COALESCE(v_role_seen, 'NULL'), v_spaces, v_vehicles;
+  ELSE
+    RAISE NOTICE 'H1: wildcard caller holds role=resident and reads residents=% (expect 0 after Tier 2), spaces=%, vehicles=%.',
+      v_residents, v_spaces, v_vehicles;
+    IF v_spaces = 0 AND v_vehicles = 0 THEN
+      RAISE NOTICE 'H1 RESULT — INHERITANCE HOLDS. residents RLS filtered the subqueries inside Group C, so those five policies are already mitigated by Tier 2. Rewrite them anyway; the urgency drops.';
+    ELSE
+      RAISE NOTICE 'H1 RESULT — INHERITANCE DOES NOT HOLD as assumed. Group C is exactly as exposed as the tier list says, and every nested policy in this codebase needs re-reading on the same question.';
+    END IF;
+  END IF;
+END $h1$;
+
 ROLLBACK;
 
 
@@ -201,6 +293,7 @@ SELECT
     'E2  drivers: exact-match JWT reads its own row (CONTROL) AND a wildcard JWT reads ZERO',
     'G3  driver_read_own polroles no longer contains PUBLIC (oid 0) — the half of the commit execution cannot see',
     'E4  counts the Tier 3 policies still carrying ILIKE, so a green run is not misread as the vector being closed',
+    'H1  HYPOTHESIS, not a gate — does residents RLS filter the subqueries inside Tier 3 Group C? Read the NOTICE; both answers change the Tier 3 plan',
     'DISCIPLINE: a denial gate without a positive control is not weaker evidence — it is no evidence. Zero rows is also what a broken fixture produces.',
     'DISCIPLINE: G3 exists because a run that omitted the retarget would still deny the wildcard — the predicate is what denies, so E2 alone would pass green with {public} intact.'
   ] AS gates_verified,
