@@ -1,36 +1,53 @@
 // ════════════════════════════════════════════════════════════════════
 // Tow Log CSV export — two variants, and the difference is the point.
 //
-// ── 🔴 AN EXPORT LEAVES THE SYSTEM ──────────────────────────────────
-// The motivating request is a tow operator asking for everything they
-// have done at a property. Reasonable — and the obvious file that
-// answers it contains things that must not go to a vendor:
+// ── ⚠ THIS IS ERGONOMICS, NOT A CONTROL ────────────────────────────
+// Read this before relying on anything below.
 //
-//   notes                — INTERNAL manager narrative, explicitly
-//                          designed never to leave the property.
-//                          "Resident was upset, said call them Monday"
-//                          is not for the operator.
+// The motivating request is a tow operator asking for everything they
+// have done at a property. The file that answers it naturally contains
+// things a vendor has no reason to receive:
+//
+//   notes                — INTERNAL manager narrative. "Resident was
+//                          upset, said call them Monday" is not for the
+//                          operator.
 //   reason_notes         — free text a manager wrote about this
 //                          incident; same class.
-//   authorized_by_email  — staff addresses. Not secret, but there is
-//   recorded_by_email      no reason to hand a vendor a roster of who
-//   voided_by_email        works there.
+//   authorized_by_email  — staff addresses. Not secret, but no reason
+//   recorded_by_email      to hand a vendor a roster of who works
+//   voided_by_email        there.
+//   void_reason          — why a record was withdrawn; internal.
 //
-// So there are TWO exports and the caller picks at the point of
-// clicking — never one export with a checkbox somebody leaves at the
-// wrong default and notices after emailing it.
+// 🔴 THE CONTROL IS THE PROPERTY MANAGER, NOT THIS CODE. They reformat
+// the file before sending it anywhere — nobody forwards a raw CSV to a
+// vendor. Nothing here prevents a manager exporting the full variant
+// and emailing it as-is, and nothing here is positioned to.
 //
-//   SHAREABLE (default) — safe to send anyone. The vehicle, when, why,
-//                         who removed it, and whether it still stands.
+// What the two variants buy is that the manager STARTS FROM A CLEAN
+// FILE INSTEAD OF DELETING COLUMNS. That is the whole benefit. It is
+// convenience, and it is worth having, and it is not enforcement.
+//
+//   SHAREABLE (default) — the vehicle, when, why, who removed it, and
+//                         whether it still stands.
 //   FULL                — the property's own records, an owner report,
 //                         an attorney. Everything.
 //
-// ── THE EXCLUSION IS ENFORCED BY THE TYPE, NOT BY THE COMMENT ───────
-// Same discipline as residents-export.ts: the shareable row-builder
-// sees a Pick<> view of the row, so reading `notes` inside it FAILS TO
-// COMPILE. Comment drift alone cannot open the door, and the
-// verification "confirm the notes column is absent, not empty" is
-// answered structurally rather than by inspection.
+// Two buttons rather than one export with a checkbox, so the choice is
+// made at the point of clicking rather than left at a default somebody
+// notices after emailing it. Also ergonomics.
+//
+// ── THE TYPE PROTECTS A DEFAULT, NOT A BOUNDARY ─────────────────────
+// Same mechanism as residents-export.ts: the shareable row-builder sees
+// an Omit<> view, so reading `notes` inside it FAILS TO COMPILE. That
+// is genuinely useful — it stops the two variants quietly drifting into
+// each other, and it answers "is the notes column absent or just empty"
+// structurally rather than by opening the file.
+//
+// 🔴 But a compile error here is NOT a security guarantee. It constrains
+// what THIS builder emits. It says nothing about where the resulting
+// file goes, who opens it, or what the full variant contains. Do not
+// cite it as a data-handling control, and do not build anything on top
+// of it that assumes internal fields cannot leave the system.
 //
 // If a future export needs an internal column, it lands as its own
 // variant with its own label — not by widening the shareable one.
