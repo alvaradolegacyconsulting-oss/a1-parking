@@ -221,12 +221,38 @@ function RegisterForm() {
         return
       }
 
+      // 🔴 EXISTING-EMAIL PATH — 2026-09-11 SECURITY FIX.
+      // The route no longer returns token_hash when the email already
+      // has an account. Until today it did, which meant anyone who knew
+      // an address could POST it here, read the token out of the
+      // response and verifyOtp into that person's session. No token,
+      // no session — so this path can only ask the user to sign in.
+      //
+      // ⚠ Known rough edge, deliberately accepted to close the hole
+      // today: a resident registering at a SECOND property now has to
+      // sign in first and come back, rather than being carried through
+      // in one pass. The alternative was a second CAPTCHA solve inline
+      // (signInWithPassword is captcha-gated on this project and the
+      // caller's only Turnstile token was consumed server-side by the
+      // route), which is more UI than a hotfix should carry. Filed.
+      if (!json.token_hash) {
+        turnstileRef.current?.reset()
+        setCaptchaToken(null)
+        setError(
+          'An account already exists for this email. Please sign in at /login first, '
+          + 'then open this registration link again to add yourself at this property.',
+        )
+        setSubmitting(false)
+        return
+      }
+
       // Sign in via verifyOtp using the magic-link token_hash returned
-      // by the new route. verifyOtp is UNGATED (confirmed by 2026-06-29
-      // prod probe) — no second captcha solve needed. Same downstream
-      // result as the prior signInWithPassword path: an authenticated
-      // session whose JWT email matches residents.email, so the
-      // residents_self_insert RLS policy passes for the INSERT below.
+      // by the new route — ONLY ever returned for an account this
+      // request just created. verifyOtp is UNGATED (confirmed by
+      // 2026-06-29 prod probe) — no second captcha solve needed. Same
+      // downstream result as the prior signInWithPassword path: an
+      // authenticated session whose JWT email matches residents.email,
+      // so the residents_self_insert RLS policy passes for the INSERT.
       //
       // SDK SIGNATURE — token_hash variant takes ONLY {token_hash, type}.
       // verifyOtp has two mutually-exclusive shapes: (a) 6-digit OTP via

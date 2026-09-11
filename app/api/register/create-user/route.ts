@@ -61,10 +61,17 @@ import { guardEmail } from '../../../lib/email-guard'
 //     message) — a weak-password on a NEW email must not distinguish
 //     from a weak-password on an EXISTING email (the existing one now
 //     hits the attach path and returns 200 instead of createUser's 400).
-//   • RESIDUAL — timing side-channel: attach path calls listUsers
-//     (O(users), paginated) while create path doesn't. Existing emails
-//     respond measurably slower. Filed as pre-signup blocker:
-//     docs/backlog/attach-endpoint-listusers-timing-enumeration.md.
+//   • RESIDUAL — timing side-channel: CLOSED 2026-09-11. The attach
+//     path used to call listUsers (O(users), paginated) while the
+//     create path didn't, so existing emails responded measurably
+//     slower. That call existed only to feed generateLink on the attach
+//     branch; removing the branch's token removed the call.
+//     docs/backlog/attach-endpoint-listusers-timing-enumeration.md
+//
+//   • ⚠ NEW DELTA, ACCEPTED 2026-09-11: the create response carries
+//     token_hash and the existing-email response does not, so the two
+//     are distinguishable. Deliberate — see the security note on the
+//     duplicate branch. Strictly less bad than the takeover it replaced.
 
 export const runtime = 'nodejs'
 
@@ -122,7 +129,6 @@ export async function POST(req: NextRequest) {
   // Discriminator locked to (err.code='email_exists' + err.status=422)
   // per 2026-07-25 probe against this project's SDK version. See
   // scripts/probe-createuser-duplicate-discriminator-ONE-TIME.ts.
-  let userId: string | null = null
   const { data: createData, error: createErr } = await supabase.auth.admin.createUser({
     email,
     password,
@@ -143,25 +149,51 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       )
     }
-    // Attach path — resolve existing auth user_id via listUsers.
-    userId = await resolveExistingAuthUserId(supabase, email)
-    if (!userId) {
-      // createUser said the email exists but listUsers didn't find it —
-      // race with a concurrent delete, or listUsers pagination limit hit.
-      // Return the SAME message class as the generateLink 500 below so
-      // a 500 doesn't distinguish which code path fired. The message is
-      // deliberately inaccurate ("Account created" — nothing was created
-      // on this branch) to match the sibling 500's shape; uniformity of
-      // 500-message beats precision because the caller can't act on
-      // either kind of 500.
-      return NextResponse.json(
-        { ok: false, error: 'Account created but session-link generation failed: could not resolve session.' },
-        { status: 500 },
-      )
-    }
-  } else {
-    userId = createData?.user?.id ?? null
+    // ══════════════════════════════════════════════════════════════
+    // 🔴 EXISTING EMAIL — RETURN WITHOUT A SESSION TOKEN. SECURITY FIX
+    //    2026-09-11. DO NOT REINSTATE generateLink ON THIS BRANCH.
+    // ══════════════════════════════════════════════════════════════
+    // Until today this branch resolved the existing user's id and FELL
+    // THROUGH to the generateLink block below, so the route returned a
+    // magic-link token_hash FOR AN ACCOUNT THE CALLER DID NOT OWN.
+    // Combined with ungated verifyOtp that was full account takeover of
+    // any address an attacker knew, from a public endpoint, with no
+    // password and no mailbox access:
+    //
+    //   POST {email: victim, password: anything, captchaToken}
+    //     → read token_hash from the 200 response
+    //     → verifyOtp({token_hash}) → session AS THE VICTIM
+    //
+    // Manager addresses are on tow tickets, invite emails and help
+    // pages, so "an address an attacker knows" is not a high bar. And
+    // a session as the victim means get_my_role() and get_my_company()
+    // return the VICTIM's values — every equality-based guard in the
+    // system evaluates in the attacker's favour.
+    //
+    // The property-A-login guarantee is about NOT DAMAGING the existing
+    // account. It never required handing the caller a session, and it
+    // still holds: nothing below this line touches the existing user.
+    //
+    // resolveExistingAuthUserId is no longer called here. It existed
+    // only to feed generateLink. Dropping it also closes the filed
+    // timing side-channel (docs/backlog/attach-endpoint-listusers-
+    // timing-enumeration.md) — the attach path no longer does an
+    // O(users) listUsers scan, so existing emails no longer respond
+    // measurably slower.
+    //
+    // ⚠ KNOWN ENUMERATION DELTA, ACCEPTED 2026-09-11: this response has
+    // no token_hash and the create response does, so a caller can tell
+    // whether an address is registered. That is strictly less bad than
+    // account takeover. Closing it too means dropping token_hash from
+    // BOTH branches and signing in with the password instead — blocked
+    // today because signInWithPassword is captcha-gated on this project
+    // and the caller's only Turnstile token was consumed above. See the
+    // report; that is a follow-up, not a regression introduced here.
+    return NextResponse.json({ ok: true })
   }
+  // NOTE: the created user's id is deliberately NOT captured or
+  // returned. It was only ever echoed to the caller, and a public
+  // endpoint has no reason to expose an internal auth id.
 
   // ── 5. Generate a magic-link token for ungated session acquisition ──
   // admin.generateLink does NOT send the email (Supabase admin-API
@@ -188,37 +220,28 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Only reachable when THIS request created the account. user_id and
+  // email are no longer echoed — a public endpoint has no reason to
+  // hand back an internal auth id, and on the (now removed) attach path
+  // that id belonged to somebody else.
   return NextResponse.json({
     ok: true,
-    user_id:    userId,
-    email,
     token_hash: linkData.properties.hashed_token,
   })
 }
 
-/**
- * Resolve an existing auth.users id by email via paginated listUsers.
- * Matches the codebase pattern in prelaunch-pm-driver-orphan-cleanup
- * (Supabase JS Admin API does not support server-side email filtering
- * on listUsers as of the SDK version in use — probe-verified 2026-07-25).
- * Returns null if not found within PAGE_LIMIT * PAGE_SIZE users.
+/*
+ * resolveExistingAuthUserId REMOVED 2026-09-11.
  *
- * READ-ONLY: this function only READS auth.users. Never mutates.
- * Load-bearing for the property-A-login guarantee — see route header.
+ * It resolved an existing auth.users id so the attach branch could mint
+ * a magic link for an account the caller did not own. That was the
+ * takeover. The function is deleted rather than left unused: dead code
+ * that hands back exactly the capability we just removed is an
+ * invitation, and the next reader would have no way to know it must not
+ * be called.
+ *
+ * Removing it also closes the filed timing side-channel — the attach
+ * path no longer performs an O(users) listUsers scan, so existing
+ * emails no longer respond measurably slower than new ones.
+ * (docs/backlog/attach-endpoint-listusers-timing-enumeration.md)
  */
-async function resolveExistingAuthUserId(
-  admin: ReturnType<typeof createSupabaseServiceClient>,
-  email: string,
-): Promise<string | null> {
-  const PAGE_SIZE = 1000
-  const PAGE_LIMIT = 10   // scale ceiling: 10,000 users; A1-era is < 100
-  const target = email.toLowerCase()
-  for (let page = 1; page <= PAGE_LIMIT; page++) {
-    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: PAGE_SIZE })
-    if (error) return null
-    const found = data?.users?.find(u => (u.email ?? '').toLowerCase() === target)
-    if (found) return found.id
-    if (!data?.users?.length || data.users.length < PAGE_SIZE) return null
-  }
-  return null   // exceeded PAGE_LIMIT pages; caller treats same as not-found
-}
