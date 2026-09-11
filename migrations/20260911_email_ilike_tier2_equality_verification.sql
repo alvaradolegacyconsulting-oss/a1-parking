@@ -214,30 +214,52 @@ END $g3$;
 -- ══════════════════════════════════════════════════════════════════════
 -- E4 — 🔴 CARRIED FORWARD AND INVERTED FROM TIER 1.
 --   Tier 1's E4 recorded that residents SELECT was still open. Tier 2
---   closes that, so the negative expectation now names WHAT IS LEFT:
---   Tier 3's role-gated reads, still carrying ILIKE, plus the audit_logs
---   policies still targeting {public}.
+--   closes that, so the negative expectation now names WHAT IS LEFT.
 --
 --   This is a DISCOVERY query used as a reminder, never as a security
 --   gate — string-matching qual cannot prove anything about behaviour.
---   Its only job is to stop a green Tier 2 run being read as "the email
---   vector is closed."
+--   Its only job is to stop a green run being read as "closed."
+--
+-- ── 🔴 WIDENED 2026-09-11: SCOPE BY THE OPERATOR, NOT THE COLUMN ────
+-- The first version of this gate matched on the word `email`, inheriting
+-- the framing error from the §2 audit. Query E then found THREE MORE
+-- ILIKE policies on residents that no email-scoped search could see:
+--
+--   residents_company_admin_read  company  ~~* get_my_company()
+--   residents_manager_read        property ~~* ANY(get_my_properties())
+--   residents_manager_update      property ~~* ANY(get_my_properties())
+--
+-- Same operator, same class of vector, different column. The pattern
+-- side comes from user_roles.company / .property — plain TEXT with (as
+-- far as migrations/ shows) no metacharacter CHECK, so a row can carry
+-- a value no real company or property has. A user_roles.company of '%'
+-- reads EVERY resident in EVERY tenant; the manager pair also WRITES.
+--
+-- 🔴 AND THIS GATE WOULD HAVE HIDDEN THAT. Scoped to `email`, it would
+-- report "ZERO policies remaining" once Tier 3 landed — actively
+-- telling a future reader the vector was closed while the
+-- company/property class sat untouched. The gate whose only job is
+-- preventing a false "closed" would have produced one.
+--
+-- Now matches `~~*` ANYWHERE in a policy expression. That is the whole
+-- surface; the email policies are a subset of it.
 -- ══════════════════════════════════════════════════════════════════════
 DO $e4$
 DECLARE
   v_remaining INT;
   v_names     TEXT;
 BEGIN
-  SELECT COUNT(*), string_agg(tablename || '.' || policyname, ', ' ORDER BY tablename, policyname)
+  -- Operator-scoped, not column-scoped. See the header.
+  SELECT COUNT(*), string_agg(tablename || '.' || policyname || ' (' || cmd || ')', ', ' ORDER BY tablename, policyname)
     INTO v_remaining, v_names
     FROM pg_policies
-   WHERE qual       ~* '(email|e_?mail)[^,)]*(~~\*|~~|ILIKE|LIKE)'
-      OR with_check ~* '(email|e_?mail)[^,)]*(~~\*|~~|ILIKE|LIKE)';
+   WHERE qual       ~ '~~\*'
+      OR with_check ~ '~~\*';
 
   IF v_remaining = 0 THEN
-    RAISE NOTICE 'E4: ZERO policies still carry an email ILIKE. If Tier 3 has landed, this gate should be INVERTED (assert 0) rather than deleted — an untested boundary must not look like a passing one.';
+    RAISE NOTICE 'E4: ZERO policies anywhere still use ~~*. If Tier 3 AND the company/property class have both landed, this gate should be INVERTED (assert 0) rather than deleted — an untested boundary must not look like a passing one.';
   ELSE
-    RAISE NOTICE 'E4 EXPECTED: % policies still carry an email ILIKE — Tier 3 is NOT in this commit. Do NOT read a green run as "the email vector is closed". Remaining: %', v_remaining, v_names;
+    RAISE NOTICE 'E4 EXPECTED: % policies still use ~~* anywhere in their expression — Tier 3 is NOT in this commit, and this count now INCLUDES the company/property class (residents_company_admin_read, residents_manager_read, residents_manager_update) that an email-scoped search could not see. Do NOT read a green run as "closed". Remaining: %', v_remaining, v_names;
   END IF;
 END $e4$;
 
@@ -354,7 +376,7 @@ SELECT
     'E1  residents: exact-match JWT reads its own row (CONTROL) AND a wildcard JWT reads ZERO',
     'E2  drivers: exact-match JWT reads its own row (CONTROL) AND a wildcard JWT reads ZERO',
     'G3  driver_read_own polroles no longer contains PUBLIC (oid 0) — the half of the commit execution cannot see',
-    'E4  counts the Tier 3 policies still carrying ILIKE, so a green run is not misread as the vector being closed',
+    'E4  counts every policy still using ~~* ANYWHERE — widened 09-11 from an email-scoped match, which would have reported ZERO while the company/property class sat untouched',
     'H1  HYPOTHESIS, not a gate — does residents RLS filter the subqueries inside Tier 3 Group C? Read the NOTICE. NEITHER answer moves Group C''s schedule: its real protection is the equality-locked role gate, which needs a stored user_roles row containing the wildcard LITERALLY.',
     'DISCIPLINE: a denial gate without a positive control is not weaker evidence — it is no evidence. Zero rows is also what a broken fixture produces.',
     'DISCIPLINE: G3 exists because a run that omitted the retarget would still deny the wildcard — the predicate is what denies, so E2 alone would pass green with {public} intact.'

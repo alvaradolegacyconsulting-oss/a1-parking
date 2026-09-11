@@ -233,3 +233,75 @@ FROM pg_policies
 WHERE schemaname = 'public'
   AND tablename  = 'residents'
 ORDER BY cmd, policyname;
+
+
+-- ══════════════════════════════════════════════════════════════════════
+-- F — 🔴 THE REAL SURFACE. SCOPE BY THE OPERATOR, NOT THE COLUMN.
+--     Added 2026-09-11, after Query E.
+--
+-- Queries A-C above matched on the word `email`. That was a framing
+-- error, not a gap in the method: the vector is the OPERATOR, and the
+-- column it sits on is incidental. Query E found three ILIKE policies on
+-- residents that no email-scoped search could ever have seen:
+--
+--   residents_company_admin_read   company  ~~* get_my_company()
+--   residents_manager_read         property ~~* ANY(get_my_properties())
+--   residents_manager_update       property ~~* ANY(get_my_properties())
+--
+-- The pattern side comes from user_roles.company / user_roles.property.
+-- 🔴 The 2026-09-01 metacharacter CHECKs do NOT cover these — they are
+-- on companies.name and properties.name, so no company can be NAMED
+-- '%', but a user_roles row can still CARRY '%' in those plain-TEXT
+-- columns. A value no real company or property has.
+--
+-- Reach: a user_roles.company of '%' reads EVERY resident in EVERY
+-- tenant — cross-tenant disclosure. The manager pair also WRITES.
+--
+-- Lower severity than the email vector because these columns are NOT
+-- self-service: admin or company_admin sets them through user
+-- management, so it needs an insider, a compromised CA, or a bug in a
+-- user-management write path — not a public POST. But cross-tenant, and
+-- one of the three is an UPDATE.
+--
+-- Known shape: the A2 probe case #7 ("driver whose user_roles.company is
+-- literally %") was closed for get_company_admin_emails by moving that
+-- function to equality. Closed in ONE place; this is the rest of it.
+--
+-- ⚠ RUN THIS BEFORE SCOPING TIER 3. Tier 3 as currently drawn is ten
+-- email policies. The real remaining surface is whatever this returns,
+-- and the ordering should weigh CROSS-TENANT reach rather than the
+-- column the pattern happens to sit on. Expect the company/property
+-- class to be sizeable — manager and company_admin read policies follow
+-- a template, and templates get copied.
+-- ══════════════════════════════════════════════════════════════════════
+SELECT schemaname, tablename, policyname, cmd, roles, qual, with_check
+  FROM pg_policies
+ WHERE qual       ~ '~~\*'
+    OR with_check ~ '~~\*'
+ ORDER BY tablename, cmd, policyname;
+
+
+-- ══════════════════════════════════════════════════════════════════════
+-- G — Is the PATTERN SIDE constrained? This may be the better fix.
+--
+-- Every policy in Query F reads its pattern from user_roles.company or
+-- user_roles.property. If those columns carried a metacharacter CHECK,
+-- the pattern could not hold a wildcard NO MATTER how many policies
+-- ILIKE against it — one constraint instead of a rewrite per policy.
+--
+-- And unlike the email case, it costs NOTHING legitimate. The argument
+-- against constraining email was that john_smith@gmail.com is a real
+-- address; no real company is named '%', and the 2026-09-01 CHECKs
+-- already guarantee none can be.
+--
+-- A grep of migrations/ finds no CHECK on user_roles (only the
+-- lower(email) unique index, 2026-07-04) — but migrations/ is not the
+-- state. Four of the six Tier 1 policies were dashboard-created and
+-- appear in no migration at all, so a dashboard-added constraint is
+-- equally plausible. THIS QUERY IS THE ANSWER, not the grep.
+-- ══════════════════════════════════════════════════════════════════════
+SELECT conname, pg_get_constraintdef(oid) AS definition
+  FROM pg_constraint
+ WHERE conrelid = 'public.user_roles'::regclass
+   AND contype  = 'c'
+ ORDER BY conname;
