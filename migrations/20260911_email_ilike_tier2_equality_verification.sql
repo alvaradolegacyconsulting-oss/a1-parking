@@ -19,6 +19,14 @@
 --   · probe addresses on @tier2probe.invalid — a reserved TLD that
 --     cannot collide with a real tenant.
 --
+-- ── ⚠ A FIXTURE ABORT INVALIDATES THE WHOLE RUN, NOT PART OF IT ─────
+-- 2026-09-11: the first run aborted inside the fixture. E1, E2, G3 and
+-- E4 produced no output — and "passed silently" is indistinguishable
+-- from "never executed" in that output, which is the absence problem
+-- again, one layer up from the gates themselves.
+-- RE-RUN THE WHOLE FILE from the top after any fixture failure. Do not
+-- reason about which gates had already gone green.
+--
 -- ── 🔴 WHY G3 IS A CATALOG GATE AND NOT AN EXECUTION ONE ────────────
 -- driver_read_own changes TWO things: the predicate and the role it is
 -- granted to ({public} → {authenticated}). Execution cannot distinguish
@@ -71,9 +79,30 @@ BEGIN
 
   -- Rows Group C WOULD return if its subquery matched. Without these,
   -- H1 is vacuous a second way — zero because nothing exists.
-  INSERT INTO public.spaces (property, space_number, company, is_active)
-  VALUES ('Tier2 Probe Property', 'T2-1', 'Tier2Probe Co', true);
+  --
+  -- 🔴 label and created_by_email ARE NOT OPTIONAL. Both are NOT NULL
+  -- with NO DEFAULT on spaces, and the first draft omitted both: the
+  -- run aborted on `label`, and `created_by_email` would have thrown on
+  -- the retry. Second fixture defect in two days — properties.updated_at
+  -- yesterday, these today — and the same root both times: the table
+  -- under TEST gets read carefully because it is the subject, while
+  -- tables the fixture WRITES to get filled in from memory because they
+  -- are scaffolding. Scaffolding that will not compile stops the gate
+  -- from ever running.
+  --
+  -- Checked rather than remembered this time: PostgREST's OpenAPI doc
+  -- (GET /rest/v1/) lists `required` per table. ⚠ It reports NOT NULL
+  -- regardless of default, so it OVER-reports — spaces.type and
+  -- is_active appear there too and both default. It narrows the
+  -- candidates; it does not settle them.
+  INSERT INTO public.spaces (property, space_number, label, company, created_by_email, is_active)
+  VALUES ('Tier2 Probe Property', 'T2-1', 'T2-1', 'Tier2Probe Co', 'h1-probe@tier2probe.invalid', true);
 
+  -- vehicles NOT NULL set is (property, company) beyond the identity
+  -- columns — both supplied. Verified against the same spec rather than
+  -- assumed, because vehicles.company going NOT NULL in the August 28
+  -- arc is exactly the omission that broke manager add-vehicle for ten
+  -- days.
   INSERT INTO public.vehicles (plate, property, unit, company, status, is_active, resident_read)
   VALUES ('T2PROBE1', 'Tier2 Probe Property', '2B', 'Tier2Probe Co', 'active', true, false);
 END $fixture$;
