@@ -43,24 +43,42 @@
 -- The `qual`/`with_check` text for those was supplied verbatim from
 -- that enumeration.
 --
--- ⚠ THE OTHER TWO — resident_insert_passes and resident_update_passes,
--- plus resident_insert_disputes — were reconstructed from
--- 20260703_rls_57014_perf_commit2_sweep.sql, a MIGRATION FILE. That is
--- the source that has already been wrong once this week (VS2, 09-10).
--- DIFF THESE THREE AGAINST THE LIVE `qual` BEFORE APPLYING. If live
--- differs, this migration would silently drop whatever condition live
--- carries and migrations/ does not.
+-- The other three — resident_insert_disputes, resident_insert_passes and
+-- resident_update_passes — were first reconstructed from
+-- 20260703_rls_57014_perf_commit2_sweep.sql, a MIGRATION FILE, which is
+-- the source that was already wrong once this week (VS2, 09-10).
+--
+-- ✅ VERIFIED 2026-09-11: all three were subsequently diffed against the
+-- live `qual`/`with_check` from the runtime enumeration and MATCH
+-- exactly, modulo pg_get_expr's own re-rendering (it adds `AS` aliases
+-- to scalar subqueries and normalises parentheses). No divergence.
+--
+-- 🔴 THAT IS A RESULT ABOUT THESE THREE FILES, NOT ABOUT THE METHOD.
+-- migrations/ happened to be accurate here. It is not a reason to trust
+-- it next time — the same source produced a wrong answer the day before,
+-- and the four dashboard-created policies in this very migration appear
+-- in no migration at all.
 --
 -- ── THE REWRITE ─────────────────────────────────────────────────────
 --   email ~~* (auth.jwt() ->> 'email')
 --     becomes
 --   lower(trim(email)) = lower(trim((SELECT auth.jwt()) ->> 'email'))
 --
--- Matching the b155.2 helper shape (20260610). trim() as well as
--- lower() because a stored address with a trailing space would
--- otherwise stop matching its own owner — the equality is stricter than
--- ILIKE was, so latent whitespace becomes a lockout rather than a
--- no-op.
+-- Matching the b155.2 helper shape (20260610).
+--
+-- trim() as well as lower(), and the reason is NOT that equality is
+-- stricter than ILIKE about whitespace. It isn't:
+--     'a@b.com ' ILIKE 'a@b.com'  -- already false
+-- ILIKE fails on a stored trailing space exactly as equality does. So
+-- trim() FIXES A PRE-EXISTING LATENT BUG — an address stored with
+-- surrounding whitespace has never matched its own owner, under either
+-- operator — rather than compensating for anything this rewrite
+-- introduces.
+--
+-- Latent, not live: Probe C on 2026-09-07 returned
+-- rows_with_whitespace = 0 on user_roles. Nothing to migrate; this is
+-- purely defensive against a future write path that stores an untrimmed
+-- address.
 --
 -- ⚠ ONE DELIBERATE ADDITION BEYOND THE SECURITY CHANGE: auth.jwt() is
 -- wrapped as (SELECT auth.jwt()) on the four dashboard policies, which
@@ -250,7 +268,7 @@ VALUES (
     'vulnerability', 'email ~~* uses the caller''s own address as an ILIKE pattern. Three of these policies do an inline user_roles lookup and never call the equality-locked helpers, so a wildcard caller inherits another role — escalation, not disclosure. admin.createUser was probed 2026-09-11 and ACCEPTS % with no error.',
     'why_not_input_validation', 'john_smith@gmail.com is a legitimate address and 11 of 231 accounts contain _. The 2026-09-11 tourniquet blocks % and \ at every ingress but cannot help existing accounts and deliberately allows _.',
     'four_were_dashboard_created', 'residents_company_admin_update, properties_manager_update, user_read_own_role and driver_read_own appear in NO migration. They surfaced only via runtime pg_policies enumeration.',
-    'three_reconstructed_from_migrations', 'resident_insert_disputes, resident_insert_passes and resident_update_passes were rebuilt from 20260703_rls_57014_perf_commit2_sweep.sql and MUST be diffed against live qual before apply.',
+    'three_reconstructed_then_verified', 'resident_insert_disputes, resident_insert_passes and resident_update_passes were rebuilt from 20260703_rls_57014_perf_commit2_sweep.sql, then diffed against the live qual from the runtime enumeration — exact match modulo pg_get_expr re-rendering. A result about those three files, not a reason to trust migrations/ next time.',
     'perf_note', 'auth.jwt() wrapped as (SELECT auth.jwt()) on the four dashboard policies, matching the 2026-07-03 57014 initplan hoisting the rest of the codebase uses.',
     'not_in_this_commit', 'Tier 2 (drivers.driver_read_own — also {public}→authenticated — and residents.resident_read_own) and Tier 3 (ten role-gated reads + {public} retargeting).'
   ),
