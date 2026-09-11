@@ -190,3 +190,46 @@ FROM (SELECT NULL::TEXT AS table_name, NULL::TEXT AS pattern_email, NULL::TEXT A
       UNION ALL
       SELECT table_name, pattern_email, exposed_email FROM _email_exposure_findings) f
 ORDER BY f.table_name NULLS FIRST, f.pattern_email;
+
+
+-- ══════════════════════════════════════════════════════════════════════
+-- E — EVERY policy on `residents`, not just the ILIKE ones.
+--     Added 2026-09-11 after Tier 2.
+--
+-- 🔴 WHY THE ILIKE-ONLY ENUMERATION IS NOT ENOUGH HERE. Tier 3's Group
+-- C policies (spaces, vehicles, properties, visitor_passes, violations)
+-- do not match on their own table's email — they SUBQUERY residents:
+--
+--     property IN (SELECT residents.property FROM residents
+--                   WHERE residents.email ~~* (auth.jwt() ->> 'email'))
+--
+-- RLS on `residents` applies inside that subquery, and RLS is the OR of
+-- ALL PERMISSIVE POLICIES — not just the one we rewrote. So the
+-- subquery returns whatever the caller can see through ANY residents
+-- policy. Rewriting resident_read_own to equality bounds it only if
+-- nothing ELSE grants a resident broader visibility of that table.
+--
+-- Group C requires role = 'resident', so the question narrows to:
+-- does any policy on residents grant a RESIDENT more than their own row?
+--
+--   · only resident_read_own applies to residents  → the inheritance
+--     argument holds cleanly
+--   · something else is permissive and broader      → that is a finding
+--     independent of this arc, and it widens Group C by a route the
+--     ILIKE enumeration never showed
+--
+-- Read `roles` and `qual` together: a policy scoped to manager or
+-- company_admin does not widen a resident, but one gated on a role the
+-- attacker could hold does.
+-- ══════════════════════════════════════════════════════════════════════
+SELECT
+  policyname,
+  cmd,
+  permissive,
+  roles::text AS granted_to,
+  qual,
+  with_check
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename  = 'residents'
+ORDER BY cmd, policyname;

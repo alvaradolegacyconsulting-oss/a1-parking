@@ -237,13 +237,46 @@ END $e4$;
 -- would return on a match — so a zero here can only come from the
 -- subquery being empty.
 --
--- READ THE NOTICE, NOT A PASS/FAIL. Both answers are useful:
---   ZERO     → inheritance holds. Group C is already mitigated by Tier 2.
---              Still rewrite it — safety resting on another table's
---              policy is fragile — but the urgency drops.
---   NON-ZERO → inheritance does not apply the way we think. Tier 3 is
---              exactly as exposed as the tier list says, AND every
---              nested policy in this codebase needs re-reading.
+-- 🔴 CORRECTED 2026-09-11, AFTER WRITING THIS: H1'S ANSWER MUST NOT
+--    MOVE GROUP C'S SCHEDULE. An earlier draft of this header said a
+--    ZERO result meant "Group C is already mitigated by Tier 2, the
+--    urgency drops." That was wrong about WHICH protection is doing the
+--    work.
+--
+--    Group C's real protection is the ROLE GATE, and it is stronger
+--    than the inheritance the hypothesis is about:
+--      1. attacker's JWT email is '%@gmail.com'
+--      2. Group C evaluates get_my_role() = 'resident'
+--      3. get_my_role() matches lower(email) = lower(jwt) — EQUALITY
+--         since 20260610
+--      4. no user_roles row holds the LITERAL string '%@gmail.com'
+--      5. NULL role, policy fails, the subquery is never reached
+--    So Group C needs a stored user_roles row containing the wildcard
+--    literally — not a pattern match. Two independent things prevent
+--    that: the 2026-09-11 tourniquet blocks % at every ingress, and
+--    zero accounts carry % today (counted 09-07, re-confirmed 09-11).
+--
+--    It WAS reachable before the tourniquet — register as
+--    '%@gmail.com', get a real user_roles row, equality-match your own
+--    literal, pass the role gate, and the subquery's ILIKE then matched
+--    every Gmail resident. That path is closed at the ingress.
+--
+-- H1 still earns its place: the fixture seeds that literal row, so it
+-- reconstructs exactly the pre-tourniquet state and tests the
+-- INHERITANCE question rather than the role gate. Whatever it returns
+-- is real information about how nested policies behave in this
+-- database, which matters beyond this arc.
+--
+-- READ THE NOTICE, NOT A PASS/FAIL. Neither answer changes Tier 3's
+-- ordering:
+--   ZERO     → inheritance holds; residents' RLS filters the subquery
+--              as well. A second layer under the role gate. Group C
+--              still gets rewritten — safety resting on another table's
+--              policy is fragile — on its existing schedule.
+--   NON-ZERO → inheritance does not apply the way we think. Group C is
+--              no MORE exposed than the role gate already leaves it,
+--              but every nested policy in this codebase needs
+--              re-reading on the same question.
 -- ══════════════════════════════════════════════════════════════════════
 DO $h1$
 DECLARE
@@ -293,7 +326,7 @@ SELECT
     'E2  drivers: exact-match JWT reads its own row (CONTROL) AND a wildcard JWT reads ZERO',
     'G3  driver_read_own polroles no longer contains PUBLIC (oid 0) — the half of the commit execution cannot see',
     'E4  counts the Tier 3 policies still carrying ILIKE, so a green run is not misread as the vector being closed',
-    'H1  HYPOTHESIS, not a gate — does residents RLS filter the subqueries inside Tier 3 Group C? Read the NOTICE; both answers change the Tier 3 plan',
+    'H1  HYPOTHESIS, not a gate — does residents RLS filter the subqueries inside Tier 3 Group C? Read the NOTICE. NEITHER answer moves Group C''s schedule: its real protection is the equality-locked role gate, which needs a stored user_roles row containing the wildcard LITERALLY.',
     'DISCIPLINE: a denial gate without a positive control is not weaker evidence — it is no evidence. Zero rows is also what a broken fixture produces.',
     'DISCIPLINE: G3 exists because a run that omitted the retarget would still deny the wildcard — the predicate is what denies, so E2 alone would pass green with {public} intact.'
   ] AS gates_verified,
