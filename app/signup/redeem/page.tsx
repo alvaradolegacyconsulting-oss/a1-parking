@@ -15,6 +15,7 @@ import { useSearchParams } from 'next/navigation'
 import { supabase } from '../../supabase'
 import { TurnstileWidget, type TurnstileHandle } from '../../components/TurnstileWidget'
 import { formatDateLong } from '../../lib/format-time'
+import { guardEmail } from '../../lib/email-guard'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -170,6 +171,19 @@ function RedeemInner() {
       return
     }
 
+
+    // ⚠ TOURNIQUET, CLIENT-SIDE — see app/lib/email-guard.ts.
+    // This page calls supabase.auth.signUp() DIRECTLY against GoTrue;
+    // there is no API route in between, so this check is UX and
+    // consistency, NOT a control — an attacker POSTs straight to the
+    // auth endpoint and never runs it. It is here so an honest user
+    // doesn't create an account the rest of the product will refuse.
+    // Treat /signup as OPEN until the policy rewrite lands.
+    const emailGuard = guardEmail(trimmedEmail)
+    if (!emailGuard.ok) {
+      setSubmission({ kind: 'error', message: emailGuard.message })
+      return
+    }
     const { data, error } = await supabase.auth.signUp({
       email: trimmedEmail,
       password,

@@ -2,6 +2,7 @@ import 'server-only'
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { verifyTurnstile } from '../../../lib/turnstile-verify'
+import { guardEmail } from '../../../lib/email-guard'
 
 // /api/register/create-user — public resident self-registration creator
 // (C′′, 2026-06-29). Replaces the /register path's call chain of
@@ -80,6 +81,18 @@ export async function POST(req: NextRequest) {
   const password     =  body.password ?? ''
   if (!email || !password) {
     return NextResponse.json({ ok: false, error: 'Email and password are required.' }, { status: 400 })
+  }
+
+  // 🔴 TOURNIQUET (2026-09-11) — see app/lib/email-guard.ts. This is the
+  // PUBLIC, live ingress: admin.createUser accepts `%` (probed against
+  // production the same day), and a session held under `%@gmail.com`
+  // makes every `email ~~*` RLS policy match every Gmail address in the
+  // table. Checked BEFORE Turnstile so a rejected address costs no
+  // siteverify call, and before any DB or auth write.
+  // Interim — the fix is the policy rewrite.
+  const emailGuard = guardEmail(email)
+  if (!emailGuard.ok) {
+    return NextResponse.json({ ok: false, error: emailGuard.message }, { status: 400 })
   }
 
   // ── 2. CAPTCHA siteverify (ADD 1 — the security boundary) ─────

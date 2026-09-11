@@ -12,6 +12,8 @@
 // CSV templates are exported as strings; client builds the Blob
 // (avoids server route for static template download).
 
+import { findBlockedEmailChar } from './email-guard'
+
 export type EntityType = 'driver' | 'resident'
 
 // ── Validated row types (post-validation shape returned to caller) ───
@@ -52,6 +54,18 @@ export const MAX_UPLOAD_ROWS = 500
 // ── Email regex matches the same shape used elsewhere in the codebase
 // (signup form, login form, etc.). Permissive — Stripe / Supabase
 // will reject truly malformed emails at write time.
+//
+// 🔴 2026-09-11 — "Supabase will reject truly malformed emails" IS NOT
+// TRUE of LIKE metacharacters. Probed against production the same day:
+// admin.createUser ACCEPTS `%` in the local part, no error. And this
+// regex permits it — `%` and `\` are neither whitespace nor `@`, so
+// they pass. The one path in the codebase that validates email shape
+// would not have stopped the wildcard vector.
+//
+// Shape check and metacharacter check are now SEPARATE concerns:
+// EMAIL_RE still answers "is this an address", guardEmail answers "can
+// this address be used as an ILIKE pattern against other rows". See
+// app/lib/email-guard.ts. Interim; the fix is the policy rewrite.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 // ── Mojibake detection ───────────────────────────────────────────────
@@ -124,6 +138,7 @@ export function validateDriverRows(rawRows: Array<Record<string, unknown>>): Val
 
     if (!email) errors.push({ row_index: i, field: 'email', message: 'required' })
     else if (!EMAIL_RE.test(email)) errors.push({ row_index: i, field: 'email', message: 'invalid email format' })
+    else if (findBlockedEmailChar(email)) errors.push({ row_index: i, field: 'email', message: `cannot contain "${findBlockedEmailChar(email)}"` })
 
     if (!name) errors.push({ row_index: i, field: 'name', message: 'required' })
     else if (detectMojibake(name)) errors.push({ row_index: i, field: 'name', message: 'encoding issue (mojibake) — save CSV as UTF-8' })
@@ -151,6 +166,7 @@ export function validateResidentRows(rawRows: Array<Record<string, unknown>>): V
 
     if (!email) errors.push({ row_index: i, field: 'email', message: 'required' })
     else if (!EMAIL_RE.test(email)) errors.push({ row_index: i, field: 'email', message: 'invalid email format' })
+    else if (findBlockedEmailChar(email)) errors.push({ row_index: i, field: 'email', message: `cannot contain "${findBlockedEmailChar(email)}"` })
 
     if (!name) errors.push({ row_index: i, field: 'name', message: 'required' })
     else if (detectMojibake(name)) errors.push({ row_index: i, field: 'name', message: 'encoding issue (mojibake) — save CSV as UTF-8' })

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
+import { guardEmail } from '../../../lib/email-guard'
 
 // /api/admin/invite-user — D1 Commit 2.
 //
@@ -121,6 +122,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 })
   }
   const email = String(body.email ?? '').trim().toLowerCase()
+
+  // 🔴 TOURNIQUET (2026-09-11) — see app/lib/email-guard.ts. Blocks the
+  // LIKE metacharacters that make an `email ~~*` policy match more than
+  // the holder's own row. Interim; the fix is the policy rewrite.
+  const emailGuard = guardEmail(email)
+  if (!emailGuard.ok) {
+    return NextResponse.json({ error: emailGuard.message }, { status: 400 })
+  }
   const role = String(body.role ?? '').trim()
   const name = body.name ? String(body.name).trim() : null
   // Property — accept the same shape as bulk-invite per-row.

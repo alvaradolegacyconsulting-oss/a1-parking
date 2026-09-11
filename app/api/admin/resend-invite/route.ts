@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
+import { guardEmail } from '../../../lib/email-guard'
 
 // B144 (folded into B66.5 commit 4.3) — CA-initiated resend invite.
 //
@@ -75,6 +76,15 @@ export async function POST(req: NextRequest) {
   if (!targetEmail) {
     return NextResponse.json({ error: 'target_email is required' }, { status: 400 })
   }
+
+  // 🔴 TOURNIQUET (2026-09-11) — see app/lib/email-guard.ts. Blocks the
+  // LIKE metacharacters that make an `email ~~*` policy match more than
+  // the holder's own row. Interim; the fix is the policy rewrite.
+  const emailGuard = guardEmail(targetEmail)
+  if (!emailGuard.ok) {
+    return NextResponse.json({ error: emailGuard.message }, { status: 400 })
+  }
+
 
   // ── 3. Account-state guard (B66.5 c4.3) ───────────────────────────
   // Skip for admin role (no company association). For company_admin,

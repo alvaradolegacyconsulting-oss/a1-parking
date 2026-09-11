@@ -30,6 +30,7 @@ import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWi
 import LegalGateAccordion, { type GateSpec } from '../components/LegalGateAccordion'
 import TermsBody from '../components/TermsBody'
 import PrivacyBody from '../components/PrivacyBody'
+import { guardEmail } from '../lib/email-guard'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -214,6 +215,19 @@ export default function SignupTierPicker() {
       ? 'https://shieldmylot.com/signup/verify'
       : `${window.location.origin}/signup/verify`
 
+
+    // ⚠ TOURNIQUET, CLIENT-SIDE — see app/lib/email-guard.ts.
+    // This page calls supabase.auth.signUp() DIRECTLY against GoTrue;
+    // there is no API route in between, so this check is UX and
+    // consistency, NOT a control — an attacker POSTs straight to the
+    // auth endpoint and never runs it. It is here so an honest user
+    // doesn't create an account the rest of the product will refuse.
+    // Treat /signup as OPEN until the policy rewrite lands.
+    const emailGuard = guardEmail(trimmedEmail)
+    if (!emailGuard.ok) {
+      setSubmission({ kind: 'error', message: emailGuard.message })
+      return
+    }
     const { data, error } = await supabase.auth.signUp({
       email: trimmedEmail,
       password,

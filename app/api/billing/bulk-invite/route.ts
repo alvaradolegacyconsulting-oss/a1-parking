@@ -16,6 +16,7 @@ import {
   type DriverRow,
   type ResidentRow,
 } from '../../../lib/bulk-upload-helpers'
+import { guardEmail } from '../../../lib/email-guard'
 
 // B113 commit 2 — bulk invite + entity insert for company_admin.
 //
@@ -239,6 +240,18 @@ export async function POST(req: NextRequest) {
 
   for (const row of validated.rows) {
     try {
+      // 🔴 TOURNIQUET (2026-09-11) — see app/lib/email-guard.ts.
+      // Belt-and-braces: validateBulkRows already rejects these, but
+      // this loop is what actually reaches inviteUserByEmail, and a
+      // future caller could hand it rows from somewhere else. Rejected
+      // rows become a per-row error rather than failing the batch —
+      // one bad address in a 500-row CSV must not discard the other 499.
+      const emailGuard = guardEmail(row.email)
+      if (!emailGuard.ok) {
+        results.push({ email: row.email, status: 'error', error: emailGuard.message })
+        continue
+      }
+
       // 8a. Invite — service-role required (Auth admin API)
       const { error: inviteErr } = await service.auth.admin.inviteUserByEmail(row.email, {
         redirectTo: inviteRedirect,
