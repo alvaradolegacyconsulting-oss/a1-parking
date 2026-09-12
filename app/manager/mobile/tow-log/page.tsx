@@ -51,6 +51,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../../supabase'
 import { getCompanyContext } from '../../../lib/tier'
 import { normalizePlate } from '../../../lib/plate'
+import { formatTimestamp } from '../../../lib/format-time'
 import {
   REMOVAL_REASONS,
   OTHER_NOTE_MIN_LENGTH,
@@ -118,6 +119,12 @@ export default function TowLogMobilePage() {
   const [authorizedByName, setAuthorizedByName] = useState('')
   const [notes, setNotes] = useState('')
   const [files, setFiles] = useState<File[]>([])
+  // Vehicle description — optional, collapsed. See the field below.
+  const [showVehicleDetails, setShowVehicleDetails] = useState(false)
+  const [plateState, setPlateState] = useState('')
+  const [make, setMake] = useState('')
+  const [model, setModel] = useState('')
+  const [color, setColor] = useState('')
 
   // ── Submit ────────────────────────────────────────────────────────
   const [submitting, setSubmitting] = useState(false)
@@ -142,6 +149,11 @@ export default function TowLogMobilePage() {
   const [success, setSuccess] = useState<{ id: number; plate: string; media: MediaUploadOutcome | null } | null>(null)
 
   const selectedProperty = propertyOptions.find(p => p.name === propertyName) ?? null
+  // 🔴 ONE derivation, used by the preview AND by handleSubmit. If the
+  // preview computed this separately the screen could show one time and
+  // save another — which is the class of defect this whole change is
+  // about.
+  const effectiveTowedAt = timeIsNow ? new Date() : fromLocalInputValue(towedAtLocal)
   const reasonIsOther = reasonCode === 'other'
   const reasonNotesShort = reasonIsOther && reasonNotes.trim().length < OTHER_NOTE_MIN_LENGTH
 
@@ -230,6 +242,8 @@ export default function TowLogMobilePage() {
     setTimeIsNow(true); setTowedAtLocal(toLocalInputValue(new Date()))
     setAuthorizedByEmail(callerEmail); setAuthorizedByName('')
     setNotes(''); setFiles([])
+    setShowVehicleDetails(false)
+    setPlateState(''); setMake(''); setModel(''); setColor('')
     setFormError(null); setOperatorNotice(null)
   }
 
@@ -245,6 +259,10 @@ export default function TowLogMobilePage() {
 
     setSubmitting(true)
     try {
+      // Re-derived at submit rather than reusing the render-time value:
+      // "Just now" must mean the moment of saving, not the moment the
+      // form last re-rendered. For a chosen datetime the two are
+      // identical, and the preview above shows that same value.
       const towedAt = timeIsNow ? new Date() : fromLocalInputValue(towedAtLocal)
       const result = await recordVehicleRemoval(supabase, {
         property: selectedProperty.name,
@@ -256,6 +274,14 @@ export default function TowLogMobilePage() {
         authorizedByName: authorizedByName || null,
         reasonNotes: reasonNotes || null,
         notes: notes || null,
+        // Sent even when blank. The RPC fills each ONE from the linked
+        // vehicle only where the caller left it empty, so a typed value
+        // always wins — see 20260912_record_vehicle_removal_link_
+        // vehicle_description.sql.
+        plateState: plateState || null,
+        make: make || null,
+        model: model || null,
+        color: color || null,
       })
 
       if (!result.ok) {
@@ -443,9 +469,30 @@ export default function TowLogMobilePage() {
         {operatorNotice && <div style={{ color: C.green, fontSize: '12px', marginTop: '6px' }}>{operatorNotice}</div>}
       </Field>
 
-      {/* 4 — When. Zero taps live, one for the Monday write-up. Without
-          the Change link every backdated record silently carries the
-          wrong timestamp. */}
+      {/* 4 — When. Zero taps live, one for the Monday write-up.
+          ── 🔴 UAT 2026-09-12: a chosen future date saved as TODAY ──
+          Neither of the two obvious causes was real. The client
+          validator rejects a future towed_at (validateRemovalInput in
+          tow-log-writes.ts) AND the RPC rejects it again — there is no
+          discard path and no retry-with-default anywhere in the code.
+          The only way now() reaches the RPC is timeIsNow === true at
+          submit, which means the chosen value was REVERTED IN THE UI
+          before submitting.
+          The mechanism this layout allowed: a bare "Now" button sat
+          directly beside the input, so one tap after the native picker
+          closed silently threw the chosen datetime away and went back
+          to "Just now" — which reads as a STATE, not as a discard.
+          Three changes, each fixing a different part of it:
+            1. `max` — the picker will not offer a future time at all.
+               Prevention beats reporting.
+            2. The effective timestamp is ALWAYS displayed, through the
+               same formatTimestamp() the desktop detail panel uses. So
+               what you see before saving is what gets stored, and a
+               silent revert becomes visible.
+            3. the bare "Now" is relabelled to read as an action with a
+               consequence rather than a state you might already be in.
+          A defence-file record that disagrees with the manager's memory
+          of creating it is worse than a rejection. */}
       <Field label="When" required>
         {timeIsNow ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -457,13 +504,24 @@ export default function TowLogMobilePage() {
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <input type="datetime-local" value={towedAtLocal} onChange={e => setTowedAtLocal(e.target.value)} style={{ ...input(), marginBottom: 0 }} />
-            <button onClick={() => setTimeIsNow(true)}
-              style={{ background: 'none', border: 'none', color: C.gold, fontSize: '13px', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}>
-              Now
+            <input
+              type="datetime-local"
+              value={towedAtLocal}
+              max={toLocalInputValue(new Date())}
+              onChange={e => setTowedAtLocal(e.target.value)}
+              style={{ ...input(), marginBottom: 0 }}
+            />
+            <button onClick={() => { setTimeIsNow(true); setTowedAtLocal(toLocalInputValue(new Date())) }}
+              style={{ background: 'none', border: 'none', color: C.gold, fontSize: '12px', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap', textDecoration: 'underline' }}>
+              Use now
             </button>
           </div>
         )}
+        {/* What will actually be stored — same helper as the detail
+            panel, so the two can never disagree. */}
+        <div style={{ color: C.muted, fontSize: '11px', marginTop: '6px' }}>
+          Will be recorded as <strong style={{ color: C.text }}>{formatTimestamp(effectiveTowedAt)}</strong>
+        </div>
       </Field>
 
       {/* 5 — Authorized by. A statement of fact about who made the call,
@@ -484,6 +542,42 @@ export default function TowLogMobilePage() {
           style={{ ...input(), resize: 'vertical' }}
         />
       </Field>
+
+      {/* 6b — Vehicle description. Optional, COLLAPSED by default so the
+          fast path stays fast: for a resident's registered car the RPC
+          fills these from the linked vehicle and nobody needs to type
+          anything.
+          🔴 It exists for the WALK-IN case, which is the scenario the
+          whole feature is for — an unregistered visitor in a handicap
+          space has no vehicles row to link, so without these inputs the
+          four export columns stay permanently empty. And there is NO
+          edit path: anything not captured here is lost for good, which
+          is why it belongs on the create screen and not on a desktop
+          edit that does not exist. */}
+      <div style={{ marginBottom: '16px' }}>
+        <button
+          onClick={() => setShowVehicleDetails(v => !v)}
+          style={{ background: 'none', border: 'none', color: C.gold, fontSize: '13px', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+        >
+          {showVehicleDetails ? '− Hide vehicle details' : '+ Add vehicle details (optional)'}
+        </button>
+        {!showVehicleDetails && (
+          <div style={{ color: C.faint, fontSize: '11px', marginTop: '4px' }}>
+            Filled in automatically if this plate is registered here.
+          </div>
+        )}
+        {showVehicleDetails && (
+          <div style={{ marginTop: '8px' }}>
+            <div style={{ color: C.faint, fontSize: '11px', marginBottom: '6px', lineHeight: 1.5 }}>
+              Anything you type here is kept as-is. Blank fields are filled from the registered vehicle when the plate matches one at this property.
+            </div>
+            <input value={plateState} onChange={e => setPlateState(e.target.value.toUpperCase().slice(0, 2))} placeholder="State (e.g. TX)" autoCapitalize="characters" style={input()} />
+            <input value={make}  onChange={e => setMake(e.target.value)}  placeholder="Make" style={input()} />
+            <input value={model} onChange={e => setModel(e.target.value)} placeholder="Model" style={input()} />
+            <input value={color} onChange={e => setColor(e.target.value)} placeholder="Color" style={input()} />
+          </div>
+        )}
+      </div>
 
       {/* 7 — Photos, optional, last. */}
       <Field label="Photos (optional)">
