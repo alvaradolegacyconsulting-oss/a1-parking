@@ -51,6 +51,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../../supabase'
 import { getCompanyContext } from '../../../lib/tier'
 import { normalizePlate } from '../../../lib/plate'
+import { escapeIlikeValue } from '../../../lib/supabase-query-escape'
 import { formatTimestamp } from '../../../lib/format-time'
 import {
   REMOVAL_REASONS,
@@ -125,6 +126,7 @@ export default function TowLogMobilePage() {
   const [make, setMake] = useState('')
   const [model, setModel] = useState('')
   const [color, setColor] = useState('')
+  const [lookupNote, setLookupNote] = useState<string | null>(null)
 
   // ── Submit ────────────────────────────────────────────────────────
   const [submitting, setSubmitting] = useState(false)
@@ -209,6 +211,64 @@ export default function TowLogMobilePage() {
     bootstrap()
   }, [])
 
+  // ── Plate blur → prefill the vehicle description ──────────────────
+  // Same principle as the "Will be recorded as" line on the When field:
+  // show what will be stored BEFORE saving, instead of having it appear
+  // server-side afterwards. The manager sees "Toyota Camry" and knows
+  // the system found the right car — or sees nothing and knows it is a
+  // walk-in.
+  //
+  // No new RPC. Managers already read `vehicles` directly under RLS —
+  // /manager/mobile's plate lookup does exactly this — so this is a
+  // read that already works from this bundle.
+  //
+  // 🔴 The status filter MIRRORS the RPC's soft link
+  // (20260912_record_vehicle_removal_link_pending_vehicles.sql): active
+  // OR pending, and deactivated rows keep status='active' with
+  // is_active=false, so is_active is checked for the active branch. If
+  // these two ever disagree the screen promises one thing and the
+  // record stores another — the exact class the When field fix was
+  // about. Change them together.
+  //
+  // Non-blocking by construction: fires on blur, never awaited by the
+  // submit path, and only fills fields the manager left EMPTY. On weak
+  // LTE a slow round trip delays nothing — it just arrives late, and a
+  // typed value still wins both here and in the RPC.
+  async function prefillFromVehicle() {
+    const normalized = normalizePlate(plate)
+    if (!normalized || !selectedProperty) { setLookupNote(null); return }
+    const { data, error } = await supabase
+      .from('vehicles')
+      .select('state, make, model, color, status, is_active')
+      .eq('plate', normalized)
+      .ilike('property', escapeIlikeValue(selectedProperty.name))
+      .or('and(status.eq.active,is_active.eq.true),status.eq.pending')
+      .order('status', { ascending: true })
+      .limit(1)
+    if (error) {
+      console.error('[tow-log] plate prefill failed', error)
+      setLookupNote(null)   // never surface a raw read error for a convenience
+      return
+    }
+    const v = (data ?? [])[0]
+    if (!v) {
+      setLookupNote('No registered vehicle with this plate at this property.')
+      return
+    }
+    // Only fill what is EMPTY — a typed value is never overwritten, the
+    // same precedence the RPC enforces server-side.
+    if (!plateState && v.state) setPlateState(String(v.state))
+    if (!make && v.make)        setMake(String(v.make))
+    if (!model && v.model)      setModel(String(v.model))
+    if (!color && v.color)      setColor(String(v.color))
+    setShowVehicleDetails(true)
+    setLookupNote(
+      v.status === 'pending'
+        ? 'Found a registered vehicle (still pending approval).'
+        : 'Found a registered vehicle.',
+    )
+  }
+
   // ── Add an operator inline ────────────────────────────────────────
   // find-or-create: a repeated name returns the EXISTING id with
   // created:false. Say so plainly — a manager who typed a name and got
@@ -243,7 +303,7 @@ export default function TowLogMobilePage() {
     setAuthorizedByEmail(callerEmail); setAuthorizedByName('')
     setNotes(''); setFiles([])
     setShowVehicleDetails(false)
-    setPlateState(''); setMake(''); setModel(''); setColor('')
+    setPlateState(''); setMake(''); setModel(''); setColor(''); setLookupNote(null)
     setFormError(null); setOperatorNotice(null)
   }
 
@@ -397,7 +457,8 @@ export default function TowLogMobilePage() {
       <Field label="License plate" required>
         <input
           value={plate}
-          onChange={e => setPlate(normalizePlate(e.target.value))}
+          onChange={e => { setPlate(normalizePlate(e.target.value)); setLookupNote(null) }}
+          onBlur={prefillFromVehicle}
           placeholder="ABC1234"
           autoCapitalize="characters"
           autoCorrect="off"
@@ -411,6 +472,9 @@ export default function TowLogMobilePage() {
             fontWeight: 'bold',
           }}
         />
+        {lookupNote && (
+          <div style={{ color: C.muted, fontSize: '11px', marginTop: '4px' }}>{lookupNote}</div>
+        )}
       </Field>
 
       {/* 2 — Reason */}

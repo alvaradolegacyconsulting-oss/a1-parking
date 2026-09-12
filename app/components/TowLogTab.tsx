@@ -576,6 +576,26 @@ export default function TowLogTab() {
           <Row label="Recorded">{formatTimestamp(selected.created_at)} by {selected.recorded_by_email}</Row>
           <Row label="Property">{selected.property}</Row>
           <Row label="Type">{selected.removal_type}</Row>
+          {/* Vehicle description. Commit 6 was built before these columns
+              could be populated, so nothing displayed them — and once the
+              2026-09-12 linked-vehicle fill landed, make and model
+              appeared in the CSV export and NOWHERE ON SCREEN. The
+              manager answering "where is my car" saw less than the file
+              they would send the operator.
+              Omitted entirely when all four are null rather than
+              rendering an empty label: a walk-in with no description is
+              a normal record, not a gap.
+              No year — vehicle_removals has no year column, only these
+              four. */}
+          {(selected.make || selected.model || selected.color || selected.plate_state) && (
+            <Row label="Vehicle">
+              {[
+                [selected.make, selected.model].filter(Boolean).join(' ') || null,
+                selected.color,
+                selected.plate_state,
+              ].filter(Boolean).join(' · ')}
+            </Row>
+          )}
           <Row label="Reason">{displayTowReason(selected.reason_code)}</Row>
           {selected.reason_notes && (
             <Row label="Why (on the record)">{selected.reason_notes}</Row>
@@ -586,9 +606,7 @@ export default function TowLogTab() {
           <Row label="Authorized by">
             {selected.authorized_by_name ? `${selected.authorized_by_name} · ` : ''}{selected.authorized_by_email}
           </Row>
-          {(selected.make || selected.model || selected.color) && (
-            <Row label="Vehicle">{[selected.color, selected.make, selected.model].filter(Boolean).join(' ')}</Row>
-          )}
+
 
           {selected.notes && (
             <div style={{ marginTop: '12px', background: '#0f1117', border: `1px solid ${C.border}`, borderRadius: '8px', padding: '10px' }}>
