@@ -49,6 +49,19 @@
 -- 20260910_record_vehicle_removal_plate_normalize_fix_verification.sql
 -- enforces it.
 --
+-- ── STATUS: APPLIED 2026-09-12 ──────────────────────────────────────
+-- ⚠ APPLIED WITHOUT A PAIRED VERIFICATION — the first migration in this
+-- project to do so. Not a problem in itself: it is a function body, no
+-- schema change, and it is verifiable retroactively. Recorded here
+-- rather than left for the next reader to infer from audit_logs.
+--
+-- The paired file landed after the fact:
+--   20260912_record_vehicle_removal_link_vehicle_description_verification.sql
+-- Its load-bearing gate is P1, the caller-wins precedence — swapping the
+-- COALESCE arguments below would still fill every column, so a gate that
+-- only asserts non-null goes green on the inverted version while a stale
+-- registration silently overwrites what a manager typed.
+--
 -- ── APPLY DISCIPLINE (CRITICAL) ─────────────────────────────────────
 -- Paste the ENTIRE BEGIN/COMMIT block as ONE block, click Run ONCE.
 -- ══════════════════════════════════════════════════════════════════════
