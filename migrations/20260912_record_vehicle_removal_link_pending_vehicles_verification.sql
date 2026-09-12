@@ -114,8 +114,13 @@ BEGIN
   END IF;
 
   -- ── L4 — 🔴 DEACTIVATED must NOT link ───────────────────────────
-  -- The gate the obvious predicate fails. This row has status='active'
-  -- and is_active=false, because deactivation only flips is_active.
+  -- The gate the obvious predicate fails. This fixture row is the
+  -- B166 OWNER-TRIM shape — status='active', is_active=false — because
+  -- that path (manager-crm-writes.ts:299) flips only is_active.
+  -- The OTHER shape, from the deactivate_vehicle RPC, is
+  -- status='deactivated' and is excluded by the predicate trivially.
+  -- This gate deliberately seeds the harder of the two: the one that
+  -- still looks active by status alone.
   SET LOCAL ROLE authenticated;
   v_res := public.record_vehicle_removal('Test PM Property', 'LINKDEACT1', 'abandoned_vehicle', now(),
              'pm-manager@test.shieldmylot.com', v_op);

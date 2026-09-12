@@ -27,12 +27,44 @@
 -- of the intent.
 --
 -- Checked in the write paths rather than assumed from the column names.
--- The four states, and what each must do:
---     active      status='active',  is_active=true   → LINK
---     pending     status='pending', is_active=false  → LINK
---     declined    status='declined',is_active=false  → NO
---     deactivated status='active',  is_active=false  → NO
+--
+-- ⚠ DEACTIVATION HAS TWO SHAPES, not one. An earlier draft of this
+-- comment said "status stays 'active'", which is true of only one of
+-- them:
+--   · deactivate_vehicle RPC (20260806_deactivate_vehicle_rpc.sql:196)
+--     sets status='deactivated' AND is_active=false
+--   · the B166 owner-trim (manager-crm-writes.ts:299) sets ONLY
+--     is_active=false, leaving status='active'
+-- Both are excluded by the predicate below, but for different reasons,
+-- and a reader who knows only the first would think the is_active check
+-- on the active branch was redundant. It is not.
+--
+-- The states, and what each must do:
+--     active        status='active',      is_active=true   → LINK
+--     pending       status='pending',     is_active=false  → LINK
+--     declined      status='declined',    is_active=false  → NO
+--     deactivated   status='deactivated', is_active=false  → NO  (RPC)
+--     owner-trimmed status='active',      is_active=false  → NO  (B166)
 -- which the shipped predicate spells out as two explicit alternatives.
+--
+-- ── RESIDUAL CHECKED: "pending AND deactivated" IS UNREACHABLE ──────
+-- The pending branch does not test is_active, because a pending row is
+-- is_active=false by definition. So a row that was pending and THEN
+-- deactivated would also link. Three paths could produce it; none does:
+--   · B166 owner-trim carries .eq('is_active', true), so it can only
+--     ever match rows that are already active — never a pending one.
+--   · the UI does not offer deactivate on a pending vehicle
+--     (PmResidentCrm.tsx:1434 gates on displayStatus === 'active').
+--   · deactivate_vehicle, if called on a pending row anyway, sets
+--     status='deactivated' — which this predicate already excludes. So
+--     even bypassing the UI gate produces a correctly-excluded row.
+--
+-- 🔴 A NEW DEACTIVATION PATH THAT LEAVES status='pending' WOULD MAKE
+-- THIS REACHABLE. If you add one, this branch needs to distinguish
+-- "pending, never approved" from "pending, then deactivated" — and note
+-- that deactivated_at will NOT separate them, because the owner-trim
+-- path stamps nothing. Written down because the next person adding a
+-- deactivation path is the one who needs to know.
 --
 -- ── ORDER BY, NOT JUST LIMIT 1 ──────────────────────────────────────
 -- With both an active and a pending row for one plate, LIMIT 1 without

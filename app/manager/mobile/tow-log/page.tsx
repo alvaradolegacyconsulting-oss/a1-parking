@@ -222,13 +222,29 @@ export default function TowLogMobilePage() {
   // /manager/mobile's plate lookup does exactly this — so this is a
   // read that already works from this bundle.
   //
-  // 🔴 The status filter MIRRORS the RPC's soft link
+  // The status filter MIRRORS the RPC's soft link
   // (20260912_record_vehicle_removal_link_pending_vehicles.sql): active
-  // OR pending, and deactivated rows keep status='active' with
-  // is_active=false, so is_active is checked for the active branch. If
-  // these two ever disagree the screen promises one thing and the
-  // record stores another — the exact class the When field fix was
-  // about. Change them together.
+  // OR pending, with is_active checked on the active branch because the
+  // B166 owner-trim leaves status='active' while flipping is_active.
+  // Change them together.
+  //
+  // ⚠ BUT BE ACCURATE ABOUT WHAT DRIFT COSTS — it is NOT the
+  // shown-versus-stored class the When field was, and treating it as
+  // that sends someone hunting a data bug that does not exist:
+  //
+  //   client WIDER than the RPC — the screen shows Toyota Camry, those
+  //     values go into the payload, and CALLER-WINS means the RPC
+  //     stores them. Screen and record AGREE. What diverges is
+  //     linked_vehicle_id (null) and vehicle_desc_source, which reads
+  //     'caller_only' instead of 'caller_then_linked_vehicle'. The data
+  //     is right; the PROVENANCE understates where it came from.
+  //
+  //   client NARROWER than the RPC — the screen shows nothing and the
+  //     record is filled server-side. Mild surprise, nothing wrong.
+  //
+  // So: still worth fixing, and it is an audit-trail inaccuracy rather
+  // than a wrong record. vehicle_desc_source is what makes it
+  // diagnosable at all.
   //
   // Non-blocking by construction: fires on blur, never awaited by the
   // submit path, and only fills fields the manager left EMPTY. On weak
