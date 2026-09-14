@@ -374,6 +374,12 @@ function VisitorForm() {
               <span style={{ background:'#1a3a1a', color:'#4caf50', border:'1px solid #2e7d32', borderRadius:'20px', padding:'3px 10px', fontSize:'11px', fontWeight:'bold' }}>✓ Active</span>
             </div>
 
+            {/* Property in large type on the pass itself — the tile
+                below keeps it in the grid, but at 11px among five tiles
+                it was not something a visitor would catch. This is the
+                line that turns a silent wrong-property pass into a
+                visible one. */}
+            <p style={{ color:'#C9A227', fontSize:'18px', fontWeight:'bold', margin:'0 0 10px', textAlign:'center', lineHeight:1.3 }}>{resolvedPropertyName}</p>
             <p style={{ color:'white', fontFamily:'Courier New', fontSize:'36px', fontWeight:'bold', letterSpacing:'0.14em', margin:'0 0 4px', textAlign:'center' }}>{normalizePlate(form.plate)}</p>
             {form.vehicle_desc && <p style={{ color:'#C9A227', fontSize:'12px', margin:'0 0 16px', textAlign:'center' }}>{form.vehicle_desc}</p>}
             {!form.vehicle_desc && <div style={{ marginBottom:'16px' }} />}
@@ -446,7 +452,14 @@ function VisitorForm() {
 
         <div style={{ marginBottom:'24px', textAlign:'center' }}>
           <h1 style={{ color:'#C9A227', fontSize:'24px', fontWeight:'bold', margin:'0' }}>{companyName || 'Visitor Parking Pass'}</h1>
-          <p style={{ color:'#888', fontSize:'13px', margin:'6px 0 0' }}>Visitor Parking Pass · {resolvedPropertyName}</p>
+          {/* 2026-09-14: the PROPERTY is the thing a visitor most needs
+              to be able to catch being wrong. A wrong selection on the
+              company picker used to be invisible from the moment it was
+              made — 13px grey text. If this says Green Acres and she is
+              standing at Sugarberry, she now has a chance to notice
+              before entering a plate. */}
+          <p style={{ color:'white', fontSize:'20px', fontWeight:'bold', margin:'8px 0 0', lineHeight:1.3 }}>{resolvedPropertyName}</p>
+          <p style={{ color:'#888', fontSize:'13px', margin:'4px 0 0' }}>Visitor Parking Pass</p>
           <p style={{ color:'#555', fontSize:'11px', margin:'4px 0 0' }}>Valid up to 24 hours · No app download required</p>
         </div>
 

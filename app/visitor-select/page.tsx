@@ -33,7 +33,16 @@ function VisitorSelectForm() {
       const { data } = await supabase.rpc('get_properties_for_visitor_select', { p_company: company })
       if (cancelled) return
       setProperties(data || [])
-      if (data && data.length > 0) setSelected(data[0].name)
+      // ── 🔴 NO PRESELECTION when there is a choice to make ────────
+      // 2026-09-14, A1: a visitor at Sugarberry scanned the company
+      // code, Green Acres was preselected as the first option, she
+      // tapped Continue without noticing and believed she held a valid
+      // pass. She did not. A default that is USUALLY wrong for the
+      // person reading it is worse than no default.
+      // The one exception: exactly one property. There is no ambiguity
+      // to protect against, and forcing a tap on a single-item dropdown
+      // is friction for nothing.
+      if (data && data.length === 1) setSelected(data[0].name)
       setLoading(false)
     }
     load()
@@ -87,11 +96,27 @@ function VisitorSelectForm() {
           </p>
 
           <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Select Property</label>
+          {/* Placeholder is value="" and disabled, so the controlled
+              select renders it while `selected` is empty and the wheel
+              cannot land on it as a real choice. Continue is gated on
+              `selected` below — the placeholder alone is not enough,
+              because a tap straight through would otherwise produce an
+              error the visitor cannot interpret.
+              ⚠ iOS Safari has rendered a disabled first option as
+              selectable in the past. The Continue gate is the backstop
+              for that: even if the wheel lands here, `selected` stays
+              '' and the button stays grey. Test on a real phone — this
+              surface is reached almost exclusively from a phone camera.
+              There is no <form> element here, so Return cannot submit
+              past the gate either. */}
           <select
             value={selected}
             onChange={e => setSelected(e.target.value)}
-            style={{ display:'block', width:'100%', marginTop:'8px', marginBottom:'20px', padding:'12px', fontSize:'14px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none' }}
+            style={{ display:'block', width:'100%', marginTop:'8px', marginBottom:'20px', padding:'12px', fontSize:'14px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color: selected ? 'white' : '#888', outline:'none' }}
           >
+            {properties.length !== 1 && (
+              <option value="" disabled>Select property…</option>
+            )}
             {properties.map((p, i) => (
               <option key={i} value={p.name}>{p.name}</option>
             ))}
