@@ -1,6 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    { "path": "/api/cron/dunning", "schedule": "0 * * * *" }
+    {
+      "path": "/api/cron/dunning",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-permits",
+      "schedule": "15 9 * * *"
+    }
   ]
 }
