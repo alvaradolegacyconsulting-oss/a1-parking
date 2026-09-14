@@ -57,7 +57,10 @@ import {
 export async function callSyncOnAdd(
   companyId: number,
   kind: 'property' | 'driver' | 'permit',
-): Promise<{ ok: true; action: string } | { ok: false; reason: string }> {
+): Promise<
+  | { ok: true;  action: string }
+  | { ok: false; reason: string; expected: boolean }
+> {
   try {
     const res = await fetch('/api/billing/sync-on-add', {
       method: 'POST',
@@ -68,9 +71,31 @@ export async function callSyncOnAdd(
     if (res.ok && json.ok) {
       return { ok: true, action: String(json.action ?? 'unknown') }
     }
-    return { ok: false, reason: String(json.reason ?? json.error ?? `HTTP ${res.status}`) }
+    // ── 🔴 403 IS THE EXPECTED OUTCOME FOR A MANAGER, NOT A FAILURE ──
+    // /api/billing/sync-on-add is gated to admin + company_admin. A
+    // MANAGER approving vehicles — which is who works the approval
+    // queue — cannot call it, by design (billing is subscriber-only:
+    // feedback_billing_is_subscriber_only). So a manager's approve
+    // always produces this 403, the approval itself succeeds, and the
+    // permit count is corrected at the next renewal by
+    // reconcileAtRenewal (stripe-mutations.ts, per_permit included).
+    //
+    // 2026-09-13: this 403 sat in the console next to a genuine
+    // approval failure and was read as its cause. It never reaches the
+    // user (syncFired is returned and consumed by nothing) — it only
+    // misleads whoever is DIAGNOSING. Classified here so the callers
+    // log it as an expected skip, not a failure.
+    //
+    // What it still costs: the prorated charge for the partial cycle
+    // between a manager's approve and the next renewal is never
+    // billed. Not a permanent leak — the quantity is right from the
+    // next cycle on — but on PM Starter past 500 permits that
+    // proration is real money. Whether managers should be able to
+    // trigger the sync is a separate decision; see the 09-13 report.
+    const expected = res.status === 403
+    return { ok: false, expected, reason: String(json.reason ?? json.error ?? `HTTP ${res.status}`) }
   } catch (e) {
-    return { ok: false, reason: (e as Error).message }
+    return { ok: false, expected: false, reason: (e as Error).message }
   }
 }
 
@@ -440,8 +465,13 @@ export async function approveVehiclesBatch(
   if (approved.length > 0 && companyIdForSync) {
     const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
     syncFired = syncRes.ok
-    console.info('[B147-sync-result]', { site: logSite, kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
-    if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: logSite, approvedCount: approved.length, reason: syncRes.reason })
+    console.info('[B147-sync-result]', { site: logSite, kind: 'permit', result: syncRes.ok ? syncRes.action : `${syncRes.expected ? 'skipped' : 'failed'}:${syncRes.reason}` })
+    if (!syncRes.ok && syncRes.expected) {
+      // A manager approved. Sync is CA-only by design; renewal reconciles.
+      console.info('[B147-sync-skipped]', { context: logSite, approvedCount: approved.length, reason: 'caller is not company_admin — expected for a manager approve; reconcileAtRenewal corrects the count' })
+    } else if (!syncRes.ok) {
+      console.warn('[B147-sync-failed]', { context: logSite, approvedCount: approved.length, reason: syncRes.reason })
+    }
   }
   return { succeeded, approved, failed, syncFired }
 }
@@ -555,8 +585,12 @@ export async function approveVehicleWrite(
   if (result.action === 'approved' && companyIdForSync) {
     const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
     syncFired = syncRes.ok
-    console.info('[B147-sync-result]', { site: 'approveVehicleWrite', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
-    if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveVehicleWrite', reason: syncRes.reason })
+    console.info('[B147-sync-result]', { site: 'approveVehicleWrite', kind: 'permit', result: syncRes.ok ? syncRes.action : `${syncRes.expected ? 'skipped' : 'failed'}:${syncRes.reason}` })
+    if (!syncRes.ok && syncRes.expected) {
+      console.info('[B147-sync-skipped]', { context: 'approveVehicleWrite', reason: 'caller is not company_admin — expected for a manager approve; reconcileAtRenewal corrects the count' })
+    } else if (!syncRes.ok) {
+      console.warn('[B147-sync-failed]', { context: 'approveVehicleWrite', reason: syncRes.reason })
+    }
   } else if (result.action === 'noop_already_active') {
     console.info('[B147-sync-skipped]', { site: 'approveVehicleWrite', reason: 'noop_already_active — vehicle was already approved; no quantity change' })
   }
