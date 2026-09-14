@@ -1461,8 +1461,11 @@ export default function ManagerPortal() {
     console.info('[B147-sync-batch-summary]', { site: 'approveAllForUnit', unit, batchSize: unitVehicles.length, approvedCount: bulkApprovedCount, willFireSync: bulkApprovedCount > 0 })
     if (bulkApprovedCount > 0 && companyIdForSync) {
       const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
-      console.info('[B147-sync-result]', { site: 'approveAllForUnit', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
-      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllForUnit', approvedCount: bulkApprovedCount, reason: syncRes.reason })
+      console.info('[B147-sync-result]', { site: 'approveAllForUnit', kind: 'permit', result: syncRes.ok ? syncRes.action : `${syncRes.expected ? 'skipped' : 'failed'}:${syncRes.reason}` })
+      // 403 = the caller is a manager. Expected, CA-only by design;
+      // reconcileAtRenewal corrects the count. See callSyncOnAdd.
+      if (!syncRes.ok && syncRes.expected) console.info('[B147-sync-skipped]', { context: 'approveAllForUnit', approvedCount: bulkApprovedCount, reason: 'caller is not company_admin — expected for a manager approve' })
+      else if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllForUnit', approvedCount: bulkApprovedCount, reason: syncRes.reason })
     }
     setUnitNotes(n => { const c = {...n}; delete c[unit]; return c })
     // B231 — same refresh discipline as approveVehicle + approveResident +
@@ -1517,8 +1520,11 @@ export default function ManagerPortal() {
     console.info('[B147-sync-batch-summary]', { site: 'approveAllPendingProperty', property: manager.name, batchSize: ids.length, approvedCount, willFireSync: approvedCount > 0 })
     if (approvedCount > 0 && companyIdForSync) {
       const syncRes = await callSyncOnAdd(companyIdForSync, 'permit')
-      console.info('[B147-sync-result]', { site: 'approveAllPendingProperty', kind: 'permit', result: syncRes.ok ? syncRes.action : `failed:${syncRes.reason}` })
-      if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllPendingProperty', approvedCount, reason: syncRes.reason })
+      console.info('[B147-sync-result]', { site: 'approveAllPendingProperty', kind: 'permit', result: syncRes.ok ? syncRes.action : `${syncRes.expected ? 'skipped' : 'failed'}:${syncRes.reason}` })
+      // 403 = the caller is a manager. Expected, CA-only by design;
+      // reconcileAtRenewal corrects the count. See callSyncOnAdd.
+      if (!syncRes.ok && syncRes.expected) console.info('[B147-sync-skipped]', { context: 'approveAllPendingProperty', approvedCount, reason: 'caller is not company_admin — expected for a manager approve' })
+      else if (!syncRes.ok) console.warn('[B147-sync-failed]', { context: 'approveAllPendingProperty', approvedCount, reason: syncRes.reason })
     }
     // B231 — same refresh discipline as approveAllForUnit +
     // approveAllPendingCrm. Refetch both vehicles + CRM dimensions so
