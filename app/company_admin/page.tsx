@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
+import { assignPropertyToDrivers } from '../lib/driver-property-assign'
 import SupportContact from '../components/SupportContact'
 import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { printQRSign } from '../lib/qr-print'
@@ -326,6 +327,16 @@ export default function CompanyAdminPortal() {
   // create time. PDF upload deferred to the Edit form because Storage paths
   // depend on the property_id, which doesn't exist until after INSERT.
   const [newProperty, setNewProperty] = useState({ name: '', address: '', city: '', state: '', zip: '', visitor_capacity: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
+  // ── Driver assignment step (2026-09-16) ──────────────────────────
+  // Shown AFTER the property row is created and BEFORE the success
+  // state, so the CA assigns while they are still in the flow rather
+  // than finding Edit Driver later. A1 added a property, nobody updated
+  // any assigned_properties array, and the driver could not see it —
+  // that is the whole reason this step exists.
+  const [assignStep, setAssignStep] = useState<{ property: string } | null>(null)
+  const [assignChecked, setAssignChecked] = useState<Set<string>>(new Set())
+  const [assignBusy, setAssignBusy] = useState(false)
+  const [assignMsg, setAssignMsg] = useState<string>('')
   const [propMsg, setPropMsg] = useState('')
   const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
 
@@ -1623,6 +1634,19 @@ export default function CompanyAdminPortal() {
     setShowAddProperty(false)
     await reloadProperties()
 
+    // ── Driver assignment step ─────────────────────────────────────
+    // Opened only when the company HAS active drivers. A dialog listing
+    // nothing is a step the CA has to dismiss for no reason, and
+    // "assign drivers" with an empty list reads like a broken screen
+    // rather than like "you have no drivers yet".
+    // Deliberately AFTER reloadProperties(): the property exists and is
+    // visible regardless of what happens next. Nothing below this line
+    // can fail in a way that loses the property.
+    await fetchCompanyDrivers()
+    setAssignChecked(new Set())
+    setAssignMsg('')
+    setAssignStep({ property: trimmedName })
+
     // Spaces v1 commit 4 — fire per-type space pool generation if any
     // non-zero counts were entered. Promise.allSettled inside the helper
     // surfaces per-type results in a modal. Property is already saved;
@@ -1634,6 +1658,61 @@ export default function CompanyAdminPortal() {
       await runSpacePoolGenerate(trimmedName)
       setSpacePoolCounts({ regular: '', carport: '', garage: '', covered: '', handicap: '', employee: '' })
     }
+  }
+
+  // ── Assign the just-created property to the checked drivers ──────
+  // 🔴 ADDITIVE ONLY — see app/lib/driver-property-assign.ts. Every
+  // array semantic lives there so it can be proven element-wise
+  // without a database; this function is UI only.
+  async function runDriverAssignment() {
+    if (!assignStep) return
+    setAssignBusy(true)
+    setAssignMsg('')
+    const ids = Array.from(assignChecked)
+    const namesById: Record<string, string> = {}
+    for (const d of companyDrivers) namesById[String(d.id)] = String(d.name ?? d.email ?? d.id)
+
+    const summary = await assignPropertyToDrivers(supabase, {
+      property: assignStep.property,
+      driverIds: ids,
+      driverNamesById: namesById,
+    })
+
+    await auditLog('assign_property_to_drivers', 'drivers', assignStep.property, {
+      property: assignStep.property,
+      requested: summary.requested,
+      added: summary.added,
+      already_had_it: summary.already_had_it,
+      failed: summary.failed,
+      // Per-driver before/after arrays. On a table where the array IS
+      // the driver's entire scope, "what did this change" must be
+      // answerable later without reconstructing it from two snapshots
+      // that no longer exist.
+      outcomes: summary.outcomes,
+    })
+
+    setAssignBusy(false)
+
+    if (summary.failed > 0) {
+      // Partial outcomes are reported as partial. The property is
+      // already saved and the successful appends already landed —
+      // saying "failed" would send the CA to re-run and re-append.
+      console.error('[assign-property-to-drivers] partial', summary.outcomes.filter(o => o.result === 'failed'))
+      setAssignMsg(
+        `${summary.added} driver${summary.added === 1 ? '' : 's'} assigned. ` +
+        `${summary.failed} could not be updated — open Drivers and add "${assignStep.property}" to them directly.`,
+      )
+      await fetchCompanyDrivers()
+      return
+    }
+
+    setAssignStep(null)
+    setPropMsg(
+      summary.added === 0
+        ? 'Property added. No driver assignments changed.'
+        : `Property added and assigned to ${summary.added} driver${summary.added === 1 ? '' : 's'}.`,
+    )
+    await fetchCompanyDrivers()
   }
 
   async function updateProperty() {
@@ -6701,6 +6780,92 @@ export default function CompanyAdminPortal() {
                     </div>
                   </div>
                 )}
+
+                {/* ── Driver assignment step (2026-09-16) ──────────────
+                    Shown after the property row is created, before the
+                    success state. Mirrors the ADD-DRIVER property picker
+                    at company_admin/page.tsx ~7722 deliberately: same
+                    Select All master checkbox, same row markup, starting
+                    UNCHECKED. A CA who learns "boxes start empty, hit
+                    Select All" on one screen must not meet pre-checked
+                    boxes on the other — they would have to NOTICE the
+                    difference to avoid a wrong assignment. Select All
+                    keeps the one-click case.
+
+                    ACTIVE DRIVERS ONLY. An inactive driver here is
+                    either noise or a reactivation decision being made on
+                    the wrong screen.
+
+                    No 'all' branch: zero drivers in the database carry
+                    it, and a branch for a state no data reaches is a
+                    branch nobody will ever test. */}
+                {assignStep && isCA && (() => {
+                  const active = companyDrivers.filter(d => d.is_active)
+                  if (active.length === 0) { return null }
+                  const allChecked = assignChecked.size === active.length && active.length > 0
+                  return (
+                    <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>
+                        Which drivers will patrol {assignStep.property}?
+                      </p>
+                      <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px', lineHeight:1.6 }}>
+                        Checking a driver adds this property to the ones they already patrol. Nothing they already have is changed.
+                      </p>
+
+                      <div style={{ maxHeight:'240px', overflowY:'auto', marginBottom:'12px' }}>
+                        <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
+                          <input type="checkbox"
+                            checked={allChecked}
+                            onChange={e => setAssignChecked(e.target.checked ? new Set(active.map(d => String(d.id))) : new Set())}
+                            style={{ width:'16px', height:'16px', accentColor:'#C9A227' }} />
+                          <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
+                        </label>
+                        {active.map(d => (
+                          <label key={d.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
+                            <input type="checkbox"
+                              checked={assignChecked.has(String(d.id))}
+                              onChange={e => {
+                                const next = new Set(assignChecked)
+                                if (e.target.checked) next.add(String(d.id)); else next.delete(String(d.id))
+                                setAssignChecked(next)
+                              }}
+                              style={{ width:'16px', height:'16px', accentColor:'#C9A227' }} />
+                            <span style={{ color:'white', fontSize:'12px' }}>{d.name}</span>
+                            <span style={{ color:'#555', fontSize:'11px' }}>
+                              {(d.assigned_properties || []).length} propert{(d.assigned_properties || []).length === 1 ? 'y' : 'ies'}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+
+                      {assignMsg && (
+                        <p style={{ color:'#C9A227', fontSize:'12px', lineHeight:1.6, margin:'0 0 10px' }}>{assignMsg}</p>
+                      )}
+
+                      <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
+                        <button
+                          onClick={runDriverAssignment}
+                          disabled={assignBusy || assignChecked.size === 0}
+                          style={{ flex:'1 1 160px', padding:'12px', background: (assignBusy || assignChecked.size === 0) ? '#555' : '#C9A227', color: (assignBusy || assignChecked.size === 0) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: (assignBusy || assignChecked.size === 0) ? 'not-allowed' : 'pointer' }}>
+                          {assignBusy ? 'Assigning…' : `Assign selected${assignChecked.size > 0 ? ` (${assignChecked.size})` : ''}`}
+                        </button>
+                        <button
+                          onClick={() => { setAssignStep(null); setAssignChecked(new Set()); setAssignMsg('') }}
+                          disabled={assignBusy}
+                          style={{ flex:'1 1 120px', padding:'12px', background:'transparent', color:'#888', fontWeight:'bold', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor: assignBusy ? 'not-allowed' : 'pointer' }}>
+                          Skip for now
+                        </button>
+                      </div>
+                      {/* A CA who skips without knowing where to go next
+                          is the support ticket this step exists to
+                          prevent. */}
+                      <p style={{ color:'#555', fontSize:'11px', margin:'8px 0 0', lineHeight:1.6 }}>
+                        You can assign drivers later from each driver&apos;s profile.
+                      </p>
+                    </div>
+                  )
+                })()}
+
 
                 <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'8px' }}>
                   <button onClick={() => setShowActiveProps(s => !s)} style={{ padding:'4px 10px', background: showActiveProps ? '#1a1f2e' : '#111', color: showActiveProps ? '#C9A227' : '#555', border:`1px solid ${showActiveProps ? '#C9A227' : '#333'}`, borderRadius:'20px', fontSize:'11px', cursor:'pointer', fontFamily:'Arial' }}>{showActiveProps ? '● Active Only' : '○ Show All'}</button>
