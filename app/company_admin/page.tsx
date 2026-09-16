@@ -340,6 +340,8 @@ export default function CompanyAdminPortal() {
   // Distinct from "no drivers" — see renderAssignDriversPanel.
   const [assignDriversError, setAssignDriversError] = useState<string>('')
   const [propMsg, setPropMsg] = useState('')
+  // Explicit severity for the property banner. See msgBox.
+  const [propMsgKind, setPropMsgKind] = useState<'success' | 'error'>('error')
   const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
 
   // 🔴 2026-09-04 (Mateo Sep 4 §1 fix a) — dismiss the property-msg
@@ -1531,7 +1533,7 @@ export default function CompanyAdminPortal() {
     // display collateral (confirm dialog, audit, spaces pool) matches the
     // stored value.
     const trimmedName = (newProperty.name || '').trim()
-    if (!trimmedName) { setPropMsg('Property name is required'); return }
+    if (!trimmedName) { setPropMsgKind('error'); setPropMsg('Property name is required'); return }
     const nameErr = nameMetacharError(trimmedName, 'property')
     if (nameErr) { setPropMsg(nameErr); return }
     const ctx = getCompanyContext()
@@ -1635,7 +1637,7 @@ export default function CompanyAdminPortal() {
       if (!r.ok) console.warn('[B147-sync-failed]', { site: 'saveProperty', companyId: companyIdForSync, propertyId: data.id, reason: r.reason })
     }
 
-    setPropMsg('Property added!')
+    setPropMsgKind('success'); setPropMsg('Property added!')
     setNewProperty({ name: '', address: '', city: '', state: '', zip: '', visitor_capacity: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
     setShowAddProperty(false)
     await reloadProperties()
@@ -1722,6 +1724,7 @@ export default function CompanyAdminPortal() {
     }
 
     setAssignStep(null)
+    setPropMsgKind('success')
     setPropMsg(
       summary.added === 0
         ? 'Property added. No driver assignments changed.'
@@ -1926,7 +1929,7 @@ export default function CompanyAdminPortal() {
       await auditLog('update_authorization_notes', 'properties', String(id), { changed: true })
     }
 
-    setPropMsg('Property updated!')
+    setPropMsgKind('success'); setPropMsg('Property updated!')
     // Fix 1 (2026-07-15) — capture the TRIMMED name so pool gen sees clean.
     const editedPropertyName = (editingProperty.name || '').trim()
     setEditingProperty(null)
@@ -1978,7 +1981,7 @@ export default function CompanyAdminPortal() {
     await auditLog('remove_authorization_pdf', 'properties', String(propertyId), { old_path: oldPath })
     setEditingProperty((p: any) => p && p.id === propertyId ? { ...p, authorization_pdf_path: null } : p)
     await reloadProperties()
-    setPropMsg('PDF removed.')
+    setPropMsgKind('success'); setPropMsg('PDF removed.')
   }
 
   async function viewAuthPdf(propertyId: number) {
@@ -4368,8 +4371,24 @@ export default function CompanyAdminPortal() {
   //    failure of whatever it reports on. The cost isn't a
   //    mislabeled banner; it's every defect downstream of that
   //    banner going unobserved."
-  const msgBox = (msg: string) => {
-    const isErr = msg.startsWith('Error') || msg.includes('failed')
+  // ── 🔴 SEVERITY IS PASSED, NOT INFERRED FROM THE TEXT ────────────
+  // 2026-09-16: the duplicate-name rejection —
+  //   "A property named 'test add 3' already exists at Test-LEGACY."
+  // — rendered GREEN, next to a 409 in the console, because it starts
+  // with neither "Error" nor contains "failed". The words said rejected
+  // and the colour said saved, and colour is what people read when they
+  // are moving fast.
+  //
+  // Text-sniffing severity fails for every message written in plain
+  // language, which is every message we deliberately rewrote to BE in
+  // plain language — the friendlier the copy, the more likely it is
+  // mis-styled. (feedback_severity_from_text_hides_downstream_failures)
+  //
+  // `kind` is explicit at the call site. The text heuristic remains
+  // ONLY as the fallback for callers that have not been converted, so
+  // this change cannot regress a site it did not touch.
+  const msgBox = (msg: string, kind?: 'success' | 'error') => {
+    const isErr = kind ? kind === 'error' : (msg.startsWith('Error') || msg.includes('failed'))
     return (
       <div style={{ background: isErr ? '#3a1a1a' : '#1a3a1a', border: `1px solid ${isErr ? '#b71c1c' : '#2e7d32'}`, borderRadius:'8px', padding:'10px 12px', marginBottom:'10px' }}>
         <p style={{ color: isErr ? '#f44336' : '#4caf50', fontSize:'12px', margin:'0', whiteSpace:'pre-wrap', wordBreak:'break-all' }}>{msg}</p>
@@ -6394,7 +6413,7 @@ export default function CompanyAdminPortal() {
                 : []
               return (
                 <div>
-                  {propMsg && msgBox(propMsg)}
+                  {propMsg && msgBox(propMsg, propMsgKind)}
                   {/* Driver assignment step — mounted in BOTH properties
                       branches. It was inlined in the !CA_CRM_REDESIGN
                       block only, which is dead code while the flag is
@@ -6844,7 +6863,7 @@ export default function CompanyAdminPortal() {
             {/* SECTION 1 (LEGACY) — Properties flat list, behind !CA_CRM_REDESIGN */}
             {manageSection === 'properties' && !CA_CRM_REDESIGN && (
               <div>
-                {propMsg && msgBox(propMsg)}
+                {propMsg && msgBox(propMsg, propMsgKind)}
                 {(() => {
                   if (!isCA) return null
                   const ctx = getCompanyContext()
