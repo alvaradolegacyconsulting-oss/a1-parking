@@ -337,6 +337,8 @@ export default function CompanyAdminPortal() {
   const [assignChecked, setAssignChecked] = useState<Set<string>>(new Set())
   const [assignBusy, setAssignBusy] = useState(false)
   const [assignMsg, setAssignMsg] = useState<string>('')
+  // Distinct from "no drivers" — see renderAssignDriversPanel.
+  const [assignDriversError, setAssignDriversError] = useState<string>('')
   const [propMsg, setPropMsg] = useState('')
   const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
 
@@ -1077,8 +1079,12 @@ export default function CompanyAdminPortal() {
     if (error) {
       console.error('[CA fetchCompanyDrivers] failed', { company: role.company, error })
       setCompanyDrivers([])
+      // 🔴 An empty list and a FAILED list must not look alike. Before
+      // this, both produced [] and every consumer read "no drivers".
+      setAssignDriversError(error.message || 'drivers fetch failed')
       return
     }
+    setAssignDriversError('')
     // B234 L3 — fold user_roles.can_regenerate_tow_ticket per driver so
     // the driver row can render the current toggle state without a
     // second round-trip. Merge by lowercased email; drivers with no
@@ -1646,6 +1652,15 @@ export default function CompanyAdminPortal() {
     setAssignChecked(new Set())
     setAssignMsg('')
     setAssignStep({ property: trimmedName })
+    // Logged deliberately: when the step does not appear, this line
+    // distinguishes "never reached" from "reached with an empty list"
+    // without a rebuild. The 2026-09-16 failure was the former and the
+    // console was silent on it.
+    console.info('[assign-step] opened', {
+      property: trimmedName,
+      company: role?.company,
+      drivers_loaded: companyDrivers.length,
+    })
 
     // Spaces v1 commit 4 — fire per-type space pool generation if any
     // non-zero counts were entered. Promise.allSettled inside the helper
@@ -1713,6 +1728,136 @@ export default function CompanyAdminPortal() {
         : `Property added and assigned to ${summary.added} driver${summary.added === 1 ? '' : 's'}.`,
     )
     await fetchCompanyDrivers()
+  }
+
+
+  // ── Driver assignment step (2026-09-16) ──────────────────────────
+  // 🔴 A RENDER FUNCTION, CALLED FROM BOTH properties branches.
+  // The first version was inlined in the `!CA_CRM_REDESIGN` block —
+  // and CA_CRM_REDESIGN is `true` (page.tsx:73), so it mounted in the
+  // DEAD branch and never rendered. Jose added three properties to
+  // Test-LEGACY, a company with two active drivers, and saw no step.
+  //
+  // The diagnosis cost more than the bug: the reported symptom was "no
+  // panel", the obvious suspects were the drivers query, the company
+  // filter and is_active — and all three were fine. Nothing was wrong
+  // downstream of a component that was never mounted.
+  //
+  // Called from both branches so a flag flip cannot silently drop it
+  // again. Duplicating the markup would have been the other option and
+  // is how the two copies drift.
+  //
+  // ── 🔴 NEVER RENDER NOTHING ──────────────────────────────────────
+  // The first version returned null when the active-driver list was
+  // empty, reasoning that an empty "assign drivers" list reads as a
+  // broken screen. That guard then MASKED this bug: a query returning
+  // empty and a company with no drivers were indistinguishable at the
+  // render — same blank space, no error, no console line. Absence
+  // produced as the success signal, in the UI layer this time.
+  // Every state is now explicit and visible.
+  function renderAssignDriversPanel() {
+    if (!assignStep || !isCA) return null
+    const active = companyDrivers.filter(d => d.is_active)
+    const allChecked = assignChecked.size === active.length && active.length > 0
+    const shell = (children: React.ReactNode) => (
+      <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
+        <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>
+          Which drivers will patrol {assignStep.property}?
+        </p>
+        {children}
+      </div>
+    )
+
+    // Driver fetch failed — say so, and log it. Distinct from "none".
+    if (assignDriversError) {
+      return shell(
+        <>
+          <p style={{ color:'#f44336', fontSize:'12px', margin:'8px 0 0', lineHeight:1.6 }}>
+            Could not load your drivers, so assignment is unavailable right now. The property was created — assign from each driver&apos;s profile, or reload and try again.
+          </p>
+          <button onClick={() => { setAssignStep(null); setAssignMsg('') }}
+            style={{ marginTop:'10px', padding:'10px 14px', background:'transparent', color:'#888', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer' }}>
+            Close
+          </button>
+        </>,
+      )
+    }
+
+    // Genuinely no active drivers — a real, nameable state, not a blank.
+    if (active.length === 0) {
+      return shell(
+        <>
+          <p style={{ color:'#888', fontSize:'12px', margin:'8px 0 0', lineHeight:1.6 }}>
+            No active drivers to assign. You can assign this property from each driver&apos;s profile once you add one.
+          </p>
+          <button onClick={() => { setAssignStep(null); setAssignMsg('') }}
+            style={{ marginTop:'10px', padding:'10px 14px', background:'transparent', color:'#888', fontSize:'12px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer' }}>
+            Close
+          </button>
+        </>,
+      )
+    }
+
+    return shell(
+      <>
+        <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px', lineHeight:1.6 }}>
+          Checking a driver adds this property to the ones they already patrol. Nothing they already have is changed.
+        </p>
+
+        <div style={{ maxHeight:'240px', overflowY:'auto', marginBottom:'12px' }}>
+          {/* Mirrors the ADD-DRIVER property picker (~7722): same Select
+              All master checkbox, same row markup, starting UNCHECKED. */}
+          <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
+            <input type="checkbox"
+              checked={allChecked}
+              onChange={e => setAssignChecked(e.target.checked ? new Set(active.map(d => String(d.id))) : new Set())}
+              style={{ width:'16px', height:'16px', accentColor:'#C9A227' }} />
+            <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
+          </label>
+          {active.map(d => (
+            <label key={d.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
+              <input type="checkbox"
+                checked={assignChecked.has(String(d.id))}
+                onChange={e => {
+                  const next = new Set(assignChecked)
+                  if (e.target.checked) next.add(String(d.id)); else next.delete(String(d.id))
+                  setAssignChecked(next)
+                }}
+                style={{ width:'16px', height:'16px', accentColor:'#C9A227' }} />
+              {/* d.name is nullable on drivers — a row with a null name
+                  must still be selectable and identifiable, not a blank
+                  label. Falls back to the email, then the id. */}
+              <span style={{ color:'white', fontSize:'12px' }}>{d.name || d.email || `Driver #${d.id}`}</span>
+              <span style={{ color:'#555', fontSize:'11px' }}>
+                {(d.assigned_properties || []).length} propert{(d.assigned_properties || []).length === 1 ? 'y' : 'ies'}
+              </span>
+            </label>
+          ))}
+        </div>
+
+        {assignMsg && (
+          <p style={{ color:'#C9A227', fontSize:'12px', lineHeight:1.6, margin:'0 0 10px' }}>{assignMsg}</p>
+        )}
+
+        <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
+          <button
+            onClick={runDriverAssignment}
+            disabled={assignBusy || assignChecked.size === 0}
+            style={{ flex:'1 1 160px', padding:'12px', background: (assignBusy || assignChecked.size === 0) ? '#555' : '#C9A227', color: (assignBusy || assignChecked.size === 0) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: (assignBusy || assignChecked.size === 0) ? 'not-allowed' : 'pointer' }}>
+            {assignBusy ? 'Assigning…' : `Assign selected${assignChecked.size > 0 ? ` (${assignChecked.size})` : ''}`}
+          </button>
+          <button
+            onClick={() => { setAssignStep(null); setAssignChecked(new Set()); setAssignMsg('') }}
+            disabled={assignBusy}
+            style={{ flex:'1 1 120px', padding:'12px', background:'transparent', color:'#888', fontWeight:'bold', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor: assignBusy ? 'not-allowed' : 'pointer' }}>
+            Skip for now
+          </button>
+        </div>
+        <p style={{ color:'#555', fontSize:'11px', margin:'8px 0 0', lineHeight:1.6 }}>
+          You can assign drivers later from each driver&apos;s profile.
+        </p>
+      </>,
+    )
   }
 
   async function updateProperty() {
@@ -6250,6 +6395,11 @@ export default function CompanyAdminPortal() {
               return (
                 <div>
                   {propMsg && msgBox(propMsg)}
+                  {/* Driver assignment step — mounted in BOTH properties
+                      branches. It was inlined in the !CA_CRM_REDESIGN
+                      block only, which is dead code while the flag is
+                      true, so it never rendered. */}
+                  {renderAssignDriversPanel()}
                   {/* CA CRM refactor 2026-07-05 — Add Property affordance carried
                       into the Slice-2 CRM so it works under the redesign flag.
                       Button + form fields inline; existing saveProperty handler. */}
@@ -6781,90 +6931,7 @@ export default function CompanyAdminPortal() {
                   </div>
                 )}
 
-                {/* ── Driver assignment step (2026-09-16) ──────────────
-                    Shown after the property row is created, before the
-                    success state. Mirrors the ADD-DRIVER property picker
-                    at company_admin/page.tsx ~7722 deliberately: same
-                    Select All master checkbox, same row markup, starting
-                    UNCHECKED. A CA who learns "boxes start empty, hit
-                    Select All" on one screen must not meet pre-checked
-                    boxes on the other — they would have to NOTICE the
-                    difference to avoid a wrong assignment. Select All
-                    keeps the one-click case.
-
-                    ACTIVE DRIVERS ONLY. An inactive driver here is
-                    either noise or a reactivation decision being made on
-                    the wrong screen.
-
-                    No 'all' branch: zero drivers in the database carry
-                    it, and a branch for a state no data reaches is a
-                    branch nobody will ever test. */}
-                {assignStep && isCA && (() => {
-                  const active = companyDrivers.filter(d => d.is_active)
-                  if (active.length === 0) { return null }
-                  const allChecked = assignChecked.size === active.length && active.length > 0
-                  return (
-                    <div style={{ background:'#0d1520', border:'1px solid #C9A227', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
-                      <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 4px' }}>
-                        Which drivers will patrol {assignStep.property}?
-                      </p>
-                      <p style={{ color:'#888', fontSize:'11px', margin:'0 0 12px', lineHeight:1.6 }}>
-                        Checking a driver adds this property to the ones they already patrol. Nothing they already have is changed.
-                      </p>
-
-                      <div style={{ maxHeight:'240px', overflowY:'auto', marginBottom:'12px' }}>
-                        <label style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer', borderBottom:'1px solid #2a2f3d', marginBottom:'4px' }}>
-                          <input type="checkbox"
-                            checked={allChecked}
-                            onChange={e => setAssignChecked(e.target.checked ? new Set(active.map(d => String(d.id))) : new Set())}
-                            style={{ width:'16px', height:'16px', accentColor:'#C9A227' }} />
-                          <span style={{ color:'#C9A227', fontSize:'12px', fontWeight:'bold' }}>Select All</span>
-                        </label>
-                        {active.map(d => (
-                          <label key={d.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'4px 0', cursor:'pointer' }}>
-                            <input type="checkbox"
-                              checked={assignChecked.has(String(d.id))}
-                              onChange={e => {
-                                const next = new Set(assignChecked)
-                                if (e.target.checked) next.add(String(d.id)); else next.delete(String(d.id))
-                                setAssignChecked(next)
-                              }}
-                              style={{ width:'16px', height:'16px', accentColor:'#C9A227' }} />
-                            <span style={{ color:'white', fontSize:'12px' }}>{d.name}</span>
-                            <span style={{ color:'#555', fontSize:'11px' }}>
-                              {(d.assigned_properties || []).length} propert{(d.assigned_properties || []).length === 1 ? 'y' : 'ies'}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-
-                      {assignMsg && (
-                        <p style={{ color:'#C9A227', fontSize:'12px', lineHeight:1.6, margin:'0 0 10px' }}>{assignMsg}</p>
-                      )}
-
-                      <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
-                        <button
-                          onClick={runDriverAssignment}
-                          disabled={assignBusy || assignChecked.size === 0}
-                          style={{ flex:'1 1 160px', padding:'12px', background: (assignBusy || assignChecked.size === 0) ? '#555' : '#C9A227', color: (assignBusy || assignChecked.size === 0) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: (assignBusy || assignChecked.size === 0) ? 'not-allowed' : 'pointer' }}>
-                          {assignBusy ? 'Assigning…' : `Assign selected${assignChecked.size > 0 ? ` (${assignChecked.size})` : ''}`}
-                        </button>
-                        <button
-                          onClick={() => { setAssignStep(null); setAssignChecked(new Set()); setAssignMsg('') }}
-                          disabled={assignBusy}
-                          style={{ flex:'1 1 120px', padding:'12px', background:'transparent', color:'#888', fontWeight:'bold', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor: assignBusy ? 'not-allowed' : 'pointer' }}>
-                          Skip for now
-                        </button>
-                      </div>
-                      {/* A CA who skips without knowing where to go next
-                          is the support ticket this step exists to
-                          prevent. */}
-                      <p style={{ color:'#555', fontSize:'11px', margin:'8px 0 0', lineHeight:1.6 }}>
-                        You can assign drivers later from each driver&apos;s profile.
-                      </p>
-                    </div>
-                  )
-                })()}
+                {renderAssignDriversPanel()}
 
 
                 <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'8px' }}>
