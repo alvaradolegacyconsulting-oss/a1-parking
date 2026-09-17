@@ -4732,6 +4732,16 @@ export default function CompanyAdminPortal() {
               {showPMExtras && ctx.tier_type === 'property_management' && (
                 <button style={styleFor(isSelected('spaces'))} onClick={() => goto('spaces')}>Spaces</button>
               )}
+              {/* Plate activity — CA only. 🔴 MOUNTED IN THE LIVE NAV.
+                  The first attempt put it in the !CA_CRM_REDESIGN legacy
+                  nav below, which is dead while the flag is true — the
+                  SECOND feature lost that way in two days, after the
+                  assign-drivers panel on 09-16. Hidden for non-CAs as a
+                  courtesy, NOT as the control: ca_plate_activity()
+                  refuses a non-CA server-side and E2 proves it. */}
+              {isCA && (
+                <button style={styleFor(isSelected('plate-activity'))} onClick={() => goto('plate-activity')}>Plate Activity</button>
+              )}
               <button style={styleFor(isSelected('insights'))} onClick={() => goto('insights')}>Insights</button>
               <button style={styleFor(isSelected('billing'))} onClick={() => goto('billing')}>Billing</button>
               {/* Audit — 8th section per Jose's placement lock. Routes to
@@ -4769,13 +4779,6 @@ export default function CompanyAdminPortal() {
               app/lib/spaces.ts helpers + same 6 RPC mutation surfaces. */}
           {getCompanyContext().tier_type === 'property_management' && (
             <button style={tab('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
-          )}
-          {/* Plate activity — CA only. The tab is hidden for anyone else
-              as a courtesy, NOT as the control: ca_plate_activity()
-              refuses a non-CA server-side, and E2 in its verification
-              proves it. Hiding a button is not a gate. */}
-          {isCA && (
-            <button style={tab('plate-activity')} onClick={() => setActiveTab('plate-activity')}>Plate Activity</button>
           )}
           <button style={tab('qrcodes')} onClick={() => setActiveTab('qrcodes')}>QR Codes</button>
           <button style={tab('manage')} onClick={() => { setActiveTab('manage'); if (!manageLoaded) loadManageData() }}>Manage</button>
@@ -6326,6 +6329,25 @@ export default function CompanyAdminPortal() {
         {/* ── QR CODES ── */}
         {/* Gate repeated here so a stale activeTab — a role change mid
             session — cannot render the panel without the tab. */}
+        {/* 🔴 A LOG AT THE RENDER DECISION. The assign-drivers panel got
+            one on 09-16 for exactly this reason: absence is the least
+            informative thing a screen can report, and without this the
+            only available fact is "the tab isn't there" — which is true
+            of a dead branch, a failed gate and a stale role alike.
+            Fires whenever the tab is selected, and says which of them
+            it is. */}
+        {activeTab === 'plate-activity' && (() => {
+          console.info('[plate-activity] render decision', {
+            active_tab: activeTab,
+            role: role?.role ?? null,
+            isCA,
+            gate_passed: isCA,
+            branch: 'CA_CRM_REDESIGN=' + String(CA_CRM_REDESIGN),
+            properties_loaded: (properties ?? []).length,
+            active_properties: (properties ?? []).filter((p: any) => p.is_active).length,
+          })
+          return null
+        })()}
         {activeTab === 'plate-activity' && isCA && (
           <CaPlateActivityTab properties={(properties ?? []).filter((p: any) => p.is_active).map((p: any) => ({ name: p.name }))} />
         )}
