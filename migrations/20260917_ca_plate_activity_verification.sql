@@ -50,23 +50,40 @@ BEGIN
 END $vs1$;
 
 -- ── VS2: EXECUTE to authenticated only ════════════════════════════
--- ⚠ REWRITTEN after the first run failed with
---     ERROR 42P01: relation "a" does not exist
--- The original was
+-- ⚠ CORRECTED 2026-09-17. An earlier version of this comment said the
+-- first run's `ERROR 42P01: relation "a" does not exist` was caused by
 --     SELECT 1 FROM unnest(v_acl) a WHERE a::text LIKE '…'
--- which leans on `a` resolving as the function-scan's implicit column.
--- That is a WHOLE-ROW-versus-column ambiguity, and when it resolves the
--- other way Postgres looks for a RELATION named `a` and reports 42P01.
+-- resolving `a` as a relation rather than the function scan's implicit
+-- column. 🔴 THAT DIAGNOSIS WAS WRONG. There was no defect in the SQL.
 --
--- Fixed by naming the column explicitly — AS x(item) — so `x.item` can
--- only ever be a column reference. Also restored to the multi-line shape
--- of the VS5 block that ran clean on 2026-09-10; the failing version had
--- the IF, the assignment and the END IF on a single line.
+-- The isolation probe (docs/backlog/wip-vs2-42p01-isolation-2026-09-17
+-- .sql) ran all three forms — bare alias multi-line, explicit
+-- AS x(item), and the collapsed one-line shape byte-for-byte — and ALL
+-- THREE passed. Then the corrected file failed the same way in a fresh
+-- tab, and then this, containing no alias at all, failed too:
+--     SELECT prosrc FROM pg_proc
+--      WHERE oid = to_regprocedure('public.ca_plate_activity(TEXT, TEXT, INT)');
+--   → 42P01: relation "a" does not exist
+-- while `SELECT 1;` returned normally.
 --
--- 🔴 The lesson is the smaller one: I wrote a NEW spelling of a block
--- that already existed in proven form two files back. Copying the
--- working one and changing the function name would not have had a
--- failure mode to discover.
+-- An error naming an identifier that is not in the submitted statement
+-- is not a property of the statement. It was the Supabase SQL EDITOR,
+-- alongside results not rendering and queries echoing back unexecuted
+-- the same day. See docs/backlog/supabase-sql-editor-phantom-42p01-
+-- 2026-09-17.md.
+--
+-- AS x(item) is KEPT — explicit beats implicit and it costs nothing —
+-- but it fixed nothing, because nothing was broken. The three
+-- bare-alias blocks in 20260909_tow_log_commit_4_rpcs_verification
+-- (VS2, VS4, VS6) are FINE and were deliberately left alone.
+--
+-- 🔴 The lesson that survives, in its corrected form: retyping a proven
+-- block in a new, shorter spelling did not introduce a bug — it created
+-- a SUSPECTED difference that cost an hour to rule out. Had this been a
+-- copy of 20260910 VS5 with the function name changed, there would have
+-- been nothing in the text to blame and the environmental cause would
+-- have been obvious immediately. A novel spelling does not just risk a
+-- defect; it absorbs suspicion that belongs elsewhere.
 DO $vs2$
 DECLARE
   v_oid     OID;
