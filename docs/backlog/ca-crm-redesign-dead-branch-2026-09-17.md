@@ -65,9 +65,28 @@ warning where the grep hit lands rather than 50 lines above it.
 used by the drivers panel: **a render function called from both branches.**
 A flag flip cannot drop it, and there is no second copy to drift.
 
+## What was done 2026-09-17
+
+**Option 2, plus a guard that does not rely on anyone reading anything.**
+
+- **12 banner markers**, one immediately before each `{!CA_CRM_REDESIGN &&` opener.
+- **`scripts/check-dead-branch-additions.ts`** — run it before committing, or pass a sha. Exit 1 if additions land in a dead block.
+
+⚠ **Markers deeper inside each block are NOT POSSIBLE.** The first attempt inserted one every ~40 lines and **broke the build**: JSX comments are only valid at *child* positions, and these blocks contain arrow-function bodies and expression contexts where one breaks the parse. Reverted. So the banner really is 50+ lines from where a grep hit lands — which is precisely why the script exists and the comment alone was never going to be enough.
+
+Self-tested against both known failures:
+
+```
+7e03abec (assign-drivers panel)  → 🔴 86 of 165 added lines dead
+ff0458a  (Plate Activity button) → 🔴  7 of  93 added lines dead
+c2acec6  (the fix)               → ✅ 0 dead
+```
+
+🔴 **A hit is not automatically wrong.** Parallel maintenance — the same change applied to both branches — is correct and common. The audit found five such commits and every one was right. The failure mode is an addition landing **only** in the dead branch, so the script prints both counts rather than a verdict.
+
 ## Recommendation
 
-**2 now, 1 when there is an appetite for the diff.** The marker costs
+**Deletion when there is an appetite for the diff.** The marker costs
 minutes and stops the bleeding; the deletion is the real answer but wants
 its own commit and its own smoke, because ~11% of a 9,785-line file is not
 a change to make alongside a feature.

@@ -4501,6 +4501,7 @@ export default function CompanyAdminPortal() {
         {/* Centered branding block — HIDDEN behind CA_CRM_REDESIGN per v4 IA.
             Company identity still surfaces via the box at :3248 below.
             Change-logo affordance moves to Audit/Settings surface (post-launch). */}
+        {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
         {!CA_CRM_REDESIGN && <div style={{ marginBottom:'16px', textAlign:'center' }}>
           <img src={resolvedLogo} alt={role?.company || 'ShieldMyLot'}
             style={{ width:'60px', height:'60px', borderRadius:'10px', border:'2px solid #C9A227', display:'block', margin:'0 auto 8px' }}
@@ -4545,6 +4546,7 @@ export default function CompanyAdminPortal() {
             <p style={{ color:'#aaa', fontSize:'11px', margin:'2px 0 0' }}>{user?.email}</p>
             {/* Tier badges — HIDDEN behind CA_CRM_REDESIGN per v4 IA
                 (Plan strip carries tier). */}
+            {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
             {!CA_CRM_REDESIGN && (() => {
               const tierType = typeof window !== 'undefined' ? localStorage.getItem('company_tier_type') : null
               const tier = typeof window !== 'undefined' ? localStorage.getItem('company_tier') : null
@@ -4570,6 +4572,7 @@ export default function CompanyAdminPortal() {
         {/* Property switcher + selected-property banner — HIDDEN behind
             CA_CRM_REDESIGN per v4 IA (each section has its own property
             filter; global switcher is redundant). */}
+        {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
         {!CA_CRM_REDESIGN && properties.length > 1 && (
           <div style={{ marginBottom:'14px' }}>
             <label style={{ color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }}>Viewing Property</label>
@@ -4579,6 +4582,7 @@ export default function CompanyAdminPortal() {
           </div>
         )}
 
+        {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
         {!CA_CRM_REDESIGN && selectedProperty && (
           <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'12px 16px', marginBottom:'14px' }}>
             <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0' }}>{selectedProperty.name}</p>
@@ -4588,6 +4592,7 @@ export default function CompanyAdminPortal() {
 
         {/* Stat tiles — HIDDEN behind CA_CRM_REDESIGN per v4 IA
             (Insights carries the operational metrics). */}
+        {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
         {!CA_CRM_REDESIGN && <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px', marginBottom:'14px' }}>
           {[
             { label:'Vehicles', value:stats.total_vehicles, color:'#C9A227' },
@@ -4753,6 +4758,7 @@ export default function CompanyAdminPortal() {
           )
         })()}
         {/* Legacy nav — preserved behind !CA_CRM_REDESIGN */}
+        {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
         {!CA_CRM_REDESIGN && (
         <div style={{ display:'flex', gap:'4px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
           <button style={tab('overview')} onClick={() => setActiveTab('overview')}>Overview</button>
@@ -4825,6 +4831,7 @@ export default function CompanyAdminPortal() {
 
         {/* ── OVERVIEW ── Behind CA_CRM_REDESIGN: lean to Plan strip only.
              Legacy render preserved behind !flag. */}
+        {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
         {activeTab === 'overview' && !CA_CRM_REDESIGN && (
           <div>
             <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'16px', marginBottom:'12px' }}>
@@ -6438,6 +6445,7 @@ export default function CompanyAdminPortal() {
                 Manage internal state machine still routes content behind
                 the scenes (via manageSection), but the 6-button sub-nav
                 chrome disappears so the composed portal matches v4. */}
+            {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
             {!CA_CRM_REDESIGN && (
             <div style={{ display:'flex', gap:'3px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
               {(['properties', 'users', 'drivers', 'storage', 'company', 'auditlog'] as const).map(s => (
@@ -7034,6 +7042,7 @@ export default function CompanyAdminPortal() {
             })()}
 
             {/* SECTION 1 (LEGACY) — Properties flat list, behind !CA_CRM_REDESIGN */}
+            {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
             {manageSection === 'properties' && !CA_CRM_REDESIGN && (
               <div>
                 {propMsg && msgBox(propMsg, propMsgKind)}
@@ -7784,6 +7793,7 @@ export default function CompanyAdminPortal() {
             })()}
 
             {/* SECTION 2 (LEGACY) — Users, behind !CA_CRM_REDESIGN */}
+            {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
             {manageSection === 'users' && !CA_CRM_REDESIGN && (
               <div>
                 {userMsg && msgBox(userMsg)}
@@ -8095,6 +8105,7 @@ export default function CompanyAdminPortal() {
                 the Users section), but a leaked state or stale bookmark
                 shouldn't be able to surface an Add Driver button while the
                 consolidated role-aware Add User is the intended path. */}
+            {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
             {manageSection === 'drivers' && !CA_CRM_REDESIGN && (
               <div>
                 {driverMsg && msgBox(driverMsg)}
@@ -9161,6 +9172,7 @@ export default function CompanyAdminPortal() {
         })()}
 
         {/* ── PLAN (Phase 2a) — LEGACY TAB, kept behind !CA_CRM_REDESIGN for rollback ── */}
+        {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
         {activeTab === 'plan' && !CA_CRM_REDESIGN && (() => {
           // B140 Item 2 — empty-localStorage detection. getCompanyContext()
           // returns a 'legacy'/'enforcement' fallback when localStorage
