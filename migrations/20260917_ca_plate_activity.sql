@@ -53,6 +53,17 @@
 -- 20260729_visitor_pass_rolling_30_semantics.sql:95-98 character for
 -- character. Changing either side silently un-indexes the trigger.
 --
+-- ⚠ SO THIS CODE LOOKS WRONG ON PURPOSE. The natural spellings here
+-- would be lower(trim(property)) and [^A-Za-z0-9] — that is what every
+-- other property/plate comparison in this codebase uses, and it is what
+-- a reader will reach for. They are DELIBERATELY not used. Writing it
+-- the natural way costs nothing visible: the queries return identical
+-- rows, every gate stays green, and the only casualty is that
+-- enforce_visitor_pass_limit goes back to scanning visitor_passes on
+-- every pass issued — the busiest write in the product — with nothing
+-- anywhere to say it happened. VS3 in the paired verification exists
+-- for exactly that reason.
+--
 -- ── BOUNDARY — DATA MINIMISATION ON THE VIOLATION PROJECTION ────────
 -- violations carries tow_fee, tow_mileage_fee, tow_storage_name/address/
 -- phone, driver_name, driver_license, vehicle_vin, photos. NONE of it is
