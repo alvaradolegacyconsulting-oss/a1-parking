@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { getThemeColor } from '../lib/theme'
 import { QRCodeCanvas } from 'qrcode.react'
 import { assignPropertyToDrivers } from '../lib/driver-property-assign'
+import CaPlateActivityTab from '../components/CaPlateActivityTab'
 import SupportContact from '../components/SupportContact'
 import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { printQRSign } from '../lib/qr-print'
@@ -342,6 +343,9 @@ export default function CompanyAdminPortal() {
   const [propMsg, setPropMsg] = useState('')
   // Explicit severity for the property banner. See msgBox.
   const [propMsgKind, setPropMsgKind] = useState<'success' | 'error'>('error')
+  // 🔴 What visitor_pass_limit held when the edit form OPENED. See the
+  // stale-write guard in updateProperty().
+  const [editingPassLimitOriginal, setEditingPassLimitOriginal] = useState<string>('')
   const [logoUploadMsg, setLogoUploadMsg] = useState<Record<string,string>>({})
 
   // 🔴 2026-09-04 (Mateo Sep 4 §1 fix a) — dismiss the property-msg
@@ -1882,6 +1886,9 @@ export default function CompanyAdminPortal() {
       ...fields,
       name: typeof fields.name === 'string' ? fields.name.trim() : fields.name,
       visitor_capacity: fields.visitor_capacity ? parseInt(fields.visitor_capacity) : null,
+      visitor_pass_limit: fields.visitor_pass_limit !== '' && fields.visitor_pass_limit != null && Number.isFinite(parseInt(String(fields.visitor_pass_limit)))
+        ? parseInt(String(fields.visitor_pass_limit))
+        : null,
       authorization_expiration_date: fields.authorization_expiration_date || null,
       authorization_notes: fields.authorization_notes || null,
     }
@@ -1903,8 +1910,48 @@ export default function CompanyAdminPortal() {
     if (clientNameLocked) {
       delete normalizedFields.name
     }
+    // ── 🔴 STALE-WRITE GUARD ON visitor_pass_limit ─────────────────
+    // This form writes a FULL object: `...fields` comes from a
+    // select('*') row, so EVERY column is in the payload whether or not
+    // the CA touched it. That already included visitor_pass_limit
+    // BEFORE this form had an input for it — so a CA opening the panel,
+    // changing an address and saving would write back whatever the
+    // limit was WHEN THE FORM LOADED.
+    //
+    // The damage: a manager sets a limit through savePassLimit() while
+    // a CA has the edit panel open. The CA saves an unrelated field.
+    // The manager's limit silently reverts, the audit row says the CA
+    // changed it, and nobody finds out until a pass that should have
+    // been refused goes through. Nobody intended any of it.
+    //
+    // So the field ships ONLY when the CA actually moved it. Same
+    // carve-out shape the rename-lock uses above (delete
+    // normalizedFields.name), for the same reason: the danger is the
+    // write nobody meant to make.
+    //
+    // Adding the input did not create this risk — it made an existing
+    // one visible and controllable.
+    const passLimitNow = normalizedFields.visitor_pass_limit == null ? '' : String(normalizedFields.visitor_pass_limit)
+    const passLimitTouched = passLimitNow !== editingPassLimitOriginal
+    if (!passLimitTouched) {
+      delete normalizedFields.visitor_pass_limit
+    }
+
     const { error: updErr } = await supabase.from('properties').update(normalizedFields).eq('id', id)
     if (updErr) { setPropMsg('Error: ' + updErr.message); return }
+
+    // Audited under the SAME action as the manager's savePassLimit() —
+    // a CA and a manager changing one setting should read as one
+    // history, not two. Only fires when the value actually moved.
+    if (passLimitTouched) {
+      await auditLog('SET_PASS_LIMIT', 'properties', String(id), {
+        visitor_pass_limit: normalizedFields.visitor_pass_limit,
+        previous: editingPassLimitOriginal === '' ? null : parseInt(editingPassLimitOriginal),
+        property: normalizedFields.name ?? (properties.find(p => p.id === id) as any)?.name ?? null,
+        changed_by_role: 'company_admin',
+      })
+      setEditingPassLimitOriginal(passLimitNow)
+    }
 
     // B51a granular audit: detect auth-field changes against the pre-edit
     // cached state in `properties` and emit per-field actions. Other changes
@@ -4723,6 +4770,13 @@ export default function CompanyAdminPortal() {
           {getCompanyContext().tier_type === 'property_management' && (
             <button style={tab('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
           )}
+          {/* Plate activity — CA only. The tab is hidden for anyone else
+              as a courtesy, NOT as the control: ca_plate_activity()
+              refuses a non-CA server-side, and E2 in its verification
+              proves it. Hiding a button is not a gate. */}
+          {isCA && (
+            <button style={tab('plate-activity')} onClick={() => setActiveTab('plate-activity')}>Plate Activity</button>
+          )}
           <button style={tab('qrcodes')} onClick={() => setActiveTab('qrcodes')}>QR Codes</button>
           <button style={tab('manage')} onClick={() => { setActiveTab('manage'); if (!manageLoaded) loadManageData() }}>Manage</button>
           {/* B219 Layer 2b (2026-06-25): Analytics tab button HIDDEN.
@@ -6270,6 +6324,12 @@ export default function CompanyAdminPortal() {
         )}
 
         {/* ── QR CODES ── */}
+        {/* Gate repeated here so a stale activeTab — a role change mid
+            session — cannot render the panel without the tab. */}
+        {activeTab === 'plate-activity' && isCA && (
+          <CaPlateActivityTab properties={(properties ?? []).filter((p: any) => p.is_active).map((p: any) => ({ name: p.name }))} />
+        )}
+
         {activeTab === 'qrcodes' && (
           <div>
             <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Individual Property QR Codes</p>
@@ -6610,6 +6670,12 @@ export default function CompanyAdminPortal() {
                             <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
                               <button onClick={async () => {
                                 setEditingProperty({ ...selected })
+                                // Remember the loaded pass limit so the save
+                                // can tell "the CA changed this" from "the
+                                // form merely had it loaded".
+                                setEditingPassLimitOriginal(
+                                  (selected as any)?.visitor_pass_limit == null ? '' : String((selected as any).visitor_pass_limit),
+                                )
                                 scrollAndFocusEditPanel('ca-edit-property')
                                 // Rename-lock count fetch (2026-07-16): parallel
                                 // count over 3 assignment carriers scoped by
@@ -6854,6 +6920,33 @@ export default function CompanyAdminPortal() {
                                   </div>
                                 )
                               })}
+                              {/* ── Visitor pass limit (CA edit, 2026-09-17) ──
+                                  Same copy as the add form, word for word.
+                                  A CA who reads different wording in two
+                                  places will assume they are different
+                                  settings.
+                                  🔴 Only written when actually changed — see
+                                  the stale-write guard in updateProperty().
+                                  The manager owns this too, via
+                                  savePassLimit(); both audit as
+                                  SET_PASS_LIMIT so the two paths are one
+                                  history. */}
+                              <div style={{ marginTop:'8px', padding:'10px 12px', background:'#161b26', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                                <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 6px' }}>Visitor pass limit (optional)</p>
+                                <p style={{ color:'#888', fontSize:'10px', margin:'0 0 8px', lineHeight:1.6 }}>
+                                  How many passes <strong>one vehicle</strong> can be issued at this property in any 30 days.
+                                  Leave blank for no limit. Most properties use 3&ndash;5.
+                                  The property manager can change this too.
+                                </p>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={(editingProperty as any).visitor_pass_limit ?? ''}
+                                  onChange={e => setEditingProperty({ ...editingProperty, visitor_pass_limit: e.target.value })}
+                                  placeholder="e.g. 4"
+                                  style={inp} />
+                              </div>
+
                               {/* Auth-doc status + upload/replace/remove — reuses handlers already at file scope. */}
                               <div style={{ marginTop:'8px', padding:'10px 12px', background:'#161b26', border:'1px solid #3a4055', borderRadius:'8px' }}>
                                 <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 8px' }}>Authorization document</p>
