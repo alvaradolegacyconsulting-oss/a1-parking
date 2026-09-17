@@ -29,29 +29,76 @@
 
 -- ── VS1: function exists, SECURITY DEFINER, 1 default ══════════════
 DO $vs1$
-DECLARE v_oid OID; v_secdef BOOLEAN; v_ndef INT;
+DECLARE
+  v_oid    OID;
+  v_secdef BOOLEAN;
+  v_ndef   INT;
 BEGIN
   v_oid := to_regprocedure('public.ca_plate_activity(TEXT, TEXT, INT)');
-  IF v_oid IS NULL THEN RAISE EXCEPTION 'VS1 FAIL: ca_plate_activity(TEXT,TEXT,INT) not found'; END IF;
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'VS1 FAIL: ca_plate_activity(TEXT,TEXT,INT) not found';
+  END IF;
+
   SELECT prosecdef, pronargdefaults INTO v_secdef, v_ndef FROM pg_proc WHERE oid = v_oid;
-  IF v_secdef IS NOT TRUE THEN RAISE EXCEPTION 'VS1 FAIL: not SECURITY DEFINER'; END IF;
+
+  IF v_secdef IS NOT TRUE THEN
+    RAISE EXCEPTION 'VS1 FAIL: ca_plate_activity is not SECURITY DEFINER (prosecdef=%)', v_secdef;
+  END IF;
   IF v_ndef <> 1 THEN
-    RAISE EXCEPTION 'VS1 FAIL: pronargdefaults = % (expected 1 — p_days DEFAULT 30). CREATE OR REPLACE drops defaults not re-typed.', v_ndef;
+    RAISE EXCEPTION 'VS1 FAIL: pronargdefaults = % (expected 1 — p_days DEFAULT 30). CREATE OR REPLACE drops any default not re-typed.', v_ndef;
   END IF;
 END $vs1$;
 
 -- ── VS2: EXECUTE to authenticated only ════════════════════════════
+-- ⚠ REWRITTEN after the first run failed with
+--     ERROR 42P01: relation "a" does not exist
+-- The original was
+--     SELECT 1 FROM unnest(v_acl) a WHERE a::text LIKE '…'
+-- which leans on `a` resolving as the function-scan's implicit column.
+-- That is a WHOLE-ROW-versus-column ambiguity, and when it resolves the
+-- other way Postgres looks for a RELATION named `a` and reports 42P01.
+--
+-- Fixed by naming the column explicitly — AS x(item) — so `x.item` can
+-- only ever be a column reference. Also restored to the multi-line shape
+-- of the VS5 block that ran clean on 2026-09-10; the failing version had
+-- the IF, the assignment and the END IF on a single line.
+--
+-- 🔴 The lesson is the smaller one: I wrote a NEW spelling of a block
+-- that already existed in proven form two files back. Copying the
+-- working one and changing the function name would not have had a
+-- failure mode to discover.
 DO $vs2$
-DECLARE v_acl aclitem[]; v_bad TEXT := '';
+DECLARE
+  v_oid     OID;
+  v_acl     aclitem[];
+  v_acl_str TEXT;
+  v_bad     TEXT := '';
 BEGIN
-  SELECT proacl INTO v_acl FROM pg_proc WHERE oid = to_regprocedure('public.ca_plate_activity(TEXT, TEXT, INT)');
-  IF v_acl IS NULL THEN
-    RAISE EXCEPTION 'VS2 FAIL: proacl NULL — the default PUBLIC EXECUTE grant was not revoked';
+  v_oid := to_regprocedure('public.ca_plate_activity(TEXT, TEXT, INT)');
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'VS2 FAIL: function not found (VS1 should have caught)';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM unnest(v_acl) a WHERE a::text LIKE 'authenticated=X/%') THEN v_bad := v_bad || 'missing authenticated EXECUTE; '; END IF;
-  IF EXISTS (SELECT 1 FROM unnest(v_acl) a WHERE a::text LIKE 'anon=%') THEN v_bad := v_bad || 'anon EXECUTE granted; '; END IF;
-  IF EXISTS (SELECT 1 FROM unnest(v_acl) a WHERE a::text LIKE '=%') THEN v_bad := v_bad || 'PUBLIC EXECUTE granted; '; END IF;
-  IF v_bad <> '' THEN RAISE EXCEPTION 'VS2 FAIL: % (proacl=%)', v_bad, v_acl::text; END IF;
+
+  SELECT proacl INTO v_acl FROM pg_proc WHERE oid = v_oid;
+  v_acl_str := COALESCE(v_acl::text, 'NULL');
+
+  IF v_acl IS NULL THEN
+    RAISE EXCEPTION 'VS2 FAIL: proacl NULL — the default PUBLIC EXECUTE grant was not revoked (feedback_function_public_grant_supabase_default)';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM unnest(v_acl) AS x(item) WHERE x.item::text LIKE 'authenticated=X/%') THEN
+    v_bad := v_bad || format('missing authenticated EXECUTE (proacl=%s); ', v_acl_str);
+  END IF;
+  IF EXISTS (SELECT 1 FROM unnest(v_acl) AS x(item) WHERE x.item::text LIKE 'anon=%') THEN
+    v_bad := v_bad || format('anon EXECUTE granted (proacl=%s); ', v_acl_str);
+  END IF;
+  IF EXISTS (SELECT 1 FROM unnest(v_acl) AS x(item) WHERE x.item::text LIKE '=%') THEN
+    v_bad := v_bad || format('PUBLIC EXECUTE granted (proacl=%s); ', v_acl_str);
+  END IF;
+
+  IF v_bad <> '' THEN
+    RAISE EXCEPTION 'VS2 FAIL: %', v_bad;
+  END IF;
 END $vs2$;
 
 -- ── VS3: 🔴 index expressions still match the enforcement trigger ══
