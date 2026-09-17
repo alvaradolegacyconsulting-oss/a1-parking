@@ -326,7 +326,7 @@ export default function CompanyAdminPortal() {
   // B51a: new properties can optionally land with expiration date + notes at
   // create time. PDF upload deferred to the Edit form because Storage paths
   // depend on the property_id, which doesn't exist until after INSERT.
-  const [newProperty, setNewProperty] = useState({ name: '', address: '', city: '', state: '', zip: '', visitor_capacity: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
+  const [newProperty, setNewProperty] = useState({ name: '', address: '', city: '', state: '', zip: '', visitor_capacity: '', visitor_pass_limit: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
   // ── Driver assignment step (2026-09-16) ──────────────────────────
   // Shown AFTER the property row is created and BEFORE the success
   // state, so the CA assigns while they are still in the flow rather
@@ -1577,6 +1577,12 @@ export default function CompanyAdminPortal() {
       city: newProperty.city || null, state: newProperty.state || null,
       zip: newProperty.zip || null,
       visitor_capacity: newProperty.visitor_capacity ? parseInt(newProperty.visitor_capacity) : null,
+      // Blank → NULL → unlimited (enforce_visitor_pass_limit returns
+      // early on NULL). parseInt guards a non-numeric paste; a NaN would
+      // otherwise reach the column as null anyway, but silently.
+      visitor_pass_limit: newProperty.visitor_pass_limit && Number.isFinite(parseInt(newProperty.visitor_pass_limit))
+        ? parseInt(newProperty.visitor_pass_limit)
+        : null,
       pm_name: newProperty.pm_name || null, pm_phone: newProperty.pm_phone || null,
       pm_email: newProperty.pm_email || null, company: role?.company, is_active: true,
       // B51a: optional auth fields at create time. PDF upload deferred to Edit form.
@@ -1638,7 +1644,7 @@ export default function CompanyAdminPortal() {
     }
 
     setPropMsgKind('success'); setPropMsg('Property added!')
-    setNewProperty({ name: '', address: '', city: '', state: '', zip: '', visitor_capacity: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
+    setNewProperty({ name: '', address: '', city: '', state: '', zip: '', visitor_capacity: '', visitor_pass_limit: '', pm_name: '', pm_phone: '', pm_email: '', authorization_expiration_date: '', authorization_notes: '' })
     setShowAddProperty(false)
     await reloadProperties()
 
@@ -6438,7 +6444,7 @@ export default function CompanyAdminPortal() {
                         { key:'city', label:'City', placeholder:'Houston' },
                         { key:'state', label:'State', placeholder:'TX' },
                         { key:'zip', label:'ZIP Code', placeholder:'77001' },
-                        { key:'visitor_capacity', label:'Visitor Capacity', placeholder:'120' },
+                        { key:'visitor_capacity', label:'Visitor parking spaces', placeholder:'e.g. 20' },
                         { key:'pm_name', label:'Property Manager Name', placeholder:'John Smith' },
                         { key:'pm_phone', label:'PM Phone', placeholder:'(713) 555-0123' },
                         { key:'pm_email', label:'PM Email', placeholder:'pm@example.com' },
@@ -6446,8 +6452,60 @@ export default function CompanyAdminPortal() {
                         <div key={f.key}>
                           <label style={lbl}>{f.label}</label>
                           <input value={(newProperty as any)[f.key]} onChange={e => setNewProperty({ ...newProperty, [f.key]: e.target.value })} placeholder={f.placeholder} style={inp} />
+                          {/* Naming the thing it ISN'T, because one live
+                              property already looks like it was set on
+                              that assumption (Summerset, 180). */}
+                          {f.key === 'visitor_capacity' && (
+                            <p style={{ color:'#555', fontSize:'10px', margin:'2px 0 0', lineHeight:1.5 }}>
+                              How many visitor spaces the property has. This does <strong>not</strong> limit visitor passes — use the pass limit below for that.
+                            </p>
+                          )}
                         </div>
                       ))}
+                      {/* ── Visitor pass limit (2026-09-17) ───────────────
+                          🔴 TWO SIMILARLY-NAMED COLUMNS, AND ONLY ONE OF
+                          THEM LIMITS ANYTHING:
+                            visitor_capacity   — how many visitor parking
+                                                 SPACES exist. A spaces
+                                                 metric (app/lib/spaces.ts:19).
+                                                 Limits nothing.
+                            visitor_pass_limit — what
+                                                 enforce_visitor_pass_limit()
+                                                 actually reads.
+                          The add form exposed only the first, labelled
+                          "Visitor Capacity", and 8 of 16 live properties
+                          have it set against 1 with a real pass limit —
+                          including A1's Summerset at 180, which is the
+                          shape of a number someone picks believing it
+                          caps passes. Hence the explicit "does not limit"
+                          line on that field and this one being added.
+
+                          🔴 THE SEMANTIC IS PER-VEHICLE-PER-30-DAYS, and
+                          nobody guesses that. 20260729_visitor_pass_
+                          rolling_30_semantics.sql:95-98 counts passes
+                          WHERE property = this property AND normalized
+                          plate = this plate AND created_at > now() - 30
+                          days. So 3-5 is the sane range and the old
+                          placeholder of 120 was thirty times any
+                          sensible value.
+
+                          Blank → NULL → unlimited, explicitly, at
+                          20260729:77. No migration, no backfill. */}
+                      <div style={{ marginTop:'8px', padding:'10px 12px', background:'#0d1520', border:'1px solid #3a4055', borderRadius:'8px' }}>
+                        <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 6px' }}>Visitor pass limit (optional)</p>
+                        <p style={{ color:'#888', fontSize:'10px', margin:'0 0 8px', lineHeight:1.6 }}>
+                          How many passes <strong>one vehicle</strong> can be issued at this property in any 30 days.
+                          Leave blank for no limit. Most properties use 3&ndash;5.
+                          The property manager can change this later.
+                        </p>
+                        <input
+                          type="number"
+                          min={1}
+                          value={newProperty.visitor_pass_limit}
+                          onChange={e => setNewProperty({ ...newProperty, visitor_pass_limit: e.target.value })}
+                          placeholder="e.g. 4"
+                          style={inp} />
+                      </div>
                       <div style={{ marginTop:'8px', padding:'10px 12px', background:'#0d1520', border:'1px solid #3a4055', borderRadius:'8px' }}>
                         <p style={{ color:'#C9A227', fontSize:'11px', fontWeight:'bold', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 6px' }}>Towing Authorization (optional)</p>
                         <p style={{ color:'#555', fontSize:'10px', margin:'0 0 8px', fontStyle:'italic' }}>Upload the signed authorization PDF after saving — via Edit once the property exists.</p>
@@ -6753,7 +6811,7 @@ export default function CompanyAdminPortal() {
                                 { key:'city', label:'City' },
                                 { key:'state', label:'State' },
                                 { key:'zip', label:'ZIP Code' },
-                                { key:'visitor_capacity', label:'Visitor Capacity' },
+                                { key:'visitor_capacity', label:'Visitor parking spaces' },
                                 { key:'pm_name', label:'PM Name' },
                                 { key:'pm_phone', label:'PM Phone' },
                                 { key:'pm_email', label:'PM Email' },
@@ -6899,7 +6957,7 @@ export default function CompanyAdminPortal() {
                       { key:'city', label:'City', placeholder:'Houston' },
                       { key:'state', label:'State', placeholder:'TX' },
                       { key:'zip', label:'ZIP Code', placeholder:'77001' },
-                      { key:'visitor_capacity', label:'Visitor Capacity', placeholder:'120' },
+                      { key:'visitor_capacity', label:'Visitor parking spaces', placeholder:'e.g. 20' },
                       { key:'pm_name', label:'Property Manager Name', placeholder:'John Smith' },
                       { key:'pm_phone', label:'PM Phone', placeholder:'(713) 555-0123' },
                       { key:'pm_email', label:'PM Email', placeholder:'pm@example.com' },
@@ -6995,7 +7053,7 @@ export default function CompanyAdminPortal() {
                         {[
                           { key:'name', label:'Name *' }, { key:'address', label:'Address' },
                           { key:'city', label:'City' }, { key:'state', label:'State' },
-                          { key:'zip', label:'ZIP' }, { key:'visitor_capacity', label:'Visitor Capacity' },
+                          { key:'zip', label:'ZIP' }, { key:'visitor_capacity', label:'Visitor parking spaces' },
                           { key:'pm_name', label:'PM Name' }, { key:'pm_phone', label:'PM Phone' },
                           { key:'pm_email', label:'PM Email' },
                         ].map(f => (
