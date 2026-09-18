@@ -106,6 +106,20 @@ ORDER BY pol.polcmd, pol.polname;
 -- ════════════════════════════════════════════════════════════════════
 -- BLOCK C — C4 detection: any email holding more than one role row
 -- ════════════════════════════════════════════════════════════════════
+-- ⚠️  SUPERSEDED — this block no longer needs the editor.
+-- It reads `user_roles`, a plain table in `public` that PostgREST
+-- reaches, so it never belonged behind the catalog gate. It now lives
+-- as a standing check:
+--
+--     npx tsx scripts/check-duplicate-role-rows.ts
+--
+-- Ran clean on 2026-09-18: 244 rows, 244 distinct emails, zero
+-- duplicates. Kept here only so the SQL form is on record, and because
+-- it is still the cheapest editor-health probe in the file — it is the
+-- simplest statement here, so if it throws a phantom 42P01 you have
+-- learned the editor is still sick in ninety seconds rather than after
+-- four blocks.
+-- ════════════════════════════════════════════════════════════════════
 -- Why this matters: get_my_role(), get_my_company() and
 -- get_my_properties() are all `… WHERE email … LIMIT 1` with NO
 -- ORDER BY. With two rows for one email, which one answers is
