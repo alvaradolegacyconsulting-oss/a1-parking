@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx'
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useResolvedLogo } from '../lib/logo'
 import { escapeIlikeValue, nameMetacharError } from '../lib/supabase-query-escape'
+import { validateCompanyExists } from '../lib/company-validate'
 import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
 import CredentialsModal from '../components/CredentialsModal'
 import { generateTempPassword } from '../lib/temp-password'
@@ -594,6 +595,11 @@ export default function AdminPortal() {
     const passwordToUse = isResident ? generateTempPassword() : newUser.password
     const targetEmail = newUser.email.trim().toLowerCase()
 
+    // ── C3 (2026-09-18) — company existence gate, same rationale as
+    // addDriver: reject before the auth user exists, not after.
+    const usrCompany = await validateCompanyExists(supabase, newUser.company)
+    if (!usrCompany.ok) { setUserMsg(usrCompany.message); return }
+
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
     const { data: { session } } = await supabase.auth.getSession()
     const url = (fnBase ?? '') + '/swift-handler'
@@ -622,7 +628,7 @@ export default function AdminPortal() {
         const { error: roleError } = await supabase.rpc('insert_user_role', {
           p_email: targetEmail,
           p_role: 'resident',
-          p_company: newUser.company.trim() || null,
+          p_company: usrCompany.canonical,
           p_property: propertyArray.length > 0 ? propertyArray : []
         })
         if (roleError) throw new Error('user_role INSERT failed: ' + roleError.message)
@@ -631,7 +637,7 @@ export default function AdminPortal() {
           email: targetEmail,
           name: newUser.email.trim(),
           property: propertyArray[0] || null,
-          company: newUser.company.trim() || null,
+          company: usrCompany.canonical,
           unit: '',
           is_active: true
         }])
@@ -704,7 +710,7 @@ export default function AdminPortal() {
       .rpc('insert_user_role', {
         p_email: newUser.email.trim(),
         p_role: newUser.role,
-        p_company: newUser.company.trim() || null,
+        p_company: usrCompany.canonical,
         p_property: propertyArray.length > 0 ? propertyArray : []
       })
     if (roleError) { setUserMsg('Auth created but role insert failed: ' + roleError.message); return }
@@ -712,7 +718,7 @@ export default function AdminPortal() {
       await supabase.from('drivers').insert([{
         email: newUser.email.trim(),
         name: newUser.email.trim(),
-        company: newUser.company.trim() || null,
+        company: usrCompany.canonical,
         assigned_properties: propertyArray,
         is_active: true
       }])
@@ -856,6 +862,14 @@ export default function AdminPortal() {
       setDriverMsg('Email addresses do not match. Retype the confirmation email.')
       return
     }
+    // ── C3 (2026-09-18) — company existence gate ────────────────────
+    // Runs BEFORE the swift-handler auth create on purpose. The auth
+    // user cannot be rolled back from here, so a company that fails
+    // validation after that call leaves an orphaned auth account behind.
+    // Reject first, mint nothing.
+    const drvCompany = await validateCompanyExists(supabase, newDriver.company)
+    if (!drvCompany.ok) { setDriverMsg(drvCompany.message); return }
+
     setDriverMsg('Creating driver...')
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
     const { data: { session } } = await supabase.auth.getSession()
@@ -869,9 +883,20 @@ export default function AdminPortal() {
       const err = await res.json().catch(() => ({}))
       if (!res.ok) { setDriverMsg('Auth error: ' + (err.error || err.message || res.statusText)); return }
     } catch (e: any) { setDriverMsg('Error: ' + e.message); return }
-    const { data, error } = await supabase.from('drivers').insert([{ ...newDriver }]).select().single()
+    // Canonical spelling as STORED in `companies`, not as supplied, so the
+    // drivers row and the user_roles row below cannot drift into two scopes.
+    const { data, error } = await supabase.from('drivers').insert([{ ...newDriver, company: drvCompany.canonical }]).select().single()
     if (error) { setDriverMsg('Error: ' + error.message); return }
-    await supabase.from('user_roles').insert([{ email: newDriver.email, role: 'driver', company: newDriver.company || null }])
+    // 🔴 This result used to be discarded. A driver with a `drivers` row and
+    // no `user_roles` row gets a blank portal, and the operator was shown
+    // "Driver created!" either way. The driver row is already committed at
+    // this point, so we report the split state rather than claiming success.
+    const { error: roleErr } = await supabase.from('user_roles').insert([{ email: newDriver.email, role: 'driver', company: drvCompany.canonical }])
+    if (roleErr) {
+      setDriverMsg(`Driver record created, but the login role failed to save: ${roleErr.message}. The driver CANNOT sign in yet — fix the role row before handing out the password.`)
+      fetchDrivers()
+      return
+    }
     await auditLog(adminEmail, 'ADD_DRIVER', 'drivers', data.id, newDriver)
     setDriverMsg(`Driver created! Temp password: ${tempPass}`)
     setNewDriver({ name:'', email:'', phone:'', company:'', operator_license:'', assigned_properties:[], is_active:true })
