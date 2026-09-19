@@ -9,7 +9,20 @@ import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWi
 
 function VisitorForm() {
   const searchParams = useSearchParams()
-  const propertyName = searchParams.get('property') || 'Managed Property'
+  // 2026-09-18 phantom-property fix. `rawProperty` is null when the URL
+  // carried no ?property= at all. That case is what wrote 22 visitor_passes
+  // rows against a property that does not exist, one of which was cited.
+  //
+  // 🔴 The placeholder no longer participates in any decision. The old
+  // spelling collapsed "absent" into the string 'Managed Property' and then
+  // every guard tested `propertyName !== 'Managed Property'` — which reads
+  // as "skip the check when we have no context" and is exactly backwards.
+  // Absent is the case that most needs refusing. `hasPropertyParam` is the
+  // one thing the guards below test, and it is a boolean, so no branch can
+  // accidentally treat "missing" as a usable value.
+  const rawProperty = searchParams.get('property')
+  const hasPropertyParam = !!(rawProperty && rawProperty.trim() !== '')
+  const propertyName = rawProperty || 'Managed Property'
   const [step, setStep] = useState<'form' | 'success'>('form')
   const [supportPhone, setSupportPhone] = useState('')
   const [supportEmail, setSupportEmail] = useState('')
@@ -24,7 +37,8 @@ function VisitorForm() {
   // from the properties table after a data wipe. This state tracks the
   // resolution result so the form only renders when the property is
   // actually resolvable.
-  //   null   → resolution in flight (or 'Managed Property' fallback)
+  //   null   → resolution in flight (a no-param arrival is set to false
+  //             immediately, so null now means genuinely in flight)
   //   true   → resolved; render form
   //   false  → unresolved; render invalid-link message, no form
   const [propertyResolved, setPropertyResolved] = useState<boolean | null>(null)
@@ -41,7 +55,15 @@ function VisitorForm() {
 
   useEffect(() => {
     async function loadSupportInfo() {
-      if (propertyName && propertyName !== 'Managed Property') {
+      // No ?property= at all: resolve to false immediately rather than
+      // leaving propertyResolved at null. null means "still loading" and
+      // the render guard deliberately falls through to the form on null,
+      // so a case that never resolved rendered a submittable form forever.
+      if (!hasPropertyParam) {
+        console.error('[visitor-property-missing]', { url: typeof window !== 'undefined' ? window.location.href : '(ssr)' })
+        setPropertyResolved(false)
+      }
+      if (hasPropertyParam) {
         // B155.3 — anon RPCs replace direct table SELECTs. Same data
         // shape; safe columns only; no anon over-read.
         const { data: propRows } = await supabase.rpc('get_property_for_visitor', { p_name: propertyName })
@@ -133,7 +155,7 @@ function VisitorForm() {
   // B19: query per-plate active-pass count on plate change so the user
   // sees the limit before submit. Debounced 400ms.
   useEffect(() => {
-    if (!form.plate || !propertyName || propertyName === 'Managed Property') {
+    if (!form.plate || !hasPropertyParam) {
       setLimitStatus(null); return
     }
     let cancelled = false
@@ -152,6 +174,20 @@ function VisitorForm() {
   // window entirely. warnAcknowledged state kept for the reset-on-
   // plate-edit path.
   async function submitPass(bypassOnRecordWarn: boolean = false) {
+    // 🔴 2026-09-18 — the write path had NO property check of any kind.
+    // The render guard was doing all the work, and it excluded the very
+    // case that needed it. This is the backstop: even if some future
+    // render change lets the form through, no row is written against a
+    // property we could not resolve. A pass that exists but cannot be
+    // found by enforcement is worse than a pass that was never issued —
+    // the visitor believes they are covered and they are not.
+    if (!hasPropertyParam || propertyResolved !== true) {
+      setPlateError(
+        'We can\u2019t tell which property you\u2019re visiting, so this pass was not created. ' +
+        'Please scan the QR code on the property\u2019s parking sign, or call the property for a visitor-pass link.'
+      )
+      return
+    }
     if (!form.plate || !form.unit) {
       alert('Please enter your license plate and the unit you are visiting')
       return
@@ -209,7 +245,13 @@ function VisitorForm() {
     // now has RLS enabled with no anon policy — direct .from() would
     // return zero rows. The RPC returns a minimum-leak boolean (no row
     // visibility, no count enumeration).
-    if (propertyName !== 'Managed Property') {
+    // 2026-09-18 — this used to be wrapped in
+    // `if (propertyName !== 'Managed Property')`, so the no-param path
+    // skipped the resident-plate block and the on-record warn as well as
+    // the property check. Three protections, one hole. The submit guard
+    // above now makes an unresolved property unreachable here, so this
+    // runs unconditionally and the wrapper is gone.
+    {
       // Finding 3 (2026-08-04): parallel precheck. check_resident_plate
       // (existing) blocks for is_active=true residents. New
       // check_plate_on_record_inactive_at_property returns TRUE for
@@ -337,7 +379,9 @@ function VisitorForm() {
   // no enforcement query can match. Loading state (null) falls through
   // to the form (existing behaviour) so a slow RPC doesn't visibly
   // block; the guard only bites on a confirmed non-match.
-  if (propertyName !== 'Managed Property' && propertyResolved === false) {
+  // 2026-09-18 — the `propertyName !== 'Managed Property'` term used to sit
+  // in front of this and excluded the no-param case from its own guard.
+  if (propertyResolved === false) {
     return (
       <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
         <div style={{ maxWidth:'420px', width:'100%' }}>
@@ -348,10 +392,16 @@ function VisitorForm() {
             <div style={{ width:'56px', height:'56px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #f44336', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px', fontSize:'24px' }}>⚠</div>
             <h2 style={{ color:'#f44336', fontSize:'17px', fontWeight:'bold', margin:'0 0 12px' }}>This parking-pass link isn&apos;t valid</h2>
             <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
-              We couldn&apos;t find a property matching this link. The link may be outdated or contain a typo.
+              {hasPropertyParam
+                ? 'We couldn\u2019t find a property matching this link. The link may be outdated or contain a typo.'
+                : 'This link doesn\u2019t say which property you\u2019re visiting, so we can\u2019t issue a pass from it.'}
+            </p>
+            <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
+              <strong style={{ color:'#C9A227' }}>No pass has been created.</strong> Your vehicle is not covered yet.
             </p>
             <p style={{ color:'#666', fontSize:'12px', lineHeight:'1.6', margin:'0' }}>
-              Please contact the property directly for a valid visitor-pass link.
+              Scan the QR code on the property&apos;s parking sign, or contact the property directly for a
+              visitor-pass link{supportPhone ? ` (${supportPhone})` : ''}.
             </p>
           </div>
         </div>
