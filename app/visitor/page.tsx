@@ -53,6 +53,28 @@ function VisitorForm() {
   // a write.
   const [resolvedPropertyName, setResolvedPropertyName] = useState<string>(propertyName)
 
+  // 2026-09-18 — the guard below turns a visible-if-wrong outcome into a
+  // SILENT refusal. Without this we cannot tell how many visitors are
+  // being turned away or where they came from, which is the question the
+  // 22 phantom passes left unanswerable. Fire-and-forget on purpose: a
+  // logging failure must never block or slow the visitor's screen, and
+  // the endpoint always answers 200 regardless.
+  function logRefusal(rawPropertyParam: string | null) {
+    if (typeof window === 'undefined') return
+    try {
+      void fetch('/api/visitor/refusal-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rawUrl: window.location.href,
+          rawProperty: rawPropertyParam,
+          referrer: document.referrer || null,
+        }),
+        keepalive: true,
+      }).catch(() => {})
+    } catch { /* never let telemetry break the refusal screen */ }
+  }
+
   useEffect(() => {
     async function loadSupportInfo() {
       // No ?property= at all: resolve to false immediately rather than
@@ -61,6 +83,7 @@ function VisitorForm() {
       // so a case that never resolved rendered a submittable form forever.
       if (!hasPropertyParam) {
         console.error('[visitor-property-missing]', { url: typeof window !== 'undefined' ? window.location.href : '(ssr)' })
+        logRefusal(null)
         setPropertyResolved(false)
       }
       if (hasPropertyParam) {
@@ -88,6 +111,7 @@ function VisitorForm() {
           // future mismatches (source/DB drift, mistyped links, stale
           // signage).
           console.error('[visitor-property-unresolved]', { propertyName })
+          logRefusal(propertyName)
           setPropertyResolved(false)
         }
       }
@@ -389,7 +413,17 @@ function VisitorForm() {
             <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>ShieldMyLot&trade;</h1>
           </div>
           <div style={{ background:'#161b26', border:'1px solid #b71c1c', borderRadius:'12px', padding:'24px', textAlign:'center' }}>
-            <div style={{ width:'56px', height:'56px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #f44336', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px', fontSize:'24px' }}>⚠</div>
+            {/* 2026-09-18: was a bare ⚠ character, which fell back to
+                nothing on the device font stack and rendered as an empty
+                circle — on the one screen whose job is to alarm. Inline
+                SVG draws the same mark everywhere with no font dependency. */}
+            <div style={{ width:'56px', height:'56px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #f44336', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px' }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" role="img" aria-label="Warning" focusable="false">
+                <path d="M12 3.2 1.8 20.4h20.4L12 3.2Z" fill="none" stroke="#f44336" strokeWidth="2" strokeLinejoin="round" />
+                <rect x="11" y="9" width="2" height="6" rx="1" fill="#f44336" />
+                <rect x="11" y="16.6" width="2" height="2" rx="1" fill="#f44336" />
+              </svg>
+            </div>
             <h2 style={{ color:'#f44336', fontSize:'17px', fontWeight:'bold', margin:'0 0 12px' }}>This parking-pass link isn&apos;t valid</h2>
             <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
               {hasPropertyParam
@@ -399,9 +433,15 @@ function VisitorForm() {
             <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
               <strong style={{ color:'#C9A227' }}>No pass has been created.</strong> Your vehicle is not covered yet.
             </p>
-            <p style={{ color:'#666', fontSize:'12px', lineHeight:'1.6', margin:'0' }}>
-              Scan the QR code on the property&apos;s parking sign, or contact the property directly for a
-              visitor-pass link{supportPhone ? ` (${supportPhone})` : ''}.
+            {/* 2026-09-18: this was #666 at 12px — the lowest-contrast text
+                on the screen, carrying the only action. It is now the most
+                readable thing here, which is what it should have been. */}
+            <p style={{ color:'#fff', fontSize:'14px', lineHeight:'1.6', margin:'12px 0 0', fontWeight:'bold' }}>
+              Scan the QR code on the property&apos;s parking sign to get a valid pass link.
+            </p>
+            <p style={{ color:'#ccc', fontSize:'13px', lineHeight:'1.6', margin:'6px 0 0' }}>
+              Or contact the property directly{supportPhone ? ' at ' : '.'}
+              {supportPhone ? <a href={`tel:${supportPhone.replace(/[^0-9+]/g, '')}`} style={{ color:'#C9A227', fontWeight:'bold', textDecoration:'underline' }}>{supportPhone}</a> : null}
             </p>
           </div>
         </div>
