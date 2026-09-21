@@ -17,6 +17,7 @@ import {
   PRIVACY_VERSION,
   PRIVACY_DISPLAY_DATE,
 } from '../lib/legal-versions'
+import { guardEmail, suggestEmailCorrection } from '../lib/email-guard'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY']
 
@@ -121,6 +122,11 @@ function RegisterForm() {
   function validateStep1(): string {
     if (!account.email || !account.password || !account.name || !account.unit) return 'Email, password, full name, and unit are required.'
     if (!account.email.includes('@')) return 'Please enter a valid email address.'
+    // 2026-09-21 — same rule the server enforces, surfaced here so the
+    // resident sees it before submit rather than as a server error.
+    // /api/register/create-user re-checks it; this is the courtesy copy.
+    const emailGuard = guardEmail(account.email)
+    if (!emailGuard.ok) return emailGuard.message
     if (account.password.length < 8) return 'Password must be at least 8 characters.'
     if (account.password !== account.confirm) return 'Passwords do not match.'
     return ''
@@ -544,6 +550,29 @@ function RegisterForm() {
               <label style={lbl}>Email *</label>
               <input type="email" value={account.email} onChange={e => setAccount({...account, email: e.target.value})}
                 placeholder="you@email.com" style={inp} />
+              {/* 2026-09-21 — one-tap typo correction. SUGGESTION ONLY:
+                  gmial.com is a domain someone could genuinely own, so
+                  this never blocks and never rewrites silently. The
+                  resident stays in control of their own address. */}
+              {(() => {
+                const suggestion = suggestEmailCorrection(account.email)
+                if (!suggestion) return null
+                return (
+                  <div style={{ margin: '-6px 0 10px', padding: '10px 12px', background: '#1a1200', border: '1px solid #C9A227', borderRadius: '8px' }}>
+                    <p style={{ color: '#fff', fontSize: '13px', margin: '0 0 8px', lineHeight: 1.5 }}>
+                      Did you mean <strong style={{ color: '#C9A227' }}>{suggestion}</strong>?
+                    </p>
+                    <button type="button"
+                      onClick={() => setAccount({ ...account, email: suggestion })}
+                      style={{ padding: '7px 14px', background: '#C9A227', color: '#0f1117', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Arial' }}>
+                      Yes, use {suggestion}
+                    </button>
+                    <span style={{ color: '#888', fontSize: '12px', marginLeft: '10px' }}>
+                      or keep what you typed
+                    </span>
+                  </div>
+                )
+              })()}
 
               <label style={lbl}>Password * (min 8 characters)</label>
               <div style={{ position: 'relative' }}>
