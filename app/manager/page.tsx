@@ -2741,12 +2741,28 @@ export default function ManagerPortal() {
     const tempPassword = generateTempPassword()
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
 
+    // 🔴 2026-09-21 — swift-handler is gaining a caller-authorization
+    // gate. BOTH calls in this function used to send the ANON KEY, which
+    // is a valid JWT carrying no user: the gate resolves it to nobody and
+    // returns 401. They must send the operator's own session token.
+    //
+    // Fetched once here and used by both the create below and the
+    // rollback in the catch — the rollback is inside a `.catch(() => {})`
+    // best-effort chain, so if it 401s it fails SILENTLY and leaves an
+    // orphaned auth user behind every failed add. That is the one of the
+    // two that would have gone unnoticed.
+    //
+    // This change is harmless before the gate ships: the function
+    // currently ignores the header entirely. Deploy this FIRST, confirm
+    // both flows, then paste the gate.
+    const { data: { session: swiftSession } } = await supabase.auth.getSession()
+
     // Step 1: Create the auth user via swift-handler (service-role bridge).
     const swiftRes = await fetch(fnBase + '/swift-handler', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${swiftSession?.access_token}`,
       },
       body: JSON.stringify({ action: 'create_user', email: targetEmail, password: tempPassword }),
     })
@@ -2877,7 +2893,7 @@ export default function ManagerPortal() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+          'Authorization': `Bearer ${swiftSession?.access_token}`,
         },
         body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
       }).catch(() => { /* best-effort */ })
