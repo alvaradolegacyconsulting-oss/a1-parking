@@ -16,6 +16,7 @@ import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 // boundary distinguishing standing authorization from tow protection.
 import AuthorizedPlatesManager from '../components/AuthorizedPlatesManager'
 import { escapeIlikeValue, nameMetacharError } from '../lib/supabase-query-escape'
+import { guardEmail } from '../lib/email-guard'
 import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId } from '../lib/tier'
@@ -2220,6 +2221,18 @@ export default function CompanyAdminPortal() {
       // to the resident manually (typically on the phone at creation
       // time). See app/api/admin/invite-user/route.ts header for why
       // residents weren't folded into the invite-by-email arc.
+      // 🔴 2026-09-21 — swift-handler create_user MINTS AN auth.users ROW and
+      // was not in the 2026-09-11 tourniquet's ingress list. Five callers,
+      // none guarded. This adds the shared gate (blocked characters AND the
+      // dead-TLD typo rule) before the mint.
+      //
+      // ⚠ CLIENT-SIDE ONLY. swift-handler is a Supabase edge function and does
+      // not live in this repo, so the real server-side gate for these paths is
+      // still absent. These are authenticated-operator surfaces, not public,
+      // which is why this is acceptable as an interim — not as closed.
+      const eg_ = guardEmail(newUser.email)
+      if (!eg_.ok) { setUserMsg(eg_.message); return }
+
       const passwordToUse = generateTempPassword()
       const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
       const { data: { session } } = await supabase.auth.getSession()

@@ -106,12 +106,144 @@ export function blockedEmailMessage(ch: BlockedEmailChar): string {
 
 export type EmailGuardResult =
   | { ok: true }
-  | { ok: false; char: BlockedEmailChar; message: string }
+  // `char` is null when the refusal came from the dead-TLD rule rather
+  // than a blocked character. Callers read `.message`; nothing in the
+  // tree branches on `.char` (verified 2026-09-21).
+  | { ok: false; char: BlockedEmailChar | null; message: string }
 
 // The single entry point. One validator, not one per ingress — three
 // copies is how the fourth ingress ships without one.
 export function guardEmail(email: string | null | undefined): EmailGuardResult {
   const ch = findBlockedEmailChar(email)
-  if (!ch) return { ok: true }
-  return { ok: false, char: ch, message: blockedEmailMessage(ch) }
+  if (ch) return { ok: false, char: ch, message: blockedEmailMessage(ch) }
+
+  // 2026-09-21 — dead-TLD check folded in here so every ingress that
+  // already calls guardEmail() gets it without a second call site.
+  // `char` is reported as null: the caller only ever reads `.message`,
+  // and inventing a fake character to satisfy the old shape would make
+  // the "we can't accept X" copy name something that isn't there.
+  const tld = checkDeadTld(email)
+  if (!tld.ok) return { ok: false, char: null, message: tld.message }
+
+  return { ok: true }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TYPO GUARD (2026-09-21) — a SECOND, INDEPENDENT concern in this file
+// ════════════════════════════════════════════════════════════════════
+//
+// Deliberately added here rather than in a new module. `guardEmail()` is
+// already the single entry point every auth-minting ingress calls; a
+// second validator would mean a second list of call sites to keep in
+// sync, and the first thing that goes wrong with two gates is that a new
+// ingress gets one of them. One email gate, not two.
+//
+// ── WHAT THIS BUYS, HONESTLY ────────────────────────────────────────
+// Of the five bounced addresses that prompted this (2026-09-21), these
+// rules would have caught exactly ONE — `greth.plancarte@gmail.con`.
+// The other four are well-formed addresses that are simply wrong, and
+// no amount of syntax checking finds those. Bounce visibility is the
+// actual fix; this is cheap insurance in front of it.
+//
+// ── TWO CLASSES, ON PURPOSE ─────────────────────────────────────────
+// HARD BLOCK  — top-level domains that do not exist. Mail to them cannot
+//               be delivered under any circumstances, so refusing costs
+//               a legitimate user nothing. Enforced SERVER-SIDE.
+//
+// SUGGEST     — misspellings of providers our users actually use. These
+//               are almost certainly typos, but `gmial.com` is a domain
+//               someone could genuinely own, and a hard block would lock
+//               them out with no recourse. CLIENT-SIDE ONLY: show the
+//               suggestion, let them keep what they typed.
+//
+// 🔴 `.co`, `.cm` and `.om` are REAL top-level domains — Colombia,
+// Cameroon and Oman. They are NOT in the block list and must not be
+// added. `name@example.co` is a valid address and the gate proves it.
+// The matching below is on the FINAL LABEL, exact, for exactly this
+// reason: a substring or startsWith test would catch `.co` inside
+// `.com` and refuse the entire internet.
+
+// Final-label values that are not real TLDs. Every one is a keyboard
+// slip for `.com` — adjacent keys, transpositions, doubled letters.
+const DEAD_TLDS = new Set([
+  'con', 'cmo', 'ocm', 'cpm', 'vom', 'xom', 'comm', 'coom',
+])
+
+// Second-level-domain misspellings of the providers our users use.
+const SLD_TYPOS: Record<string, string> = {
+  gmial: 'gmail.com', gmal: 'gmail.com', gamil: 'gmail.com',
+  gmali: 'gmail.com', gnail: 'gmail.com', gmaill: 'gmail.com',
+  hotmial: 'hotmail.com', hotmai: 'hotmail.com', hotmil: 'hotmail.com',
+  yahooo: 'yahoo.com', yaho: 'yahoo.com', yhoo: 'yahoo.com',
+  outlok: 'outlook.com', outloo: 'outlook.com',
+  iclod: 'icloud.com', icoud: 'icloud.com',
+}
+
+// Whole-domain cases the SLD map cannot catch, because the SLD is
+// spelled correctly and only the TLD is short.
+const DOMAIN_TYPOS: Record<string, string> = {
+  'gmail.co': 'gmail.com',
+}
+
+// Matches the lower(trim(email)) convention used everywhere else.
+export function normalizeEmail(email: string | null | undefined): string {
+  return (email ?? '').trim().toLowerCase()
+}
+
+function domainOf(email: string): string | null {
+  const at = email.lastIndexOf('@')
+  if (at < 0 || at === email.length - 1) return null
+  return email.slice(at + 1)
+}
+
+export type DeadTldResult = { ok: true } | { ok: false; tld: string; message: string }
+
+// HARD BLOCK. Server-enforced.
+export function checkDeadTld(email: string | null | undefined): DeadTldResult {
+  const domain = domainOf(normalizeEmail(email))
+  if (!domain) return { ok: true }          // not our job — shape is validated elsewhere
+
+  // A trailing dot ("name@gmail.com.") leaves an empty final label. It is
+  // technically a fully-qualified root form and no mail provider accepts
+  // it from a form, so it is treated as the typo it always is.
+  if (domain.endsWith('.')) {
+    return {
+      ok: false,
+      tld: '(trailing dot)',
+      message: 'That address ends with a dot. Please remove the dot at the end and try again.',
+    }
+  }
+
+  const labels = domain.split('.')
+  const tld = labels[labels.length - 1]
+  if (labels.length < 2 || !tld) return { ok: true }
+
+  if (DEAD_TLDS.has(tld)) {
+    return {
+      ok: false,
+      tld,
+      message: `That address ends in ".${tld}" — did you mean ".com"? Please check the address and try again.`,
+    }
+  }
+  return { ok: true }
+}
+
+// SUGGEST. Client-side only — never rejects, only proposes.
+// Returns the corrected FULL address so the form can offer one-tap accept.
+export function suggestEmailCorrection(email: string | null | undefined): string | null {
+  const normalized = normalizeEmail(email)
+  const domain = domainOf(normalized)
+  if (!domain) return null
+  const local = normalized.slice(0, normalized.lastIndexOf('@'))
+
+  const whole = DOMAIN_TYPOS[domain]
+  if (whole) return `${local}@${whole}`
+
+  const labels = domain.split('.')
+  if (labels.length < 2) return null
+  const sld = labels[labels.length - 2]
+  const corrected = SLD_TYPOS[sld]
+  if (corrected) return `${local}@${corrected}`
+
+  return null
 }

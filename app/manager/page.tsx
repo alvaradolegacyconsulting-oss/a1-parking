@@ -54,6 +54,7 @@ import {
   fetchActiveGuestAuths,
   guestAuthDisplayStatus,
 } from '../lib/guest-auth'
+import { guardEmail } from '../lib/email-guard'
 // Spaces v1 — dashboard-primary architecture with filtered/paginated list.
 // All mutations route through the 6 DEFINER RPCs (assign/reassign/free/
 // generate/decommission/update_space_metadata). NO direct table writes
@@ -2725,6 +2726,18 @@ export default function ManagerPortal() {
     try {
 
     const targetEmail = newResident.email.trim().toLowerCase()
+    // 🔴 2026-09-21 — swift-handler create_user MINTS AN auth.users ROW and
+    // was not in the 2026-09-11 tourniquet's ingress list. Five callers,
+    // none guarded. This adds the shared gate (blocked characters AND the
+    // dead-TLD typo rule) before the mint.
+    //
+    // ⚠ CLIENT-SIDE ONLY. swift-handler is a Supabase edge function and does
+    // not live in this repo, so the real server-side gate for these paths is
+    // still absent. These are authenticated-operator surfaces, not public,
+    // which is why this is acceptable as an interim — not as closed.
+    const eg_ = guardEmail(targetEmail)
+    if (!eg_.ok) { alert(eg_.message); return }
+
     const tempPassword = generateTempPassword()
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
 

@@ -7,6 +7,7 @@ import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tool
 import { useResolvedLogo } from '../lib/logo'
 import { escapeIlikeValue, nameMetacharError } from '../lib/supabase-query-escape'
 import { validateCompanyExists } from '../lib/company-validate'
+import { guardEmail } from '../lib/email-guard'
 import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
 import CredentialsModal from '../components/CredentialsModal'
 import { generateTempPassword } from '../lib/temp-password'
@@ -603,6 +604,19 @@ export default function AdminPortal() {
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
     const { data: { session } } = await supabase.auth.getSession()
     const url = (fnBase ?? '') + '/swift-handler'
+    // 🔴 2026-09-21 — swift-handler create_user MINTS AN auth.users ROW and
+    // was not in the 2026-09-11 tourniquet's ingress list. Five callers,
+    // none guarded. This adds the shared gate (blocked characters AND the
+    // dead-TLD typo rule) before the mint.
+    //
+    // ⚠ CLIENT-SIDE ONLY. swift-handler is a Supabase edge function and
+    // does not live in this repo, so the real server-side gate for these
+    // five paths is still absent. These callers are all
+    // authenticated-operator surfaces, not public, which is why this is
+    // acceptable as an interim — but do not read it as closed.
+    const eg_ = guardEmail(newUser.email)
+    if (!eg_.ok) { setUserMsg(eg_.message); return }
+
     const reqBody = JSON.stringify({ action: 'create_user', email: newUser.email, password: passwordToUse })
     try {
       const res = await fetch(url, {
@@ -869,6 +883,19 @@ export default function AdminPortal() {
     // Reject first, mint nothing.
     const drvCompany = await validateCompanyExists(supabase, newDriver.company)
     if (!drvCompany.ok) { setDriverMsg(drvCompany.message); return }
+
+    // 🔴 2026-09-21 — swift-handler create_user MINTS AN auth.users ROW and
+    // was not in the 2026-09-11 tourniquet's ingress list. Five callers,
+    // none guarded. This adds the shared gate (blocked characters AND the
+    // dead-TLD typo rule) before the mint.
+    //
+    // ⚠ CLIENT-SIDE ONLY. swift-handler is a Supabase edge function and
+    // does not live in this repo, so the real server-side gate for these
+    // five paths is still absent. These callers are all
+    // authenticated-operator surfaces, not public, which is why this is
+    // acceptable as an interim — but do not read it as closed.
+    const eg_ = guardEmail(newDriver.email)
+    if (!eg_.ok) { setDriverMsg(eg_.message); return }
 
     setDriverMsg('Creating driver...')
     const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL
