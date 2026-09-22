@@ -73,18 +73,60 @@ async function setup() {
     created.push(email)
     const { error: rErr } = await admin.from('user_roles').insert([{ email, role, company: COMPANY }])
     if (rErr) console.log(`  🔴 role row for ${email}: ${rErr.message}`)
+    // 🔴 NOT signInWithPassword. Supabase has CAPTCHA protection enabled
+    // on auth, so a script cannot sign in: it returns "captcha protection:
+    // request disallowed". The 2026-09-21 run of this suite hit exactly
+    // that, every fixture came back token-less, and because call() omits
+    // the header when the token is falsy, every "positive control" ran as
+    // an ANONYMOUS request and passed for the wrong reason. See the
+    // assertTokens() guard below — that failure must never be silent again.
+    //
+    // generateLink + verifyOtp is the server-side path that works: the
+    // service-role client mints a magiclink, and exchanging its
+    // hashed_token yields a genuine user session.
+    const { data: link, error: lErr } = await admin.auth.admin.generateLink({ type: 'magiclink', email })
+    const hashed = (link as unknown as { properties?: { hashed_token?: string } })?.properties?.hashed_token
+    if (lErr || !hashed) { console.log(`  🔴 generateLink failed for ${email}: ${lErr?.message ?? 'no hashed_token'}`); continue }
     const anonC = createClient(URL_, ANON)
-    const { data, error: sErr } = await anonC.auth.signInWithPassword({ email, password: PW })
-    if (sErr || !data.session) console.log(`  🔴 could not sign in ${email}: ${sErr?.message}`)
+    const { data, error: sErr } = await anonC.auth.verifyOtp({ token_hash: hashed, type: 'magiclink' })
+    if (sErr || !data.session) console.log(`  🔴 could not mint a session for ${email}: ${sErr?.message}`)
     else tokens[k] = data.session.access_token
     console.log(`  ${email.padEnd(46)} ${role.padEnd(14)} token=${tokens[k] ? 'yes' : 'NO'}`)
   }
+}
+
+// 🔴 THE LESSON FROM THE 2026-09-21 RUN, MADE STRUCTURAL.
+// call() omits the Authorization header when the token is falsy. So a
+// fixture that failed to get a session does not produce a failing test —
+// it produces an ANONYMOUS request, which against the ungated function
+// returns 200 and reads as a PASSING positive control. The suite reported
+// P1-P7 green while proving nothing at all.
+//
+// A missing token is a BROKEN SUITE, not a result. Stop before asserting.
+function assertTokens() {
+  const missing = (Object.keys(F) as (keyof typeof F)[]).filter(k => !tokens[k])
+  if (missing.length === 0) { pass('F0', `all ${Object.keys(F).length} fixtures hold a real session token`); return true }
+  fail('F0', `🔴 NO TOKEN for: ${missing.join(', ')} — every token-bearing assertion below would run ANONYMOUSLY and be meaningless. Suite aborted.`)
+  return false
 }
 
 async function teardown() {
   console.log('\n── teardown ──')
   const { data: del } = await admin.from('user_roles').delete().ilike('email', `gate-${STAMP}-%`).select('email')
   console.log(`  user_roles rows removed: ${(del || []).length}`)
+  // Sweep by PREFIX as well as by the tracked list — belt and braces
+  // after the 2026-09-21 leak. Anything this suite created is gate-<stamp>-.
+  try {
+    let page = 1
+    for (;;) {
+      const { data } = await admin.auth.admin.listUsers({ page, perPage: 1000 })
+      const users = data?.users ?? []
+      for (const u of users) if (u.email && u.email.startsWith(`gate-${STAMP}-`) && !created.includes(u.email)) created.push(u.email)
+      if (users.length < 1000) break
+      page++
+    }
+  } catch { /* fall back to the tracked list */ }
+
   let gone = 0
   for (const email of created) {
     const { data } = await admin.rpc('get_auth_user_id_by_email', { p_email: email })
@@ -100,24 +142,40 @@ async function main() {
   if (!FN || !ANON || !SERVICE) { console.error('missing env'); process.exit(2) }
   await setup()
 
+  console.log('')
+  if (!assertTokens()) {
+    await teardown()
+    console.log('\n❌ SUITE ABORTED — fixtures had no sessions. Nothing below was measured.')
+    process.exit(1)
+  }
+
   console.log('\n══ NEGATIVE — the hole, must now be closed ══')
 
   // N1 — THE HEADLINE. This exact request is what is open today.
-  expect('N1', await call(null, { action: 'create_user', email: `gate-${STAMP}-x@${dom}`, password: PW }),
+  //
+  // 🔴 Registered for teardown BEFORE the call. Pre-paste this request
+  // SUCCEEDS — that is the whole point of running the suite first — so it
+  // mints a real auth user. The 2026-09-21 run leaked exactly this address
+  // because teardown only knew about addresses the POSITIVE cases created.
+  // A negative case that is expected to fail today still has side effects
+  // today.
+  const nx = `gate-${STAMP}-x@${dom}`
+  created.push(nx)
+  expect('N1', await call(null, { action: 'create_user', email: nx, password: PW }),
          401, 'no Authorization header · create_user')
 
   // N1b — the anon key is a valid JWT with no user behind it. This is
   // precisely what manager:2745/2876 used to send.
-  expect('N1b', await call(ANON, { action: 'create_user', email: `gate-${STAMP}-x@${dom}`, password: PW }),
+  expect('N1b', await call(ANON, { action: 'create_user', email: nx, password: PW }),
          401, 'anon key as the bearer · create_user')
 
   expect('N1c', await call('not-a-real-token', { action: 'reset_password', email: F.manager.email, new_password: PW }),
          401, 'garbage token · reset_password')
 
   // N2 — authenticated but too low a role.
-  expect('N2', await call(tokens.driver, { action: 'create_user', email: `gate-${STAMP}-x@${dom}`, password: PW }),
+  expect('N2', await call(tokens.driver, { action: 'create_user', email: nx, password: PW }),
          403, 'driver · create_user')
-  expect('N2b', await call(tokens.resident, { action: 'create_user', email: `gate-${STAMP}-x@${dom}`, password: PW }),
+  expect('N2b', await call(tokens.resident, { action: 'create_user', email: nx, password: PW }),
          403, 'resident · create_user')
 
   // N3 — 🔴 SAME RANK. manager → a DIFFERENT manager. Denied.
