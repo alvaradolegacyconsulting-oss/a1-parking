@@ -64,6 +64,15 @@ const expect = (id: string, got: { status: number; text: string }, want: number,
   else fail(id, `${note} → expected ${want}, got ${got.status}: ${got.text.slice(0, 160)}`)
 }
 
+async function mintSession(email: string): Promise<string | null> {
+  const { data: link, error: lErr } = await admin.auth.admin.generateLink({ type: 'magiclink', email })
+  const hashed = (link as unknown as { properties?: { hashed_token?: string } })?.properties?.hashed_token
+  if (lErr || !hashed) { console.log(`     generateLink failed for ${email}: ${lErr?.message ?? 'no hashed_token'}`); return null }
+  const { data, error } = await createClient(URL_, ANON).auth.verifyOtp({ token_hash: hashed, type: 'magiclink' })
+  if (error || !data.session) { console.log(`     verifyOtp failed for ${email}: ${error?.message}`); return null }
+  return data.session.access_token
+}
+
 async function setup() {
   console.log('── building fixtures ──')
   for (const k of Object.keys(F) as (keyof typeof F)[]) {
@@ -84,13 +93,9 @@ async function setup() {
     // generateLink + verifyOtp is the server-side path that works: the
     // service-role client mints a magiclink, and exchanging its
     // hashed_token yields a genuine user session.
-    const { data: link, error: lErr } = await admin.auth.admin.generateLink({ type: 'magiclink', email })
-    const hashed = (link as unknown as { properties?: { hashed_token?: string } })?.properties?.hashed_token
-    if (lErr || !hashed) { console.log(`  🔴 generateLink failed for ${email}: ${lErr?.message ?? 'no hashed_token'}`); continue }
-    const anonC = createClient(URL_, ANON)
-    const { data, error: sErr } = await anonC.auth.verifyOtp({ token_hash: hashed, type: 'magiclink' })
-    if (sErr || !data.session) console.log(`  🔴 could not mint a session for ${email}: ${sErr?.message}`)
-    else tokens[k] = data.session.access_token
+    const tok = await mintSession(email)
+    if (!tok) console.log(`  🔴 could not mint a session for ${email}`)
+    else tokens[k] = tok
     console.log(`  ${email.padEnd(46)} ${role.padEnd(14)} token=${tokens[k] ? 'yes' : 'NO'}`)
   }
 }
@@ -127,12 +132,19 @@ async function teardown() {
     }
   } catch { /* fall back to the tracked list */ }
 
-  let gone = 0
+  let gone = 0, absent = 0, stuck: string[] = []
   for (const email of created) {
     const { data } = await admin.rpc('get_auth_user_id_by_email', { p_email: email })
-    if (data) { const { error } = await admin.auth.admin.deleteUser(data as string); if (!error) gone++ }
+    if (!data) { absent++; continue }   // never created — its gate refused, which is a PASS
+    const { error } = await admin.auth.admin.deleteUser(data as string)
+    if (error) stuck.push(email); else gone++
   }
-  console.log(`  auth users removed: ${gone} of ${created.length}`)
+  // Distinguish "was never there" from "could not remove it". Collapsing
+  // them reads as a partial failure on a clean run — post-paste, the
+  // addresses the NEGATIVE cases name are never created at all, because
+  // the gate now refuses them.
+  console.log(`  auth users: ${gone} removed, ${absent} never existed (their gate refused — expected post-paste)`)
+  if (stuck.length) fail('T0', `🔴 could not delete: ${stuck.join(', ')}`)
   const { data: left } = await admin.from('user_roles').select('email').ilike('email', `gate-${STAMP}-%`)
   if ((left || []).length === 0) pass('T1', 'teardown verified — no fixture rows remain')
   else fail('T1', `🔴 ${(left || []).length} fixture role row(s) REMAIN: ${JSON.stringify(left)}`)
@@ -209,8 +221,29 @@ async function main() {
   expect('P4', await call(tokens.companyAdmin, { action: 'create_user', email: p4, password: PW }),
          200, 'company_admin · create_user (the manager-creation path)')
   created.push(p4)
-  expect('P4b', await call(tokens.companyAdmin, { action: 'reset_password', email: F.manager.email, new_password: PW }),
+  // 🔴 TARGETS manager2, NOT manager. A password reset REVOKES that
+  // user's existing sessions — verified 2026-09-22: a token that
+  // resolved cleanly returns "Auth session missing!" immediately after
+  // an admin password change.
+  //
+  // The first post-paste run had this pointed at F.manager, so P5, P6 and
+  // P7 all sent a token this very assertion had just killed and came back
+  // 401. Three red lines that said nothing about the gate. manager2 is
+  // only ever a TARGET (N3/N3b, where it is denied and its password is
+  // therefore never changed), so using it here costs nothing.
+  expect('P4b', await call(tokens.companyAdmin, { action: 'reset_password', email: F.manager2.email, new_password: PW }),
          200, 'company_admin · reset_password on a MANAGER (downward)')
+
+  // Belt and braces: re-mint every token that a preceding assertion could
+  // have invalidated, so re-pointing a target later cannot silently
+  // reintroduce the same failure. A test whose credentials an earlier test
+  // destroyed reports a defect that does not exist — which is worse than
+  // no test, because it sends you looking at working code.
+  for (const k of ['manager', 'manager2'] as const) {
+    const t = await mintSession(F[k].email)
+    if (t) tokens[k] = t
+    else fail('P4c', `could not re-mint the ${k} session after the reset — P5/P6/P7 below would be meaningless`)
+  }
 
   // P5/P6 — 🔴 the two call sites that used to send the anon key.
   const p5 = `gate-${STAMP}-p5@${dom}`
