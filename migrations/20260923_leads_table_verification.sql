@@ -29,13 +29,16 @@
 --    42P01 — indistinguishable at a glance from the editor's phantom
 --    one, which is the worst error this repo could manufacture.
 --
--- ── leads STARTS AT id 10, NOT id 1 ────────────────────────────────
--- The first run of this file errored at G7 and the editor's implicit
--- transaction rolled the probe rows back. SEQUENCES DO NOT ROLL BACK, so
--- leads_id_seq had already advanced. There are no missing rows; ids 1-9
--- were never committed. Recorded here rather than in a message because
--- the person who needs it is whoever reconciles lead counts against ids
--- months from now.
+-- ── GAPS IN leads.id ARE EXPECTED, NOT MISSING ROWS ────────────────
+-- SEQUENCES DO NOT ROLL BACK. Every run of this file consumes ids for
+-- its probe rows, and every rolled-back or failed INSERT anywhere
+-- consumes one too. So the first REAL lead's id will be well above 1,
+-- and the id series will contain gaps for as long as the table exists.
+--
+-- Do not read a gap as a deleted or lost lead. If you need to know how
+-- many leads there are, count them; the id is an identifier, not a
+-- tally. (An earlier version of this note recorded one instance — "leads
+-- starts at id 10" — which went stale the next time the file ran.)
 --
 -- 🔴 WHAT THIS FILE CANNOT VERIFY. The SQL editor runs as a superuser
 -- role that BYPASSES RLS. So G6 checks that the policy EXISTS and has
@@ -279,22 +282,44 @@ SELECT
     -- access to every prospect's name, email and phone. With the quotes,
     -- '%''admin''%' does not match 'company_admin' — the character
     -- before admin there is an underscore, not a quote.
-    WHEN pg_get_expr(p.polqual, p.polrelid) NOT LIKE '%''admin''%'
-      THEN 'FAIL — predicate calls get_my_role() but does not compare against the literal ''admin'': '
+    -- 🔴 EXACT MATCH, pinned 2026-09-23 once the rendering was known.
+    -- The keyword tests that used to live here (contains 'admin',
+    -- contains no OR) retired containment one shape at a time and would
+    -- have kept needing another branch for the next one — ANY(ARRAY[…]),
+    -- a second call, a NOT. One equality retires all of them at once.
+    --
+    -- If this FAILS, the predicate changed. That is not automatically
+    -- wrong, but it must be deliberate: read the printed text, decide,
+    -- then update this literal in the same commit that changed the
+    -- policy. Do NOT relax it back to a LIKE.
+    WHEN pg_get_expr(p.polqual, p.polrelid) <> '(get_my_role() = ''admin''::text)'
+      THEN 'FAIL — predicate is not the pinned text. Expected exactly '
+           || '(get_my_role() = ''admin''::text)  but found:  '
            || pg_get_expr(p.polqual, p.polrelid)
-    -- An OR would widen the predicate past what the other branches
-    -- inspect: `get_my_role() = 'admin' OR true` satisfies every test
-    -- above and grants everyone.
-    WHEN upper(pg_get_expr(p.polqual, p.polrelid)) LIKE '% OR %'
-      THEN 'FAIL — predicate contains OR, which widens it beyond the admin check: '
-           || pg_get_expr(p.polqual, p.polrelid)
-    ELSE 'PASS — SELECT, {authenticated}, compares get_my_role() to ''admin'', no ILIKE, no OR. '
-         || 'RECORD THIS EXACT PREDICATE; any later change to it should be deliberate: '
+    ELSE 'PASS — SELECT, {authenticated}, predicate matches the pinned text exactly: '
          || pg_get_expr(p.polqual, p.polrelid)
   END AS result
 FROM (SELECT 1) dummy
 LEFT JOIN pg_policy p
   ON p.polrelid = to_regclass('public.leads') AND p.polname = 'admin_select_leads';
+
+-- ══════════════════════════════════════════════════════════════════
+-- 🔴 CLEANUP — AND WHY THIS FILE MUST BE RUN WHOLE, IN ONE GO
+-- ══════════════════════════════════════════════════════════════════
+-- On 2026-09-23 the probe row probe-g5c@verification.invalid SURVIVED
+-- into public.leads and sat there until a later session found it. The
+-- cleanup below is the last statement in the file, so it only runs if
+-- execution REACHES it: run the blocks separately, or stop early, and
+-- the probes stay in production data.
+--
+-- That matters more here than in a catalog-read file, because these
+-- probes are rows in a LIVE BUSINESS TABLE. A fake lead sitting in
+-- `leads` will be counted, exported and possibly contacted.
+--
+-- So: RUN THIS FILE WHOLE. If you must stop early, run the DELETE below
+-- on its own before you walk away. The terminal row re-checks for
+-- survivors and will say so.
+-- ══════════════════════════════════════════════════════════════════
 
 -- ── CLEANUP — remove every probe row, then PROVE it ───────────────
 -- DELETE ... RETURNING, because a DELETE that matched nothing and a
