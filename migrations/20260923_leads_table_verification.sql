@@ -182,6 +182,7 @@ DECLARE
   v_id     BIGINT;
   v_state  TEXT;
   v_msg    TEXT;
+  v_rows   INTEGER;
 BEGIN
   BEGIN
     INSERT INTO public.leads (
@@ -215,6 +216,32 @@ BEGIN
     GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
     RAISE NOTICE 'G5d FAIL — a valid status transition was refused: % / %', v_state, v_msg;
   END;
+
+  -- ════════════════════════════════════════════════════════════════
+  -- 🔴 SELF-CLEANING. This block removes the row IT created, HERE,
+  -- inside the same DO block, immediately after the assertions that
+  -- needed it.
+  --
+  -- WHY, and it is not hypothetical: on 2026-09-23
+  -- probe-g5c@verification.invalid SURVIVED into public.leads and sat
+  -- there as business data until a later session found it. The only
+  -- cleanup was the file-level DELETE at the very end, which runs only
+  -- if execution REACHES it — and these blocks are routinely run
+  -- separately. Nothing deferred can be skipped, so nothing here is
+  -- deferred.
+  --
+  -- The general rule: a verification that writes to a table a human
+  -- will read as business data must clean up inside the block that
+  -- wrote. Catalog reads are harmless; this class is not, because a
+  -- fake lead gets counted, exported and possibly contacted.
+  -- ════════════════════════════════════════════════════════════════
+  DELETE FROM public.leads WHERE email = 'probe-g5c@verification.invalid';
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows = 1 THEN
+    RAISE NOTICE 'G5e PASS — the probe row this block created was removed here, not deferred (1 row)';
+  ELSE
+    RAISE NOTICE 'G5e FAIL — expected to remove exactly 1 probe row, removed %. CHECK public.leads BY HAND.', v_rows;
+  END IF;
 END
 $do$;
 
@@ -306,19 +333,21 @@ LEFT JOIN pg_policy p
 -- ══════════════════════════════════════════════════════════════════
 -- 🔴 CLEANUP — AND WHY THIS FILE MUST BE RUN WHOLE, IN ONE GO
 -- ══════════════════════════════════════════════════════════════════
--- On 2026-09-23 the probe row probe-g5c@verification.invalid SURVIVED
--- into public.leads and sat there until a later session found it. The
--- cleanup below is the last statement in the file, so it only runs if
--- execution REACHES it: run the blocks separately, or stop early, and
--- the probes stay in production data.
+-- EVERY PROBE BLOCK IN THIS FILE NOW DELETES ITS OWN ROW, inside the
+-- same DO block, immediately after the assertions that needed it. You
+-- can run the blocks separately, stop halfway, or walk away mid-file,
+-- and no probe row is left behind. That is a property of the file, not
+-- a rule you have to follow.
 --
--- That matters more here than in a catalog-read file, because these
--- probes are rows in a LIVE BUSINESS TABLE. A fake lead sitting in
--- `leads` will be counted, exported and possibly contacted.
+-- The DELETE below is therefore a belt-and-braces sweep, not the only
+-- thing standing between a probe and a live business table. It was the
+-- only thing on 2026-09-23, and probe-g5c@verification.invalid survived
+-- into public.leads until a later session found it.
 --
--- So: RUN THIS FILE WHOLE. If you must stop early, run the DELETE below
--- on its own before you walk away. The terminal row re-checks for
--- survivors and will say so.
+-- 🔴 The rule worth carrying past this file: a verification that writes
+-- to a table a human will read as BUSINESS DATA must self-clean inside
+-- the writing block. Catalog reads are harmless; this class is not —
+-- a fake lead gets counted, exported and possibly contacted.
 -- ══════════════════════════════════════════════════════════════════
 
 -- ── CLEANUP — remove every probe row, then PROVE it ───────────────
