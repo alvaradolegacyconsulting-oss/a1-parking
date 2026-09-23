@@ -1,0 +1,48 @@
+-- ════════════════════════════════════════════════════════════════════
+-- DRAFT — NOT APPLIED. Column comment: platform_settings.updated_at
+--         does not track writes.
+-- ════════════════════════════════════════════════════════════════════
+--
+-- Draft only. Lives in docs/backlog/ because migrations/ is reserved for
+-- applied+paired files. Move it (with its verification) when Jose applies
+-- it.
+--
+-- ── THE OBSERVATION, AND THE PROOF ──────────────────────────────────
+--
+-- platform_settings.updated_at reads 2026-07-01T01:10:09Z.
+--
+-- migrations/20260901_platform_settings_pm_starter_pricing.sql:65 runs:
+--     UPDATE public.platform_settings
+--        SET price_pm_starter_base = 149, ...
+--
+-- That migration RAN — audit_logs carries
+-- SCHEMA_PLATFORM_SETTINGS_PM_STARTER_PRICING on 2026-09-01, and the row
+-- today reads price_pm_starter_base = 149.
+--
+-- A September UPDATE did not move a July timestamp. There is no BEFORE
+-- UPDATE trigger maintaining the column and the migration did not set it
+-- by hand. So the value dates the last write that happened to set it —
+-- not the last write to the row.
+--
+-- 🔴 WHY THIS MATTERS ENOUGH TO COMMENT
+--
+-- The row holds stripe_billing_enabled and public_signup_open: the two
+-- flags that decide whether the public can sign up and be charged. When
+-- someone asks "when did self-serve go live", updated_at is the first
+-- column they will reach for, it will answer with a plausible date, and
+-- the date will be wrong. A wrong-but-plausible answer is worse than no
+-- answer, which is the whole reason this is written down rather than
+-- remembered.
+--
+-- ── SCOPE: A COMMENT, NOT A TRIGGER ─────────────────────────────────
+--
+-- This does NOT add a trigger to maintain the column. Backfilling one
+-- would start the clock at "now" on a row whose real history is already
+-- unrecoverable, which manufactures a second wrong-but-plausible answer.
+-- If write-tracking on this row is wanted, the honest shape is an
+-- audit_logs row per flag change (the convention every other sensitive
+-- write here already uses), not a timestamp with no author and no
+-- before/after. That is a separate decision, deliberately not taken here.
+
+COMMENT ON COLUMN public.platform_settings.updated_at IS
+  'NOT maintained on UPDATE. No trigger sets this column; only a write that sets it explicitly moves it. Proof: 20260901_platform_settings_pm_starter_pricing.sql UPDATEd this row on 2026-09-01 (see the SCHEMA_PLATFORM_SETTINGS_PM_STARTER_PRICING audit_logs row) and this column still reads 2026-07-01. 🔴 Do NOT use it to date a change to this table — including the stripe_billing_enabled / public_signup_open go-live flags, which is the question it will most often be asked. Use audit_logs, or the Supabase project logs for hand-made changes.';

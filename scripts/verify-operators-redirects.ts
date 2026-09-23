@@ -30,6 +30,19 @@ let failures = 0
 const pass = (id: string, n: string) => console.log(`✅ ${id}  ${n}`)
 const fail = (id: string, n: string) => { failures++; console.log(`❌ ${id}  ${n}`) }
 
+// 🔴 Refuse to measure a server this gate did not start. `spawn('npx',
+// ['next','start'])` creates a WRAPPER; SIGTERM to it leaves the real
+// server listening, so a later run can bind-fail, connect to the STALE
+// server and report green against an older build. That is not
+// hypothetical — it happened to the route-exposure gate's positive
+// control, which passed while probing a previous run's server.
+async function portIsOccupied(): Promise<boolean> {
+  try {
+    const r = await fetch(`${BASE}/operators`, { redirect: 'manual', signal: AbortSignal.timeout(2000) })
+    return r.status > 0
+  } catch { return false }
+}
+
 async function waitForServer(ms = 45000): Promise<boolean> {
   const start = Date.now()
   while (Date.now() - start < ms) {
@@ -48,10 +61,22 @@ async function hop(path: string) {
 }
 
 async function main() {
+  if (await portIsOccupied()) {
+    console.log(`❌ S0  something is already listening on :${PORT}. Refusing to probe a server this gate did not`)
+    console.log('      start — it would likely be a stale server on an older build, and every result below would')
+    console.log(`      be a green light for code that is not running. Nothing measured. lsof -nP -iTCP:${PORT} -sTCP:LISTEN`)
+    process.exit(2)
+  }
+
   console.log(`starting production server on :${PORT} …`)
+  // detached so the whole process GROUP can be killed, wrapper included.
   const server: ChildProcess = spawn('npx', ['next', 'start', '-p', String(PORT)], {
-    cwd: process.cwd(), stdio: 'ignore', detached: false,
+    cwd: process.cwd(), stdio: 'ignore', detached: true,
   })
+  const stop = () => {
+    try { if (server.pid) process.kill(-server.pid, 'SIGTERM') } catch { /* already gone */ }
+  }
+  process.on('exit', stop)
 
   try {
     if (!await waitForServer()) {
@@ -92,10 +117,15 @@ async function main() {
     }
 
     // ── R4 — 🔴 the middleware must not eat any of it ───────────────
-    // publicPaths is an explicit list, not a prefix match. If either
-    // short path or /operators is missing from it, anonymous traffic is
-    // 307'd to /login — a campaign landing every reader on a login
-    // screen. The tell is a Location containing /login.
+    // publicPaths is PREFIX-matched (middleware.ts: pathname.startsWith),
+    // so one entry covers a whole subtree — but each of these three paths
+    // is its own top-level string and none is a prefix of another. If any
+    // is missing from the list, anonymous traffic is 307'd to /login — a
+    // campaign landing every reader on a login screen. The tell is a
+    // Location containing /login.
+    // (An earlier version of this comment claimed publicPaths was an
+    // explicit non-prefix list. It is not, and the difference matters:
+    // it is why gating the whole /help tree in 136bb46 was one string.)
     for (const path of ['/morethantruck?src=swto-print', '/swtowop', '/operators?src=swto-print']) {
       const r = await hop(path)
       const toLogin = (r.location ?? '').includes('/login')
@@ -124,7 +154,12 @@ async function main() {
       else fail('R5', `status=${res.status}, page markers found=${looksRight}`)
     }
   } finally {
-    server.kill('SIGTERM')
+    stop()
+    await new Promise(r => setTimeout(r, 1200))
+    if (await portIsOccupied()) {
+      console.log(`\n⚠  :${PORT} is STILL listening after teardown. The next run would probe a stale server and`)
+      console.log(`   could report a false pass. Kill it:  lsof -nP -iTCP:${PORT} -sTCP:LISTEN`)
+    }
     await new Promise(r => setTimeout(r, 400))
     if (!server.killed) server.kill('SIGKILL')
     console.log('server stopped')
