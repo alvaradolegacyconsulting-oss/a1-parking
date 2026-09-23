@@ -1,6 +1,5 @@
 'use client'
-import { useState, useEffect, useRef, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useState, useEffect, useRef } from 'react'
 import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 import { guardEmail, suggestEmailCorrection } from '../lib/email-guard'
 import { readAttribution, buildLeadPayload, type AskedFields } from '../lib/lead-attribution'
@@ -47,8 +46,7 @@ const TRACK = 'enforcement' as const
 // the page presented is sent as an explicit false rather than omitted.
 const ASKED: AskedFields = { texas_confirmed: true, wants_demo: true }
 
-function OperatorsForm() {
-  const searchParams = useSearchParams()
+export default function OperatorsPage() {
   const [source, setSource] = useState<LeadSource | null>(null)
   const [values, setValues] = useState({
     company_name: '', contact_name: '', email: '', phone: '', property_count: '',
@@ -60,11 +58,21 @@ function OperatorsForm() {
   const [done, setDone] = useState(false)
   const turnstileRef = useRef<TurnstileHandle>(null)
 
-  // Attribution is captured once, at load, from the URL the ad pointed
+  // Attribution is captured once on mount, from the URL the ad pointed
   // at. Kept in state so it survives the visitor editing the form.
+  //
+  // 🔴 window.location.search, NOT useSearchParams(). useSearchParams()
+  // forces the nearest Suspense boundary to bail out of server
+  // rendering, so the whole page came back to a crawler as an EMPTY
+  // SHELL — indexable in name only, on a page we deliberately left
+  // indexable. The redirect gate's R5 caught it: 200 OK, zero copy.
+  //
+  // Reading it here instead costs nothing (this only ever runs in the
+  // browser, where the URL is available) and the marketing content now
+  // renders server-side where a crawler can see it.
   useEffect(() => {
-    setSource(readAttribution(searchParams.toString()))
-  }, [searchParams])
+    setSource(readAttribution(window.location.search))
+  }, [])
 
   const set = (k: keyof typeof values) => (v: string | boolean) =>
     setValues(s => ({ ...s, [k]: v }))
@@ -340,13 +348,5 @@ function OperatorsForm() {
         </div>
       </div>
     </main>
-  )
-}
-
-export default function OperatorsPage() {
-  return (
-    <Suspense fallback={<main style={{ minHeight: '100vh', background: NAVY }} />}>
-      <OperatorsForm />
-    </Suspense>
   )
 }

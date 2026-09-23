@@ -33,6 +33,33 @@ const nextConfig: NextConfig = {
         destination: '/help/videos/getting-started-resident',
         permanent: true,
       },
+      // ── Ad short paths → /operators (2026-09-23, Commit 4 of 4) ────
+      // /operators is CANONICAL so the page survives a change of ad hook
+      // or of association membership; these short paths exist for print
+      // legibility and can be added to or retired without touching it.
+      //
+      // 🔴 DO NOT PUT A QUERY STRING ON `destination`. Next forwards the
+      // incoming query to a destination that has none; give the
+      // destination its own and the incoming one is REPLACED. The
+      // printed QR encodes /morethantruck?src=swto-print, so dropping
+      // the query would land the reader on a working page, save the
+      // lead with source null, and report success everywhere — print and
+      // email attribution would both collapse into "direct" with nothing
+      // anywhere raising an error. Zero print-attributed leads looks
+      // exactly like an ad nobody answered.
+      //
+      // scripts/verify-operators-redirects.ts starts a real server and
+      // asserts the forwarded query, so an edit here trips a gate.
+      {
+        source: '/morethantruck',
+        destination: '/operators',
+        permanent: true,
+      },
+      {
+        source: '/swtowop',
+        destination: '/operators',
+        permanent: true,
+      },
     ]
   },
 };
