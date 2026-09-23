@@ -13,6 +13,22 @@
 -- trigger can raise the same sqlstate and you would credit the wrong
 -- guard.
 --
+-- 🔴 TWO CATALOG-QUERY TRAPS, FIXED HERE, WORTH CARRYING FORWARD.
+--
+-- 1. Several pg_catalog columns are the internal "char" type, NOT text:
+--    pg_policy.polcmd, pg_class.relkind, pg_class.relpersistence,
+--    pg_proc.prokind, pg_attribute.attidentity / attgenerated,
+--    pg_constraint.contype. Comparing them to a literal is fine —
+--    'r' resolves to "char". CONCATENATING them is not: `unknown ||
+--    "char"` is ambiguous and fails 42725 at analysis time. Cast to
+--    ::text at every point of concatenation.
+--
+-- 2. `'public.x'::regclass` RAISES 42P01 when the object is absent;
+--    to_regclass('public.x') returns NULL. Verification files must use
+--    to_regclass, or running one before its migration produces a REAL
+--    42P01 — indistinguishable at a glance from the editor's phantom
+--    one, which is the worst error this repo could manufacture.
+--
 -- 🔴 WHAT THIS FILE CANNOT VERIFY. The SQL editor runs as a superuser
 -- role that BYPASSES RLS. So G6 checks that the policy EXISTS and has
 -- the right shape and roles — it cannot prove a non-admin session is
@@ -60,15 +76,15 @@ SELECT
            'texas_confirmed','wants_demo','source','status',
            'alert_email_sent','alert_email_message_id','alert_email_error')) <> 18
       THEN 'FAIL — expected all 18 named columns, found '
-           || count(*) FILTER (WHERE attname IN (
+           || (count(*) FILTER (WHERE attname IN (
               'id','created_at','company_name','contact_name','email','phone',
               'track','property_count','scale_note','timeline','growth_trend',
               'texas_confirmed','wants_demo','source','status',
-              'alert_email_sent','alert_email_message_id','alert_email_error'))::text
+              'alert_email_sent','alert_email_message_id','alert_email_error')))::text
     ELSE 'PASS — 18 columns, required NOT NULLs set, three-state booleans nullable'
   END AS result
 FROM pg_attribute
-WHERE attrelid = 'public.leads'::regclass AND attnum > 0 AND NOT attisdropped;
+WHERE attrelid = to_regclass('public.leads') AND attnum > 0 AND NOT attisdropped;
 
 -- ── G3–G5 — EXECUTION gates on the three CHECKs ───────────────────
 -- Each inserts a FRESH probe row and reads the real sqlstate. 23514 is
@@ -199,21 +215,21 @@ SELECT
   CASE
     WHEN EXISTS (
       SELECT 1 FROM pg_class c, aclexplode(c.relacl) a
-      WHERE c.oid = 'public.leads'::regclass
+      WHERE c.oid = to_regclass('public.leads')
         AND a.grantee = 'anon'::regrole
     ) THEN 'FAIL — anon holds a grant on public.leads. It must hold NONE.'
     WHEN EXISTS (
       SELECT 1 FROM pg_class c, aclexplode(c.relacl) a
-      WHERE c.oid = 'public.leads'::regclass
+      WHERE c.oid = to_regclass('public.leads')
         AND a.grantee = 'authenticated'::regrole
         AND a.privilege_type <> 'SELECT'
     ) THEN 'FAIL — authenticated holds more than SELECT: ' || (
       SELECT string_agg(a.privilege_type, ', ')
         FROM pg_class c, aclexplode(c.relacl) a
-       WHERE c.oid = 'public.leads'::regclass AND a.grantee = 'authenticated'::regrole)
+       WHERE c.oid = to_regclass('public.leads') AND a.grantee = 'authenticated'::regrole)
     WHEN NOT EXISTS (
       SELECT 1 FROM pg_class c, aclexplode(c.relacl) a
-      WHERE c.oid = 'public.leads'::regclass
+      WHERE c.oid = to_regclass('public.leads')
         AND a.grantee = 'authenticated'::regrole
         AND a.privilege_type = 'SELECT'
     ) THEN 'FAIL — authenticated has NO SELECT, so the admin policy has nothing to narrow and admin reads will fail'
@@ -226,7 +242,13 @@ SELECT
   'G7' AS gate,
   CASE
     WHEN p.polname IS NULL THEN 'FAIL — admin_select_leads does not exist'
-    WHEN p.polcmd <> 'r'   THEN 'FAIL — policy is not SELECT-only (polcmd=' || p.polcmd || ')'
+    -- 🔴 ::text is load-bearing. pg_policy.polcmd is Postgres's internal
+    -- "char" type, and a string literal arrives as `unknown`, so
+    -- `unknown || "char"` leaves several candidate || operators and no
+    -- way to choose: 42725 at analysis time, before a single row is
+    -- read. The COMPARISON on this line is fine — 'r' resolves to "char"
+    -- unambiguously. Only the concatenation is ambiguous.
+    WHEN p.polcmd <> 'r'   THEN 'FAIL — policy is not SELECT-only (polcmd=' || p.polcmd::text || ')'
     WHEN NOT p.polpermissive THEN 'FAIL — policy is RESTRICTIVE; expected PERMISSIVE'
     WHEN EXISTS (
       SELECT 1 FROM pg_roles r WHERE r.oid = ANY(p.polroles) AND r.rolname = 'anon'
@@ -240,7 +262,7 @@ SELECT
   END AS result
 FROM (SELECT 1) dummy
 LEFT JOIN pg_policy p
-  ON p.polrelid = 'public.leads'::regclass AND p.polname = 'admin_select_leads';
+  ON p.polrelid = to_regclass('public.leads') AND p.polname = 'admin_select_leads';
 
 -- ── CLEANUP — remove every probe row, then PROVE it ───────────────
 -- DELETE ... RETURNING, because a DELETE that matched nothing and a
@@ -258,7 +280,7 @@ SELECT
     WHEN (SELECT count(*) FROM public.leads WHERE email LIKE '%@verification.invalid') > 0
       THEN 'FAIL — probe rows SURVIVED cleanup: '
            || (SELECT count(*) FROM public.leads WHERE email LIKE '%@verification.invalid')::text
-    WHEN NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = 'public.leads'::regclass AND relrowsecurity)
+    WHEN NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = to_regclass('public.leads') AND relrowsecurity)
       THEN 'FAIL — RLS is not enabled on public.leads'
     ELSE 'PASS — probes cleaned, RLS enabled. Now read G1/G2/G6/G7 above and G3/G4/G5 in the Messages pane. '
          || 'Real leads currently in the table: '
