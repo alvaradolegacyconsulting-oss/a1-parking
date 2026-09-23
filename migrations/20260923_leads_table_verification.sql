@@ -29,6 +29,14 @@
 --    42P01 — indistinguishable at a glance from the editor's phantom
 --    one, which is the worst error this repo could manufacture.
 --
+-- ── leads STARTS AT id 10, NOT id 1 ────────────────────────────────
+-- The first run of this file errored at G7 and the editor's implicit
+-- transaction rolled the probe rows back. SEQUENCES DO NOT ROLL BACK, so
+-- leads_id_seq had already advanced. There are no missing rows; ids 1-9
+-- were never committed. Recorded here rather than in a message because
+-- the person who needs it is whoever reconciles lead counts against ids
+-- months from now.
+--
 -- 🔴 WHAT THIS FILE CANNOT VERIFY. The SQL editor runs as a superuser
 -- role that BYPASSES RLS. So G6 checks that the policy EXISTS and has
 -- the right shape and roles — it cannot prove a non-admin session is
@@ -258,7 +266,31 @@ SELECT
       THEN 'FAIL — policy predicate uses ILIKE (~~*). Must be equality — see the Sept ILIKE arc.'
     WHEN pg_get_expr(p.polqual, p.polrelid) NOT LIKE '%get_my_role%'
       THEN 'FAIL — policy does not go through get_my_role(): ' || pg_get_expr(p.polqual, p.polrelid)
-    ELSE 'PASS — SELECT, {authenticated}, get_my_role()=admin, no ILIKE — ' || pg_get_expr(p.polqual, p.polrelid)
+    -- 🔴 F1 (2026-09-23). The gate above proves the predicate CALLS
+    -- get_my_role(). It does not prove what it compares the result to.
+    -- `get_my_role() = 'manager'` passed it while the PASS line claimed
+    -- "get_my_role()=admin" — a label describing intent rather than
+    -- measurement, which is the exact shape that keeps catching us.
+    --
+    -- The test is for the quoted literal 'admin', quotes included, NOT
+    -- for the substring admin. That distinction is load-bearing:
+    -- 'company_admin' CONTAINS "admin", so a naive %admin% test would
+    -- pass a policy granting the whole tenant's company_admin read
+    -- access to every prospect's name, email and phone. With the quotes,
+    -- '%''admin''%' does not match 'company_admin' — the character
+    -- before admin there is an underscore, not a quote.
+    WHEN pg_get_expr(p.polqual, p.polrelid) NOT LIKE '%''admin''%'
+      THEN 'FAIL — predicate calls get_my_role() but does not compare against the literal ''admin'': '
+           || pg_get_expr(p.polqual, p.polrelid)
+    -- An OR would widen the predicate past what the other branches
+    -- inspect: `get_my_role() = 'admin' OR true` satisfies every test
+    -- above and grants everyone.
+    WHEN upper(pg_get_expr(p.polqual, p.polrelid)) LIKE '% OR %'
+      THEN 'FAIL — predicate contains OR, which widens it beyond the admin check: '
+           || pg_get_expr(p.polqual, p.polrelid)
+    ELSE 'PASS — SELECT, {authenticated}, compares get_my_role() to ''admin'', no ILIKE, no OR. '
+         || 'RECORD THIS EXACT PREDICATE; any later change to it should be deliberate: '
+         || pg_get_expr(p.polqual, p.polrelid)
   END AS result
 FROM (SELECT 1) dummy
 LEFT JOIN pg_policy p
