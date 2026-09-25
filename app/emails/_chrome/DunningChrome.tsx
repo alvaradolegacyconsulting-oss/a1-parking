@@ -12,10 +12,17 @@
 // protects against accidental future route file additions inside.
 // See [[feedback-next-private-folder-routing-convention]].
 //
-// Brand asset: /public/logo.jpeg referenced as absolute URL because
-// email clients can't resolve relative paths. The asset is immutable
-// (no versioning) — preview deploys reference the production logo, which
-// is acceptable since the brand mark doesn't change per-deploy.
+// Brand asset: referenced as an ABSOLUTE URL because email clients
+// can't resolve relative paths. The asset is immutable (no versioning) —
+// preview deploys reference the production logo, which is acceptable
+// since the brand mark doesn't change per-deploy.
+//
+// 🔴 2026-09-25 — was /logo.jpeg. Two faults, both live since launch:
+// that file is A1 Wrecker's lion (a customer's mark on our billing
+// email), and it answered 307 → /login to anonymous requests. An email
+// client fetches images anonymously, so the logo in every dunning email
+// resolved to a login page instead of an image. /brand/ is in the
+// middleware matcher exclusion, so this URL serves.
 
 import * as React from 'react'
 import {
@@ -32,7 +39,7 @@ import {
 } from '@react-email/components'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
-const LOGO_URL = `${APP_URL}/logo.jpeg`
+const LOGO_URL = `${APP_URL}/brand/shieldmylot-shield.png`
 const SUPPORT_EMAIL = 'support@shieldmylot.com'
 const LEGAL_ENTITY = 'Alvarado Legacy Consulting LLC d/b/a ShieldMyLot™'
 

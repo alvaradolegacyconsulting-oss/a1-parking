@@ -68,6 +68,16 @@ export const config = {
   // Symptom: Android install showed "S on grey" fallback because
   // /icon-192.png returned an HTML redirect instead of a PNG.
   //
+  // 2026-09-25 — added the whole `brand/` folder. Static brand assets are
+  // fetched by the browser as sub-requests of a page that may itself be
+  // anonymous, so gating them breaks the page for exactly the visitor it
+  // was built for. 🔴 This is not theoretical: /logo.jpeg has been
+  // answering 307 → /login to anonymous traffic, which means the logo on
+  // the LOGIN PAGE — the first thing a logged-out visitor sees — has
+  // never loaded for them. Only the six assets named in this exclusion
+  // have ever worked anonymously. A folder is excluded rather than each
+  // file, so adding a brand asset does not repeat the mistake.
+  //
   // 2026-09-23 — added robots.txt + sitemap.xml. Same class, missed by the
   // 2026-07-10 pass, and found only because an unrelated routing change
   // prompted a sweep of every build route against production. app/robots.ts
@@ -83,5 +93,5 @@ export const config = {
   // scripts/verify-route-exposure.ts exists to stop: it enumerates the
   // build's own route list and FAILS on any route with no declared
   // expectation, so a new route cannot be forgotten — only declared.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|icon-192.png|icon-512.png|manifest.webmanifest|robots.txt|sitemap.xml).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|icon-192.png|icon-512.png|manifest.webmanifest|robots.txt|sitemap.xml|brand/).*)'],
 }
