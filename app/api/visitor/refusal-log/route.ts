@@ -38,6 +38,32 @@ import { createClient } from '@supabase/supabase-js'
 const MAX = 500
 const clip = (v: unknown) => (typeof v === 'string' ? v.slice(0, MAX) : null)
 
+// 🔴 2026-09-25 — the caller may now name a reason, but ONLY from this
+// list. The header above promises the caller cannot choose the action
+// string; the same discipline applies here. An unrecognised value is
+// discarded and the reason falls back to the derived one, so this stays
+// a fixed-shape row rather than a free-text sink.
+//
+// resolver_error is new and is the important one: it means the lookup
+// FAILED, not that the property is missing. Five real visitors were
+// turned away with 'unresolvable_property' on byte-identical property
+// names because those two outcomes could not be told apart.
+const REASONS = new Set(['no_property_param', 'unresolvable_property', 'resolver_error'])
+
+// Bounded diagnostic bag. Fixed keys, clipped values — enough to tell a
+// dropped connection from a server refusal without becoming a channel.
+function detailOf(v: unknown): Record<string, unknown> | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const d = v as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  if (d.error_message !== undefined) out.error_message = clip(d.error_message)
+  if (d.error_code !== undefined) out.error_code = clip(d.error_code)
+  if (typeof d.attempts === 'number') out.attempts = Math.min(Math.trunc(d.attempts), 99)
+  if (typeof d.online === 'boolean' || d.online === null) out.online = d.online
+  if (d.source !== undefined) out.source = clip(d.source)
+  return Object.keys(out).length ? out : undefined
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({} as Record<string, unknown>))
@@ -60,7 +86,10 @@ export async function POST(request: Request) {
         // referrer is whatever the client says it is.
         referrer: clip(request.headers.get('referer')) ?? clip(body.referrer),
         user_agent: clip(request.headers.get('user-agent')),
-        reason: body.rawProperty ? 'unresolvable_property' : 'no_property_param',
+        reason: (typeof body.reason === 'string' && REASONS.has(body.reason))
+          ? body.reason
+          : (body.rawProperty ? 'unresolvable_property' : 'no_property_param'),
+        detail: detailOf(body.detail),
       },
     }])
 

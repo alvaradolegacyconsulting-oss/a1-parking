@@ -59,7 +59,31 @@ function VisitorForm() {
   // 22 phantom passes left unanswerable. Fire-and-forget on purpose: a
   // logging failure must never block or slow the visitor's screen, and
   // the endpoint always answers 200 regardless.
-  function logRefusal(rawPropertyParam: string | null) {
+  // 🔴 2026-09-25 — a failed LOOKUP is not a missing PROPERTY.
+  //
+  // Five real visitors were turned away between 09-20 and 09-25, every
+  // one of them naming a live property with a BYTE-IDENTICAL name, all
+  // on mobile Safari, while other visitors were issued passes at those
+  // same properties minutes either side. The resolver returns those same
+  // names 10/10 when called directly.
+  //
+  // Cause: the call below destructured `error` away. A dropped mobile
+  // connection produced `undefined` rows, which is indistinguishable
+  // from "no such property" — so the screen told a guest their link was
+  // invalid, withheld the form, and left them parked without a pass and
+  // exposed to a tow. That is the worst possible failure direction for
+  // this page.
+  //
+  // Now: three outcomes, not two.
+  //   'resolved'  → form
+  //   'not_found' → clean zero rows. Genuinely not a property. Invalid-link.
+  //   'error'     → the call FAILED. Connection screen + Retry. The guard
+  //                 stays closed, but we do not blame the visitor's link.
+  const [resolverFailed, setResolverFailed] = useState(false)
+  const [resolverDetail, setResolverDetail] = useState<string>('')
+  const [retrying, setRetrying] = useState(false)
+
+  function logRefusal(rawPropertyParam: string | null, reason?: string, detail?: Record<string, unknown>) {
     if (typeof window === 'undefined') return
     try {
       void fetch('/api/visitor/refusal-log', {
@@ -69,10 +93,45 @@ function VisitorForm() {
           rawUrl: window.location.href,
           rawProperty: rawPropertyParam,
           referrer: document.referrer || null,
+          reason,
+          detail,
         }),
         keepalive: true,
       }).catch(() => {})
     } catch { /* never let telemetry break the refusal screen */ }
+  }
+
+  // Retry ONLY on error. A clean zero-row answer is a real answer and
+  // must never be retried — that would turn "not a property" into three
+  // times the latency and the same screen.
+  type ResolveOutcome =
+    | { kind: 'resolved'; prop: { name: string; company: string } }
+    | { kind: 'not_found' }
+    | { kind: 'error'; message: string; code: string; attempts: number }
+
+  async function resolveProperty(name: string): Promise<ResolveOutcome> {
+    const backoff = [300, 900]
+    let lastMessage = 'unknown'
+    let lastCode = ''
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const { data, error } = await supabase.rpc('get_property_for_visitor', { p_name: name })
+        if (!error) {
+          const prop = (data as { name: string; company: string }[] | null)?.[0]
+          // Resolved, or a clean zero. Both are answers — return now.
+          return prop?.company ? { kind: 'resolved', prop } : { kind: 'not_found' }
+        }
+        lastMessage = error.message
+        lastCode = (error as { code?: string }).code ?? ''
+      } catch (e) {
+        // A thrown fetch (offline, DNS, CORS) never reaches the error
+        // field at all. It is the case that actually bit us.
+        lastMessage = e instanceof Error ? e.message : String(e)
+        lastCode = 'throw'
+      }
+      if (attempt < 3) await new Promise(r => setTimeout(r, backoff[attempt - 1]))
+    }
+    return { kind: 'error', message: lastMessage, code: lastCode, attempts: 3 }
   }
 
   useEffect(() => {
@@ -89,12 +148,34 @@ function VisitorForm() {
       if (hasPropertyParam) {
         // B155.3 — anon RPCs replace direct table SELECTs. Same data
         // shape; safe columns only; no anon over-read.
-        const { data: propRows } = await supabase.rpc('get_property_for_visitor', { p_name: propertyName })
-        const prop = propRows?.[0] as { name: string; company: string } | undefined
-        if (prop?.company) {
+        const outcome = await resolveProperty(propertyName)
+
+        if (outcome.kind === 'error') {
+          // 🔴 The lookup FAILED after 3 attempts. We do NOT know whether
+          // this property exists, so we must not tell the visitor their
+          // link is invalid. Guard stays closed; message and logged
+          // reason both say what actually happened.
+          console.error('[visitor-property-resolver-error]', { propertyName, ...outcome })
+          setResolverDetail(outcome.message)
+          setResolverFailed(true)
+          setPropertyResolved(false)
+          logRefusal(propertyName, 'resolver_error', {
+            error_message: outcome.message,
+            error_code: outcome.code,
+            attempts: outcome.attempts,
+            online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+          })
+        } else if (outcome.kind === 'resolved') {
+          const prop = outcome.prop
+          setResolverFailed(false)
           setPropertyResolved(true)
           setResolvedPropertyName(prop.name)
-          const { data: coRows } = await supabase.rpc('get_company_branding', { p_name: prop.company })
+          // Branding is cosmetic: its failure falls through to platform
+          // defaults below and CANNOT gate the form, so it is not
+          // retried and not treated as a refusal. Reading the error only
+          // so a failure is visible in the console instead of silent.
+          const { data: coRows, error: coErr } = await supabase.rpc('get_company_branding', { p_name: prop.company })
+          if (coErr) console.error('[visitor-company-branding-failed]', { company: prop.company, error: coErr.message })
           const co = coRows?.[0] as { support_phone: string | null; support_email: string | null; support_website: string | null; display_name: string | null } | undefined
           if (co) {
             setSupportPhone(co.support_phone || '')
@@ -104,14 +185,12 @@ function VisitorForm() {
             return
           }
         } else {
-          // Property URL param doesn't match any row. Log and flip the
-          // guard so the render path shows the invalid-link message
-          // rather than a submittable form. Anon page — no audit_logs
-          // write available; console.error is the visibility path for
-          // future mismatches (source/DB drift, mistyped links, stale
-          // signage).
+          // Clean zero rows. The param really doesn't match a property.
+          // Unchanged behaviour: invalid-link message, logged as
+          // unresolvable_property.
           console.error('[visitor-property-unresolved]', { propertyName })
-          logRefusal(propertyName)
+          logRefusal(propertyName, 'unresolvable_property')
+          setResolverFailed(false)
           setPropertyResolved(false)
         }
       }
@@ -125,6 +204,42 @@ function VisitorForm() {
     }
     loadSupportInfo()
   }, [propertyName])
+
+  // Retry button on the connection screen. Re-runs the resolve only —
+  // nothing else on the page needs re-fetching, and a full reload would
+  // lose nothing but cost the visitor another round trip on the
+  // connection that just failed them.
+  async function retryResolve() {
+    setRetrying(true)
+    const outcome = await resolveProperty(propertyName)
+    if (outcome.kind === 'resolved') {
+      setResolverFailed(false)
+      setPropertyResolved(true)
+      setResolvedPropertyName(outcome.prop.name)
+      const { data: coRows } = await supabase.rpc('get_company_branding', { p_name: outcome.prop.company })
+      const co = coRows?.[0] as { support_phone: string | null; support_email: string | null; support_website: string | null; display_name: string | null } | undefined
+      if (co) {
+        setSupportPhone(co.support_phone || '')
+        setSupportEmail(co.support_email || '')
+        setSupportWebsite(co.support_website || '')
+        setCompanyName(co.display_name || outcome.prop.company)
+      }
+    } else if (outcome.kind === 'not_found') {
+      setResolverFailed(false)
+      setPropertyResolved(false)
+      logRefusal(propertyName, 'unresolvable_property')
+    } else {
+      setResolverDetail(outcome.message)
+      logRefusal(propertyName, 'resolver_error', {
+        error_message: outcome.message,
+        error_code: outcome.code,
+        attempts: outcome.attempts,
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+        source: 'retry_button',
+      })
+    }
+    setRetrying(false)
+  }
   const [loading, setLoading] = useState(false)
   const [plateError, setPlateError] = useState('')
   const [tosChecked, setTosChecked] = useState(false)
@@ -405,6 +520,58 @@ function VisitorForm() {
   // block; the guard only bites on a confirmed non-match.
   // 2026-09-18 — the `propertyName !== 'Managed Property'` term used to sit
   // in front of this and excluded the no-param case from its own guard.
+  // 🔴 Connection screen — the lookup FAILED, so we do not know whether
+  // this property exists. Checked BEFORE the invalid-link block: both
+  // states have propertyResolved === false (the guard is closed either
+  // way, which is the point), and the only difference is what we are
+  // entitled to tell the visitor. Telling someone with a perfectly good
+  // link that it is invalid is what sent five real guests away between
+  // 09-20 and 09-25.
+  if (resolverFailed) {
+    return (
+      <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+        <div style={{ maxWidth:'420px', width:'100%' }}>
+          <div style={{ marginBottom:'24px', textAlign:'center' }}>
+            <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>ShieldMyLot&trade;</h1>
+          </div>
+          <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'12px', padding:'24px', textAlign:'center' }}>
+            <div style={{ width:'56px', height:'56px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #C9A227', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px' }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" role="img" aria-label="Connection problem" focusable="false">
+                <path d="M2.5 8.5a13 13 0 0 1 19 0" fill="none" stroke="#C9A227" strokeWidth="2" strokeLinecap="round" />
+                <path d="M6 12.5a8.5 8.5 0 0 1 12 0" fill="none" stroke="#C9A227" strokeWidth="2" strokeLinecap="round" />
+                <path d="M9.5 16.5a3.8 3.8 0 0 1 5 0" fill="none" stroke="#C9A227" strokeWidth="2" strokeLinecap="round" />
+                <rect x="11" y="19.4" width="2" height="2" rx="1" fill="#C9A227" />
+              </svg>
+            </div>
+            <h2 style={{ color:'#C9A227', fontSize:'17px', fontWeight:'bold', margin:'0 0 12px' }}>We couldn&rsquo;t reach the server</h2>
+            {/* Says what we know and what we do NOT know. The link is not
+                blamed, because we have no evidence against it. */}
+            <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
+              Your link looks fine &mdash; we just couldn&rsquo;t load the property details. Check your connection and try again.
+            </p>
+            <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
+              <strong style={{ color:'#C9A227' }}>No pass has been created.</strong> Your vehicle is not covered yet.
+            </p>
+            <button
+              onClick={retryResolve}
+              disabled={retrying}
+              style={{ width:'100%', padding:'13px', marginTop:'14px', background: retrying ? '#555' : '#C9A227', color: retrying ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: retrying ? 'not-allowed' : 'pointer', fontFamily:'inherit' }}
+            >
+              {retrying ? 'Trying\u2026' : 'Try again'}
+            </button>
+            <p style={{ color:'#ccc', fontSize:'13px', lineHeight:'1.6', margin:'12px 0 0' }}>
+              If it keeps failing, contact the property directly{supportPhone ? ' at ' : '.'}
+              {supportPhone ? <a href={`tel:${supportPhone.replace(/[^0-9+]/g, '')}`} style={{ color:'#C9A227', fontWeight:'bold', textDecoration:'underline' }}>{supportPhone}</a> : null}
+            </p>
+            {resolverDetail ? (
+              <p style={{ color:'#555', fontSize:'11px', margin:'10px 0 0', wordBreak:'break-word' }}>{resolverDetail}</p>
+            ) : null}
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   if (propertyResolved === false) {
     return (
       <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
