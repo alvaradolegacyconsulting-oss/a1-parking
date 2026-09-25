@@ -2285,11 +2285,32 @@ export default function CompanyAdminPortal() {
         if (flagErr) throw new Error('must_change_password set failed: ' + flagErr.message)
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
-        await fetch(swiftUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
-        }).catch(() => {})
+        // 🔴 2026-09-25 — the response is INSPECTED now. The comment at
+        // the bottom of this catch called for exactly this and deferred
+        // it to keep §6 scope tight; this is that follow-on. A failed ban
+        // leaves a working login for a resident the CA believes was never
+        // created, and the message below used to assert the opposite.
+        let banOk = false
+        let banDetail: string | null = null
+        try {
+          const banRes = await fetch(swiftUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+            body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
+          })
+          if (banRes.ok) banOk = true
+          else {
+            const j = await banRes.json().catch(() => ({}))
+            banDetail = j.error || j.message || `HTTP ${banRes.status}`
+          }
+        } catch (banErr) {
+          banDetail = banErr instanceof Error ? banErr.message : String(banErr)
+        }
+        if (!banOk) {
+          console.error('[orphan-rollback-CA] ban FAILED', { email: targetEmail, detail: banDetail })
+        }
+
+        let rowProblem: string | null = null
         if (residentInserted) {
           // 2026-07-10 fix — swap direct .delete().ilike() for DEFINER RPC.
           // Prior shape had no DELETE policy for company_admin on residents,
@@ -2299,12 +2320,28 @@ export default function CompanyAdminPortal() {
           // NOT EXISTS auth.users guard. Property-precise like the manager
           // rollback; also closes the pre-existing cross-tenant hole where
           // an email-alone filter could have hit rows at other companies.
-          const { error: rollbackErr } = await supabase.rpc('delete_orphaned_pending_resident', {
+          //
+          // 🔴 2026-09-25 — the RETURNED COUNT is read now. It used to be
+          // `const { error }`, discarding `data`, so a call that succeeded
+          // and deleted NOTHING looked identical to one that worked. That
+          // is what was happening: _v2's undocumented auth-existence guard
+          // plus a ban that runs FIRST meant the auth row always existed
+          // and the delete always returned 0.
+          //
+          // 1 is the only success. More than 1 means the scope matched
+          // rows it should not have — an alarm, not thoroughness.
+          const { data: rowsDeleted, error: rollbackErr } = await supabase.rpc('delete_orphaned_pending_resident', {
             p_email: targetEmail,
             p_property: propertyArray[0] ?? null,
           })
           if (rollbackErr) {
-            console.error('[orphan-rollback-CA]', { email: targetEmail, error: rollbackErr.message })
+            console.error('[orphan-rollback-CA] RPC error', { email: targetEmail, error: rollbackErr.message })
+            rowProblem = 'The resident record could not be removed (' + rollbackErr.message + ').'
+          } else if (rowsDeleted !== 1) {
+            console.error('[orphan-rollback-CA] unexpected rows_deleted', { email: targetEmail, rowsDeleted })
+            rowProblem = rowsDeleted === 0
+              ? 'The resident record could not be removed — nothing was deleted.'
+              : 'The rollback removed ' + String(rowsDeleted) + ' resident records when it should have removed one.'
           }
           // B150 — vehicle-lifecycle cascade on rollback delete. Gate-check
           // counts active residents remaining at the tuple; cascade only
@@ -2349,18 +2386,23 @@ export default function CompanyAdminPortal() {
         // resident setup. Same class as toggleUserActive's "User not
         // found" concealment.
         //
-        // Copy honesty note: "Login account deactivated" asserts the
-        // rollback (swift-handler deactivate_user fetch just above at
-        // ~:1816) succeeded. That fetch is .catch(() => {}) —
-        // response never inspected. If swift-handler is broken (see
-        // Aug 8 arc), the rollback silently no-ops and the auth.users
-        // row survives orphaned. That's a separate follow-on: the
-        // rollback needs the same explicit-outcome discipline this
-        // commit is applying to the primary path. Not fixed here to
-        // keep §6 scope tight.
+        // Copy honesty note (2026-08-08, RESOLVED 2026-09-25): this
+        // message used to assert "Login account deactivated" while the
+        // ban's response was never inspected — the follow-on that note
+        // called for is the banOk/rowProblem handling above.
+        //
+        // The two failures stay SEPARATE. "The login still works" and "a
+        // resident record is still there" need different things done
+        // about them, and one combined apology tells support neither.
+        const parts = ['Could not complete resident setup: ' + msg + '.']
+        parts.push(banOk
+          ? 'Login account deactivated.'
+          : '\u26A0 The login account could NOT be deactivated and may still work.')
+        if (rowProblem) parts.push('\u26A0 ' + rowProblem)
+        if (!banOk || rowProblem) parts.push('Contact support and quote this address: ' + targetEmail)
         setUserActionResult({
           severity: 'error',
-          text: 'Could not complete resident setup: ' + msg + '. Login account deactivated.',
+          text: parts.join(' '),
         })
         return
       }

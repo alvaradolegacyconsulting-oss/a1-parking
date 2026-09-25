@@ -2888,35 +2888,89 @@ export default function ManagerPortal() {
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
-      // Roll back the auth user (and the residents row if it landed).
-      await fetch(fnBase + '/swift-handler', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${swiftSession?.access_token}`,
-        },
-        body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
-      }).catch(() => { /* best-effort */ })
+      // ── Roll back the auth user ──────────────────────────────────
+      // 🔴 2026-09-25 — the response is INSPECTED now. It used to be
+      // `.catch(() => {})` with the result thrown away, and the message
+      // below told the manager "The login account has been deactivated"
+      // whether or not it had been. A failed ban leaves a working login
+      // for a resident the manager believes was never created, and the
+      // only person who could notice was told the opposite.
+      let banOk = false
+      let banDetail: string | null = null
+      try {
+        const banRes = await fetch(fnBase + '/swift-handler', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${swiftSession?.access_token}`,
+          },
+          body: JSON.stringify({ action: 'deactivate_user', email: targetEmail }),
+        })
+        if (banRes.ok) banOk = true
+        else {
+          const j = await banRes.json().catch(() => ({}))
+          banDetail = j.error || j.message || `HTTP ${banRes.status}`
+        }
+      } catch (banErr) {
+        banDetail = banErr instanceof Error ? banErr.message : String(banErr)
+      }
+      if (!banOk) {
+        console.error('[orphan-rollback-manager] ban FAILED', { email: targetEmail, detail: banDetail })
+      }
+
+      // ── Roll back the residents row ──────────────────────────────
+      // 2026-07-10 fix — swap direct .delete().ilike() for DEFINER RPC.
+      // Prior shape had no DELETE policy for manager on residents; every
+      // rollback silently 0-rowed and left orphan rows. RPC enforces
+      // manager-property scope server-side (p_property required for
+      // manager callers).
+      //
+      // 🔴 2026-09-25 — the RETURNED COUNT is read now. It used to be
+      // `const { error }`, discarding `data`, so a call that succeeded
+      // and deleted NOTHING was indistinguishable from one that worked.
+      // That is exactly what was happening: the live _v2 function carried
+      // an undocumented auth-existence guard, the ban above runs FIRST,
+      // so the auth row always existed and the delete always returned 0.
+      // Every rollback since has left an orphan and reported nothing.
+      //
+      // 1 is the only success. 0 means nothing was removed; more than 1
+      // means the scope matched rows it should not have, which is its own
+      // alarm and must not be read as "extra thorough".
+      let rowProblem: string | null = null
       if (residentInserted) {
-        // 2026-07-10 fix — swap direct .delete().ilike() for DEFINER RPC.
-        // Prior shape had no DELETE policy for manager on residents; every
-        // rollback silently 0-rowed and left orphan rows. RPC enforces
-        // manager-property scope server-side (p_property required for
-        // manager callers). Best-effort surfacing preserved: on failure,
-        // log and continue with the cascade + user-facing alert.
-        const { error: rollbackErr } = await supabase.rpc('delete_orphaned_pending_resident', {
+        const { data: rowsDeleted, error: rollbackErr } = await supabase.rpc('delete_orphaned_pending_resident', {
           p_email: targetEmail,
           p_property: manager.name,
         })
         if (rollbackErr) {
-          console.error('[orphan-rollback-manager]', { email: targetEmail, property: manager.name, error: rollbackErr.message })
+          console.error('[orphan-rollback-manager] RPC error', { email: targetEmail, property: manager.name, error: rollbackErr.message })
+          rowProblem = 'The resident record could not be removed (' + rollbackErr.message + ').'
+        } else if (rowsDeleted !== 1) {
+          console.error('[orphan-rollback-manager] unexpected rows_deleted', { email: targetEmail, property: manager.name, rowsDeleted })
+          rowProblem = rowsDeleted === 0
+            ? 'The resident record could not be removed — nothing was deleted.'
+            : 'The rollback removed ' + String(rowsDeleted) + ' resident records when it should have removed one.'
         }
         // B150 — same lifecycle cascade as deactivateResident. Gate-check
         // ensures we only archive vehicles if NO other active resident
         // remains at the tuple (handles roommate case).
         await cascadeVehiclesIfUnitVacant(newResident.unit, manager.name, 'ADD_RESIDENT_ROLLBACK')
       }
-      alert('Could not complete resident setup: ' + msg + '\n\nThe login account has been deactivated. Try again or contact support.')
+
+      // ── One message, and it says what actually happened ──────────
+      // The two failures are kept SEPARATE on purpose. "The login still
+      // works" and "a resident record is still there" need different
+      // things done about them, and collapsing them into one apology
+      // tells support neither.
+      const parts = ['Could not complete resident setup: ' + msg]
+      parts.push(banOk
+        ? 'The login account has been deactivated.'
+        : '\u26A0 The login account could NOT be deactivated and may still work.')
+      if (rowProblem) parts.push('\u26A0 ' + rowProblem)
+      parts.push((banOk && !rowProblem)
+        ? 'Try again or contact support.'
+        : 'Contact support and quote this address: ' + targetEmail)
+      alert(parts.join('\n\n'))
       return
     }
 
