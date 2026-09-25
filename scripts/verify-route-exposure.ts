@@ -288,6 +288,58 @@ async function main() {
       } else pass('D3 sitemap advertises only reachable URLs', `${locs.length} URL(s), all serve anonymously`)
     }
 
+    // ── D5 — assets a public page REFERENCES must also serve ────────
+    // 🔴 The route map cannot catch this class on its own: files under
+    // public/ are not app routes, so they appear in no build manifest and
+    // no declaration. They are still middleware-matched, and a gated
+    // asset breaks the page for exactly the anonymous visitor it was
+    // built for.
+    //
+    // Found the hard way: /logo.jpeg answers 307 → /login, which means
+    // the logo on the LOGIN PAGE has never loaded for a logged-out
+    // visitor. Every page-level check passed the whole time, because the
+    // page returns 200 and the browser's failure is a separate request.
+    //
+    // So: for every route we declare as something an anonymous visitor
+    // GETS, fetch it and follow its own asset references.
+    {
+      const assetRoutes = Object.entries(ROUTE_EXPOSURE)
+        .filter(([, e]) => e.kind === 'page' || e.kind === 'content')
+        .map(([r, e]) => ('sample' in e && e.sample ? e.sample : r))
+        .filter(r => !r.includes('['))
+      const broken: string[] = []
+      const seen = new Set<string>()
+      for (const route of assetRoutes) {
+        let html: string
+        try { html = await (await fetch(`${BASE}${route}`)).text() } catch { continue }
+        // src="…" on img/script/source, plus href="…" on <link>. Skip
+        // /_next/* — those are served by the same matcher exclusion and
+        // number in the hundreds per page; a break there would surface as
+        // a blank page long before this gate ran.
+        const refs = [
+          ...[...html.matchAll(/\bsrc="(\/[^"]+)"/g)].map(m => m[1]),
+          ...[...html.matchAll(/<link[^>]+href="(\/[^"]+)"/g)].map(m => m[1]),
+        ].filter(u => !u.startsWith('/_next/'))
+        for (const ref of refs) {
+          const clean = ref.split('#')[0]
+          if (seen.has(clean)) continue
+          seen.add(clean)
+          try {
+            const r = await fetch(`${BASE}${clean}`, { redirect: 'manual' })
+            if (isLoginRedirect(r.status, r.headers.get('location'))) broken.push(`${clean}  (referenced by ${route})`)
+            else if (r.status >= 400) broken.push(`${clean}  → ${r.status}  (referenced by ${route})`)
+          } catch { broken.push(`${clean}  (request threw, referenced by ${route})`) }
+        }
+      }
+      if (broken.length) {
+        fail('D5 referenced assets serve anonymously', `${broken.length} asset(s) referenced by a public page do not serve to anonymous traffic:`)
+        broken.forEach(b => console.log(`      • ${b}`))
+        console.log('      A page that returns 200 while its own logo 307s to /login is broken for')
+        console.log('      the visitor it was built for. Static asset folders belong in the')
+        console.log('      middleware matcher exclusion — see the rule in middleware.ts.')
+      } else pass('D5 referenced assets serve anonymously', `${seen.size} distinct non-_next asset ref(s) across ${assetRoutes.length} public page(s)`)
+    }
+
     {
       const txt = await (await fetch(`${BASE}/robots.txt`)).text()
       const allows = txt.split('\n')

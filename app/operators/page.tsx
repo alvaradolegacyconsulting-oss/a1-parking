@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import Image from 'next/image'
 import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 import { guardEmail, suggestEmailCorrection } from '../lib/email-guard'
 import { readAttribution, buildLeadPayload, type AskedFields } from '../lib/lead-attribution'
@@ -151,12 +152,14 @@ export default function OperatorsPage() {
         .op-wrap { max-width: 1180px; margin: 0 auto; }
         .op-pad { padding: 38px 22px 40px; }
         .op-h1 { font-size: 46px; line-height: 0.95; letter-spacing: -0.01em; }
+        .op-mark { height: 32px; width: auto; display: block; }
         .op-h2 { font-size: 34px; line-height: 1; }
         .op-lede { font-size: 18px; line-height: 1.5; }
         .op-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
         .op-two { display: grid; grid-template-columns: 1fr; gap: 16px; }
         @media (min-width: 860px) {
           .op-pad { padding: 64px 56px 68px; }
+          .op-mark { height: 40px; }
           .op-h1 { font-size: 78px; }
           .op-h2 { font-size: 48px; }
           .op-lede { font-size: 22px; line-height: 1.45; }
@@ -165,11 +168,34 @@ export default function OperatorsPage() {
         }
       `}</style>
 
-      {/* Masthead — wordmark only. Deliberately not a nav bar. */}
+      {/* Masthead — shield + wordmark, linked home. Deliberately NOT a
+          nav bar: this is an ad landing page and the demo button is the
+          only call to action. Adding links here gives a cold reader
+          somewhere else to go. */}
       <div className="op-wrap" style={{ padding: '18px 22px', borderBottom: '1px solid #1E3E54' }}>
-        <div style={{ fontWeight: 700, fontSize: 20, textTransform: 'uppercase', letterSpacing: '0.01em' }}>
-          ShieldMyLot<span style={{ fontSize: 9, verticalAlign: 'super' }}>&trade;</span>
-        </div>
+        <a
+          href="/"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 10, textDecoration: 'none', color: 'inherit' }}
+        >
+          {/* 🔴 /brand/shieldmylot-shield.png, NOT /logo.jpeg — that file
+              is A1 Wrecker's lion, a customer's mark. The shield is
+              RGBA with an antialiased edge band, so it sits on the navy
+              masthead without a white plate behind it.
+              width/height are the intrinsic ratio (148×160 → 37×40);
+              .op-mark scales by height with width:auto, which is what
+              keeps next/image from warning and keeps the ratio true. */}
+          <Image
+            src="/brand/shieldmylot-shield.png"
+            alt="ShieldMyLot"
+            width={37}
+            height={40}
+            className="op-mark"
+            priority
+          />
+          <span style={{ fontWeight: 700, fontSize: 20, textTransform: 'uppercase', letterSpacing: '0.01em' }}>
+            ShieldMyLot<span style={{ fontSize: 9, verticalAlign: 'super' }}>&trade;</span>
+          </span>
+        </a>
       </div>
 
       <div className="op-wrap op-pad">
