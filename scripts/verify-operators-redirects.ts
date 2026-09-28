@@ -26,6 +26,15 @@ import { spawn, type ChildProcess } from 'child_process'
 const PORT = 3987
 const BASE = `http://127.0.0.1:${PORT}`
 
+// Every printed short path and the page it must reach. A new campaign
+// alias is ONE ROW here — the four assertions below iterate it — rather
+// than four separate edits, three of which someone would forget.
+const ALIASES: Array<{ short: string; dest: string }> = [
+  { short: '/morethantruck', dest: '/operators' },
+  { short: '/swtowop',       dest: '/operators' },
+  { short: '/everyspace',    dest: '/property-managers' },   // HAA / PM campaign
+]
+
 let failures = 0
 const pass = (id: string, n: string) => console.log(`✅ ${id}  ${n}`)
 const fail = (id: string, n: string) => { failures++; console.log(`❌ ${id}  ${n}`) }
@@ -87,33 +96,35 @@ async function main() {
     pass('S0', 'production server responding')
 
     // ── R1 — 🔴 the QR path, query intact. The headline. ────────────
-    for (const short of ['/morethantruck', '/swtowop']) {
+    for (const { short, dest } of ALIASES) {
       const r = await hop(`${short}?src=swto-print`)
-      const ok = r.status >= 300 && r.status < 400 && r.location === '/operators?src=swto-print'
+      const ok = r.status >= 300 && r.status < 400 && r.location === `${dest}?src=swto-print`
       if (ok) pass('R1', `${short}?src=swto-print → ${r.status} ${r.location} (query FORWARDED)`)
-      else fail('R1', `🔴 ${short}?src=swto-print → ${r.status} ${r.location} — expected 30x to /operators?src=swto-print. Attribution would be LOST SILENTLY.`)
+      else fail('R1', `🔴 ${short}?src=swto-print → ${r.status} ${r.location} — expected 30x to ${dest}?src=swto-print. Attribution would be LOST SILENTLY.`)
     }
 
     // ── R1b — a full campaign URL, every parameter forwarded ────────
     {
       const qs = 'utm_source=assoc&utm_medium=print&utm_campaign=fall26&src=swto-print'
-      const r = await hop(`/morethantruck?${qs}`)
-      if (r.location === `/operators?${qs}`) pass('R1b', 'all four campaign parameters forwarded in order')
-      else fail('R1b', `got ${r.location}`)
+      for (const { short, dest } of ALIASES) {
+        const r = await hop(`${short}?${qs}`)
+        if (r.location === `${dest}?${qs}`) pass('R1b', `${short}: all four campaign parameters forwarded in order`)
+        else fail('R1b', `${short} got ${r.location}`)
+      }
     }
 
     // ── R2 — permanent, as specified ────────────────────────────────
-    for (const short of ['/morethantruck', '/swtowop']) {
+    for (const { short } of ALIASES) {
       const r = await hop(short)
       if (r.status === 308 || r.status === 301) pass('R2', `${short} → ${r.status} (permanent)`)
       else fail('R2', `${short} → ${r.status}; expected a permanent 308/301`)
     }
 
     // ── R3 — no query in means no empty `?` out ─────────────────────
-    for (const short of ['/morethantruck', '/swtowop']) {
+    for (const { short, dest } of ALIASES) {
       const r = await hop(short)
-      if (r.location === '/operators') pass('R3', `${short} → /operators exactly, no trailing '?'`)
-      else fail('R3', `${short} → ${r.location}; expected bare /operators`)
+      if (r.location === dest) pass('R3', `${short} → ${dest} exactly, no trailing '?'`)
+      else fail('R3', `${short} → ${r.location}; expected bare ${dest}`)
     }
 
     // ── R4 — 🔴 the middleware must not eat any of it ───────────────
@@ -126,7 +137,7 @@ async function main() {
     // (An earlier version of this comment claimed publicPaths was an
     // explicit non-prefix list. It is not, and the difference matters:
     // it is why gating the whole /help tree in 136bb46 was one string.)
-    for (const path of ['/morethantruck?src=swto-print', '/swtowop', '/operators?src=swto-print']) {
+    for (const path of [...ALIASES.map(a => `${a.short}?src=swto-print`), '/operators?src=swto-print', '/property-managers?src=haa-print']) {
       const r = await hop(path)
       const toLogin = (r.location ?? '').includes('/login')
       if (!toLogin) pass('R4', `anonymous ${path} is not sent to /login`)
@@ -144,14 +155,19 @@ async function main() {
     //
     // So this asserts CONTENT, not status. A 200 that renders nothing is
     // not a working page.
-    {
-      const res = await fetch(`${BASE}/operators?src=swto-print`, { redirect: 'manual' })
+    for (const { path, headline } of [
+      { path: '/operators?src=swto-print',          headline: /This is what you/ },
+      { path: '/property-managers?src=haa-print',   headline: /Know who belongs in/ },
+    ]) {
+      const res = await fetch(`${BASE}${path}`, { redirect: 'manual' })
       const html = res.status === 200 ? await res.text() : ''
-      // Asserting on copy that only this page carries, so a 200 from
-      // some other page could not pass this.
-      const looksRight = /This is what you/.test(html) && /Send this over/i.test(html)
-      if (res.status === 200 && looksRight) pass('R5', '/operators returns 200 and renders the form, anonymously')
-      else fail('R5', `status=${res.status}, page markers found=${looksRight}`)
+      // Asserting on copy that only THAT page carries, so a 200 from
+      // some other page could not pass this. The shared "Send this over"
+      // button proves the form rendered; the headline proves it is the
+      // right page — neither alone would.
+      const looksRight = headline.test(html) && /Send this over/i.test(html)
+      if (res.status === 200 && looksRight) pass('R5', `${path} returns 200 and renders the form, anonymously`)
+      else fail('R5', `${path}: status=${res.status}, page markers found=${looksRight}`)
     }
   } finally {
     stop()

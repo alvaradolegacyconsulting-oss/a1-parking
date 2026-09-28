@@ -60,6 +60,15 @@ const nextConfig: NextConfig = {
         destination: '/operators',
         permanent: true,
       },
+      // HAA / property-manager campaign. Same contract as the two above:
+      // destination carries NO query of its own, because Next forwards
+      // the incoming query only to a destination that has none — and the
+      // printed codes are /everyspace?src=haa-print and friends.
+      {
+        source: '/everyspace',
+        destination: '/property-managers',
+        permanent: true,
+      },
     ]
   },
 };

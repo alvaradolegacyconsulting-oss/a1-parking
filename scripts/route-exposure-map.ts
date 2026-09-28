@@ -70,7 +70,7 @@ export type Expectation =
 // Routes that exist but are NOT app-router pages — next.config.ts
 // redirects. Declared here so they are gated too; the stale-entry check
 // knows to expect their absence from the build manifest.
-export const NON_MANIFEST_ROUTES = new Set(['/morethantruck', '/swtowop'])
+export const NON_MANIFEST_ROUTES = new Set(['/morethantruck', '/swtowop', '/everyspace'])
 
 export const ROUTE_EXPOSURE: Record<string, Expectation> = {
   // ── Public marketing + legal ──────────────────────────────────────
@@ -82,6 +82,12 @@ export const ROUTE_EXPOSURE: Record<string, Expectation> = {
   },
   '/morethantruck': { kind: 'redirect', to: '/operators', note: 'Printed campaign short path. Query forwarding is proven separately by verify-operators-redirects.ts.' },
   '/swtowop': { kind: 'redirect', to: '/operators' },
+  '/property-managers': {
+    kind: 'content',
+    marker: 'Know who belongs in',
+    note: 'PM twin of /operators (HAA campaign). `content`, not `page`, for the same reason: this is a landing page whose server-rendered copy IS the product, and a 200 with an empty shell would pass a status check while showing a cold reader nothing.',
+  },
+  '/everyspace': { kind: 'redirect', to: '/property-managers', note: 'Printed HAA short path. Deliberately NOT in the sitemap.' },
   '/terms': { kind: 'page' },
   '/privacy': { kind: 'page' },
   '/saas': {

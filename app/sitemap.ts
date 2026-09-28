@@ -44,6 +44,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     { url: `${BASE}/`, lastModified: now, changeFrequency: 'monthly', priority: 1.0 },
     { url: `${BASE}/operators`, lastModified: now, changeFrequency: 'monthly', priority: 0.9 },
+    // The campaign aliases (/morethantruck, /swtowop, /everyspace) are
+    // deliberately ABSENT: they 308 to the canonical page, and listing a
+    // redirect asks a crawler to spend a fetch learning what the
+    // canonical entry already told it.
+    { url: `${BASE}/property-managers`, lastModified: now, changeFrequency: 'monthly', priority: 0.9 },
     { url: `${BASE}/terms`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${BASE}/privacy`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${BASE}/saas`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
