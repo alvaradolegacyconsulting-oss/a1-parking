@@ -10,7 +10,8 @@
     "lint": "eslint",
     "verify:routes": "next build && tsx scripts/verify-route-exposure.ts",
     "verify:redirects": "next build && tsx scripts/verify-operators-redirects.ts",
-    "verify:selfserve": "tsx scripts/verify-self-serve-door.ts"
+    "verify:selfserve": "tsx scripts/verify-self-serve-door.ts",
+    "verify:tierparam": "tsx scripts/verify-signup-tier-param.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

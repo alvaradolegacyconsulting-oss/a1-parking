@@ -406,7 +406,7 @@ export default function PropertyManagersPage() {
             {selfServeOpen && (
               <p style={{ margin: '2px 0 0', fontSize: 16, lineHeight: 1.55, color: INK, maxWidth: 640 }}>
                 Managing a single property?{' '}
-                <a href="/signup" style={{ color: '#6B5A1E', fontWeight: 700 }}>Start on your own &rarr;</a>
+                <a href="/signup?tier=pm_starter" style={{ color: '#6B5A1E', fontWeight: 700 }}>Start on your own &rarr;</a>
               </p>
             )}
           </div>

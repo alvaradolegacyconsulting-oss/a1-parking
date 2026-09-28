@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { OFFERINGS, TierTrack } from '../lib/tier-display'
 import { TIER_CONFIG, TIER_PRICING, getTierPricing } from '../lib/tier-config'
+import { resolveInitialTier, DEFAULT_TIER, type SelfServeTier } from '../lib/signup-tier-param'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import {
   TEXAS_ATTESTATION_VERSION,
@@ -96,7 +97,32 @@ export default function SignupTierPicker() {
   // Default = enforcement_only matches prior default. Only self-serve
   // slugs valid here: 'pm_starter' or 'enforcement_only'. custom_quote
   // is a routing card (never sets this state; navigates to /#contact).
-  const [tier, setTier] = useState<'pm_starter' | 'enforcement_only'>('enforcement_only')
+  // 2026-09-28 — ?tier= preselect, allowlisted. Campaign links can land
+  // a property manager on the PM Starter card instead of making them
+  // find it (/property-managers sends /signup?tier=pm_starter).
+  //
+  // 🔴 A LAZY INITIALIZER, NOT AN EFFECT. Two reasons, both load-bearing:
+  //
+  //   1. No flash and no clobber. Setting the tier in an effect would
+  //      paint the Enforcement card selected, then swap it — and the
+  //      `[tier]` effect below would fire a SECOND time and reset
+  //      propertyCount/driverCount, potentially over something the
+  //      visitor had already typed in that window.
+  //   2. No hydration mismatch, because the picker never server-renders:
+  //      dormancy starts 'loading' and both the loading and closed
+  //      branches return before this markup. Reading window here is safe
+  //      for that specific reason — it would NOT be on a page whose
+  //      picker was in the SSR output.
+  //
+  // useSearchParams() is deliberately not used: it would bail this page
+  // out of static rendering, which is the /operators R5 defect.
+  //
+  // The existing `[tier]` effect then applies the right count resets for
+  // whichever tier we start on — pm_starter → propertyCount '1',
+  // driverCount '0' — with no change needed there.
+  const [tier, setTier] = useState<SelfServeTier>(
+    () => (typeof window === 'undefined' ? DEFAULT_TIER : resolveInitialTier(window.location.search)),
+  )
   const [cycle, setCycle] = useState<'monthly' | 'annual'>('monthly')
   const [propertyCount, setPropertyCount] = useState<string>('1')
   const [driverCount, setDriverCount] = useState<string>('1')
