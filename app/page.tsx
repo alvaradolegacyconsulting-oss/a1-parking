@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useResolvedLogo } from './lib/logo'
 // 3-tier rebuild (Jose 2026-06-24): the landing page now renders the
 // single 3-card OFFERINGS view (PM-Only / Enforcement-Only / Legacy).
@@ -17,6 +17,23 @@ const MUTED = '#64748b'
 export default function Landing() {
   const [contact, setContact] = useState({ name: '', email: '', type: 'General inquiry', message: '' })
   const logoUrl = useResolvedLogo()
+
+  // Campaign query carried onto the two audience doors below.
+  //
+  // 🔴 window.location.search, NOT useSearchParams(). This page is
+  // statically prerendered (○ in the build output); useSearchParams()
+  // forces the nearest Suspense boundary to bail out of server
+  // rendering, which would return the MARKETING HOME PAGE to a crawler
+  // as an empty shell. That is exactly the defect R5 caught on
+  // /operators, on a more important page. Reading it in an effect costs
+  // nothing — this only ever runs in a browser, where the URL exists —
+  // and the links are progressively enhanced: they work without it,
+  // they just lose the attribution the visitor arrived with.
+  const [qs, setQs] = useState('')
+  useEffect(() => {
+    const raw = window.location.search
+    setQs(raw && raw !== '?' ? raw : '')
+  }, [])
 
   function sendContact() {
     const subject = encodeURIComponent(`[${contact.type}] from ${contact.name}`)
@@ -105,6 +122,32 @@ export default function Landing() {
         <p style={{ fontSize: 18, color: MUTED, maxWidth: 640, margin: '0 auto 44px', lineHeight: 1.7 }}>
           Resident registration, visitor passes, reserved-space management, plate enforcement, and tow ticketing — for Texas operators working under Chapter 2308. Three offerings: PM-Only, Enforcement-Only, and Legacy.
         </p>
+        {/* ── Two audience doors (2026-09-28) ─────────────────────────
+            The event-banner QR is shieldmylot.com/?src=event-banner, so a
+            scanner lands HERE and must reach the right lead form in one
+            tap. Placed directly under the lede, above the existing CTA
+            row, as a chooser rather than a fourth call to action — the
+            three buttons below still say what to DO, these two say who
+            you ARE.
+
+            🔴 `qs` carries the incoming query onto both hrefs. Without
+            it a banner scan reaches the form as "direct" and the
+            placement that produced the lead is unrecoverable — the same
+            silent-attribution-loss the /morethantruck redirect gate
+            exists to prevent, one hop earlier. */}
+        <div style={{ margin: '0 auto 30px', maxWidth: 680 }}>
+          <div style={{ fontSize: 12, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED, marginBottom: 12 }}>
+            Which brings you here?
+          </div>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <a href={`/property-managers${qs}`} style={{ background: 'rgba(201,162,39,0.12)', border: `1px solid ${GOLD}`, color: GOLD, fontWeight: 700, fontSize: 15, padding: '14px 24px', borderRadius: 10, textDecoration: 'none' }}>
+              I manage properties →
+            </a>
+            <a href={`/operators${qs}`} style={{ background: 'rgba(201,162,39,0.12)', border: `1px solid ${GOLD}`, color: GOLD, fontWeight: 700, fontSize: 15, padding: '14px 24px', borderRadius: 10, textDecoration: 'none' }}>
+              I run a towing company →
+            </a>
+          </div>
+        </div>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <a href="/signup" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Sign up →</a>
           <a href="#contact" style={{ background: CARD_BG, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 15, padding: '14px 28px', borderRadius: 10, textDecoration: 'none' }}>Request Access →</a>
