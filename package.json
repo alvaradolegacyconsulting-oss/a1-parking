@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "verify:routes": "next build && tsx scripts/verify-route-exposure.ts",
-    "verify:redirects": "next build && tsx scripts/verify-operators-redirects.ts"
+    "verify:redirects": "next build && tsx scripts/verify-operators-redirects.ts",
+    "verify:selfserve": "tsx scripts/verify-self-serve-door.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

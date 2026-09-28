@@ -5,6 +5,7 @@ import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWi
 import { guardEmail, suggestEmailCorrection } from '../lib/email-guard'
 import { readAttribution, buildLeadPayload, type AskedFields } from '../lib/lead-attribution'
 import type { LeadSource } from '../lib/leads'
+import { probeSelfServeOpen } from '../lib/self-serve-door'
 
 // ════════════════════════════════════════════════════════════════════
 // /property-managers — PM landing page. The twin of /operators.
@@ -80,6 +81,17 @@ export default function PropertyManagersPage() {
   // renders server-side where a crawler can see it.
   useEffect(() => {
     setSource(readAttribution(window.location.search))
+  }, [])
+
+  // Self-serve door. Hidden until public signup is actually open —
+  // same check /signup itself uses, so the two can never disagree.
+  // Starts false, so the line is absent while the probe is in flight
+  // and never flashes a link we might have to take away.
+  const [selfServeOpen, setSelfServeOpen] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    probeSelfServeOpen().then(open => { if (!cancelled) setSelfServeOpen(open) })
+    return () => { cancelled = true }
   }, [])
 
   const set = (k: keyof typeof values) => (v: string | boolean) =>
@@ -382,6 +394,21 @@ export default function PropertyManagersPage() {
               We won&rsquo;t sell or share it. See our{' '}
               <a href="/privacy" style={{ color: '#6B5A1E' }}>Privacy Policy</a>.
             </p>
+
+            {/* ── Self-serve door ──────────────────────────────────────
+                Secondary on purpose: the demo is the primary action and
+                a single-property manager is the exception, not the
+                pitch. Links to plain /signup — the tier picker has NO
+                URL preselect today (app/signup/page.tsx:99 hardcodes
+                'enforcement_only'), so a ?tier= would be ignored and a
+                PM would land on the wrong card believing we had chosen
+                for them. Silently-ignored is worse than absent. */}
+            {selfServeOpen && (
+              <p style={{ margin: '2px 0 0', fontSize: 16, lineHeight: 1.55, color: INK, maxWidth: 640 }}>
+                Managing a single property?{' '}
+                <a href="/signup" style={{ color: '#6B5A1E', fontWeight: 700 }}>Start on your own &rarr;</a>
+              </p>
+            )}
           </div>
         </div>
       </div>
