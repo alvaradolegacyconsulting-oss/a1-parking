@@ -88,6 +88,11 @@ export const ROUTE_EXPOSURE: Record<string, Expectation> = {
     note: 'PM twin of /operators (HAA campaign). `content`, not `page`, for the same reason: this is a landing page whose server-rendered copy IS the product, and a 200 with an empty shell would pass a status check while showing a cold reader nothing.',
   },
   '/everyspace': { kind: 'redirect', to: '/property-managers', note: 'Printed HAA short path. Deliberately NOT in the sitemap.' },
+  '/videos': {
+    kind: 'content',
+    marker: 'See it',
+    note: 'Public walkthrough library. Exists BECAUSE the home footer pointed at /help/videos, which 307s to /login for a prospect. Does NOT reopen /help — 136bb46 stands and the /help entries below are unchanged.',
+  },
   '/terms': { kind: 'page' },
   '/privacy': { kind: 'page' },
   '/saas': {

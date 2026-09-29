@@ -41,7 +41,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: '*',
-        allow: ['/', '/operators', '/property-managers', '/terms', '/privacy', '/saas', '/signup'],
+        allow: ['/', '/operators', '/property-managers', '/videos', '/terms', '/privacy', '/saas', '/signup'],
         disallow: [
           '/admin',
           '/company_admin',

@@ -340,6 +340,45 @@ async function main() {
       } else pass('D5 referenced assets serve anonymously', `${seen.size} distinct non-_next asset ref(s) across ${assetRoutes.length} public page(s)`)
     }
 
+    // ── D5b — the HeyGen embeds /videos can play ────────────────────
+    // 🔴 The same class as D5, one origin further out. The page lazy-
+    // mounts each iframe on click, so the embed URLs are NOT in the
+    // served HTML and D5's scrape cannot see them. Reading the source
+    // of truth instead — docs/videos/*.md — means a video added there
+    // is covered without anyone remembering to update a list here.
+    //
+    // A logged-out prospect is the entire audience for /videos. If an
+    // embed answers anything but 200 to an unauthenticated request, the
+    // page shows a play button that leads to nothing.
+    //
+    // A network failure FAILS rather than warning. The message says it
+    // may be HeyGen rather than us — but a gate whose job is "the videos
+    // play for a stranger" must not pass while unable to check.
+    {
+      const dir = 'docs/videos'
+      const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.endsWith('.md')) : []
+      if (!files.length) {
+        fail('D5b embeds reachable anonymously', `no files in ${dir}/ — nothing was measured`)
+      } else {
+        const bad: string[] = []
+        for (const f of files) {
+          const src = fs.readFileSync(`${dir}/${f}`, 'utf8')
+          const url = src.match(/^heygen_share_url:\s*"([^"]+)"/m)?.[1]
+          if (!url) { bad.push(`${f}: no heygen_share_url in frontmatter`); continue }
+          try {
+            const r = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(15000) })
+            if (r.status !== 200) bad.push(`${f}: ${url} → ${r.status}`)
+          } catch (e) {
+            bad.push(`${f}: ${url} → could not reach it (${(e as Error).message}). This may be HeyGen, not us — but it is not a pass.`)
+          }
+        }
+        if (bad.length) {
+          fail('D5b embeds reachable anonymously', `${bad.length} of ${files.length} embed(s) do not answer 200 to an anonymous request:`)
+          bad.forEach(b => console.log(`      • ${b}`))
+        } else pass('D5b embeds reachable anonymously', `${files.length} HeyGen embed(s), all 200 with no auth`)
+      }
+    }
+
     {
       const txt = await (await fetch(`${BASE}/robots.txt`)).text()
       const allows = txt.split('\n')

@@ -49,6 +49,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     // redirect asks a crawler to spend a fetch learning what the
     // canonical entry already told it.
     { url: `${BASE}/property-managers`, lastModified: now, changeFrequency: 'monthly', priority: 0.9 },
+    { url: `${BASE}/videos`, lastModified: now, changeFrequency: 'monthly', priority: 0.8 },
     { url: `${BASE}/terms`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${BASE}/privacy`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${BASE}/saas`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
