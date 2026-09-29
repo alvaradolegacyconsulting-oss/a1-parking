@@ -661,7 +661,13 @@ export default function Landing() {
               <p style={{ color: TEXT, fontSize: 13, fontWeight: 600, margin: '0 0 12px' }}>Support</p>
               {[
                 ['Help Center', '/help'],
-                ['Video Guides', '/help/videos'],
+                // 🔴 2026-09-28 — was '/help/videos', which 307s to
+                // /login for anyone not signed in. A prospect clicking
+                // "Videos" in the public footer hit a login screen.
+                // /videos is the public library; /help stays gated, and
+                // "Help Center" above still points there deliberately
+                // (it IS the subscriber manual — see 136bb46).
+                ['Video Guides', '/videos'],
                 ['Contact', '#contact'],
               ].map(([label, href]) => (
                 <a key={label} href={href} style={{ display: 'block', color: MUTED, fontSize: 13, textDecoration: 'none', marginBottom: 8 }}>{label}</a>

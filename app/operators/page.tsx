@@ -71,8 +71,14 @@ export default function OperatorsPage() {
   // Reading it here instead costs nothing (this only ever runs in the
   // browser, where the URL is available) and the marketing content now
   // renders server-side where a crawler can see it.
+  // Raw query, kept alongside the parsed attribution so the
+  // "See it in action" link can forward it verbatim. Same mount-effect
+  // rule as everywhere else: never useSearchParams() on a static page.
+  const [qs, setQs] = useState('')
   useEffect(() => {
-    setSource(readAttribution(window.location.search))
+    const raw = window.location.search
+    setSource(readAttribution(raw))
+    setQs(raw && raw !== '?' ? raw : '')
   }, [])
 
   const set = (k: keyof typeof values) => (v: string | boolean) =>
@@ -215,6 +221,14 @@ export default function OperatorsPage() {
           background: GOLD, color: NAVY, fontWeight: 700, fontSize: 20, letterSpacing: '0.04em',
           textTransform: 'uppercase', textDecoration: 'none', maxWidth: 420,
         }}>Request a 15-minute demo</a>
+        {/* Secondary to the demo, deliberately. A cold reader who is not
+            ready to talk to anyone can still see the product — and lands
+            on their OWN audience section rather than the top of the
+            library. Carries ?src= so a campaign scan that detours through
+            the videos still arrives at the form tagged. */}
+        <p style={{ margin: '16px 0 0', fontSize: 17 }}>
+          <a href={`/videos#operators${qs}`} style={{ color: GOLD_LIGHT, fontWeight: 600 }}>See it in action &rarr;</a>
+        </p>
       </div>
 
       <div style={{ background: CREAM, color: NAVY }}>
