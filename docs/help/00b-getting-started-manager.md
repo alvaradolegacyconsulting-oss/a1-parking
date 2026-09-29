@@ -24,7 +24,7 @@ A one-page orientation for the person running the day-to-day at a property. Cove
 
 ## What you'll do most
 
-- Approve or decline residents & vehicles · Assign and manage reserved spaces · Issue and review visitor passes · Look up plates · Respond to disputes · Watch Insights for activity at your properties
+- Approve or decline residents & vehicles · Assign and manage reserved spaces · Issue and review visitor passes · Look up plates · Watch Insights for activity at your properties
 
 ## Good to know
 
