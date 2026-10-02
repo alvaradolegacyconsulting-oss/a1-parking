@@ -111,6 +111,44 @@ export function getLimit(flag: FeatureFlag, company: CompanyContext): number {
 
 // True only if the user is *under* the limit (count + 1 still allowed),
 // or the flag is unlimited (-1). Use at submit-time as a race guard.
+// ════════════════════════════════════════════════════════════════════
+// The PROPERTY ceiling is resolved by the SERVER, not by tier-config
+// ════════════════════════════════════════════════════════════════════
+//
+// 🔴 tier-config.ts carries MAX_PROPERTIES = -1 for enforcement_only
+// and legacy. That was true until the 2026-10-02 ceiling migration and
+// is now WRONG — the database caps those tiers at 50, so a client that
+// trusts the config lets a customer fill in an add-property form and
+// then meets a raw Postgres cap error.
+//
+// Writing 50 into tier-config instead would be a THIRD copy of a number
+// that already lives in two places, and would STILL be wrong for A1,
+// whose proposal-code override is -1 and who must stay uncapped in the
+// UI as well.
+//
+// So the client asks the server, and the server answers with the same
+// precedence the trigger applies — override first, then tier default.
+// One rule, one place.
+//
+// Returns null when it cannot resolve. The caller must then NOT block:
+// the database is still enforcing, and refusing a legitimate customer
+// because a lookup failed is the worse error. Fail-open in the UI,
+// fail-closed in the DB.
+export async function getEffectivePropertyLimit(companyName: string): Promise<number | null> {
+  if (!companyName || !companyName.trim()) return null
+  const { data, error } = await supabase.rpc('get_effective_property_limit', { p_company_name: companyName })
+  if (error) {
+    console.error('[tier] get_effective_property_limit failed:', error.message)
+    return null
+  }
+  return typeof data === 'number' ? data : null
+}
+
+/** Negative is unlimited — the trigger's own convention. */
+export function limitIsUnlimited(limit: number | null): boolean {
+  return limit === null || limit < 0
+}
+
 export function isUnderLimit(flag: FeatureFlag, count: number, company: CompanyContext): boolean {
   const limit = getLimit(flag, company)
   if (limit < 0) return true

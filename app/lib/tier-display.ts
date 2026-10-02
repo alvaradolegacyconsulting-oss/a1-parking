@@ -62,7 +62,9 @@ export type TierDisplay = {
   // Latent because public_signup_open has never been true; still a bug.
   // Callers MUST use this field, never derive from the display name.
   // Union kept narrow so a typo like 'pm-only' is caught at compile time.
-  slug: 'pm_only' | 'enforcement_only' | 'legacy' | 'pm_starter' | 'custom_quote'
+  slug: 'pm_starter' | 'pm_pro' | 'operator_starter' | 'operator_pro'
+  /** Transition label; rendered only while FORMERLY_LABELS_ON. */
+  formerly?: string
   // Optional because Legacy hides its price on marketing surfaces
   // (customPrice: true replaces the numeric with "Custom pricing").
   base?: number
@@ -135,6 +137,19 @@ export type TierDisplay = {
 // there so a signup-open flip is one edit per card, not one per
 // tier-display constant).
 
+// ════════════════════════════════════════════════════════════════════
+// OFFERINGS — the Oct 2026 lineup
+// ════════════════════════════════════════════════════════════════════
+//
+// 🔴 PM-Only and "Custom quote" are GONE from the public page. PM-Only
+// is retired and no longer sold; Elite replaces "Custom quote" and is a
+// LEAD, not a card you can buy — it routes to the existing intake form.
+//
+// Every feature line below was checked against TIER_CONFIG, not written
+// from the plan names. The audit is the reason two obvious-sounding
+// lines are NOT here: leasing-agent seats are on all four plans so they
+// differentiate nothing, and support tiering is deliberately absent
+// from the public page (Jose, 2026-10-02).
 export const OFFERINGS: TierDisplay[] = [
   {
     name: 'PM Starter',
@@ -153,104 +168,114 @@ export const OFFERINGS: TierDisplay[] = [
     ],
   },
   {
-    name: 'Enforcement-Only',
-    slug: 'enforcement_only',
-    base: 199,
+    name: 'PM Pro',
+    slug: 'pm_pro',
+    base: 249,
     perProp: 15,
-    taglineOneLine: 'For towing and enforcement operators.',
-    includesEnforcement: true,
-    includesPM: false,
+    taglineOneLine: 'For property management companies.',
+    includesEnforcement: false,
+    includesPM: true,
     features: [
-      'Unlimited properties',
-      'No permit charges',
-      'Violations, tow tickets, plate scanning, enforcement reporting',
+      'Everything in PM Starter, across your whole portfolio',
+      'Unlimited permits',
+      'Properties 21–50 included',
+      'Managers and leasing agents across properties',
+      'Tow log for every property',
     ],
   },
   {
-    name: 'Custom quote',
-    slug: 'custom_quote',
-    customPrice: true,
-    hiddenFromSelfServe: true,
-    taglineOneLine: 'More than one property? Both sides of the business?',
-    customPitch: 'Every portfolio is different, so we quote those directly. Multi-property PM, combined PM + enforcement, non-standard deployments — talk to us.',
+    name: 'Operator Starter',
+    slug: 'operator_starter',
+    formerly: 'Enforcement-Only',
+    base: 199,
+    perProp: 15,
+    taglineOneLine: 'Driver and office tools for towing operators.',
+    includesEnforcement: true,
+    includesPM: false,
+    features: [
+      'Violations, tow tickets, plate scanning, enforcement reporting',
+      'No permit charges',
+      'Properties 21–50 included',
+    ],
+  },
+  {
+    name: 'Operator Pro',
+    slug: 'operator_pro',
+    formerly: 'Legacy',
+    base: 299,
+    perProp: 20,
+    taglineOneLine: 'The full platform for towing operators.',
     includesEnforcement: true,
     includesPM: true,
     features: [
-      // Kept minimal; the customPitch above is the messaging. Rendered
-      // as fallback for consumers that read features[].
-      'Multi-property PM',
-      'Combined PM + enforcement',
-      'Custom terms + priority support',
+      'Everything in Operator Starter',
+      'Resident self-registration, visitor passes, and spaces & permits for every property you serve',
+      'Give each property its own parking system, run by you',
+      'Properties 21–50 included',
     ],
   },
 ]
 
-// ── Backwards-compat exports for /signup pre-billing flow ────────────
+// ════════════════════════════════════════════════════════════════════
+// FEATURE_COMPARISON — four columns, every cell checked against
+// TIER_CONFIG rather than written from the plan names
+// ════════════════════════════════════════════════════════════════════
 //
-// DEPRECATED — to be removed when the self-serve checkout flow (gated
-// by stripe_billing_enabled + public_signup_open dormancy flags) gets
-// restructured for the one-product / three-offering model.
-//
-// Today /signup splits its picker into two tabs (enforcement vs PM) and
-// reads these arrays. Pre-launch the dormancy flag keeps that flow in
-// its "Coming soon" placeholder branch, so the deprecated exports stay
-// compiling without rendering wrong content to users.
-//
-// PM-Only appears under PM tab; Enforcement-Only under Enforcement; Legacy
-// (which spans both) appears under BOTH — fine semantically (a Legacy
-// subscriber gets both capabilities) and irrelevant pre-billing since
-// /signup self-serve isn't open yet.
-
-export const ENFORCEMENT_TIERS: TierDisplay[] = OFFERINGS.filter(o => o.includesEnforcement)
-export const PROPERTY_MANAGEMENT_TIERS: TierDisplay[] = OFFERINGS.filter(o => o.includesPM)
-
-export function tiersForTrack(track: TierTrack): TierDisplay[] {
-  return track === 'enforcement' ? ENFORCEMENT_TIERS : PROPERTY_MANAGEMENT_TIERS
-}
-
-// ── Feature-split comparison table (rendered on landing) ─────────────
-//
-// Per Jose's spec 2026-06-24. Shared as a const so a future docs page
-// or sales sheet can render the same data without duplication.
-//
-// 🔴 2026-08-31 rename in column semantics per Mateo pricing rewrite:
-//   pmOnly           column now describes  PM Starter capabilities
-//                    (Starter = one-property PM; feature set matches
-//                    what the old PM-Only offered, minus multi-property
-//                    which is behind Custom quote)
-//   enforcementOnly  unchanged
-//   legacy           column now describes  Custom quote capabilities
-//                    (Custom = both tracks combined, same feature
-//                    coverage as legacy)
-//
-// Column KEYS kept as `pmOnly`/`legacy` to avoid renaming every row +
-// re-verifying the mapping — the RENDER at page.tsx maps the keys to
-// the new display labels ("PM Starter" / "Custom quote"). Data
-// unchanged; only the header labels and this comment.
-
+// 🔴 Rows that are NOT here, and why:
+//   • Leasing-agent seats — LEASING_AGENT_ROLE is true on all four, so
+//     a row would imply a difference that does not exist.
+//   • Priority support / dedicated account manager — true on PM Starter
+//     and false on the pricier Operator Starter, which is a flag audit
+//     to run separately. Jose's ruling: no support rows on the public
+//     table for any self-serve plan.
 export type ComparisonRow = {
   capability: string
-  pmOnly:           string  // — / ✓ / value — rendered as "PM Starter" column
-  enforcementOnly:  string
-  legacy:           string  // rendered as "Custom quote" column
+  pmStarter: string
+  pmPro: string
+  operatorStarter: string
+  operatorPro: string
 }
 
 export const FEATURE_COMPARISON: ComparisonRow[] = [
+  // AI_PLATE_SCANNING / VIOLATION_DOCUMENTATION / TOW_TICKET_GENERATION
   { capability: 'Full enforcement (plate scan, video, tow tickets)',
-    pmOnly: '—',                   enforcementOnly: '✓',                  legacy: '✓' },
+    pmStarter: '—',          pmPro: '—',          operatorStarter: '✓',                operatorPro: '✓' },
+  // RESIDENT_PORTAL
   { capability: 'Resident portal',
-    pmOnly: '✓',                   enforcementOnly: '—',                  legacy: '✓' },
+    pmStarter: '✓',          pmPro: '✓',          operatorStarter: '—',                operatorPro: '✓' },
+  // RESIDENT_SELF_REGISTRATION
   { capability: 'Resident self-registration',
-    pmOnly: '✓',                   enforcementOnly: 'Manager adds',       legacy: '✓' },
+    pmStarter: '✓',          pmPro: '✓',          operatorStarter: 'Office adds',      operatorPro: '✓' },
+  // VISITOR_PASS_SELF_SERVICE is true everywhere, but resident-issued
+  // passes need RESIDENT_PORTAL — which Operator Starter does not have.
+  // So the flag is right and the row says what the operator actually
+  // gets (Jose's ruling 2026-10-02).
   { capability: 'Visitor passes',
-    pmOnly: 'Self-serve',          enforcementOnly: 'QR code only',       legacy: 'Self-serve' },
+    pmStarter: 'QR, office and resident-issued', pmPro: 'QR, office and resident-issued',
+    operatorStarter: 'QR and office-issued',     operatorPro: 'QR, office and resident-issued' },
+  // ADVANCED_ANALYTICS (BASIC_DASHBOARDS is true everywhere)
   { capability: 'Detailed reporting / analytics',
-    pmOnly: '✓',                   enforcementOnly: 'Basic only',         legacy: '✓' },
+    pmStarter: '✓',          pmPro: '✓',          operatorStarter: 'Basic only',       operatorPro: '✓' },
+  // Reserved spaces ride PROPERTY_MANAGEMENT + VEHICLE_REGISTRY
   { capability: 'Reserved spaces',
-    pmOnly: '✓',                   enforcementOnly: '—',                  legacy: '✓' },
+    pmStarter: '✓',          pmPro: '✓',          operatorStarter: '—',                operatorPro: '✓' },
+  // MAX_VISITOR_PASSES_PER_PROPERTY_MONTH = -1 on all four
   { capability: 'Visitor capacity',
-    pmOnly: 'Unlimited (free)',    enforcementOnly: 'Unlimited (free)',   legacy: 'Unlimited (free)' },
-  // "Property managers" row removed 2026-07-02 — there is no property-
-  // manager cap on any offering. Advertising a number here would
-  // reintroduce the fossil the spec explicitly retires.
+    pmStarter: 'Unlimited (free)', pmPro: 'Unlimited (free)',
+    operatorStarter: 'Unlimited (free)', operatorPro: 'Unlimited (free)' },
+  // The ceiling, from the Oct 2026 decision. PM Starter is one property
+  // by definition; the other three pay to 20 and are free to 50.
+  { capability: 'Properties included',
+    pmStarter: 'One',        pmPro: 'Pay to 20, free to 50',
+    operatorStarter: 'Pay to 20, free to 50', operatorPro: 'Pay to 20, free to 50' },
+  // pm_starter's graduated meter vs unlimited everywhere else.
+  { capability: 'Permits',
+    pmStarter: '500 included, then $1.25', pmPro: 'Unlimited',
+    operatorStarter: 'Not metered',        operatorPro: 'Not metered' },
 ]
+
+// One line under the table — Elite is not a column, because it is not a
+// plan you can select. Its terms are negotiated.
+export const ELITE_TABLE_NOTE =
+  'More than 50 properties? Elite is priced around your portfolio, with a dedicated contact. Talk to us.'
+

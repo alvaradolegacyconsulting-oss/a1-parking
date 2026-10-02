@@ -437,6 +437,12 @@ const PM_PM_ONLY: TierConfigShape = { ...PM_ENTERPRISE }
 const PM_PM_STARTER: TierConfigShape = {
   ...PM_PM_ONLY,
   [F.MAX_PROPERTIES]: 1,
+  // 🔴 2026-10-02 — was inherited FALSE from PM_PM_ONLY, which is a
+  // slip rather than a tier decision: PM Starter already has
+  // CUSTOM_DATE_RANGE_EXPORTS and ADVANCED_PDF_REPORTS on, so it could
+  // produce a dated PDF report but not a plain CSV. Jose's ruling
+  // 2026-10-02: turn it on. Surfaced by the pricing-page cell audit.
+  [F.CSV_EXPORT_BASIC]: true,
 }
 // PM_LEGACY (2026-07-05 all-on flip) — Legacy is Legacy regardless of
 // track. Prior shape ({...PM_ENTERPRISE}) had all Enforcement flags off

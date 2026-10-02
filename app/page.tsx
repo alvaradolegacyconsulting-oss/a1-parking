@@ -2,10 +2,12 @@
 import { useState, useEffect } from 'react'
 import { useResolvedLogo } from './lib/logo'
 // 3-tier rebuild (Jose 2026-06-24): the landing page now renders the
-// single 3-card OFFERINGS view (PM-Only / Enforcement-Only / Legacy).
+// 2026-10-02: the four-card OFFERINGS view (PM Starter / PM Pro /
+// Operator Starter / Operator Pro) plus an Elite strip. PM-Only is
+// retired and "Custom quote" is gone — Elite is a LEAD, not a card.
 // Two-track tab UI dropped; ?track= deep-link removed; FEATURE_COMPARISON
 // table added between Features and Pricing.
-import { OFFERINGS, FEATURE_COMPARISON } from './lib/tier-display'
+import { OFFERINGS, FEATURE_COMPARISON, ELITE_TABLE_NOTE } from './lib/tier-display'
 
 const GOLD = '#C9A227'
 const BG = '#0a0d14'
@@ -52,12 +54,12 @@ export default function Landing() {
   // Comparison table below, not duplicated per tile). Honest copy; no
   // overpromised claims (B55 discipline preserved).
   const features = [
-    { icon: '🚗', title: 'Plate-based enforcement', body: 'Every registered vehicle gets a digital permit tied to their plate. Drivers verify against the live registry in seconds.', tier: 'Enforcement-Only · Legacy' },
-    { icon: '📱', title: 'QR code self-registration', body: 'Residents scan a property QR code, register their vehicles in minutes, and get manager approval.', tier: 'PM-Only · Legacy' },
-    { icon: '🎫', title: 'Visitor pass system', body: 'Residents issue digital visitor passes to guests. Passes auto-expire. Manager-issued passes also available.', tier: 'PM-Only · Legacy (self-serve); Enforcement-Only (QR only)' },
-    { icon: '📊', title: 'Detailed analytics', body: 'Track violations, pass usage, tow events, and trends across all your properties.', tier: 'PM-Only · Legacy (basic on Enforcement-Only)' },
+    { icon: '🚗', title: 'Plate-based enforcement', body: 'Every registered vehicle gets a digital permit tied to their plate. Drivers verify against the live registry in seconds.', tier: 'Operator Starter · Operator Pro' },
+    { icon: '📱', title: 'QR code self-registration', body: 'Residents scan a property QR code, register their vehicles in minutes, and get manager approval.', tier: 'PM Starter · PM Pro · Operator Pro' },
+    { icon: '🎫', title: 'Visitor pass system', body: 'Residents issue digital visitor passes to guests. Passes auto-expire. Manager-issued passes also available.', tier: 'Resident-issued on PM and Operator Pro; QR + office on Operator Starter' },
+    { icon: '📊', title: 'Detailed analytics', body: 'Track violations, pass usage, tow events, and trends across all your properties.', tier: 'PM Starter · PM Pro · Operator Pro (basic on Operator Starter)' },
     { icon: '🏗️', title: 'Multi-property management', body: 'Manage your entire portfolio from one login. Each property has its own rules, managers, and resident database.', tier: 'All offerings' },
-    { icon: '🅿️', title: 'Reserved space management', body: 'Track who has which spot, with cap-aware roommate tying. Included on PM-Only and Legacy at no additional cost.', tier: 'PM-Only · Legacy' },
+    { icon: '🅿️', title: 'Reserved space management', body: 'Track who has which spot, with cap-aware roommate tying. Included on PM Starter, PM Pro and Operator Pro at no additional cost.', tier: 'PM Starter · PM Pro · Operator Pro' },
   ]
 
   return (
@@ -120,7 +122,7 @@ export default function Landing() {
         </h1>
         <div style={{ width: 60, height: 2, background: GOLD, margin: '0 auto 28px', opacity: 0.7 }} />
         <p style={{ fontSize: 18, color: MUTED, maxWidth: 640, margin: '0 auto 44px', lineHeight: 1.7 }}>
-          Resident registration, visitor passes, reserved-space management, plate enforcement, and tow ticketing — for Texas operators working under Chapter 2308. Three offerings: PM-Only, Enforcement-Only, and Legacy.
+          Resident registration, visitor passes, reserved-space management, plate enforcement, and tow ticketing — for Texas properties and the operators who serve them. Four plans you can start today, and Elite for large portfolios.
         </p>
         {/* ── Two audience doors (2026-09-28) ─────────────────────────
             The event-banner QR is shieldmylot.com/?src=event-banner, so a
@@ -228,24 +230,24 @@ export default function Landing() {
             {[
               {
                 icon: '🏢',
-                offering: 'PM-Only',
-                tagline: 'For self-managed properties + HOAs',
-                blurb: 'Resident registration, visitor passes, reserved space management, and analytics — without enforcement. Coordinate with whoever does your towing.',
+                offering: 'Property managers',
+                tagline: 'PM Starter · PM Pro',
+                blurb: 'Residents register their own vehicles, visitor passes take seconds, and spaces and permits stay current. Start with one property or run a whole portfolio. Work with whichever towing company you choose.',
                 anchor: '#pricing',
               },
               {
                 icon: '🚛',
-                offering: 'Enforcement-Only',
-                tagline: 'For cost-conscious tow operators',
-                blurb: 'Full plate enforcement, video evidence, tow tickets, and driver workflow. Barebones PM features so residents can self-register the basics.',
+                offering: 'Towing operators',
+                tagline: 'Operator Starter · Operator Pro',
+                blurb: 'Plate enforcement, video evidence, tow tickets and the driver workflow. Step up to Pro and hand every property you serve its own parking system, run by you.',
                 anchor: '#pricing',
               },
               {
                 icon: '🏆',
-                offering: 'Legacy',
-                tagline: 'For bid-winning operators',
-                blurb: 'Full PM + full enforcement. Offer your serviced properties a complete resident platform as part of your bid — you recover the cost in enforcement.',
-                anchor: '#pricing',
+                offering: 'Elite',
+                tagline: 'More than 50 properties',
+                blurb: 'Large portfolios, universities and large fleets. Priced around your portfolio rather than off a menu, with a dedicated contact.',
+                anchor: '/property-managers?src=elite#start',
               },
             ].map((p, i) => (
               <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 28 }}>
@@ -265,8 +267,8 @@ export default function Landing() {
       {/* ── HOW IT WORKS — unified narrative ──
           Track-toggle dropped in the 3-tier rebuild. Same steps work for
           any offering; what differs is which steps are emphasized in
-          your day-to-day (PM-Only doesn't run a driver workflow;
-          Enforcement-Only doesn't run a self-serve visitor pass system). */}
+          your day-to-day (a PM plan doesn't run a driver workflow;
+          Operator Starter doesn't give residents their own portal). */}
       <section id="how-it-works" style={{ padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
@@ -355,57 +357,61 @@ export default function Landing() {
                   <tr style={{ background: 'rgba(201,162,39,0.06)', borderBottom: `1px solid ${BORDER}` }}>
                     <th style={{ textAlign: 'left',  padding: '14px 18px', color: MUTED, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Capability</th>
                     {/* 🔴 2026-08-31 rename per Mateo public-catalog rewrite —
-                        columns map: pmOnly key → PM Starter label; legacy key
-                        → Custom quote label. Data rows in tier-display.ts
-                        unchanged (Starter capabilities = one-property PM
-                        subset; Custom capabilities = both tracks combined =
-                        legacy). Comparison table describes CAPABILITIES per
-                        offering, not per-tier scope constraints (single-
-                        property Starter still gets the same "Resident portal"
-                        checkmark as multi-property PM). */}
-                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT,  fontSize: 13, fontWeight: 700 }}>PM Starter</th>
-                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT,  fontSize: 13, fontWeight: 700 }}>Enforcement-Only</th>
-                    <th style={{ textAlign: 'center', padding: '14px 18px', color: GOLD,  fontSize: 13, fontWeight: 700 }}>Custom quote</th>
+                        Four columns, one per self-serve plan. Elite is
+                        NOT a column — it is not a plan you can select,
+                        and a column implying otherwise would invite
+                        people to compare a negotiated deal against a
+                        price list. It gets one line under the table.
+
+                        Every cell comes from tier-display.ts, where each
+                        row is annotated with the TIER_CONFIG flag it
+                        reports. */}
+                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT, fontSize: 13, fontWeight: 700 }}>PM Starter</th>
+                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT, fontSize: 13, fontWeight: 700 }}>PM Pro</th>
+                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT, fontSize: 13, fontWeight: 700 }}>Operator Starter</th>
+                    <th style={{ textAlign: 'center', padding: '14px 18px', color: TEXT, fontSize: 13, fontWeight: 700 }}>Operator Pro</th>
                   </tr>
                 </thead>
                 <tbody>
                   {FEATURE_COMPARISON.map((row, i) => (
                     <tr key={i} style={{ borderBottom: i === FEATURE_COMPARISON.length - 1 ? 'none' : `1px solid ${BORDER}` }}>
                       <td style={{ padding: '12px 18px', color: TEXT,  fontSize: 14 }}>{row.capability}</td>
-                      <td style={{ padding: '12px 18px', color: row.pmOnly          === '—' ? '#4a5568' : '#94a3b8', fontSize: 13, textAlign: 'center' }}>{row.pmOnly}</td>
-                      <td style={{ padding: '12px 18px', color: row.enforcementOnly === '—' ? '#4a5568' : '#94a3b8', fontSize: 13, textAlign: 'center' }}>{row.enforcementOnly}</td>
-                      <td style={{ padding: '12px 18px', color: row.legacy          === '—' ? '#4a5568' : '#94a3b8', fontSize: 13, textAlign: 'center' }}>{row.legacy}</td>
+                      {([row.pmStarter, row.pmPro, row.operatorStarter, row.operatorPro]).map((cell, c) => (
+                        <td key={c} style={{ padding: '12px 18px', color: cell === '—' ? '#4a5568' : '#94a3b8', fontSize: 13, textAlign: 'center' }}>{cell}</td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {/* Elite, as one line. Not a column — see the header note. */}
+            <p style={{ color: MUTED, fontSize: 13, margin: '14px 2px 0', lineHeight: 1.6 }}>
+              {ELITE_TABLE_NOTE.replace(' Talk to us.', '')}{' '}
+              <a href="/property-managers?src=elite#start" style={{ color: GOLD, textDecoration: 'none', fontWeight: 600 }}>Talk to us →</a>
+            </p>
           </div>
         </div>
       </section>
 
-      {/* ── PRICING — 3-card view (Jose 2026-07-02 update).
-          Retired: "Most Popular" badge, per-space + per-driver lines,
-          Legacy pitchLine. Legacy now shows "Custom pricing" + a
-          "Request a proposal" CTA (customPrice: true on the offering).
-          PM-Only shows a graduated per-permit table under base + per-
-          property. */}
+      {/* ── PRICING — the Oct 2026 four-card lineup + an Elite strip.
+          Every self-serve card goes to /signup?tier=<slug>; Elite is a
+          LEAD and goes to the existing intake form, because it is not a
+          plan anyone can select. */}
       <section id="pricing" style={{ padding: '104px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
-            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Simple pricing, two selectable tiers</h2>
+            <h2 style={{ fontSize: 36, fontWeight: 700, margin: '0 0 12px', letterSpacing: '-0.02em' }}>Simple pricing. Properties 21&ndash;50 are on us.</h2>
             <p style={{ color: MUTED, fontSize: 16, margin: '0 0 8px', maxWidth: 640, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
-              Flat monthly rate for a single-property manager, per-property pricing for towing operators, and a custom quote for everything else.
+              Pick a plan and start today. You pay per property up to 20, properties 21&ndash;50 are included, and above 50 we build it around you.
             </p>
             <p style={{ color: MUTED, fontSize: 13, margin: '10px 0 0', maxWidth: 640, marginLeft: 'auto', marginRight: 'auto' }}>
-              <strong style={{ color: TEXT }}>Texas only</strong>, for now &nbsp;·&nbsp; <strong style={{ color: TEXT }}>14-day money back</strong> on the first month
+              <strong style={{ color: TEXT }}>Texas only</strong>, for now &nbsp;·&nbsp; <strong style={{ color: TEXT }}>14-day money back</strong> on the first month &nbsp;·&nbsp; <strong style={{ color: TEXT }}>Annual billing: two months free</strong>
             </p>
             <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '20px auto 0' }} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24 }}>
             {OFFERINGS.map((tier, i) => {
-              const isCustom = tier.customPrice === true
               return (
                 <div key={i} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 20, padding: 36, position: 'relative' }}>
                   <p style={{ color: MUTED, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>
@@ -416,14 +422,6 @@ export default function Landing() {
                     <p style={{ color: MUTED, fontSize: 13, margin: '0 0 16px', lineHeight: 1.55 }}>{tier.taglineOneLine}</p>
                   )}
 
-                  {isCustom ? (
-                    <div style={{ marginBottom: 24 }}>
-                      <p style={{ color: GOLD, fontSize: 22, fontWeight: 800, margin: '0 0 8px' }}>Custom pricing</p>
-                      {tier.customPitch && (
-                        <p style={{ color: MUTED, fontSize: 13, margin: 0, lineHeight: 1.6 }}>{tier.customPitch}</p>
-                      )}
-                    </div>
-                  ) : (
                     <>
                       <div style={{ marginBottom: 8 }}>
                         <span style={{ color: GOLD, fontSize: 36, fontWeight: 800 }}>${tier.base}</span>
@@ -485,11 +483,7 @@ export default function Landing() {
 
                       {!tier.permitTiers && !tier.permitAllowance && <div style={{ marginBottom: 20 }} />}
                     </>
-                  )}
-
-                  {/* Custom-quote card: skip feature checklist (customPitch above
-                      is the messaging). Priced cards render features[]. */}
-                  {!isCustom && (
+                  {(
                     <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 20, marginBottom: 24 }}>
                       {tier.features.map((f, j) => (
                         <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
@@ -499,22 +493,40 @@ export default function Landing() {
                       ))}
                     </div>
                   )}
-                  {isCustom && <div style={{ marginBottom: 24 }} />}
 
-                  {/* 🔴 CTAs (Mateo 2026-08-31): every card routes to #contact
-                      while public_signup_open=false. Advertising a price + a
-                      dead "Get started" button loses leads. When signup opens,
-                      swap the two priced cards to real signup buttons — one
-                      line per card, right here. */}
-                  <a href="#contact" style={{ display: 'block', textAlign: 'center', background: isCustom ? GOLD : CARD_BG, color: isCustom ? '#0a0d14' : TEXT, fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${isCustom ? GOLD : BORDER}` }}>
-                    Get in touch →
+                  {/* 🔴 2026-10-02 — the "swap to real signup buttons when
+                      signup opens" note from 2026-08-31 is now done.
+                      Signup IS open, so every self-serve card goes
+                      straight to its own preselected plan. A price plus
+                      a "Get in touch" button was costing the conversion
+                      the price was there to earn. */}
+                  <a href={`/signup?tier=${tier.slug}`} style={{ display: 'block', textAlign: 'center', background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, padding: '12px', borderRadius: 10, textDecoration: 'none', border: `1px solid ${GOLD}` }}>
+                    Start with {tier.name} →
                   </a>
                 </div>
               )
             })}
           </div>
-          <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 28 }}>
-            Every account is set up personally right now — reach out via Contact below and we&apos;ll follow up within one business day.
+          {/* ── ELITE STRIP, full width under the cards ────────────────
+              Two doors so the lead reaches the right track's form, and
+              ?src=elite so the row and the alert both say what it was.
+              Same form, same Turnstile, same table — no new endpoint. */}
+          <div style={{ marginTop: 28, padding: '24px 28px', borderRadius: 16, border: `1px solid ${GOLD}`, background: 'rgba(201,162,39,0.06)', textAlign: 'center' }}>
+            <p style={{ color: TEXT, fontSize: 20, fontWeight: 700, margin: '0 0 6px' }}>More than 50 properties?</p>
+            <p style={{ color: MUTED, fontSize: 15, margin: '0 auto 16px', maxWidth: 620, lineHeight: 1.6 }}>
+              Universities, large portfolios and large fleets get pricing built around them, with a dedicated contact.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <a href="/property-managers?src=elite#start" style={{ background: GOLD, color: '#0a0d14', fontWeight: 'bold', fontSize: 14, padding: '12px 20px', borderRadius: 10, textDecoration: 'none' }}>
+                I manage properties — talk to us →
+              </a>
+              <a href="/operators?src=elite#start" style={{ background: CARD_BG, border: `1px solid ${GOLD}`, color: GOLD, fontWeight: 'bold', fontSize: 14, padding: '12px 20px', borderRadius: 10, textDecoration: 'none' }}>
+                I run a towing company — talk to us →
+              </a>
+            </div>
+          </div>
+          <p style={{ textAlign: 'center', color: MUTED, fontSize: 13, marginTop: 20 }}>
+            Annual billing: <strong style={{ color: TEXT }}>two months free</strong> &nbsp;·&nbsp; 14-day money back on your first month
           </p>
         </div>
       </section>

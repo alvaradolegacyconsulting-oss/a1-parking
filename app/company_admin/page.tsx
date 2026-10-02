@@ -19,7 +19,7 @@ import { escapeIlikeValue, nameMetacharError } from '../lib/supabase-query-escap
 import { guardEmail } from '../lib/email-guard'
 import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
-import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId } from '../lib/tier'
+import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId, getEffectivePropertyLimit, limitIsUnlimited } from '../lib/tier'
 import { formatTimestamp, formatDate, formatDateLong, formatTime } from '../lib/format-time'
 
 // 2026-08-08 — three-state severity palette for the explicit-severity
@@ -1543,15 +1543,25 @@ export default function CompanyAdminPortal() {
     if (nameErr) { setPropMsg(nameErr); return }
     const ctx = getCompanyContext()
     const activeCount = properties.filter(p => p.is_active).length
-    if (!isUnderLimit(FEATURE_FLAGS.MAX_PROPERTIES, activeCount, ctx)) {
-      const limit = getLimit(FEATURE_FLAGS.MAX_PROPERTIES, ctx)
-      const opened = offerForcedUpgrade(
-        `You're at your ${limit}-property limit. Upgrade to continue.`,
-        () => { setPropMsg(''); saveProperty() },
+    // 🔴 The ceiling comes from the SERVER, not tier-config. Config says
+    // -1 for enforcement_only and legacy; the DB caps them at 50 since
+    // 2026-10-02, and an account with a proposal-code override (A1: -1)
+    // must stay uncapped here too. Asking the server is the only answer
+    // that cannot disagree with the trigger.
+    //
+    // null = could not resolve → do NOT block. The database is still
+    // enforcing, and refusing a legitimate customer because a lookup
+    // failed is the worse error.
+    const effLimit = await getEffectivePropertyLimit(role?.company || '')
+    if (!limitIsUnlimited(effLimit) && activeCount >= (effLimit as number)) {
+      // Friendly, and it names the actual next step. A raw cap error
+      // from the trigger would reach the user otherwise — the thing the
+      // server-side check exists to prevent them seeing.
+      setPropMsgKind('error')
+      setPropMsg(
+        `You're at your ${effLimit}-property limit. More than ${effLimit} properties is an Elite plan — ` +
+        `tell us about your portfolio at /property-managers and we'll size it with you.`,
       )
-      if (!opened) {
-        setPropMsg(`Property limit reached (${limit}). Contact support to expand your account.`)
-      }
       return
     }
     // 2026-07-02 (per-screen polish #3) — billing-impact notice
@@ -2123,15 +2133,17 @@ export default function CompanyAdminPortal() {
     if (!wasActive) {
       const ctx = getCompanyContext()
       const currentActiveCount = properties.filter(p => p.is_active).length
-      if (!isUnderLimit(FEATURE_FLAGS.MAX_PROPERTIES, currentActiveCount, ctx)) {
-        const limit = getLimit(FEATURE_FLAGS.MAX_PROPERTIES, ctx)
-        const opened = offerForcedUpgrade(
-          `You're at your ${limit}-property limit. Upgrade to reactivate this property.`,
-          () => { setPropMsg(''); togglePropertyActive(prop) },
+      // Same server-resolved ceiling as the add path. REACTIVATION is
+      // capped too — the trigger's Commit C branch fires on a
+      // false→true flip, so a client that only guarded the add path
+      // would let someone reactivate into a raw cap error.
+      const effLimit = await getEffectivePropertyLimit(role?.company || '')
+      if (!limitIsUnlimited(effLimit) && currentActiveCount >= (effLimit as number)) {
+        setPropMsgKind('error')
+        setPropMsg(
+          `You're at your ${effLimit}-property limit, so this one can't be reactivated. ` +
+          `More than ${effLimit} properties is an Elite plan — tell us about your portfolio at /property-managers.`,
         )
-        if (!opened) {
-          setPropMsg(`Property limit reached (${limit}). Contact support to expand your account.`)
-        }
         return
       }
     }
