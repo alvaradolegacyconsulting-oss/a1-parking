@@ -44,11 +44,21 @@ export const maxDuration = 30
 // drift a BUILD error rather than the 503 the picker-research pass
 // found here (intended.tier as IntendedTier['tier'] silenced the
 // comparison). See feedback_cast_at_vocabulary_boundary.
-// Legacy self-serve doesn't exist — legacy is proposal-code-only,
-// which uses a different route entirely.
+// 2026-10-02 — 'legacy' ADDED. It is now a self-serve tier: PM Pro and
+// Operator Pro both resolve to it, distinguished by track. The standard
+// catalog gained enforcement/legacy and property_management/legacy rows
+// in the Oct lineup, so getStandardCatalogLines can resolve them.
+//
+// Legacy remains proposal-code-reachable as well — those rows carry
+// proposal_code_id and are matched on it, so the two paths do not
+// collide.
+//
+// 🔴 The union stays NARROW on purpose. It is what makes the next
+// vocabulary drift a build error rather than the 503 this file used to
+// produce when an `as` cast silenced the comparison.
 interface IntendedTier {
   track: 'enforcement' | 'property_management'
-  tier: 'pm_starter' | 'enforcement_only'
+  tier: 'pm_starter' | 'enforcement_only' | 'legacy'
   cycle: 'monthly' | 'annual'
   property_count: number
   driver_count: number
@@ -209,12 +219,18 @@ export async function POST() {
   //
   // pm_starter → 2 (base + per_permit graduated; NO per_property)
   // enforcement_only → 2 (base + per_property; per_driver retired)
-  // pm_only is NOT in this map — self-serve picker doesn't send it
-  // (proposal-code path uses a different route). If pm_only ever
-  // becomes self-serve, add here.
+  // legacy → 2 (base + per_property), on BOTH tracks:
+  //   • Operator Pro (enforcement/legacy)       base + per_property
+  //   • PM Pro       (property_management/legacy) base + per_property
+  //   PM Pro has NO per_permit line — permits are unlimited on Pro and
+  //   the meter stays on PM Starter only. One count covers both because
+  //   the shape is the same; the track is what distinguishes them, and
+  //   getStandardCatalogLines is keyed on (track, tier).
+  // pm_only is NOT in this map — self-serve picker doesn't send it.
   const expectedCountByTier: Record<IntendedTier['tier'], number> = {
     pm_starter: 2,
     enforcement_only: 2,
+    legacy: 2,
   }
   const expectedCount = expectedCountByTier[intended.tier]
   if (catalog.length !== expectedCount) {

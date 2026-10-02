@@ -117,9 +117,16 @@ export type LeadAlertInput = {
 // the operator open every message to find out which one this is.
 export function buildLeadAlert(l: LeadAlertInput): { subject: string; text: string } {
   const who = l.company_name ?? l.contact_name ?? l.email
+  // 🔴 Elite leads have to be findable in an inbox. `src=elite` already
+  // reaches the Attribution line below, but a JSON blob five lines down
+  // is not something you spot while scanning. Elite is the one inquiry
+  // that cannot be self-served and needs a human, so it goes in the
+  // SUBJECT.
+  const isElite = (l.source as { src?: string } | null)?.src === 'elite'
+  const eliteTag = isElite ? '[ELITE] ' : ''
   const subject = l.wants_demo === true
-    ? `[ShieldMyLot] DEMO REQUESTED — ${who}`
-    : `[ShieldMyLot] New lead — ${who}`
+    ? `${eliteTag}[ShieldMyLot] DEMO REQUESTED — ${who}`
+    : `${eliteTag}[ShieldMyLot] New lead — ${who}`
 
   const line = (label: string, v: unknown) =>
     `${label.padEnd(18)} ${v === null || v === undefined || v === '' ? '(not asked / not given)' : String(v)}`

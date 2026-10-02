@@ -15,7 +15,18 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { OFFERINGS, TierTrack } from '../lib/tier-display'
 import { TIER_CONFIG, TIER_PRICING, getTierPricing } from '../lib/tier-config'
-import { resolveInitialTier, DEFAULT_TIER, type SelfServeTier } from '../lib/signup-tier-param'
+import { resolveInitialToken, DEFAULT_TOKEN, planFor, PICKER_TOKENS, FORMERLY_LABELS_ON, type PlanToken } from '../lib/signup-tier-param'
+
+// Card copy. Prices here are DISPLAY ONLY — what a customer is actually
+// charged comes from stripe_prices server-side. Kept beside the picker
+// so the four cards read as one table rather than four scattered
+// strings.
+const PLAN_CARD_COPY: Record<string, { who: string; price: string; note: string }> = {
+  pm_starter:       { who: 'For a single property',                   price: '$149/mo flat',           note: '500 permits included, then $1.25 each' },
+  pm_pro:           { who: 'For property management companies',        price: '$249/mo + $15/property', note: 'Properties 21–50 included · unlimited permits' },
+  operator_starter: { who: 'Driver and office tools for towing operators', price: '$199/mo + $15/property', note: 'Properties 21–50 included' },
+  operator_pro:     { who: 'The full platform for towing operators',   price: '$299/mo + $20/property', note: 'Properties 21–50 included' },
+}
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import {
   TEXAS_ATTESTATION_VERSION,
@@ -97,35 +108,30 @@ export default function SignupTierPicker() {
   // Default = enforcement_only matches prior default. Only self-serve
   // slugs valid here: 'pm_starter' or 'enforcement_only'. custom_quote
   // is a routing card (never sets this state; navigates to /#contact).
-  // 2026-09-28 — ?tier= preselect, allowlisted. Campaign links can land
-  // a property manager on the PM Starter card instead of making them
-  // find it (/property-managers sends /signup?tier=pm_starter).
+  // 2026-09-28 — ?tier= preselect, allowlisted. 2026-10-02 — the value
+  // is now a PLAN TOKEN, not a bare tier: `legacy` is the backend tier
+  // for both PM Pro and Operator Pro, so a tier alone no longer says
+  // which track it is on. The token does, and resolves to the same
+  // (track, tier) pair the rest of the system has always used.
   //
   // 🔴 A LAZY INITIALIZER, NOT AN EFFECT. Two reasons, both load-bearing:
-  //
-  //   1. No flash and no clobber. Setting the tier in an effect would
-  //      paint the Enforcement card selected, then swap it — and the
-  //      `[tier]` effect below would fire a SECOND time and reset
-  //      propertyCount/driverCount, potentially over something the
-  //      visitor had already typed in that window.
+  //   1. No flash and no clobber. Setting it in an effect would paint
+  //      one card selected, then swap — and the `[token]` effect below
+  //      would fire a SECOND time and reset propertyCount, potentially
+  //      over something the visitor had already typed.
   //   2. No hydration mismatch, because the picker never server-renders:
   //      dormancy starts 'loading' and both the loading and closed
-  //      branches return before this markup. Reading window here is safe
-  //      for that specific reason — it would NOT be on a page whose
-  //      picker was in the SSR output.
+  //      branches return before this markup.
   //
-  // useSearchParams() is deliberately not used: it would bail this page
+  // useSearchParams() is deliberately not used; it would bail this page
   // out of static rendering, which is the /operators R5 defect.
-  //
-  // The existing `[tier]` effect then applies the right count resets for
-  // whichever tier we start on — pm_starter → propertyCount '1',
-  // driverCount '0' — with no change needed there.
-  const [tier, setTier] = useState<SelfServeTier>(
-    () => (typeof window === 'undefined' ? DEFAULT_TIER : resolveInitialTier(window.location.search)),
+  const [token, setToken] = useState<PlanToken>(
+    () => (typeof window === 'undefined' ? DEFAULT_TOKEN : resolveInitialToken(window.location.search)),
   )
+  const plan = planFor(token)
+  const tier = plan.tier
   const [cycle, setCycle] = useState<'monthly' | 'annual'>('monthly')
   const [propertyCount, setPropertyCount] = useState<string>('1')
-  const [driverCount, setDriverCount] = useState<string>('1')
   const [companyName, setCompanyName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -150,25 +156,18 @@ export default function SignupTierPicker() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<TurnstileHandle>(null)
 
-  // 2026-09-03 (Picker §3): track derives from tier. When user picks
-  // pm_starter, force propertyCount='1' (Starter is one property by
-  // definition; cap sequence A→A₀ enforces at DB) + driverCount='0'
-  // (no drivers on PM track). When user picks enforcement_only, ensure
-  // driverCount is at least '1' so the count check passes.
-  const track: TierTrack = trackForTier(tier)
+  // 2026-10-02: the track comes from the PLAN, not from the tier. A
+  // tier no longer implies a track — `legacy` is both PM Pro and
+  // Operator Pro — so the derivation moved into the token map.
+  const track: TierTrack = plan.track === 'property_management' ? 'pm' : 'enforcement'
   useEffect(() => {
-    if (tier === 'pm_starter') {
-      setPropertyCount('1')
-      setDriverCount('0')
-    } else if (tier === 'enforcement_only') {
-      // Bump to 1 only if user hasn't already entered a valid count.
-      // Keep whatever they had for propertyCount.
-      if ((parseInt(driverCount, 10) || 0) < 1) setDriverCount('1')
-    }
-    // Intentionally no dep on propertyCount/driverCount — this is the
-    // "tier just changed" reset, not a live guard.
+    // PM Starter is one property by definition (the DB cap enforces it
+    // too). Every other plan keeps whatever the visitor typed.
+    if (plan.tier === 'pm_starter') setPropertyCount('1')
+    // Intentionally no dep on propertyCount — this is the "plan just
+    // changed" reset, not a live guard.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tier])
+  }, [token])
 
   // ── Pricing preview (display source: TIER_PRICING + OFFERINGS) ────
   // Authoritative prices used for the actual Stripe Checkout line items
@@ -184,7 +183,13 @@ export default function SignupTierPicker() {
   const perDriverMonthly = selectedTier?.perDriver ?? 0
 
   const pCount = Math.max(0, parseInt(propertyCount, 10) || 0)
-  const dCount = track === 'enforcement' ? Math.max(0, parseInt(driverCount, 10) || 0) : 0
+  // 🔴 ALWAYS 0. The Drivers field is removed: per-driver charging was
+  // retired with the 3-tier move and the catalog creates no per_driver
+  // price, so asking for a count implied a charge that does not exist.
+  // The field is still SENT, as 0, because order_forms.driver_count is
+  // NOT NULL and create-checkout-session requires the key to be a
+  // number — omitting it would 400 as "intended_tier malformed".
+  const dCount = 0
   const monthlyTotal = baseMonthly + (perPropMonthly * pCount) + (perDriverMonthly * dCount)
   const annualTotal = monthlyTotal * 10  // ~17% discount (matches B66.2a multiplier)
   const totalThisCycle = cycle === 'monthly' ? monthlyTotal : annualTotal
@@ -192,15 +197,12 @@ export default function SignupTierPicker() {
   // ── Tier limit guardrails ────────────────────────────────────────
   const tierCfg = TIER_CONFIG[tk]?.[tier]
   const maxProperties = (tierCfg?.[FEATURE_FLAGS.MAX_PROPERTIES] as number) ?? -1
-  const maxDrivers = (tierCfg?.[FEATURE_FLAGS.MAX_DRIVERS] as number) ?? -1
   const propertyLimitReached = maxProperties !== -1 && pCount > maxProperties
-  const driverLimitReached = track === 'enforcement' && maxDrivers !== -1 && dCount > maxDrivers
 
   // ── Validation ───────────────────────────────────────────────────
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
   const passwordErr = validatePassword(password)
   const propertyCountOk = pCount >= 1 && !propertyLimitReached
-  const driverCountOk = track === 'pm' || (dCount >= 1 && !driverLimitReached)
   const companyNameOk = companyName.trim().length > 0
   // Metachar rejection lives in the shared write-time helper — same
   // characters (%, _, \) blocked by the DB CHECK constraint (migration
@@ -210,7 +212,7 @@ export default function SignupTierPicker() {
   const companyNameMetacharErr = nameMetacharError(companyName, 'company')
   // captchaToken added to allOk so Submit disables until the widget callback fires.
   // ToS + Privacy are now gate-signed (accordion) — signed = non-null reviewed_at.
-  const allOk = companyNameOk && !companyNameMetacharErr && emailOk && !passwordErr && propertyCountOk && driverCountOk
+  const allOk = companyNameOk && !companyNameMetacharErr && emailOk && !passwordErr && propertyCountOk
     && attestChecked && !!tosReviewedAt && !!privacyReviewedAt && !!captchaToken
 
   // ── Submit ────────────────────────────────────────────────────────
@@ -350,64 +352,62 @@ export default function SignupTierPicker() {
           <div style={{ width: 60, height: 2, background: GOLD, opacity: 0.7, margin: '14px auto 0' }} />
         </div>
 
-        {/* PLAN CARDS — 3 from OFFERINGS. No track toggle: the tier IS
-            the track. Starter + Enforcement-Only route to checkout;
-            Custom-quote routes to /#contact (matches pricing page). */}
+        {/* ── PLAN CARDS — the Oct 2026 lineup ────────────────────────
+            Four self-serve plans plus an Elite card.
+
+            🔴 Elite is NOT self-serve and must not look like it is. It
+            routes to the existing lead form — same form, same Turnstile,
+            same table — with ?src=elite so the row and the alert say
+            what it was. No new form, no new endpoint.
+
+            "Starter" means different things per track and the
+            one-liners carry it: PM Starter is ONE PROPERTY; Operator
+            Starter is fewer FEATURES across up to 50. Shortening those
+            away would make the ladder look like a simple price step. */}
         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
           <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>1. Choose your plan</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-            {OFFERINGS.map((o) => {
-              const isCustom = o.slug === 'custom_quote'
-              const selectable = !isCustom
-              const selected = selectable && tier === o.slug
-              const cardStyle: React.CSSProperties = {
-                textAlign: 'left', padding: 14, borderRadius: 10,
-                border: selected ? `2px solid ${GOLD}` : `1px solid ${BORDER}`,
-                background: selected ? 'rgba(201,162,39,0.10)' : 'transparent',
-                color: TEXT, cursor: 'pointer', fontFamily: 'inherit',
-                textDecoration: 'none', display: 'block',
-              }
-              // Feature-line body — different shape per offering:
-              //  - Starter: "500 permits included, then $1.25 each"
-              //    (permitAllowance, no perProp — the render fix)
-              //  - Enforcement-Only: "+ $15/property"
-              //  - Custom quote: taglineOneLine only, no price
-              const priceBody = isCustom ? (
-                <div style={{ color: MUTED, fontSize: 12 }}>{o.taglineOneLine}</div>
-              ) : (
-                <>
-                  <div style={{ color: MUTED, fontSize: 12 }}>${o.base}/mo base</div>
-                  {o.permitAllowance ? (
-                    <div style={{ color: MUTED, fontSize: 11 }}>
-                      {o.permitAllowance.includedUpTo} permits included, then ${o.permitAllowance.overageRate.toFixed(2)} each
-                    </div>
-                  ) : o.perProp != null ? (
-                    <div style={{ color: MUTED, fontSize: 11 }}>+ ${o.perProp}/property</div>
-                  ) : null}
-                </>
-              )
-              const label = (
-                <>
-                  <div style={{ color: selected ? GOLD : TEXT, fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{o.name}</div>
-                  {priceBody}
-                  {isCustom && (
-                    <div style={{ color: GOLD, fontSize: 12, marginTop: 8 }}>Contact us →</div>
+            {PICKER_TOKENS.map((t) => {
+              const p = planFor(t)
+              const selected = token === t
+              const copy = PLAN_CARD_COPY[t]
+              return (
+                <button key={t} onClick={() => setToken(t)} style={{
+                  textAlign: 'left', padding: 14, borderRadius: 10,
+                  border: selected ? `2px solid ${GOLD}` : `1px solid ${BORDER}`,
+                  background: selected ? 'rgba(201,162,39,0.10)' : 'transparent',
+                  color: TEXT, cursor: 'pointer', fontFamily: 'inherit',
+                  textDecoration: 'none', display: 'block',
+                }}>
+                  <div style={{ color: selected ? GOLD : TEXT, fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{p.label}</div>
+                  {FORMERLY_LABELS_ON && p.formerly && (
+                    <div style={{ color: MUTED, fontSize: 10, marginBottom: 4 }}>formerly {p.formerly}</div>
                   )}
-                </>
+                  <div style={{ color: MUTED, fontSize: 11, marginBottom: 6, lineHeight: 1.4 }}>{copy.who}</div>
+                  <div style={{ color: MUTED, fontSize: 12 }}>{copy.price}</div>
+                  <div style={{ color: MUTED, fontSize: 11 }}>{copy.note}</div>
+                </button>
               )
-              // Custom-quote is an anchor to the pricing page's #contact
-              // section (matches app/page.tsx pricing cards' CTA target).
-              // Same-page anchor works from anywhere: '/#contact' jumps home.
-              if (isCustom) {
-                return <a key={o.slug} href="/#contact" style={cardStyle}>{label}</a>
-              }
-              // Runtime guard narrows o.slug to SelfServeSlug for setTier.
-              // If OFFERINGS somehow contains a non-self-serve slug not
-              // marked hiddenFromSelfServe, skip it rather than crash.
-              if (!isSelfServeSlug(o.slug)) return null
-              const slug = o.slug
-              return <button key={slug} onClick={() => setTier(slug)} style={cardStyle}>{label}</button>
             })}
+          </div>
+
+          {/* ELITE — a lead, not a checkout. Two doors so the lead lands
+              on the right track's form; src=elite is an existing allowed
+              key, so it reaches leads.source and the alert unchanged. */}
+          <div style={{ marginTop: 14, padding: 14, borderRadius: 10, border: `1px solid ${BORDER}`, background: 'rgba(255,255,255,0.02)' }}>
+            <div style={{ color: TEXT, fontWeight: 700, fontSize: 14 }}>More than 50 properties?</div>
+            <div style={{ color: MUTED, fontSize: 12, margin: '4px 0 10px', lineHeight: 1.5 }}>
+              Large portfolios, universities and large fleets get pricing built around them.
+              Tell us about your business and we&apos;ll be in touch.
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <a href="/property-managers?src=elite#start" style={{ color: GOLD, fontSize: 12, fontWeight: 700, textDecoration: 'none', border: `1px solid ${GOLD}`, borderRadius: 8, padding: '8px 12px' }}>
+                I manage properties — talk to us →
+              </a>
+              <a href="/operators?src=elite#start" style={{ color: GOLD, fontSize: 12, fontWeight: 700, textDecoration: 'none', border: `1px solid ${GOLD}`, borderRadius: 8, padding: '8px 12px' }}>
+                I run a towing company — talk to us →
+              </a>
+            </div>
           </div>
         </div>
 
@@ -433,33 +433,42 @@ export default function SignupTierPicker() {
         {/* COUNTS — for enforcement_only only. pm_starter is 1-property
             by definition (forced by tier-change useEffect); the count
             section is skipped rather than shown as a locked field. */}
-        {tier === 'enforcement_only' && (
+        {/* ── Property count ──────────────────────────────────────────
+            Shown for every plan EXCEPT PM Starter, which is one
+            property by definition. It used to be gated on
+            enforcement_only; PM Pro and Operator Pro charge per
+            property too, so that gate would have hidden the field from
+            two of the four plans and billed them at one property.
+
+            🔴 THE DRIVERS FIELD IS GONE. Per-driver charging was retired
+            with the 3-tier move and the catalog creates no per_driver
+            price, so asking for a count implied a charge that does not
+            exist. driver_count is still SENT as 0 — order_forms.
+            driver_count is NOT NULL and create-checkout-session requires
+            the key to be a number, so omitting it would 400 as
+            "intended_tier malformed". */}
+        {tier !== 'pm_starter' && (
           <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
-            <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>3. Initial counts</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div>
-                <label style={labelStyle}>Properties{maxProperties !== -1 && ` (max ${maxProperties} on ${selectedTier?.name})`}</label>
-                <input type="number" min={1} max={maxProperties === -1 ? undefined : maxProperties} value={propertyCount}
-                  onChange={e => setPropertyCount(e.target.value)} style={inputStyle} />
-                {propertyLimitReached && (
-                  <p style={{ color: '#f44336', fontSize: 11, margin: '6px 0 0' }}>Exceeds {selectedTier?.name} limit ({maxProperties}). Upgrade tier or reduce.</p>
-                )}
-              </div>
-              <div>
-                <label style={labelStyle}>Drivers{maxDrivers !== -1 && ` (max ${maxDrivers})`}</label>
-                <input type="number" min={1} max={maxDrivers === -1 ? undefined : maxDrivers} value={driverCount}
-                  onChange={e => setDriverCount(e.target.value)} style={inputStyle} />
-                {driverLimitReached && (
-                  <p style={{ color: '#f44336', fontSize: 11, margin: '6px 0 0' }}>Exceeds {selectedTier?.name} limit ({maxDrivers}).</p>
-                )}
-              </div>
+            <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>3. Properties</p>
+            <div style={{ maxWidth: 320 }}>
+              <label style={labelStyle}>How many properties?</label>
+              <input type="number" min={1} max={maxProperties === -1 ? undefined : maxProperties} value={propertyCount}
+                onChange={e => setPropertyCount(e.target.value)} style={inputStyle} />
+              {propertyLimitReached && (
+                <p style={{ color: '#f44336', fontSize: 11, margin: '6px 0 0' }}>
+                  More than {maxProperties} properties is an Elite plan — use &ldquo;Talk to us&rdquo; above.
+                </p>
+              )}
+              <p style={{ color: MUTED, fontSize: 11, margin: '6px 0 0' }}>
+                You pay per property up to 20. Properties 21&ndash;50 are included.
+              </p>
             </div>
           </div>
         )}
 
         {/* COMPANY + ACCOUNT */}
         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
-          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>{tier === 'enforcement_only' ? '4' : '3'}. Account details</p>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 12px', fontWeight: 700 }}>{tier === 'pm_starter' ? '3' : '4'}. Account details</p>
           <label style={labelStyle}>Company name</label>
           <input type="text" value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Acme Towing LLC" style={inputStyle} />
           {companyName && companyNameMetacharErr && <p style={{ color: '#f44336', fontSize: 11, margin: '4px 0 0' }}>{companyNameMetacharErr}</p>}
@@ -484,7 +493,7 @@ export default function SignupTierPicker() {
             required to enable Sign, reviewed_at captured at unlock (T1) and
             passed to accept_signup_consents via user_metadata. */}
         <div style={{ background: 'rgba(201,162,39,0.06)', border: `1px solid rgba(201,162,39,0.35)`, borderRadius: 14, padding: 24, marginBottom: 18 }}>
-          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>{tier === 'enforcement_only' ? '5' : '4'}. Legal acceptance</p>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>{tier === 'pm_starter' ? '4' : '5'}. Legal acceptance</p>
           <div style={{ background: '#0a0d14', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 14, marginBottom: 14, fontSize: 13, color: '#94a3b8', whiteSpace: 'pre-line', lineHeight: 1.6 }}>
             {TEXAS_ATTESTATION_TEXT}
           </div>
@@ -554,7 +563,7 @@ export default function SignupTierPicker() {
             user clears the challenge before they can click. Widget callback
             sets captchaToken; expiry/error clears it so Submit re-disables. */}
         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 18, marginBottom: 18 }}>
-          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>{tier === 'enforcement_only' ? '6' : '5'}. Confirm you&apos;re human</p>
+          <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>{tier === 'pm_starter' ? '5' : '6'}. Confirm you&apos;re human</p>
           <TurnstileWidget
             ref={turnstileRef}
             onVerify={setCaptchaToken}

@@ -56,7 +56,19 @@ const main=async()=>{
 
   const other=MODE==='test'?'live':'test'
   const live=await db.from('stripe_prices').select('*').eq('mode',other)
-  if(MODE==='test') chk('LIVE mode untouched by the test run', (live.data??[]).filter((x:any)=>x.lookup_key?.includes('.v4')).length===0)
+  // 🔴 Corrected 2026-10-02. This asserted the OTHER mode had zero v4
+  // rows, which was true only until the live run happened — after
+  // which a correct catalog fails it. It could never have distinguished
+  // "a test run leaked into live" from "live was built on purpose"
+  // anyway, because both leave the same rows.
+  //
+  // What DOES hold across the whole lifecycle: a mode has either none
+  // of the lineup (not built yet) or all ten of it (built). Anything in
+  // between is a partial run — the real failure this should catch.
+  const otherV4 = (live.data??[]).filter((x:any)=>x.lookup_key?.includes('.v4')).length
+  chk(`${other} mode holds 0 or 10 lineup rows, not a partial run`, otherV4===0 || otherV4===10, `found ${otherV4}`)
+  const thisV4 = act.filter((x:any)=>x.lookup_key?.includes('.v4')).length
+  chk(`${MODE} mode holds all 10 lineup rows`, thisV4===10, `found ${thisV4}`)
   const a1raw=await db.from('stripe_prices').select('*').eq('mode','live')
   const a1=(a1raw.data??[]).filter((x:any)=>x.proposal_code_id!==null)
   chk("A1's proposal price untouched", a1.length===1 && a1[0].is_active===true && a1[0].unit_amount_cents===32500)
