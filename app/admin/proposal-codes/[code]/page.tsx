@@ -500,6 +500,21 @@ export default function ProposalCodeDetail() {
               {!overrideValidation.valid && (
                 <p style={{ color: '#f44336', fontSize: '11px', margin: '-10px 0 14px' }}>{overrideValidation.error}</p>
               )}
+              {/* 🔴 2026-10-02 ceiling warning. The NEW-code form has a
+                  dedicated "Max properties" field; this page keeps the
+                  raw JSON editor, because a code edited here may predate
+                  that field and its overrides are already JSON. What
+                  this page must not do is let a legacy code be saved
+                  without the key and look fine — the cap is enforced
+                  server-side and only surfaces when the customer is
+                  refused their 51st property. */}
+              {tier === 'legacy' && !/\"max_properties\"/.test(overridesText) && (
+                <p style={{ color: '#fbbf24', fontSize: '12px', margin: '0 0 14px', padding: '10px 12px', background: '#2a2000', border: '1px solid #8a6b1e', borderRadius: '6px', lineHeight: 1.5 }}>
+                  ⚠ <strong>No max_properties override — this account will be capped at 50 properties.</strong>{' '}
+                  Legacy is the backend tier for Operator Pro and PM Pro, which are self-serve plans with a 50-property ceiling.
+                  For an Elite deal add <code style={{ color: '#fff' }}>{'{"max_properties": -1}'}</code> above.
+                </p>
+              )}
 
               <label style={lbl}>Notes (internal)</label>
               <textarea value={notes} onChange={e => setNotes(e.target.value)} style={{ ...inp, minHeight: '60px', resize: 'vertical' as const }} />

@@ -19,6 +19,12 @@ function validateFeatureOverrides(text: string): Validation {
     return { valid: false, error: 'Must be a JSON object, e.g. {"max_properties": 50}' }
   }
   for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    // 🔴 max_properties has its OWN field now (2026-10-02). Allowing it
+    // here as well would give one key two writers, and the merge order
+    // would silently decide which Elite customer gets a ceiling.
+    if (key === 'max_properties') {
+      return { valid: false, error: 'Set max_properties in the "Max properties" field above, not here.' }
+    }
     if (!VALID_FLAGS.has(key as FeatureFlag)) {
       return { valid: false, error: `Unknown flag: "${key}"` }
     }
@@ -94,6 +100,13 @@ export default function NewProposalCode() {
   // Slice 1 Commit 5 — includedDrivers state removed (per_driver retired).
   // Form field gone; payload always sends included_drivers=null.
   const [overridesText, setOverridesText] = useState<string>('')
+  // 🔴 2026-10-02 — max_properties promoted out of the raw JSON blob.
+  // The ceiling migration made enforcement_only and legacy default to
+  // 50 active properties. Elite accounts are exempted ONLY by a
+  // proposal code carrying this key, so a code issued without it caps
+  // an Elite customer at a number they were explicitly sold out of —
+  // and nothing would surface that until they hit it.
+  const [maxProperties, setMaxProperties] = useState<string>('')
   const [notes, setNotes] = useState<string>('')
 
   useEffect(() => {
@@ -223,7 +236,11 @@ export default function NewProposalCode() {
       // is now always NULL (per_driver retired in slice 1 commit 5).
       included_properties: includedProperties === '' ? null : parseInt(includedProperties, 10),
       included_drivers: null,
-      feature_overrides: overrideValidation.value,
+      // The dedicated field owns this key; the JSON textarea refuses it.
+      feature_overrides: {
+        ...overrideValidation.value,
+        ...(maxProperties.trim() === '' ? {} : { max_properties: Number(maxProperties) }),
+      },
       notes: notes.trim() || null,
       status: 'draft',
       generated_at: new Date().toISOString(),
@@ -408,8 +425,39 @@ export default function NewProposalCode() {
             </div>
           )}
 
+          {/* ── Max properties ──────────────────────────────────────
+              Promoted out of the JSON blob because it is the one
+              override with a customer-visible consequence: the Oct 2026
+              ceiling caps enforcement_only and legacy at 50, and a code
+              without this key inherits that cap. "Elite" is not a tier —
+              it IS this field. */}
           <p style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }}>
-            Feature overrides (JSON)
+            Max properties
+          </p>
+          <input
+            type="number"
+            value={maxProperties}
+            onChange={e => setMaxProperties(e.target.value)}
+            placeholder="blank = plan default of 50"
+            style={{ ...inp, maxWidth: '260px' }}
+          />
+          <p style={{ color: '#555', fontSize: '11px', margin: '6px 0 0' }}>
+            Blank = the plan default (50 active properties). <strong style={{ color: '#888' }}>-1 = unlimited</strong>, which is what an Elite deal needs. Any positive number sets that exact ceiling.
+          </p>
+          {tier === 'legacy' && maxProperties.trim() === '' && (
+            <p style={{ color: '#fbbf24', fontSize: '12px', margin: '8px 0 0', padding: '10px 12px', background: '#2a2000', border: '1px solid #8a6b1e', borderRadius: '6px', lineHeight: 1.5 }}>
+              ⚠ <strong>This account will be capped at 50 properties.</strong> Legacy is the backend tier for Operator Pro and PM Pro, which are self-serve plans with a 50-property ceiling. If this is an Elite deal, set <strong>-1</strong> above — the ceiling is enforced server-side and the customer will be refused their 51st property.
+            </p>
+          )}
+          {maxProperties.trim() !== '' && !Number.isInteger(Number(maxProperties)) && (
+            <p style={{ color: '#f44336', fontSize: '11px', margin: '6px 0 0' }}>Must be a whole number (or blank).</p>
+          )}
+          {Number(maxProperties) === 0 && maxProperties.trim() !== '' && (
+            <p style={{ color: '#f44336', fontSize: '11px', margin: '6px 0 0' }}>0 would allow NO properties at all. Use -1 for unlimited, or leave blank for the default.</p>
+          )}
+
+          <p style={{ color: '#C9A227', fontWeight: 'bold', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }}>
+            Other feature overrides (JSON)
           </p>
           <p style={{ color: '#555', fontSize: '11px', margin: '0 0 10px' }}>
             Per-flag overrides applied on top of the tier defaults. Keys must match feature-flags.ts.
