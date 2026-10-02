@@ -168,6 +168,19 @@ interface LogicalAddress {
   tier_name: TierName
   line_item: LineItem
   cycle: Cycle
+  // ── Oct 2026 lineup additions ──────────────────────────────────────
+  // Per-address lookup version. Defaults to PRICE_LOOKUP_VERSION. The
+  // Oct lineup uses v4 so its prices are NEW Stripe objects: Stripe
+  // prices are immutable, and enforcement_only's per_property is
+  // changing shape from flat to graduated. Reusing the v3 key would
+  // find the old flat price and silently keep charging it.
+  lookup_version?: string
+  // Marks a per_property line as graduated (the 20/50 step). Only the
+  // Oct lineup sets it; the v3 rows stay flat.
+  graduated_property?: boolean
+  // Flat amount in whole dollars, for addresses whose price does NOT
+  // come from platform_settings. See LINEUP_OCT_2026.
+  flat_dollars?: number
 }
 
 // Source shape from platform_settings.permit_tiers (rate_cents).
@@ -236,6 +249,76 @@ function resolveSupabase(): { url: string; key: string } {
 // CHECK constraint). PM Starter has 2 line_items (base + per_permit —
 // NO per_property; one property by definition, enforced by cap
 // sequence A→A₀). Legacy excluded — negotiated-only.
+// ════════════════════════════════════════════════════════════════════
+// LINEUP_OCT_2026 — the self-serve Pro catalog
+// ════════════════════════════════════════════════════════════════════
+//
+// Per DECISION_pricing_selfserve_pro_tiers_oct2_2026.
+//
+// 🔴 PRICED HERE, NOT IN platform_settings. The v3 rows read their
+// amounts from platform_settings columns; these do not, because no such
+// columns exist for the Pro tiers and the admin pricing tab is becoming
+// a READ-ONLY view of stripe_prices in this same arc (Ruling 3). Adding
+// columns would re-open the projection hazard the ruling closes: two
+// places holding a price, one of which nobody charges from. The script
+// is the source of truth for this lineup, and stripe_prices is its
+// projection.
+//
+// 🔴 'legacy' gets STANDARD rows for the first time. It stays
+// proposal-code-reachable too — A1's per-code prices are untouched and
+// carry proposal_code_id, so nothing here collides with them.
+//
+// The 20/50 step is ONE graduated price, not a cap line: 1–20 at the
+// rate, 21+ at zero. Stripe applies the bands against the quantity the
+// b147 sync already maintains, so the sync needs no change.
+const PROPERTY_BAND_CUTOFF = 20
+
+type LineupEntry = {
+  track: Track
+  tier: TierName
+  productLabel: string
+  baseDollars: number        // 0 = no new base price (reuse the v3 one)
+  perPropertyDollars: number // the 1–20 rate; 21+ is always 0
+}
+const LINEUP_OCT_2026: LineupEntry[] = [
+  // Operator Starter — base is UNCHANGED at $199 and its v3 price is
+  // immutable and correct, so no new base row. Only per_property
+  // changes shape (flat $15 → graduated 1-20 @ $15, 21+ @ $0).
+  { track: 'enforcement',         tier: 'enforcement_only', productLabel: 'Operator Starter', baseDollars: 0,   perPropertyDollars: 15 },
+  // Operator Pro — display name for enforcement-track legacy.
+  { track: 'enforcement',         tier: 'legacy',           productLabel: 'Operator Pro',     baseDollars: 299, perPropertyDollars: 20 },
+  // PM Pro — display name for PM-track legacy. NO permit meter: the
+  // meter stays on PM Starter only, and Pro already charges per
+  // property (decision, confirmed).
+  { track: 'property_management', tier: 'legacy',           productLabel: 'PM Pro',           baseDollars: 249, perPropertyDollars: 15 },
+]
+const LINEUP_VERSION = 'v4'
+
+function propertyBands(rateDollars: number, cycle: Cycle): WirePermitTier[] {
+  const rate = unitAmountCents(rateDollars, cycle)
+  return [
+    { up_to: PROPERTY_BAND_CUTOFF, unit_amount: rate },
+    { up_to: null,                 unit_amount: 0 },
+  ]
+}
+
+function buildLineupAddresses(): LogicalAddress[] {
+  const out: LogicalAddress[] = []
+  const CYCLES: Cycle[] = ['monthly', 'annual']
+  for (const e of LINEUP_OCT_2026) {
+    for (const c of CYCLES) {
+      if (e.baseDollars > 0) {
+        out.push({ tier_track: e.track, tier_name: e.tier, line_item: 'base', cycle: c,
+                   lookup_version: LINEUP_VERSION, flat_dollars: e.baseDollars })
+      }
+      out.push({ tier_track: e.track, tier_name: e.tier, line_item: 'per_property', cycle: c,
+                 lookup_version: LINEUP_VERSION, graduated_property: true,
+                 flat_dollars: e.perPropertyDollars })
+    }
+  }
+  return out
+}
+
 function buildAddresses(): LogicalAddress[] {
   const addrs: LogicalAddress[] = []
   const PM_LINE_ITEMS: LineItem[] = ['base', 'per_property', 'per_permit']
@@ -260,21 +343,29 @@ function buildAddresses(): LogicalAddress[] {
       addrs.push({ tier_track: 'property_management', tier_name: 'pm_starter', line_item: li, cycle: c })
     }
   }
-  return addrs
+  return [...addrs, ...buildLineupAddresses()]
 }
 
 function formatLookupKey(a: LogicalAddress): string {
-  return `sml.${a.tier_track}.${a.tier_name}.${a.line_item}.${a.cycle}.${PRICE_LOOKUP_VERSION}`
+  return `sml.${a.tier_track}.${a.tier_name}.${a.line_item}.${a.cycle}.${a.lookup_version ?? PRICE_LOOKUP_VERSION}`
 }
 
 function formatProductName(a: LogicalAddress): string {
   // Tier-name based (not track-based) — pm_only and pm_starter both
   // ride property_management but need distinct Product labels for the
   // Stripe dashboard.
-  const tierLabel = a.tier_name === 'pm_only'          ? 'PM-Only'
-                  : a.tier_name === 'pm_starter'       ? 'PM Starter'
-                  : a.tier_name === 'enforcement_only' ? 'Enforcement-Only'
-                  : 'Legacy'   // unreachable — legacy has no standard rows
+  // Oct 2026 lineup labels take precedence — these are the names that
+  // appear on a customer's INVOICE, so they must read as the plan the
+  // customer bought. A v3 address keeps its old label so A1's and the
+  // existing catalog's Products are not renamed under them.
+  const lineup = a.lookup_version === LINEUP_VERSION
+    ? LINEUP_OCT_2026.find(e => e.track === a.tier_track && e.tier === a.tier_name)
+    : undefined
+  const tierLabel = lineup                              ? lineup.productLabel
+                  : a.tier_name === 'pm_only'           ? 'PM-Only'
+                  : a.tier_name === 'pm_starter'        ? 'PM Starter'
+                  : a.tier_name === 'enforcement_only'  ? 'Enforcement-Only'
+                  : 'Legacy'   // v3 legacy has no standard rows
   const liLabel = a.line_item === 'base' ? 'Base'
               : a.line_item === 'per_property' ? 'Per-Property'
               : a.line_item === 'per_permit' ? 'Per-Permit (Graduated)'
@@ -456,10 +547,45 @@ async function main() {
   }
 
   const addresses = buildAddresses()
-  const EXPECTED_TOTAL = 14
+  // 14 v3 addresses + the Oct lineup. Derived rather than a literal:
+  // the old hardcoded 14 would have had to be hand-bumped every time
+  // the lineup changed, and a wrong literal aborts a correct build.
+  const V3_TOTAL = 14
+  const EXPECTED_TOTAL = V3_TOTAL + buildLineupAddresses().length
   if (addresses.length !== EXPECTED_TOTAL) {
     console.error(`[create-stripe-prices] Internal error: built ${addresses.length} addresses, expected ${EXPECTED_TOTAL}.`)
     process.exit(1)
+  }
+  console.log(`[create-stripe-prices] ${V3_TOTAL} v3 addresses + ${EXPECTED_TOTAL - V3_TOTAL} Oct-2026 lineup addresses = ${EXPECTED_TOTAL}`)
+
+  // ── --dry-run ───────────────────────────────────────────────────
+  // 🔴 Added for the LIVE pass. Jose runs live mode with a temporary
+  // restricted key and then revokes it; he should be able to see every
+  // amount this will create BEFORE spending that key, and a dry run is
+  // the only way to read the computed annual bands rather than trust
+  // the multiplication. Touches no network.
+  if (process.argv.includes('--dry-run')) {
+    console.log(`\n── DRY RUN (${mode} mode) — nothing will be created ──`)
+    for (const a of addresses) {
+      const key = formatLookupKey(a)
+      let priced: string
+      if (a.line_item === 'per_permit') {
+        const src = a.tier_name === 'pm_starter' ? starterPermitTiersSource : permitTiersSource
+        priced = 'graduated ' + JSON.stringify(graduatedTiers(src, a.cycle, a.tier_name))
+      } else if (a.graduated_property) {
+        priced = 'graduated ' + JSON.stringify(propertyBands(a.flat_dollars as number, a.cycle))
+      } else if (typeof a.flat_dollars === 'number') {
+        priced = 'flat ' + unitAmountCents(a.flat_dollars, a.cycle) + 'c'
+      } else {
+        const col = flatPriceColumn(a)
+        priced = 'flat ' + unitAmountCents(Number(ps[col as keyof typeof ps]), a.cycle) + `c (from ${col})`
+      }
+      const isNew = a.lookup_version === LINEUP_VERSION
+      console.log(`  ${isNew ? '🆕' : '  '} ${formatProductName(a).padEnd(44)} ${priced}`)
+      console.log(`     ${key}`)
+    }
+    console.log(`\nDry run complete. ${addresses.filter(a => a.lookup_version === LINEUP_VERSION).length} of ${addresses.length} are new (🆕).`)
+    return
   }
 
   let created = 0
@@ -473,7 +599,7 @@ async function main() {
   for (const addr of addresses) {
     const lookupKey = formatLookupKey(addr)
     const groupKey = `${addr.tier_track}.${addr.tier_name}.${addr.line_item}`
-    const isGraduated = addr.line_item === 'per_permit'
+    const isGraduated = addr.line_item === 'per_permit' || addr.graduated_property === true
 
     // Resolve the price input — FLAT path reads a dollar column;
     // GRADUATED path uses the validated permit_tiers JSONB.
@@ -484,10 +610,26 @@ async function main() {
       // cycle-correct array. Source column depends on tier:
       //   pm_only     → permit_tiers          (4-band $2.00→$1.25)
       //   pm_starter  → starter_permit_tiers  (2-band $0→$1.25 included allowance)
-      const graduatedSource = addr.tier_name === 'pm_starter'
-        ? starterPermitTiersSource
-        : permitTiersSource
-      wireTiersForDb = graduatedTiers(graduatedSource, addr.cycle, addr.tier_name)
+      if (addr.graduated_property) {
+        // The 20/50 property step. Bands are computed, not read from
+        // platform_settings — see LINEUP_OCT_2026. unitAmountCents
+        // applies ANNUAL_MULTIPLIER, so the annual bands are ×10 of the
+        // monthly ones, same rule as every other line.
+        if (typeof addr.flat_dollars !== 'number') {
+          console.error(`[create-stripe-prices] graduated per_property address has no flat_dollars: ${JSON.stringify(addr)}`)
+          process.exit(1)
+        }
+        wireTiersForDb = propertyBands(addr.flat_dollars, addr.cycle)
+      } else {
+        const graduatedSource = addr.tier_name === 'pm_starter'
+          ? starterPermitTiersSource
+          : permitTiersSource
+        wireTiersForDb = graduatedTiers(graduatedSource, addr.cycle, addr.tier_name)
+      }
+    } else if (typeof addr.flat_dollars === 'number') {
+      // Lineup flat line (a Pro base). Priced in this file, not in
+      // platform_settings — see LINEUP_OCT_2026.
+      amountCentsForDb = unitAmountCents(addr.flat_dollars, addr.cycle)
     } else {
       const colName = flatPriceColumn(addr)
       const rawMonthly = ps[colName as keyof typeof ps]

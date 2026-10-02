@@ -11,7 +11,8 @@
     "verify:routes": "next build && tsx scripts/verify-route-exposure.ts",
     "verify:redirects": "next build && tsx scripts/verify-operators-redirects.ts",
     "verify:selfserve": "tsx scripts/verify-self-serve-door.ts",
-    "verify:tierparam": "tsx scripts/verify-signup-tier-param.ts"
+    "verify:tierparam": "tsx scripts/verify-signup-tier-param.ts",
+    "verify:catalog": "tsx scripts/verify-catalog-oct2026.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",
