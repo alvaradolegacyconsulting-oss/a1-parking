@@ -15,7 +15,8 @@
     "verify:catalog": "tsx scripts/verify-catalog-oct2026.ts",
     "verify:pricing": "tsx scripts/verify-pricing-sweep.ts",
     "verify:saas": "tsx scripts/verify-saas-consent.ts",
-    "verify:proration": "tsx scripts/verify-annual-proration.ts"
+    "verify:proration": "tsx scripts/verify-annual-proration.ts",
+    "verify:quote": "tsx scripts/verify-signup-quote.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

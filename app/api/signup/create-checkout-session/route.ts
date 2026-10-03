@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { getStripe, getStripeMode } from '../../../lib/stripe'
 import { getStripeBillingEnabled, getPublicSignupOpen } from '../../../lib/platform-flags'
-import { getStandardCatalogLines } from '../../../lib/stripe-catalog'
+import { getStandardCatalogLines, EXPECTED_LINE_COUNT } from '../../../lib/stripe-catalog'
+import { quantityForLine } from '../../../lib/pricing-quote'
 import {
   TOS_VERSION,
   PRIVACY_VERSION,
@@ -239,12 +240,9 @@ export async function POST() {
   //   the shape is the same; the track is what distinguishes them, and
   //   getStandardCatalogLines is keyed on (track, tier).
   // pm_only is NOT in this map — self-serve picker doesn't send it.
-  const expectedCountByTier: Record<IntendedTier['tier'], number> = {
-    pm_starter: 2,
-    enforcement_only: 2,
-    legacy: 2,
-  }
-  const expectedCount = expectedCountByTier[intended.tier]
+  // 2026-10-02 — shared with /api/signup/quote so the estimate refuses
+  // the same partial catalog this route refuses.
+  const expectedCount = EXPECTED_LINE_COUNT[intended.tier]
   if (catalog.length !== expectedCount) {
     return NextResponse.json(
       { error: `standard catalog missing rows for (${intended.track}.${intended.tier}.${intended.cycle}.${mode}): expected ${expectedCount}, got ${catalog.length}. Run scripts/create-stripe-prices.ts.` },
@@ -272,14 +270,21 @@ export async function POST() {
   // Previous fallthrough sent intended.driver_count for anything not
   // base/per_property — that would produce NaN for PM per_permit and
   // silently drop the line via the >0 filter.
+  // 2026-10-02 — the quantity map moved to lib/pricing-quote and is
+  // IMPORTED here rather than written inline.
+  //
+  // 🔴 WHY: /signup's estimate prices the same catalog with the same
+  // quantities through /api/signup/quote. While this map lived here as
+  // a literal, the preview had to reimplement it, and a reimplemented
+  // rule is a rule that drifts — which is precisely how the page came
+  // to advertise $199 for a $339 subscription. One exported function
+  // means the estimate and the charge cannot disagree about what is in
+  // the basket; stripe_prices already means they cannot disagree about
+  // what it costs.
   const lineItems = catalog
     .map(line => ({
       price: line.stripe_price_id,
-      quantity:
-        line.line_item === 'base'         ? 1
-        : line.line_item === 'per_property' ? intended.property_count!
-        : line.line_item === 'per_permit'   ? 1
-        : 1,
+      quantity: quantityForLine(line.line_item, intended.property_count!),
     }))
     .filter(li => li.quantity > 0)
 

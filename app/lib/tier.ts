@@ -218,6 +218,28 @@ export function getUpgradePrompt(
     // tt is a runtime TierType; use getTierPricing to widen the
     // per-track union at the call site (ladder[i] came from the same
     // table so the lookup is always safe at runtime).
+    // ════════════════════════════════════════════════════════════
+    // 🔴 READ THIS BEFORE ADDING A PRO TIER TO TIER_LADDER
+    // ════════════════════════════════════════════════════════════
+    // TIER_PRICING IS NOT A PRICE LIST. It is a stale internal map.
+    // Its `legacy` entry still reads { base: 199, perProperty: 0 }
+    // while Operator Pro is $299 + $20/property and PM Pro is $249 +
+    // $15 — the exact discrepancy that, on 2026-10-02, had /signup
+    // advertising $199 for a subscription Stripe then billed at $339.
+    // Caught in a live run before anyone paid.
+    //
+    // This call site is SAFE ONLY BY ACCIDENT: TIER_LADDER is a
+    // single-element array per track, so the loop never reaches a
+    // second candidate and no price is ever surfaced. The moment a Pro
+    // tier is added to that ladder — which launching self-serve Pro
+    // invites — this line starts quoting $199 as an upgrade price in
+    // the CA portal.
+    //
+    // 🔴 WHEN YOU ADD THE LADDER STEP: price it through
+    // /api/signup/quote (app/lib/pricing-quote.ts), which reads the
+    // stripe_prices catalog Checkout charges from. Do not read a price
+    // out of TIER_PRICING. The quote endpoint takes a plan token, a
+    // cycle and a property count and returns total_cents.
     const priceEntry = getTierPricing(tt, candidate)
     if (priceEntry === undefined || priceEntry.base === null) continue
     const price = priceEntry.base

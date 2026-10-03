@@ -14,8 +14,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { OFFERINGS, TierTrack } from '../lib/tier-display'
-import { TIER_CONFIG, TIER_PRICING, getTierPricing } from '../lib/tier-config'
-import { resolveInitialToken, DEFAULT_TOKEN, planFor, PICKER_TOKENS, FORMERLY_LABELS_ON, type PlanToken } from '../lib/signup-tier-param'
+import { useQuote } from '../lib/use-quote'
+import { formatUsd, describeQuote } from '../lib/pricing-quote'
+import { TIER_CONFIG } from '../lib/tier-config'
+import { resolveInitialToken, DEFAULT_TOKEN, planFor, PICKER_TOKENS, FORMERLY_LABELS_ON, displayName, type PlanToken } from '../lib/signup-tier-param'
 
 // Card copy. Prices here are DISPLAY ONLY — what a customer is actually
 // charged comes from stripe_prices server-side. Kept beside the picker
@@ -169,18 +171,30 @@ export default function SignupTierPicker() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
-  // ── Pricing preview (display source: TIER_PRICING + OFFERINGS) ────
-  // Authoritative prices used for the actual Stripe Checkout line items
-  // come from stripe_prices.unit_amount_cents (server-side). This is
-  // for the in-form preview only.
+  // ── Pricing preview ──────────────────────────────────────────────
+  //
+  // 🔴 2026-10-02 — THIS NO LONGER COMPUTES A PRICE.
+  //
+  // It used to: `getTierPricing(tk, tier)?.base ?? selectedTier?.base`,
+  // reading the hardcoded TIER_PRICING map. There is no TIER_PRICING
+  // entry for the Pro tiers' backend key beyond a stale
+  // `legacy: { base: 199, perProperty: 0 }` marked in its own comment
+  // as an "internal display value" — so Operator Pro, which is $299 +
+  // $20/property, advertised "$199.00 — $199/mo base + $0/property × 2"
+  // on the last page before Checkout, where Stripe then correctly asked
+  // for $339. Caught in a live acceptance run before anyone paid.
+  //
+  // The estimate now comes from /api/signup/quote, which calls the same
+  // getStandardCatalogLines Checkout calls, against the same
+  // (track, tier, cycle, mode) address, with the same quantity map, and
+  // applies the graduated bands. Display and charge share one source;
+  // they can no longer disagree.
+  //
+  // OFFERINGS is still consulted — for the permit ALLOWANCE copy, which
+  // is a product fact, not a price. No `.base` / `.perProp` read remains
+  // on this page.
   const tk = trackKey(track)
-  const selectedTier = OFFERINGS.find(o => o.slug === tier)
-  // 2026-09-04 TIER_PRICING shape change: { base, perProperty }.
-  // getTierPricing() widens the union-keyed map at the call site
-  // (runtime lookup — signup can pass any string tier).
-  const baseMonthly = getTierPricing(tk, tier)?.base ?? selectedTier?.base ?? 0
-  const perPropMonthly = selectedTier?.perProp ?? 0
-  const perDriverMonthly = selectedTier?.perDriver ?? 0
+  const selectedTier = OFFERINGS.find(o => o.slug === token)
 
   const pCount = Math.max(0, parseInt(propertyCount, 10) || 0)
   // 🔴 ALWAYS 0. The Drivers field is removed: per-driver charging was
@@ -190,9 +204,11 @@ export default function SignupTierPicker() {
   // NOT NULL and create-checkout-session requires the key to be a
   // number — omitting it would 400 as "intended_tier malformed".
   const dCount = 0
-  const monthlyTotal = baseMonthly + (perPropMonthly * pCount) + (perDriverMonthly * dCount)
-  const annualTotal = monthlyTotal * 10  // ~17% discount (matches B66.2a multiplier)
-  const totalThisCycle = cycle === 'monthly' ? monthlyTotal : annualTotal
+  // Annual is NOT computed here either. The catalog holds separate
+  // annual Prices (monthly × 10, the ~17% discount baked into the
+  // Price), so the cycle is part of the address we ask about, not a
+  // multiplier we apply afterwards.
+  const { quote, loading: quoteLoading, error: quoteError } = useQuote(token, cycle, pCount)
 
   // ── Tier limit guardrails ────────────────────────────────────────
   const tierCfg = TIER_CONFIG[tk]?.[tier]
@@ -540,21 +556,29 @@ export default function SignupTierPicker() {
             render both handle the missing per-property axis correctly. */}
         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 20, marginBottom: 18 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-            <span style={{ color: MUTED, fontSize: 13 }}>Estimated {cycle === 'monthly' ? 'monthly' : 'annual'} cost</span>
-            <span style={{ color: GOLD, fontSize: 26, fontWeight: 800 }}>${totalThisCycle.toFixed(2)}</span>
+            <span style={{ color: MUTED, fontSize: 13 }}>
+              {displayName(token)} · estimated {cycle === 'monthly' ? 'monthly' : 'annual'} cost
+            </span>
+            {/* 🔴 No $0.00 fallback. A failed or pending quote renders as
+                itself. Showing a number we could not source is the defect
+                this card was rebuilt to prevent. */}
+            <span style={{ color: quote ? GOLD : MUTED, fontSize: 26, fontWeight: 800 }}>
+              {quote ? formatUsd(quote.total_cents) : quoteLoading ? '…' : '—'}
+            </span>
           </div>
-          {tier === 'pm_starter' && selectedTier?.permitAllowance ? (
+          {quote ? (
             <p style={{ color: MUTED, fontSize: 11, margin: 0 }}>
-              ${baseMonthly}/mo flat for one property
-              {' — '}
-              {selectedTier.permitAllowance.includedUpTo} permits included, then ${selectedTier.permitAllowance.overageRate.toFixed(2)} each
-              {cycle === 'annual' && ' · × 10 months (annual prepay)'}
+              {describeQuote(quote.lines)}
+              {tier === 'pm_starter' && selectedTier?.permitAllowance && (
+                ` · ${selectedTier.permitAllowance.includedUpTo} permits included, then $${selectedTier.permitAllowance.overageRate.toFixed(2)} each`
+              )}
+              {cycle === 'annual' && ' · billed once for 10 months (annual prepay)'}
             </p>
           ) : (
-            <p style={{ color: MUTED, fontSize: 11, margin: 0 }}>
-              ${baseMonthly}/mo base + ${perPropMonthly}/property × {pCount}
-              {track === 'enforcement' && perDriverMonthly > 0 && ` + $${perDriverMonthly}/driver × ${dCount}`}
-              {cycle === 'annual' && ' × 10 months (annual prepay)'}
+            <p style={{ color: quoteError ? '#fca5a5' : MUTED, fontSize: 11, margin: 0 }}>
+              {quoteError
+                ? `We couldn't price this plan right now — ${quoteError} Your card is not charged until the next screen, which always shows Stripe's own total.`
+                : 'Pricing…'}
             </p>
           )}
         </div>

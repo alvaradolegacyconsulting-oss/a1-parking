@@ -44,8 +44,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../../supabase'
-import { TIER_PRICING, getTierPricing } from '../../lib/tier-config'
-import { OFFERINGS } from '../../lib/tier-display'
+import { tokenFor, displayName } from '../../lib/signup-tier-param'
+import { useQuote } from '../../lib/use-quote'
+import { formatUsd, describeQuote } from '../../lib/pricing-quote'
 import { isOtpExpiredOrUsed } from '../../lib/otp-errors'
 import { SAAS_VERSION, SAAS_DISPLAY_DATE } from '../../lib/legal-versions'
 import LegalReadthroughGate from '../../components/LegalReadthroughGate'
@@ -453,14 +454,16 @@ function ErrorCard({ title, body, primaryLabel, primaryHref }: { title: string; 
 
 function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: IntendedTier; proceeding: boolean; onProceed: () => void }) {
   const trackLabel = tier.track === 'enforcement' ? 'Enforcement' : 'Property Management'
-  // 2026-09-03 (Picker §3, Mateo Sep 3 §1): tier lookup by slug from
-  // OFFERINGS directly. Prior filtered ENFORCEMENT_TIERS /
-  // PROPERTY_MANAGEMENT_TIERS by track (from tier-display's backwards-
-  // compat exports) — obsolete now that the picker sources 3 cards
-  // straight from OFFERINGS. Slug is the canonical key; scanning one
-  // list is equivalent to scanning two filtered lists and simpler.
-  const td = OFFERINGS.find(o => o.slug === tier.tier)
-  const tierTitle = td?.name ?? (tier.tier.charAt(0).toUpperCase() + tier.tier.slice(1))
+  // 🔴 2026-10-02 — the heading no longer prints the BACKEND tier.
+  //
+  // It used to fall back to a capitalised tier string, so an Operator
+  // Pro buyer saw "Enforcement · Legacy" on the last screen before
+  // paying: `legacy` is the internal key for BOTH Pro plans and matches
+  // no OFFERINGS slug, so the fallback fired every time. tokenFor()
+  // resolves the stored (track, tier) pair back to its display token;
+  // the pair stays the durable truth and the name is derived from it.
+  const planToken = tokenFor(tier.track, tier.tier)
+  const tierTitle = planToken ? displayName(planToken) : null
 
   // B118 Layer 2 Commit 3 — SaaS acceptance state for self-serve.
   // Fires the accept_saas_agreement RPC via /api/signup/accept-saas
@@ -497,14 +500,15 @@ function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: In
     }
   }
 
-  // Preview from display constants (matches /signup form).
-  // tiers + td already declared above for tierTitle lookup — reuse here.
-  // 2026-09-04 TIER_PRICING shape change: { base, perProperty }.
-  const baseMonthly = getTierPricing(tier.track, tier.tier)?.base ?? td?.base ?? 0
-  const perProp = td?.perProp ?? 0
-  const perDriver = td?.perDriver ?? 0
-  const monthlyTotal = baseMonthly + (perProp * tier.property_count) + (perDriver * tier.driver_count)
-  const totalThisCycle = tier.cycle === 'monthly' ? monthlyTotal : monthlyTotal * 10
+  // 🔴 2026-10-02 — the summary total comes from the catalog, not from
+  // display constants. Identical change, identical reason, to the one on
+  // /signup: this card said "$199.00" for the plan Stripe then billed at
+  // $339. It now asks /api/signup/quote, which prices the very rows
+  // Checkout is about to use. The annual × 10 multiplier is gone too —
+  // annual has its own Prices in the catalog.
+  const { quote, loading: quoteLoading, error: quoteError } = useQuote(
+    planToken, tier.cycle, tier.property_count,
+  )
 
   return (
     <>
@@ -518,14 +522,43 @@ function ReadyCard({ user, tier, proceeding, onProceed }: { user: User; tier: In
 
       <div style={{ background: 'rgba(201,162,39,0.06)', border: `1px solid rgba(201,162,39,0.35)`, borderRadius: 14, padding: 20, marginBottom: 18 }}>
         <p style={{ color: GOLD, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px', fontWeight: 700 }}>Your selection</p>
-        <p style={{ color: TEXT, fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>{trackLabel} · {tierTitle}</p>
+        {/* The plan NAME, not track · backend-tier. When the stored pair
+            is outside the self-serve lineup tokenFor() returns null and
+            we show the track alone rather than inventing a name from the
+            internal key. */}
+        <p style={{ color: TEXT, fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>
+          {tierTitle ?? trackLabel}
+        </p>
+        {/* 🔴 "drivers" dropped (2026-10-02). Per-driver charging retired
+            with the 3-tier move and the catalog creates no per_driver
+            price, so "0 drivers" was a line item that does not exist —
+            it only invited the question of what a driver costs. The
+            count is still STORED (order_forms.driver_count is NOT NULL)
+            and still sent as 0; it is simply not advertised. */}
         <p style={{ color: MUTED, fontSize: 13, margin: '0 0 4px' }}>
-          {tier.cycle === 'monthly' ? 'Monthly billing' : 'Annual billing (~17% off)'} · {tier.property_count} {tier.property_count === 1 ? 'property' : 'properties'}{tier.track === 'enforcement' && ` · ${tier.driver_count} ${tier.driver_count === 1 ? 'driver' : 'drivers'}`}
+          {tier.cycle === 'monthly' ? 'Monthly billing' : 'Annual billing (~17% off)'} · {tier.property_count} {tier.property_count === 1 ? 'property' : 'properties'}
         </p>
         <p style={{ color: TEXT, fontSize: 13, margin: '0 0 14px' }}>Company: <strong>{tier.company_name}</strong></p>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderTop: `1px solid ${BORDER}`, paddingTop: 14 }}>
-          <span style={{ color: MUTED, fontSize: 13 }}>{tier.cycle === 'monthly' ? 'Monthly' : 'Annual'} total</span>
-          <span style={{ color: GOLD, fontSize: 24, fontWeight: 800 }}>${totalThisCycle.toFixed(2)}</span>
+        <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <span style={{ color: MUTED, fontSize: 13 }}>{tier.cycle === 'monthly' ? 'Monthly' : 'Annual'} total</span>
+            <span style={{ color: quote ? GOLD : MUTED, fontSize: 24, fontWeight: 800 }}>
+              {quote ? formatUsd(quote.total_cents) : quoteLoading ? '…' : '—'}
+            </span>
+          </div>
+          {quote ? (
+            <p style={{ color: MUTED, fontSize: 11, margin: '6px 0 0' }}>
+              {describeQuote(quote.lines)}
+              {tier.cycle === 'annual' && ' · billed once for 10 months'}
+              {' · plus sales tax, calculated at checkout'}
+            </p>
+          ) : (
+            <p style={{ color: quoteError ? '#fca5a5' : MUTED, fontSize: 11, margin: '6px 0 0' }}>
+              {quoteError
+                ? `We couldn't show your total here — ${quoteError} Stripe's checkout page always shows the exact amount before you pay.`
+                : 'Pricing…'}
+            </p>
+          )}
         </div>
       </div>
 

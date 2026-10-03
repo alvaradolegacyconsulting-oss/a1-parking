@@ -1,5 +1,6 @@
 import 'server-only'
 import { createSupabaseServiceClient } from './supabase-admin'
+import type { PriceBand, PriceModel } from './pricing-quote'
 
 // B66.3 — standard-catalog query helper. Resolves a (track, tier, cycle,
 // mode) tuple to the per-line-item Stripe Price IDs for line-item
@@ -40,8 +41,47 @@ export interface CatalogLine {
   line_item: LineItem
   stripe_price_id: string
   stripe_product_id: string
-  unit_amount_cents: number
+  // 🔴 NULL on graduated rows. The amount lives in `tiers`, not here —
+  // reading unit_amount_cents alone on a graduated line yields null and,
+  // with the usual `?? 0`, a confident $0.
+  unit_amount_cents: number | null
   lookup_key: string | null
+  // 2026-10-02 — price_model + tiers added to the projection.
+  //
+  // 🔴 WHY: these columns have always existed and this helper never
+  // selected them, so no caller could price a graduated line. Checkout
+  // did not need to (Stripe applies the bands), but that made the
+  // catalog UNPRICEABLE OUTSIDE STRIPE, which is why /signup grew a
+  // second, hardcoded price source and started contradicting Checkout.
+  // Carrying the bands is what lets display and charge share one source.
+  price_model: PriceModel | null
+  tiers: PriceBand[] | null
+}
+
+/**
+ * How many catalog rows a self-serve tier must have, per cycle+mode.
+ *
+ * 🔴 ABSENCE IS NOT A PRICE. A missing row does not raise — it just
+ * makes the total smaller, so an incomplete catalog quotes a confident
+ * wrong number instead of failing. Both the Checkout route and the
+ * /api/signup/quote estimate assert against this map and 503 rather
+ * than price a partial basket.
+ *
+ *   pm_starter       2 — base + per_permit. NO per_property: Starter is
+ *                        one property by definition. The missing line is
+ *                        the correct shape, not an omission.
+ *   enforcement_only 2 — base + per_property
+ *   legacy           2 — base + per_property, on EITHER track. PM Pro has
+ *                        no per_permit line (permits are unlimited on
+ *                        Pro); the track distinguishes the two, and this
+ *                        helper is keyed on (track, tier).
+ *
+ * pm_only is absent on purpose: the self-serve picker cannot send it.
+ */
+export const EXPECTED_LINE_COUNT: Record<'pm_starter' | 'enforcement_only' | 'legacy', number> = {
+  pm_starter: 2,
+  enforcement_only: 2,
+  legacy: 2,
 }
 
 export async function getStandardCatalogLines(
@@ -54,7 +94,7 @@ export async function getStandardCatalogLines(
 
   const { data, error } = await supabase
     .from('stripe_prices')
-    .select('line_item, stripe_price_id, stripe_product_id, unit_amount_cents, lookup_key')
+    .select('line_item, stripe_price_id, stripe_product_id, unit_amount_cents, lookup_key, price_model, tiers')
     .eq('tier_track', track)
     .eq('tier_name', tier)
     .eq('cycle', cycle)

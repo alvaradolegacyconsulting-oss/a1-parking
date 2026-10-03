@@ -122,3 +122,27 @@ export function resolveInitialToken(search: string | null | undefined): PlanToke
   const v = raw.trim()
   return isPlanToken(v) ? v : DEFAULT_TOKEN
 }
+
+/**
+ * Reverse lookup: a stored (track, tier) pair → its display token.
+ *
+ * 🔴 WHY THE REVERSE DIRECTION IS NEEDED. /signup knows the token the
+ * visitor arrived with. /signup/verify does not — it reads back
+ * `intended_tier` from the account, which stores the BACKEND pair, and
+ * before 2026-10-02 it rendered that pair raw: "Enforcement · Legacy".
+ * That is the internal vocabulary on a purchase confirmation. The pair
+ * is the durable truth; the name is derived from it on the way out.
+ *
+ * Returns null for a pair outside the self-serve lineup (pm_only, the
+ * historical 6-tier names, or a hand-edited user_metadata value).
+ * Callers must handle null — it means "not a plan we sell", not
+ * "unnamed", so falling back to a capitalised tier string would
+ * reintroduce exactly the leak this closes.
+ */
+export function tokenFor(track: string, tier: string): PlanToken | null {
+  for (const t of PICKER_TOKENS) {
+    const p = PLANS[t]
+    if (p.track === track && p.tier === tier) return t
+  }
+  return null
+}
