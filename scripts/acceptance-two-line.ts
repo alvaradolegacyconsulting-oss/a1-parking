@@ -80,9 +80,30 @@ const main = async () => {
       const up = await (stripe.invoices as unknown as { createPreview: (a: unknown) => Promise<Stripe.Invoice> })
         .createPreview({ subscription: sub.id })
       console.log(`  upcoming invoice preview: subtotal=${money(up.subtotal)}`)
-      const pro = up.lines.data.filter(l => (l as unknown as { proration?: boolean }).proration)
-      console.log(`${pro.length ? '✅' : '❌'} ${pro.length} prorated line(s) for the mid-cycle add`)
-      pro.forEach(l => console.log(`     ${l.description} — ${money(l.amount)}`))
+
+      // 🔴 DETECT THE PRORATION BY ARITHMETIC, NOT BY A FLAG.
+      //
+      // This filtered on `line.proration`, which does not exist on our
+      // pinned API version — so it reported "0 prorated lines" and
+      // printed a red X against an upcoming subtotal of $379 that was
+      // exactly right. A false red on correct behaviour, on the live
+      // acceptance run (2026-10-02). Same defect, same fix, as
+      // verify-annual-proration.ts.
+      //
+      // A clean next cycle is base + 3 × per-property = $359. Anything
+      // above that is catch-up for the mid-cycle add. The arithmetic
+      // cannot go stale when Stripe renames or drops a field.
+      //
+      // It also now GATES. The flag version printed ❌ and exited 0,
+      // because only the quantity check fed `ok` — so the one assertion
+      // most likely to be wrong was the one that could not fail the run.
+      const cleanRecurring = 29900 + 3 * 2000
+      const extra = (up.subtotal ?? 0) - cleanRecurring
+      const pro_ok = extra > 0
+      console.log(`${pro_ok ? '✅' : '❌'} a proration is PENDING on the next invoice — ` +
+        `upcoming ${money(up.subtotal)} vs clean recurring ${money(cleanRecurring)} → ${money(extra)} of catch-up`)
+      up.lines.data.forEach(l => console.log(`     ${l.description} — ${money(l.amount)}`))
+      if (!pro_ok) process.exit(1)
     }
     if (!ok) process.exit(1)
     return
