@@ -62,7 +62,8 @@ npx tsx scripts/acceptance-two-line.ts before
 3. Company name: **`ZZ Two Line Acceptance`** — the cleanup script matches on it exactly.
 4. Email: a `+` alias you control, e.g. `alvaradolegacyconsulting+twoline@gmail.com`.
 5. Complete signup, confirm the email, and on `/signup/verify`:
-   - **sign the SaaS Agreement** (the Continue button stays disabled until you do),
+   - **sign the SaaS Agreement** (the Continue button stays disabled until you do — and as of
+     today the server refuses checkout without it too, so this is no longer skippable),
    - then **Continue → Stripe Checkout**.
 6. Pay with your real card.
 
@@ -155,6 +156,11 @@ customer view and the refund is the evidence this ran.
 
 ## If something goes wrong
 
+- **🔴 `legal consent not recorded at current versions`, with `saas_agreement` in `missing`.**
+  New as of today: the SaaS Agreement is now enforced **server-side**, not just by the disabled
+  button. If you reach this, the signature on `/signup/verify` did not record — go back, sign it,
+  and retry. Do not try to work around it; refusing here is the gate doing its job, and it is the
+  one that makes the agreement a contract rather than a checkbox.
 - **One line item at checkout** → stop, do not pay, tell me. That is the defect.
 - **Subtotal is not $339** → pay nothing, screenshot, tell me the figure.
 - **Teardown fails partway** → re-run `teardown`; it is idempotent and reports what is left.
