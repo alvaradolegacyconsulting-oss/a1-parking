@@ -13,7 +13,9 @@
     "verify:selfserve": "tsx scripts/verify-self-serve-door.ts",
     "verify:tierparam": "tsx scripts/verify-signup-tier-param.ts",
     "verify:catalog": "tsx scripts/verify-catalog-oct2026.ts",
-    "verify:pricing": "tsx scripts/verify-pricing-sweep.ts"
+    "verify:pricing": "tsx scripts/verify-pricing-sweep.ts",
+    "verify:saas": "tsx scripts/verify-saas-consent.ts",
+    "verify:proration": "tsx scripts/verify-annual-proration.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

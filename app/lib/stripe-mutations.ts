@@ -223,7 +223,7 @@ async function countActiveRecords(
 async function updateLineItemQuantity(
   itemId: string,
   newQty: number,
-  prorationBehavior: 'create_prorations' | 'none',
+  prorationBehavior: 'create_prorations' | 'none' | 'always_invoice',
   companyId: number,
   lineItem: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -261,7 +261,7 @@ async function updateLineItemQuantity(
 async function updateLineItemPrice(
   itemId: string,
   newPriceId: string,
-  prorationBehavior: 'create_prorations' | 'none',
+  prorationBehavior: 'create_prorations' | 'none' | 'always_invoice',
   companyId: number,
   lineItem: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -299,7 +299,9 @@ export type SyncOnAddResult =
  * (property/driver: add or reactivate; permit: approve via
  * approve_vehicle RPC returning action='approved'). Increments the
  * relevant line item only when activeCount > current Stripe quantity.
- * Uses create_prorations. Reactivation within prepaid is free by
+ * Proration: always_invoice on ANNUAL (bill the add now rather than
+ * up to a year later), create_prorations on monthly. Reactivation
+ * within prepaid is free by
  * construction (the floor check excludes it). Same floor-guard applies
  * to permit mid-cycle (un-approve → next-renewal trim, not mid-cycle
  * decrement) per slice 1 commit 4 design.
@@ -354,7 +356,28 @@ export async function syncOnAdd(
     return { ok: true, action: 'noop_within_floor' }
   }
 
-  const result = await updateLineItemQuantity(item.itemId, activeCount, 'create_prorations', companyId, item.lineItem)
+  // 🔴 ANNUAL BILLS THE ADD NOW; MONTHLY KEEPS DEFERRING IT.
+  //
+  // create_prorations puts the proration on the NEXT scheduled invoice.
+  // On monthly that is ~30 days out, which is fine. On ANNUAL it can be
+  // up to twelve months out — a customer adds a property in month two
+  // and we invoice for it the following January. always_invoice bills
+  // it when it happens.
+  //
+  // This does NOT interact with the quantity floor or the reactivation
+  // guard: both are the `activeCount <= item.quantity` check above,
+  // which runs BEFORE this line and decides WHICH adds are billed.
+  // proration_behavior only decides WHEN.
+  //
+  // Scope note: above 20 properties the graduated band is $0, so an
+  // annual add past 20 has nothing to bill either way. This changes
+  // behaviour only for properties 2–20.
+  //
+  // Accepted consequence (Jose, 2026-10-02): always_invoice attempts
+  // collection immediately, so a declined card on a small proration
+  // becomes a failed invoice and enters normal dunning.
+  const proration = item.cycle === 'annual' ? 'always_invoice' : 'create_prorations'
+  const result = await updateLineItemQuantity(item.itemId, activeCount, proration, companyId, item.lineItem)
   if (!result.ok) return result
   return { ok: true, action: 'incremented' }
 }

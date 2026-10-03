@@ -1,3 +1,4 @@
+import { SAAS_VERSION } from '../legal-versions'
 import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
@@ -311,16 +312,68 @@ export async function handleCheckoutSessionCompleted(
     })
   }
 
+  // ── 🔴 Bind the SaaS acceptance to the company it belongs to ─────
+  //
+  // On self-serve the SaaS row is written BEFORE checkout, from
+  // /api/signup/accept-saas, at a point where no company exists yet —
+  // so it lands with company_id NULL and user_id as the only key. That
+  // was the documented chicken-and-egg; the Sept 4 relax migration made
+  // the write succeed, and this is the other half: now that the company
+  // exists, the row is bound to it.
+  //
+  // Two consumers need it bound, and both were silently finding
+  // nothing:
+  //   • the Order Form snapshot below, which looks up by
+  //     (company_id, document_type='saas');
+  //   • anyone asking "did this company sign the agreement", which is
+  //     the question that matters if a subscription is ever disputed.
+  //
+  // Non-fatal. The subscription is already paid and the company
+  // exists; failing the webhook here would strand a paying customer
+  // over a bookkeeping link. Logged loudly instead, because an unbound
+  // acceptance is a real gap in the evidence trail.
+  {
+    const { data: bound, error: bindErr } = await supabase
+      .from('tos_acceptances')
+      .update({ company_id: companyId })
+      .eq('document_type', 'saas')
+      .is('company_id', null)
+      .eq('user_id', session.client_reference_id ?? '')
+      .select('id')
+    if (bindErr) {
+      console.error('[saas-bind] could not bind the SaaS acceptance to the company', {
+        companyId, err: bindErr.message,
+      })
+    } else if (!bound?.length) {
+      // Absence is reported, not swallowed. By the time this runs the
+      // consent gate in create-checkout-session has already required a
+      // SaaS row at the pinned version, so finding none here means the
+      // row exists but is keyed to a different user — worth knowing.
+      console.warn('[saas-bind] no unbound SaaS acceptance found for this user', {
+        companyId, userId: session.client_reference_id,
+      })
+    } else {
+      console.log('[saas-bind] bound SaaS acceptance to company', { companyId, rows: bound.length })
+    }
+
+    // (c) Stamp the version on user_roles. Same reason: "which version
+    // did they sign" must be answerable from the role row, which is
+    // where every other consumer looks.
+    const { error: stampErr } = await supabase
+      .from('user_roles')
+      .update({ saas_accepted_version: SAAS_VERSION })
+      .ilike('email', email)
+    if (stampErr) {
+      console.error('[saas-bind] could not stamp user_roles.saas_accepted_version', {
+        companyId, email, err: stampErr.message,
+      })
+    }
+  }
+
   // ── B2-5 C5 — Order Form snapshot (self-serve path) ──────────────
-  // Testability caveat: on self-serve, the SaaS tos_acceptances row
-  // is supposed to be written pre-checkout via accept_saas_agreement
-  // — which today RAISEs 42501 because user_roles doesn't exist yet
-  // (the chicken-and-egg documented in
-  // docs/backlog/accept-saas-agreement-selfserve-chicken-and-egg.md).
-  // Until that bug fixes, the SaaS row lookup below finds nothing and
-  // the writer skips + logs. Structural wiring correct; end-to-end
-  // verification waits on that dependency. Proposal-code path is
-  // unaffected — its SaaS row lands inline in redeem_proposal_code.
+  // The SaaS row is bound to the company immediately above, so the
+  // lookup below now finds it on the self-serve path too. Proposal-code
+  // path unchanged — its SaaS row lands inline in redeem_proposal_code.
   await writeOrderFormSnapshot({
     supabase,
     companyId,
@@ -928,7 +981,13 @@ export async function writeOrderFormSnapshot(args: WriteOrderFormSnapshotArgs): 
     .select('id, reviewed_at, accepted_at')
     .eq('company_id', companyId)
     .eq('document_type', 'saas')
-    .order('created_at', { ascending: false })
+    // 🔴 accepted_at, NOT created_at. tos_acceptances has no created_at
+    // column, so this ordering raised 42703 and the error branch below
+    // logged "lookup failed — skipping snapshot". The snapshot has been
+    // skipped for TWO reasons stacked on each other: the row was
+    // unbound, and this query could not run even once it was bound.
+    // Fixing only the binding would have left it still skipping.
+    .order('accepted_at', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (saasErr) {

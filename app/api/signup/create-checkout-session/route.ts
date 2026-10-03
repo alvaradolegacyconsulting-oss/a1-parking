@@ -7,6 +7,7 @@ import {
   TOS_VERSION,
   PRIVACY_VERSION,
   TEXAS_ATTESTATION_VERSION,
+  SAAS_VERSION,
 } from '../../../lib/legal-versions'
 
 // B66.3 — Stripe Checkout session creator. Called from /signup/verify
@@ -99,9 +100,9 @@ export async function POST() {
   // owns the re-attest UX.
   const { data: consentRows, error: consentErr } = await supabase
     .from('tos_acceptances')
-    .select('document_type, tos_version, privacy_version, attestation_version')
+    .select('document_type, tos_version, privacy_version, attestation_version, saas_version')
     .eq('user_id', user.id)
-    .in('document_type', ['tos', 'privacy', 'texas_attestation'])
+    .in('document_type', ['tos', 'privacy', 'texas_attestation', 'saas'])
   if (consentErr) {
     return NextResponse.json(
       { error: 'legal consent verification failed: ' + consentErr.message },
@@ -117,11 +118,22 @@ export async function POST() {
   const hasTexas = (consentRows ?? []).some(
     r => r.document_type === 'texas_attestation' && r.attestation_version === TEXAS_ATTESTATION_VERSION
   )
-  if (!hasTos || !hasPrivacy || !hasTexas) {
+  // 🔴 2026-10-02 — saas ADDED. The gate above was built to stop a
+  // caller POSTing straight here and buying a subscription with no
+  // recorded consent, and then omitted the one document that IS the
+  // subscription contract. /signup/verify disabled the Continue button
+  // until the SaaS gate was signed, but the page submits by
+  // programmatic form POST to this route — so the UI gate protected
+  // nothing a direct POST could not skip.
+  const hasSaas = (consentRows ?? []).some(
+    r => r.document_type === 'saas' && r.saas_version === SAAS_VERSION
+  )
+  if (!hasTos || !hasPrivacy || !hasTexas || !hasSaas) {
     const missing: string[] = []
     if (!hasTos) missing.push('terms_of_service')
     if (!hasPrivacy) missing.push('privacy_policy')
     if (!hasTexas) missing.push('texas_attestation')
+    if (!hasSaas) missing.push('saas_agreement')
     return NextResponse.json(
       {
         error: 'legal consent not recorded at current versions',
