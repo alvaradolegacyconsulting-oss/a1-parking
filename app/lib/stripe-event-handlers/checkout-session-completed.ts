@@ -1,4 +1,9 @@
 import { SAAS_VERSION } from '../legal-versions'
+
+// The consent documents a self-serve signup records before checkout,
+// all of which must end up bound to the company that results from it.
+// An allowlist: a new document type binds only once it is named here.
+export const BINDABLE_DOCUMENT_TYPES = ['tos', 'privacy', 'texas_attestation', 'saas'] as const
 import 'server-only'
 import type Stripe from 'stripe'
 import { createSupabaseServiceClient } from '../supabase-admin'
@@ -312,21 +317,43 @@ export async function handleCheckoutSessionCompleted(
     })
   }
 
-  // ── 🔴 Bind the SaaS acceptance to the company it belongs to ─────
+  // ── 🔴 Bind the consent record to the company it belongs to ──────
   //
-  // On self-serve the SaaS row is written BEFORE checkout, from
-  // /api/signup/accept-saas, at a point where no company exists yet —
-  // so it lands with company_id NULL and user_id as the only key. That
+  // On self-serve every acceptance row is written BEFORE checkout — the
+  // first three at verification, the SaaS row from
+  // /api/signup/accept-saas — at a point where no company exists yet.
+  // They land with company_id NULL and user_id as the only key. That
   // was the documented chicken-and-egg; the Sept 4 relax migration made
   // the write succeed, and this is the other half: now that the company
-  // exists, the row is bound to it.
+  // exists, the rows are bound to it.
   //
-  // Two consumers need it bound, and both were silently finding
+  // Two consumers need them bound, and both were silently finding
   // nothing:
   //   • the Order Form snapshot below, which looks up by
   //     (company_id, document_type='saas');
-  //   • anyone asking "did this company sign the agreement", which is
-  //     the question that matters if a subscription is ever disputed.
+  //   • anyone asking "did this company agree to X", which is the
+  //     question that matters if a subscription is ever disputed.
+  //
+  // 🔴 KEYED ON userId, NOT session.client_reference_id (2026-10-03).
+  // The first version of this block filtered on client_reference_id,
+  // which create-checkout-session has never set — so the predicate was
+  // `user_id = ''`, it matched nothing on every run, and the warn
+  // branch below fired silently every time. The live acceptance run on
+  // 2026-10-02 proved it: user_roles.saas_accepted_version was stamped
+  // (that half keys on email) while the SaaS row sat unbound, and the
+  // order-form snapshot never wrote because it had nothing to bind to.
+  // The session's user id travels in metadata.supabase_user_id, read as
+  // `userId` above, which is the only identifier this flow actually
+  // populates.
+  //
+  // 🔴 ALL FOUR DOCUMENT TYPES, not just saas (2026-10-03). The
+  // snapshot only needs the SaaS row, which is why the first version
+  // bound only that one — but "did this company accept the Terms" is
+  // just as much a question a dispute asks, and an acceptance row whose
+  // company_id is NULL cannot answer it. An explicit allowlist rather
+  // than dropping the filter: binding whatever happens to be unbound
+  // for this user is a wildcard, and a document type added later should
+  // have to opt in here deliberately.
   //
   // Non-fatal. The subscription is already paid and the company
   // exists; failing the webhook here would strand a paying customer
@@ -336,24 +363,33 @@ export async function handleCheckoutSessionCompleted(
     const { data: bound, error: bindErr } = await supabase
       .from('tos_acceptances')
       .update({ company_id: companyId })
-      .eq('document_type', 'saas')
+      .in('document_type', BINDABLE_DOCUMENT_TYPES)
       .is('company_id', null)
-      .eq('user_id', session.client_reference_id ?? '')
-      .select('id')
+      .eq('user_id', userId)
+      .select('id, document_type')
     if (bindErr) {
-      console.error('[saas-bind] could not bind the SaaS acceptance to the company', {
-        companyId, err: bindErr.message,
+      console.error('[saas-bind] could not bind the consent rows to the company', {
+        companyId, userId, err: bindErr.message,
       })
     } else if (!bound?.length) {
       // Absence is reported, not swallowed. By the time this runs the
-      // consent gate in create-checkout-session has already required a
-      // SaaS row at the pinned version, so finding none here means the
-      // row exists but is keyed to a different user — worth knowing.
-      console.warn('[saas-bind] no unbound SaaS acceptance found for this user', {
-        companyId, userId: session.client_reference_id,
+      // consent gate in create-checkout-session has already required
+      // all four rows at their pinned versions, so finding none here
+      // means they exist but are keyed to a different user — or that
+      // this predicate is wrong again, which is exactly how the last
+      // one hid for a month.
+      console.warn('[saas-bind] no unbound consent rows found for this user', {
+        companyId, userId,
       })
     } else {
-      console.log('[saas-bind] bound SaaS acceptance to company', { companyId, rows: bound.length })
+      // Log WHICH types bound. A count alone would have looked healthy
+      // on a run that bound the SaaS row and missed the other three.
+      const got = bound.map(r => r.document_type as string).sort()
+      const missing = BINDABLE_DOCUMENT_TYPES.filter(t => !got.includes(t))
+      console.log('[saas-bind] bound consent rows to company', {
+        companyId, userId, bound: got,
+        ...(missing.length ? { notBound: missing } : {}),
+      })
     }
 
     // (c) Stamp the version on user_roles. Same reason: "which version
