@@ -33,7 +33,22 @@ const reasonLabelForResident = (code: string | null | undefined) => reasonLabel(
 // Same for vehicles. See app/lib/deactivation-reasons.ts for the
 // entity-scoped design lock — shared codes may render different
 // labels on resident vs vehicle surfaces.
-const vehicleReasonLabelForDisplay = (code: string | null | undefined) => reasonLabel('vehicle', code)
+// 2026-10-06 — falls back to the SYSTEM vocabulary.
+//
+// System codes DO land on vehicle rows: the three cascade codes have
+// always stamped cascade-produced rows, and 'resident_removed' now
+// stamps resident self-removals. But reasonLabel('vehicle', ...) only
+// searches the VEHICLE list, so every one of them has been rendering in
+// this panel as the raw `code: cascade_resident_deactivated` fallback —
+// a pre-existing wart that resident self-removal would have joined.
+//
+// The '[system] ' prefix is stripped for display. It exists to mark a
+// code as non-selectable in manager-facing PICKERS; this panel is
+// read-only history, where the prefix only looks like a leak.
+const vehicleReasonLabelForDisplay = (code: string | null | undefined) =>
+  reasonLabel('vehicle', code)
+  ?? reasonLabel('system', code)?.replace(/^\[system\]\s*/, '')
+  ?? null
 
 type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
 

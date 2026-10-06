@@ -66,6 +66,7 @@ export type SystemReasonCode =
   | 'cascade_resident_deactivated'
   | 'owner_trim'
   | 'admin_cascade'
+  | 'resident_removed'
 
 export interface DeactivationReason<Code extends string = string> {
   readonly code:     Code
@@ -112,6 +113,20 @@ export const SYSTEM_DEACTIVATION_REASONS: readonly DeactivationReason<SystemReas
   { code: 'cascade_resident_deactivated', label: '[system] cascade from resident deactivation', notifies: false },
   { code: 'owner_trim',                    label: '[system] B166 owner-trim',                    notifies: false },
   { code: 'admin_cascade',                 label: '[system] admin property/company cascade',     notifies: false },
+  // 2026-10-06 — resident self-removal. SYSTEM, not a vehicle reason,
+  // for one reason: a manager must never be able to claim the resident
+  // took their own car off the list. Only deactivate_my_vehicle stamps
+  // it, and deactivate_vehicle's v_system_codes rejects it from the
+  // manager path.
+  //
+  // 🔴 THE REJECTION IS NOT ENFORCED BY THIS FILE. The gate is a second
+  // copy of this list hardcoded inside deactivate_vehicle. Adding a
+  // code here without adding it there leaves the manager path open.
+  // They are one fact in two places — change both.
+  //
+  // notifies: false — the resident performed the action; emailing them
+  // about it is noise, not notice.
+  { code: 'resident_removed',              label: '[system] Removed by the resident',            notifies: false },
 ]
 
 // ── Precomputed per-entity lookups ───────────────────────────────────

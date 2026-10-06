@@ -118,6 +118,11 @@ export default function ResidentPortal() {
   // the marginal disclosure is worth the usefulness.
   const [eligibleAgainStr, setEligibleAgainStr] = useState<string | null>(null)
   const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null)
+  // 2026-10-06 resident self-removal — in-flight guard. Mirrors B217:
+  // a second RPC call is harmless (the RPC is idempotent and returns
+  // already_deactivated) but a double-tap would fire two confirms and
+  // two refreshes, which reads as a glitch.
+  const [removingVehicleId, setRemovingVehicleId] = useState<string | null>(null)
   const [editingVehicle, setEditingVehicle] = useState<any>({})
   // Slice 4 — resident's own pending plate changes, indexed by vehicle_id.
   // Fetched alongside vehicles; used to render the "Plate change under
@@ -731,6 +736,59 @@ export default function ResidentPortal() {
         },
       })
       setEditingVehicleId(null); fetchVehicles(resident.unit, resident.property, resident.email)
+    }
+  }
+
+  // ── 2026-10-06 — resident removes their OWN vehicle ───────────────
+  //
+  // Soft-deactivate through deactivate_my_vehicle. The resident is the
+  // actor: the RPC stamps deactivated_by with their address and
+  // reason='resident_removed', which is what makes the event legible in
+  // the PM's CRM restore panel.
+  //
+  // 🔴 NOT REVERSIBLE BY THE RESIDENT, and the dialog has to say so. A
+  // PM restore is the approval; the resident's own route back is to
+  // re-add the plate, which lands as pending like any new vehicle. If
+  // the copy implied they could undo it, the first person to remove the
+  // wrong car would expect a button that does not exist.
+  //
+  // No client-side logAudit here, unlike saveVehicle: the RPC writes its
+  // own RESIDENT_DEACTIVATE_VEHICLE row inside the same transaction, so
+  // the audit cannot be skipped by a client that navigates away — and a
+  // second client-side row would double-count the event.
+  // Typed to the three fields it reads rather than `any` like its
+  // neighbours — the file carries 28 of those and this adds none.
+  async function removeVehicle(v: { id: string; plate: string; property: string }) {
+    if (removingVehicleId) return
+    const confirmed = window.confirm(
+      `Remove ${v.plate} from your authorized vehicles?\n\n` +
+      `It will no longer be permitted to park at ${v.property}, and enforcement may ticket or tow it.\n\n` +
+      `You can't undo this yourself. To bring it back you'd add the plate again and your property manager would review it like a new vehicle.`
+    )
+    if (!confirmed) return
+
+    setRemovingVehicleId(v.id)
+    try {
+      const { error } = await supabase.rpc('deactivate_my_vehicle', { p_vehicle_id: v.id })
+      if (error) {
+        // Same matcher the other three resident RPCs rely on — the RPC
+        // raises 'account_deactivated' with the identical string so a
+        // deactivated resident is told that, not "not yours".
+        if (error.message.includes('account_deactivated')) {
+          alert('Your registration is deactivated — contact your property manager.')
+        } else if (error.message.includes('not found or not yours')) {
+          // The no-oracle error. In the UI this can only mean the list
+          // is stale (someone else already removed it, or residency
+          // changed), so say that rather than echoing the server string.
+          alert('That vehicle is no longer on your list. Refreshing.')
+        } else {
+          alert('Could not remove this vehicle: ' + error.message)
+        }
+        return
+      }
+      await fetchVehicles(resident.unit, resident.property, resident.email)
+    } finally {
+      setRemovingVehicleId(null)
     }
   }
 
@@ -1562,10 +1620,26 @@ export default function ResidentPortal() {
                               under_review is locked (one-in-flight rule).
                               A pending change on this vehicle is announced
                               by the under-review pill below. */}
+                          {/* 2026-10-06 — Remove. Gated identically to Request
+                              Plate Change, and for the same reasons: only an
+                              ACTIVE vehicle is in the authorized set worth
+                              removing (pending is already is_active=false, so
+                              the button would be a no-op), and a vehicle with a
+                              plate change in flight stays locked under the
+                              one-in-flight rule — removing it would orphan the
+                              pending change row. Styled destructively and placed
+                              last so it is never the first thing a thumb finds. */}
                           {v.status === 'active' && !pendingPlateChangesByVehicle[v.id] && (
                             <button onClick={() => requestPlateChange(v)}
                               style={{ width:'100%', padding:'7px', background:'transparent', color:'#f0a340', border:'1px solid #a16207', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial', marginTop:'6px' }}>
                               Request Plate Change
+                            </button>
+                          )}
+                          {v.status === 'active' && !pendingPlateChangesByVehicle[v.id] && (
+                            <button onClick={() => removeVehicle(v)}
+                              disabled={removingVehicleId === v.id}
+                              style={{ width:'100%', padding:'7px', background:'transparent', color: removingVehicleId === v.id ? '#6b7280' : '#f87171', border:`1px solid ${removingVehicleId === v.id ? '#374151' : '#7f1d1d'}`, borderRadius:'6px', cursor: removingVehicleId === v.id ? 'default' : 'pointer', fontSize:'11px', fontWeight:'bold', fontFamily:'Arial', marginTop:'6px' }}>
+                              {removingVehicleId === v.id ? 'Removing…' : 'Remove This Vehicle'}
                             </button>
                           )}
                           {pendingPlateChangesByVehicle[v.id] && (() => {
