@@ -46,18 +46,40 @@ const chk = (name: string, ok: boolean, detail = '') => {
 
 type Actor = { email: string; uid: string; client: ReturnType<typeof createClient> }
 
+// 🔴 CLEANUP REGISTRY, not the actor variables.
+//
+// The first version tore down from A/B/M, which are only assigned once
+// makeUser RETURNS. The captcha-gated signIn threw midway through
+// makeUser('a') on 2026-10-06, so A was still null, the finally block
+// skipped it, and a real auth user plus a real user_roles row were left
+// in production. A teardown that depends on the success of the thing it
+// is cleaning up after is not a teardown.
+//
+// Every created identity is registered the instant it exists.
+const created: { email: string; uid: string }[] = []
+
 async function makeUser(tag: string, role: 'resident' | 'manager'): Promise<Actor> {
   const email = `zz-rm-${tag}-${STAMP}@test.invalid`
   const { data, error } = await db.auth.admin.createUser({ email, password: PW, email_confirm: true })
   if (error || !data.user) throw new Error(`createUser ${tag}: ${error?.message}`)
+  created.push({ email, uid: data.user.id })
   const { error: rErr } = await db.from('user_roles').insert({
     email, role, company: COMPANY, property: [PROPERTY], is_active: true,
     ...(role === 'manager' ? { can_approve_vehicles: true } : {}),
   })
   if (rErr) throw new Error(`user_roles ${tag}: ${rErr.message}`)
+  // Session via generateLink -> verifyOtp, not signInWithPassword.
+  // Password sign-in is captcha-gated (post-B213 Turnstile toggle-on)
+  // and a script has no captcha token; verifyOtp is not gated. Same
+  // path scripts/b228-p3-role-bypass-check.ts and the /register
+  // single-solve build use.
   const client = createClient(URL, ANON, { auth: { persistSession: false } })
-  const { error: sErr } = await client.auth.signInWithPassword({ email, password: PW })
-  if (sErr) throw new Error(`signIn ${tag}: ${sErr.message}`)
+  const { data: link, error: lErr } = await db.auth.admin.generateLink({ type: 'magiclink', email })
+  if (lErr || !link.properties?.hashed_token) throw new Error(`generateLink ${tag}: ${lErr?.message}`)
+  const { data: sess, error: sErr } = await client.auth.verifyOtp({
+    token_hash: link.properties.hashed_token, type: 'magiclink',
+  })
+  if (sErr || !sess.session) throw new Error(`verifyOtp ${tag}: ${sErr?.message}`)
   return { email, uid: data.user.id, client }
 }
 
@@ -85,7 +107,7 @@ const main = async () => {
   const probe = await db.rpc('deactivate_my_vehicle', { p_vehicle_id: -1 })
   if (probe.error && /Could not find the function/i.test(probe.error.message)) {
     console.error('deactivate_my_vehicle does not exist — apply')
-    console.error('  docs/backlog/wip-20261006_resident_vehicle_removal.sql  first.')
+    console.error('  migrations/20261006_resident_vehicle_removal.sql  first.')
     console.error('  This is NOT a pass and NOT a failure of the feature.')
     process.exit(2)
   }
@@ -170,14 +192,23 @@ const main = async () => {
       JSON.stringify(r7.data ?? r7.error?.message))
   } finally {
     // ── Teardown ──
-    await db.from('audit_logs').delete().eq('action', 'RESIDENT_DEACTIVATE_VEHICLE').in('user_email', [A?.email ?? '', B?.email ?? ''])
+    await db.from('audit_logs').delete().eq('action', 'RESIDENT_DEACTIVATE_VEHICLE')
+      .in('user_email', created.length ? created.map(c => c.email) : [''])
     await db.from('vehicles').delete().eq('unit', UNIT).eq('property', PROPERTY)
     await db.from('residents').delete().eq('unit', UNIT).eq('property', PROPERTY)
-    for (const a of [A, B, M]) {
-      if (!a) continue
+    for (const a of created) {
       await db.from('user_roles').delete().ilike('email', a.email)
       await db.auth.admin.deleteUser(a.uid).catch(() => {})
     }
+  }
+
+  // Sweep orphans from any EARLIER aborted run of this gate. Scoped to
+  // the zz-rm-*@test.invalid shape this script owns and nothing else.
+  const { data: orphans } = await db.auth.admin.listUsers({ perPage: 1000 })
+  for (const o of (orphans?.users ?? []).filter(u => /^zz-rm-[abm]-\d+@test\.invalid$/.test(u.email ?? ''))) {
+    await db.from('user_roles').delete().ilike('email', o.email!)
+    await db.auth.admin.deleteUser(o.id).catch(() => {})
+    console.log(`  swept orphan from an earlier run: ${o.email}`)
   }
 
   // Residue check — a green run must leave nothing behind.
