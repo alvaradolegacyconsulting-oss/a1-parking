@@ -63,3 +63,34 @@ export async function assertPlateUniqueAtProperty(
   }
   return null
 }
+
+// ════════════════════════════════════════════════════════════════════
+// normalizeUnit — unit comparison, format-insensitive
+// ════════════════════════════════════════════════════════════════════
+//
+// 🔴 WHY. `unit` is free text that residents and managers both type.
+// Green Acres currently holds the same unit as "Traila# 191" and
+// "Traila #191" — one resident, one trailer, two spellings. Comparing
+// those with equality classified a plain same-resident re-submission as
+// a DIFFERENT resident/unit collision, which is the difference between
+// "clear this duplicate silently" and "escalate to the property office".
+//
+// Live shapes this has to survive, all from A1's production data:
+//   "116"  "#55"  "Unit 81"  "Unidad #115"  "Trlr 155"  "1012 unit 2"
+//
+// Deliberately the same aggressive strip as normalizePlate: drop
+// everything that is not a letter or digit, then uppercase. "Traila# 191"
+// and "Traila #191" both become "TRAILA191".
+//
+// 🔴 NOT for display and NOT for storage. The typed value is what the
+// resident and the manager recognise, so it stays on the row. This is a
+// comparison key only.
+//
+// 🔴 NOT a uniqueness rule either. "Unit 1" and "Unit 01" are different
+// units here (1 vs 01) because digits are preserved — zero-padding is a
+// real distinction in some buildings and guessing otherwise would merge
+// two households.
+export function normalizeUnit(value: string | null | undefined): string {
+  if (!value) return ''
+  return value.replace(/[^A-Z0-9]/gi, '').toUpperCase()
+}

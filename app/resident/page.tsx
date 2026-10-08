@@ -824,7 +824,21 @@ export default function ResidentPortal() {
       // gives the resident the right escalation path ("contact PM").
       // Other errors (validation, network) get the raw message.
       const msg = error.message || 'Error'
-      if (msg.includes('account_deactivated')) {
+      // 🔴 2026-10-07 — the duplicate refusals, in plain language.
+      //
+      // request_my_vehicle used to insert a second pending row for a
+      // plate the resident already had. Residents who saw no
+      // confirmation re-submitted, and at Green Acres 18 of 29 pending
+      // rows were duplicates that could never be approved — approving
+      // one hung the manager's button. The RPC now refuses, and these
+      // two messages are the whole point of refusing: each one tells
+      // the resident that the thing they were about to re-do is already
+      // done, and what the actual state is.
+      if (msg.includes('vehicle_already_registered')) {
+        alert('This vehicle is already registered and approved at your property. You don\u2019t need to add it again.')
+      } else if (msg.includes('vehicle_already_pending')) {
+        alert('This vehicle is already waiting for approval by the property office. Submitting it again won\u2019t speed it up \u2014 you\u2019ll see it here as soon as they review it.')
+      } else if (msg.includes('account_deactivated')) {
         alert('Your account is deactivated. Contact your property manager to be reactivated before submitting a vehicle.')
       } else {
         alert('Error: ' + msg)
@@ -1581,6 +1595,20 @@ export default function ResidentPortal() {
                               close with the "property's rules still apply"
                               anchor. See
                               feedback_platform_states_facts_not_permissions.md. */}
+                          {/* 🔴 2026-10-07 — say WHO they are waiting on.
+                              The copy below explained what pending means for
+                              enforcement but never named the next step, so a
+                              resident with no confirmation concluded the
+                              submission had failed and sent it again. That is
+                              what produced 18 duplicate pending rows at Green
+                              Acres and the manager-side hang. The refusal in
+                              request_my_vehicle stops a second submission; this
+                              removes the reason to attempt one. */}
+                          {v.status === 'pending' && (
+                            <p style={{ color:'#fbbf24', fontSize:'11.5px', margin:'0 0 6px', lineHeight:'1.5', fontWeight:'bold' }}>
+                              Waiting on the property office. We&apos;ve got your request &mdash; there&apos;s nothing more for you to do, and adding it again won&apos;t speed it up.
+                            </p>
+                          )}
                           {v.status === 'pending' && (
                             <p style={{ color:'#888', fontSize:'11px', margin:'0 0 10px', lineHeight:'1.5', fontStyle:'italic' }}>
                               Issuing a visitor pass won&apos;t change your registration. Your vehicle won&apos;t be recognised as a resident vehicle until it&apos;s approved, and your property&apos;s parking rules still apply.

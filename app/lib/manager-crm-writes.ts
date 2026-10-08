@@ -568,7 +568,15 @@ export async function approveVehicleWrite(
   const result = rpcResult as { ok?: boolean; action?: string; error?: string; hint?: string } | null
   if (!result?.ok) {
     console.error('[approve_vehicle] RPC returned error:', result?.error, result?.hint)
-    return { ok: false, action: null, syncFired: false, error: result?.error ?? 'rpc_returned_not_ok' }
+    // 🔴 2026-10-07 — forward the WHOLE result object, not result.error.
+    //
+    // It used to return just the error STRING, which threw away every
+    // field the caller needs. approve_vehicle's plate_already_active
+    // carries existing_unit, existing_resident_email and same_resident
+    // — the entire content of the manager's message — and a bare
+    // 'plate_already_active' string cannot render any of it. The caller
+    // narrows with isPlateClash().
+    return { ok: false, action: null, syncFired: false, error: result ?? 'rpc_returned_not_ok' }
   }
   console.info('[approve_vehicle]', { site: 'approveVehicleWrite', vehicleId, action: result.action })
   await logAudit({
@@ -722,9 +730,20 @@ export async function declineVehicleWrite(
   },
 ): Promise<{ ok: boolean; error?: unknown }> {
   const { vehicleId, property, managerNote = null } = args
-  await supabase.from('vehicles')
+  // 🔴 2026-10-07 — the error is CAPTURED now.
+  //
+  // This UPDATE's error was discarded and the function ended with an
+  // unconditional `return { ok: true }`, so a decline that the database
+  // refused reported success. The caller then cleared the note field and
+  // refreshed, and the row came back still pending with the manager's
+  // note gone — the worst of both outcomes, and nothing logged.
+  const { error: updErr } = await supabase.from('vehicles')
     .update({ is_active: false, status: 'declined', manager_note: managerNote })
     .eq('id', vehicleId)
+  if (updErr) {
+    console.error('[decline_vehicle] UPDATE failed:', updErr.message, { vehicleId, property })
+    return { ok: false, error: updErr.message }
+  }
   await logAudit({ action: 'DECLINE_VEHICLE', table_name: 'vehicles', record_id: vehicleId, new_values: { status: 'declined', property } })
   // ── 2026-08-28 A1-cluster Item 3 Commit 1 — SITE 2 REMOVED ────────
   //

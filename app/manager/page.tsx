@@ -91,12 +91,12 @@ import CredentialsModal from '../components/CredentialsModal'
 // 2–6. Toggle: flip PM_CRM_ENABLED to false to fall back to the legacy
 // render below (kept intact for rollback until slice 2 retires it).
 import PmResidentCrm from '../components/PmResidentCrm'
-import { buildCrmResidents, isVehicleUnauthorizedForRestore, type CrmResident, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
+import { buildCrmResidents, isVehicleUnauthorizedForRestore, isPlateClash, plateClashMessage, findPlateDuplicates, type CrmResident, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
 import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '../lib/unit-occupancy'
 
 const PM_CRM_ENABLED = true
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
-import { normalizePlate, assertPlateUniqueAtProperty } from '../lib/plate'
+import { normalizePlate, normalizeUnit, assertPlateUniqueAtProperty } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -1378,6 +1378,51 @@ export default function ManagerPortal() {
     fetchPendingSpaceRequests(manager.name)
   }
 
+  // ── 2026-10-07 duplicate-plate support ───────────────────────────
+  //
+  // Resolves the colliding record's email to a name when the CRM has
+  // one loaded. A manager is entitled to both; the email is a fine
+  // fallback and never blank.
+  function residentNameForEmail(email: string | null | undefined): string | null {
+    if (!email) return null
+    const target = email.trim().toLowerCase()
+    const hit = (residents as Array<{ email?: string | null; name?: string | null }>).find(
+      r => (r?.email ?? '').trim().toLowerCase() === target)
+    return hit?.name?.trim() || null
+  }
+
+  // Clear a duplicate PENDING request: deactivated + registered_in_error.
+  //
+  // 🔴 NOT 'declined'. The resident portal fetches
+  // `is_active = true OR status = 'declined'`, so declining would show
+  // the resident a red rejection for a plate they already have approved.
+  // 'deactivated' matches neither clause — the duplicate leaves their
+  // list quietly and the original stays active. registered_in_error is
+  // labelled "Registered in error / duplicate" and is notifies:false.
+  async function clearDuplicatePending(vehicleId: string) {
+    const res = await deactivateVehicleWrite({
+      supabase,
+      vehicleId,
+      reason: 'registered_in_error',
+      note: null,
+      actor: manager?.email ?? 'manager',
+      property: manager.name,
+      notify: false,
+    })
+    if (!res.ok) {
+      alert(`Couldn't clear the duplicate.${res.message ? ` ${res.message}` : ''} The request is unchanged.`)
+    }
+    await refreshCrmData()
+  }
+
+  // Pending plates that already exist as an ACTIVE vehicle at this
+  // property — the rows vehicles_plate_norm_uniq will refuse. Memoised
+  // on the vehicle slices so it recomputes exactly when they do.
+  const plateDuplicates = useMemo(
+    () => findPlateDuplicates([...vehicles, ...pendingVehicles], normalizePlate, normalizeUnit),
+    [vehicles, pendingVehicles],
+  )
+
   async function approveVehicle(id: string) {
     // Permit-Door Piece 1 §3 — billing-conversion prompt (PM-Only ONLY).
     // Non-PM tiers: no prompt (no permit meter; approval just fires).
@@ -1404,7 +1449,42 @@ export default function ManagerPortal() {
       companyIdForSync,
       occupancyStamp: buildOccupancyStamp(unitOccupancy, vUnit),
     })
-    if (!result.ok) return
+    // 🔴 2026-10-07 — this was `if (!result.ok) return`.
+    //
+    // A bare return. The guard in PmResidentCrm released only on a
+    // thrown error, the write cores never throw, and the row stayed
+    // 'pending' so the button never unmounted — so a refused approve
+    // left "Approving…" on screen permanently with nothing said. That
+    // is what A1 hit on every duplicate plate.
+    //
+    // The guard now releases in `finally`, so the button comes back on
+    // its own. This branch owes the manager an explanation.
+    if (!result.ok) {
+      const clash = result.error as unknown
+      if (isPlateClash(clash)) {
+        const { text, offerClear } = plateClashMessage(clash, residentNameForEmail)
+        if (offerClear) {
+          // Same resident, same unit: a re-submission. Offer to make it
+          // go away rather than leaving the manager to work out that
+          // "deactivate the pending one" is the fix.
+          if (window.confirm(`${text}\n\nClear this duplicate request?`)) {
+            await clearDuplicatePending(id)
+          }
+        } else {
+          // Different household. No one-click action on purpose — see
+          // plateClashMessage. The office decides who owns the plate.
+          alert(text)
+        }
+      } else {
+        const msg = typeof result.error === 'string' ? result.error : (result.error as Error)?.message ?? ''
+        const isNetwork = /Load failed|Failed to fetch|NetworkError|network|timeout/i.test(msg)
+        alert(isNetwork
+          ? "Couldn't reach the server. Check your connection and try again."
+          : `Couldn't approve this vehicle.${msg ? ` ${msg}` : ''} Try again — if it keeps happening, contact your company administrator.`)
+      }
+      await refreshCrmData()
+      return
+    }
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
     // B231 parity — same refresh discipline as approveAllPendingCrm.
     // Approving one vehicle can flip its resident's needsApproval when
@@ -1417,11 +1497,22 @@ export default function ManagerPortal() {
   async function declineVehicle(id: string) {
     // Write core owns: vehicles UPDATE + audit + residents-back-to-active
     // cascade at same (unit, property).
-    await declineVehicleWrite(supabase, {
+    // 🔴 2026-10-07 — the result is CHECKED now. This call's return was
+    // discarded, and declineVehicleWrite itself discarded its UPDATE's
+    // error and always returned ok:true, so a refused decline cleared
+    // the manager's note and refreshed into an unchanged row. Both ends
+    // of that are fixed.
+    const dres = await declineVehicleWrite(supabase, {
       vehicleId: id,
       property: manager.name,
       managerNote: pendingNotes[id] || null,
     })
+    if (!dres.ok) {
+      const msg = (dres.error as Error)?.message ?? String(dres.error ?? '')
+      alert(`Couldn't decline this vehicle.${msg ? ` ${msg}` : ''} The request is unchanged — try again.`)
+      await refreshCrmData()
+      return
+    }
     setPendingNotes(n => { const c = {...n}; delete c[id]; return c })
     await refreshCrmData()
   }
@@ -2401,11 +2492,21 @@ export default function ManagerPortal() {
     // Write core bundles: residents UPDATE + pending-vehicle UPDATE +
     // notify + audit + B166 owner-trim. All cascades are invariants of
     // the decline shape and travel together in one call.
-    await declineResidentWrite(supabase, {
+    // 🔴 2026-10-07 — the result is CHECKED now. Same unhandled-error
+    // pattern as declineVehicle: the return was discarded, so a refused
+    // decline cleared the manager's note and refreshed into an
+    // unchanged row while the guard's "Declining…" never released.
+    const dres = await declineResidentWrite(supabase, {
       resident: { id: r.id, name: r.name, unit: r.unit, email: r.email },
       property: manager.name,
       managerNote: residentNotes[r.id] || null,
     })
+    if (!dres.ok) {
+      const msg = (dres.error as Error)?.message ?? String(dres.error ?? '')
+      alert(`Couldn't decline this resident.${msg ? ` ${msg}` : ''} Nothing was changed — try again.`)
+      await refreshCrmData()
+      return
+    }
     setResidentNotes(n => { const c = {...n}; delete c[r.id]; return c })
     await refreshCrmData()
   }
@@ -4855,6 +4956,7 @@ export default function ManagerPortal() {
             })}
             propertyName={manager.name}
             managerEmail={managerEmail}
+            plateDuplicates={plateDuplicates}
             availableSpaces={crmSpacesAtProperty.filter(s => s.status === 'available' && s.is_active).map(s => ({ id: s.id, label: s.label, type: s.type }))}
             unitOccupancy={unitOccupancy}
             canApproveVehicles={canApproveVehicles}

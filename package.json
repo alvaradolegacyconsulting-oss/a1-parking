@@ -18,7 +18,8 @@
     "verify:proration": "tsx scripts/verify-annual-proration.ts",
     "verify:quote": "tsx scripts/verify-signup-quote.ts",
     "verify:saasbind": "tsx scripts/verify-saas-binding-e2e.ts",
-    "verify:residentremove": "tsx scripts/verify-resident-vehicle-removal.ts"
+    "verify:residentremove": "tsx scripts/verify-resident-vehicle-removal.ts",
+    "verify:dupeplate": "tsx scripts/verify-duplicate-plate.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

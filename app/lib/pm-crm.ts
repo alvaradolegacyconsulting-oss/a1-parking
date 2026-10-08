@@ -868,3 +868,127 @@ export function noAuthorizedBadgeText(r: CrmResident, bucket: NoAuthorizedBucket
 export function initials(name: string): string {
   return name.split(/\s+/).map(w => w[0] || '').slice(0, 2).join('').toUpperCase() || '?'
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Duplicate-plate detection + manager copy  (2026-10-07)
+// ════════════════════════════════════════════════════════════════════
+//
+// A1 live: 18 of 29 pending rows at Green Acres held a plate that was
+// already active at the property. Approving one raised 23505 on
+// vehicles_plate_norm_uniq and hung the button. These helpers make the
+// collision visible BEFORE the click and legible after it.
+//
+// Pure, so the wording and the matching can both be asserted without a
+// browser.
+
+/** The shape approve_vehicle returns when the unique index would refuse. */
+export interface PlateClash {
+  error: 'plate_already_active'
+  same_resident?: boolean
+  existing_vehicle_id?: number | string | null
+  existing_unit?: string | null
+  existing_resident_email?: string | null
+  plate?: string | null
+  raced?: boolean
+  hint?: string | null
+}
+
+export function isPlateClash(r: unknown): r is PlateClash {
+  return !!r && typeof r === 'object' && (r as { error?: string }).error === 'plate_already_active'
+}
+
+/**
+ * The manager's message, and whether to offer the one-click clear.
+ *
+ * 🔴 TWO DIFFERENT SITUATIONS, deliberately two different messages.
+ * Same resident = a re-submission; there is nothing to decide and the
+ * right action is to make it go away. Different resident = a plate that
+ * two households are claiming, which is a decision the office has to
+ * make with information this screen does not have. Offering "clear it"
+ * there would invite a manager to erase one resident's claim with one
+ * click, so that branch offers nothing and says what to do instead.
+ *
+ * `residentLabel` resolves the existing record's email to a human name
+ * when the CRM has one loaded; the email is a fine fallback and a
+ * manager is entitled to both.
+ */
+export function plateClashMessage(
+  clash: PlateClash,
+  residentLabel?: (email: string | null | undefined) => string | null,
+): { text: string; offerClear: boolean } {
+  const unit = clash.existing_unit?.trim() || 'an unknown unit'
+  const plate = clash.plate?.trim() || 'That plate'
+
+  if (clash.same_resident) {
+    return {
+      text: `${plate} is already approved for this resident at Unit ${unit}. This request is a duplicate.`,
+      offerClear: true,
+    }
+  }
+
+  const who = residentLabel?.(clash.existing_resident_email)
+    || clash.existing_resident_email
+    || 'another resident'
+  return {
+    text: `${plate} is already active at Unit ${unit} (${who}). `
+      + `If the vehicle now belongs to this unit, deactivate that record first, then approve.`,
+    offerClear: false,
+  }
+}
+
+/**
+ * Pending rows whose plate is already active at the same property.
+ *
+ * Feeds the "Duplicate of active vehicle" badge, so a manager sees the
+ * collision in the queue instead of discovering it by clicking.
+ *
+ * Mirrors vehicles_plate_norm_uniq: same property, normalized plate,
+ * active rows only. Units are compared with normalizeUnit because
+ * "Traila# 191" and "Traila #191" are one trailer — matching them with
+ * equality labelled a plain re-submission as a cross-resident dispute.
+ */
+export interface DuplicateFlag {
+  /** The active row this pending plate collides with. */
+  existingVehicleId: string | number
+  existingUnit: string | null
+  existingResidentEmail: string | null
+  /** Same resident AND same unit → a re-submission, safe to clear. */
+  sameResident: boolean
+}
+
+export function findPlateDuplicates(
+  vehicles: Array<{
+    id: string | number
+    plate?: string | null
+    property?: string | null
+    unit?: string | null
+    resident_email?: string | null
+    status?: string | null
+    is_active?: boolean | null
+  }>,
+  normPlate: (s: string | null | undefined) => string,
+  normUnit: (s: string | null | undefined) => string,
+): Map<string, DuplicateFlag> {
+  const activeBy = new Map<string, typeof vehicles[number]>()
+  for (const v of vehicles) {
+    if (v.is_active !== true || v.status !== 'active') continue
+    const k = `${(v.property ?? '').trim().toLowerCase()}||${normPlate(v.plate)}`
+    if (!activeBy.has(k)) activeBy.set(k, v)
+  }
+
+  const out = new Map<string, DuplicateFlag>()
+  for (const v of vehicles) {
+    if (v.status !== 'pending') continue
+    const k = `${(v.property ?? '').trim().toLowerCase()}||${normPlate(v.plate)}`
+    const hit = activeBy.get(k)
+    if (!hit) continue
+    const sameEmail = (hit.resident_email ?? '').trim().toLowerCase() === (v.resident_email ?? '').trim().toLowerCase()
+    out.set(String(v.id), {
+      existingVehicleId: hit.id,
+      existingUnit: hit.unit ?? null,
+      existingResidentEmail: hit.resident_email ?? null,
+      sameResident: sameEmail && normUnit(hit.unit) === normUnit(v.unit),
+    })
+  }
+  return out
+}

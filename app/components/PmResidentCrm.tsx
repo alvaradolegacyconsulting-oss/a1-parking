@@ -7,7 +7,7 @@
 // from the parent. Zero DB access here; grouping done in app/lib/pm-crm.ts.
 
 import { useMemo, useRef, useState } from 'react'
-import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus, NoAuthorizedBucket } from '@/app/lib/pm-crm'
+import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus, NoAuthorizedBucket, DuplicateFlag } from '@/app/lib/pm-crm'
 import {
   computeInsights, filterCrmRows, initials, residentDisplayStatus,
   vehicleDisplayStatus,
@@ -60,6 +60,11 @@ interface Props {
   // pending space requests. Sourced from crmSpacesAtProperty filtered
   // client-side to status='available' + is_active.
   availableSpaces: Array<Pick<CrmSpace, 'id' | 'label' | 'type'>>
+  // 2026-10-07 — pending vehicle id -> the active row its plate
+  // collides with. Keyed by String(id) to match VehicleCard's keys.
+  // Absent/empty map simply renders no badges, so a failed derivation
+  // degrades to today's behaviour rather than to a wrong badge.
+  plateDuplicates?: Map<string, DuplicateFlag>
   // 2026-08-04 — unit occupancy batch payload (single source of truth
   // for the four surfaces below + audit stamp on approvals). Feeds:
   //   1. ListRow red flag when unit has ≥1 OTHER active resident
@@ -276,14 +281,18 @@ function useResidentDecisionGuard(
       setBusy({ id, kind })
       try {
         await fn(r)
-        // Success: leave busy set. Parent's refetch flips r.status,
-        // showApprove/showDecline become false, buttons unmount. State
-        // dies with the unmount. See header §3.
-      } catch (e) {
-        // Error: release so the manager can retry.
+      } finally {
+        // 🔴 2026-10-07 — finally, not catch. The old comment here said
+        // "Success: leave busy set... state dies with the unmount",
+        // which holds for success and for a thrown error but NOT for a
+        // handled one. The write cores return { ok: false } and never
+        // throw, so a refused decision left this button stuck on
+        // "Approving…"/"Declining…" with no way back but a reload.
+        // Releasing unconditionally is correct for all three outcomes;
+        // on success the setState lands on an unmounted subtree and
+        // React no-ops it. Same fix as useVehicleDecisionGuard below.
         inFlight.current.delete(id)
         setBusy(null)
-        throw e
       }
     }
 
@@ -341,10 +350,28 @@ function useVehicleDecisionGuard(
       setBusy({ id: key, kind })
       try {
         await fn(id)
-      } catch (e) {
+      } finally {
+        // 🔴 2026-10-07 — finally, not catch.
+        //
+        // This was a catch-only release resting on "guard state dies
+        // with unmount": on success the row leaves 'pending', the
+        // button's render condition goes false, the subtree unmounts
+        // and the state goes with it. True for success. True for a
+        // THROWN error. False for the only kind of failure this layer
+        // actually produces — manager-crm-writes.ts has 19
+        // `return { ok: false }` and zero `throw`, so a refused
+        // approve returned normally, the status stayed 'pending', the
+        // button never unmounted, and `busy` stayed set forever.
+        //
+        // A1 live, 2026-10-07: approving a duplicate plate raised 23505
+        // on vehicles_plate_norm_uniq, the write core turned it into
+        // ok:false, and "Approving…" never came back.
+        //
+        // Releasing in finally is correct for all three outcomes. On
+        // success the setState lands on an unmounted subtree, which
+        // React treats as a no-op.
         inFlight.current.delete(key)
         setBusy(null)
-        throw e
       }
     }
 
@@ -357,7 +384,7 @@ function useVehicleDecisionGuard(
 }
 
 export default function PmResidentCrm({
-  crmResidents, propertyName, availableSpaces, unitOccupancy,
+  crmResidents, propertyName, availableSpaces, unitOccupancy, plateDuplicates,
   canApproveVehicles, isReadOnly,
   onApproveVehicle: onApproveVehicleRaw, onDeclineVehicle: onDeclineVehicleRaw,
   onApproveResident: onApproveResidentRaw, onDeclineResident: onDeclineResidentRaw,
@@ -658,6 +685,7 @@ export default function PmResidentCrm({
                     unitOccupancy={unitOccupancy}
                     onOpenAddVehicle={onOpenAddVehicle}
                     getVehicleDecisionBusy={vehicleDecisionGuard.busyFor}
+                    plateDuplicates={plateDuplicates}
                   />
                 )}
                 {subTab === 'spaces' && (
@@ -825,6 +853,7 @@ function DetailHeader({ resident, canApproveVehicles, isReadOnly, onApproveResid
   // Buttons render disabled with a "-ing…" label. See
   // useResidentDecisionGuard header for the release semantics.
   decisionBusy: DecisionKind | null
+  duplicateOf?: DuplicateFlag | null
 }) {
   const showApprove = resident.status === 'pending' && canApproveVehicles && !isReadOnly
   const showDecline = resident.status === 'pending' && !isReadOnly
@@ -1260,7 +1289,7 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
   )
 }
 
-function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, onOpenAddVehicle, getVehicleDecisionBusy }: {
+function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, onOpenAddVehicle, getVehicleDecisionBusy, plateDuplicates }: {
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -1276,6 +1305,7 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
   // Commit E fast-follow — per-vehicle busy lookup. Passed through to
   // VehicleCard so each card queries its own v.id.
   getVehicleDecisionBusy: (id: string | number) => DecisionKind | null
+  plateDuplicates?: Map<string, DuplicateFlag>
 }) {
   // 2026-08-08 — Add Vehicle affordance. Gated on the aggregate
   // residentDisplayStatus (matches the pattern at :721 for the
@@ -1332,13 +1362,14 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
           onEditVehicle={onEditVehicle}
           unitOccupancy={unitOccupancy}
           decisionBusy={getVehicleDecisionBusy(v.id)}
+          duplicateOf={plateDuplicates?.get(String(v.id)) ?? null}
         />
       ))}
     </>
   )
 }
 
-function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, decisionBusy }: {
+function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, decisionBusy, duplicateOf }: {
   v: any
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -1353,6 +1384,9 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
   // Commit E fast-follow — set when this vehicle has an in-flight
   // approve/decline. Buttons render disabled with "-ing…" label.
   decisionBusy: DecisionKind | null
+  // 2026-10-07 — set when this PENDING plate already exists as an
+  // active vehicle at the property. Drives the duplicate badge.
+  duplicateOf?: DuplicateFlag | null
 }) {
   // Slice 6 — inline edit mode + form state. Plate is DELIBERATELY NOT
   // in the form — it's read-only on the plate chip. If the resident
@@ -1529,6 +1563,35 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
           </div>
         )
       })()}
+      {/* ── 2026-10-07 — DUPLICATE BADGE ─────────────────────────────
+          Sits ABOVE the buttons, because its whole purpose is to be read
+          before one is pressed. Approving this row raises 23505 on
+          vehicles_plate_norm_uniq; the manager used to find that out by
+          clicking and watching the button hang.
+
+          The two wordings differ because the next action differs: a
+          re-submission is a duplicate to clear, a different household is
+          a decision the office has to make. Same split as
+          plateClashMessage, which the post-click dialog uses. */}
+      {duplicateOf && (
+        <div style={{
+          marginTop: '10px', padding: '9px 11px', borderRadius: '8px',
+          background: duplicateOf.sameResident ? 'rgba(201,162,39,0.10)' : 'rgba(239,68,68,0.10)',
+          border: `1px solid ${duplicateOf.sameResident ? 'rgba(201,162,39,0.40)' : 'rgba(239,68,68,0.40)'}`,
+        }}>
+          <div style={{
+            fontSize: '10.5px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+            color: duplicateOf.sameResident ? '#C9A227' : '#f87171', marginBottom: '3px',
+          }}>
+            Duplicate of active vehicle
+          </div>
+          <div style={{ fontSize: '12px', color: C.muted, lineHeight: 1.45 }}>
+            {duplicateOf.sameResident
+              ? `Already approved for this resident at Unit ${duplicateOf.existingUnit?.trim() || '—'}. Approving will fail; clear this request instead.`
+              : `Already active at Unit ${duplicateOf.existingUnit?.trim() || '—'} (${duplicateOf.existingResidentEmail || 'another resident'}). Deactivate that record first if the vehicle moved.`}
+          </div>
+        </div>
+      )}
       {(showApprove || showDecline) && (
         <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
           {showApprove && (
