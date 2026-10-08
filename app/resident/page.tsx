@@ -776,6 +776,12 @@ export default function ResidentPortal() {
         // deactivated resident is told that, not "not yours".
         if (error.message.includes('account_deactivated')) {
           alert('Your registration is deactivated — contact your property manager.')
+        } else if (error.message.includes('not_active')) {
+          // Unreachable from this screen — the Remove button renders only
+          // for status === 'active'. Handled anyway so a stale list or a
+          // crafted call gets the truth instead of a silent no-op that
+          // used to arrive as {ok:true}.
+          alert('Only an approved, active vehicle can be removed. A request still waiting for approval can\u2019t be withdrawn here yet \u2014 contact your property manager.')
         } else if (error.message.includes('not found or not yours')) {
           // The no-oracle error. In the UI this can only mean the list
           // is stale (someone else already removed it, or residency

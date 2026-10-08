@@ -91,10 +91,10 @@ async function makeResidentRow(email: string) {
   if (error) throw new Error(`residents ${email}: ${error.message}`)
 }
 
-async function makeVehicle(email: string, plate: string): Promise<number> {
+async function makeVehicle(email: string, plate: string, status = 'active'): Promise<number> {
   const { data, error } = await db.from('vehicles').insert({
     plate, state: 'TX', property: PROPERTY, unit: UNIT, company: COMPANY,
-    resident_email: email, status: 'active', is_active: true,
+    resident_email: email, status, is_active: status === 'active',
   }).select('id').single()
   if (error) throw new Error(`vehicles ${plate}: ${error.message}`)
   return data.id as number
@@ -160,6 +160,30 @@ const main = async () => {
     chk('second call is already_deactivated, not an error',
       !r3.error && (r3.data as { action?: string })?.action === 'already_deactivated',
       r3.error ? r3.error.message : JSON.stringify(r3.data))
+
+    // ── 3b. A PENDING row is refused HONESTLY ─────────────────────
+    // 🔴 2026-10-07. This used to return {ok:true,
+    // action:'already_deactivated'} and touch nothing — a success
+    // response for a no-op, because the idempotency branch keyed on
+    // is_active=false, which is true of every pending row. Resident
+    // withdrawal is ruled and queued; until it ships the refusal has to
+    // say so rather than imply it worked.
+    const vPending = await makeVehicle(A.email, `ZZP${STAMP % 100000}`, 'pending')
+    const r3b = await A.client.rpc('deactivate_my_vehicle', { p_vehicle_id: vPending })
+    chk('a PENDING row is refused with not_active, not a fake ok:true',
+      !!r3b.error && /not_active/.test(r3b.error.message),
+      r3b.error ? r3b.error.message : `NO ERROR — returned ${JSON.stringify(r3b.data)}`)
+    const pendAfter = await db.from('vehicles').select('status, is_active, deactivation_reason').eq('id', vPending).single()
+    chk('…and the pending row is untouched', pendAfter.data?.status === 'pending' && pendAfter.data?.deactivation_reason === null,
+      JSON.stringify(pendAfter.data))
+
+    // A genuinely deactivated row still reports already_deactivated —
+    // the idempotency contract must survive the narrowing. (vA was
+    // deactivated in step 2.)
+    const r3c = await A.client.rpc('deactivate_my_vehicle', { p_vehicle_id: vA })
+    chk('a genuinely deactivated row still returns already_deactivated',
+      !r3c.error && (r3c.data as { action?: string })?.action === 'already_deactivated',
+      r3c.error?.message ?? JSON.stringify(r3c.data))
 
     // ── 4. Deactivated resident gets the deactivated message ──────
     await db.from('residents').update({ is_active: false }).eq('email', A.email)
