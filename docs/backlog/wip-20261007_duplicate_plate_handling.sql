@@ -594,21 +594,39 @@ BEGIN
 
   -- ── 6. Already-deactivated shortcut ───────────────────────────────
   --
-  -- 🔴 2026-10-07 — narrowed from `is_active = false` to
-  -- `status = 'deactivated'`.
+  -- 🔴 2026-10-07 — replaced `is_active = false` with an ALLOWLIST of
+  -- the statuses a deactivation may act on.
   --
-  -- is_active=false is TRUE FOR EVERY PENDING ROW. So this shortcut
-  -- treated "waiting for approval" as "already deactivated" and
-  -- returned ok:true/already_deactivated without stamping anything —
-  -- meaning a manager deactivating a pending vehicle silently did
-  -- nothing, and the duplicate-clearing action this arc adds could
-  -- never have worked. 'declined' and 'expired' rows are also
-  -- is_active=false and are likewise not deactivated.
+  -- THE BUG: is_active=false is TRUE FOR EVERY PENDING ROW (39 live).
+  -- So this shortcut treated "waiting for approval" as "already
+  -- deactivated", returned ok:true without stamping anything, and made
+  -- the duplicate-clearing action this arc adds a silent no-op.
   --
-  -- The shortcut's purpose is idempotency: don't re-stamp a row that is
-  -- already in the deactivated state. Keying it on the state it names
-  -- is what it meant to say.
-  IF v_vehicle.status = 'deactivated' THEN
+  -- 🔴 WHY NOT simply `status = 'deactivated'`, which was the first
+  -- draft: that would let a manager deactivate a DECLINED row (55
+  -- live), which is destructive rather than merely odd. The resident
+  -- portal fetches `is_active = true OR status = 'declined'`, so a
+  -- declined vehicle is visible to the resident along with the
+  -- manager's note; rewriting its status to 'deactivated' makes that
+  -- record VANISH from their view and puts it beyond
+  -- mark_my_vehicle_declined_read. A declined vehicle was also never in
+  -- the authorized set, so deactivating it is not a meaningful action.
+  --
+  -- So: proceed only for rows that are IN the authorized set or
+  -- awaiting entry to it — active, pending, under_review. Everything
+  -- else short-circuits, including any status added later, because an
+  -- allowlist fails closed where a denylist fails open.
+  --
+  -- The action string stays 'already_deactivated' so no existing caller
+  -- changes, even though for a declined row the wording is loose.
+  -- Tightening that vocabulary is a separate change with its own
+  -- callers to audit.
+  --
+  -- Live effect: 694 active + 39 pending + 2 under_review proceed;
+  -- 55 declined + 6 deactivated no-op. The 19 status='active' /
+  -- is_active=false rows the CRM calls "orphaned plates" proceed, which
+  -- is right — a manager should be able to clear them.
+  IF v_vehicle.status IS NULL OR v_vehicle.status NOT IN ('active', 'pending', 'under_review') THEN
     RETURN jsonb_build_object(
       'ok',     true,
       'action', 'already_deactivated',

@@ -41,10 +41,31 @@ const db = createClient(g('NEXT_PUBLIC_SUPABASE_URL'), g('SUPABASE_SERVICE_ROLE_
 
 const APPLY = process.argv.includes('--apply')
 const REASON = 'registered_in_error'
-const ACTOR = 'system_duplicate_cleanup'
+const ACTOR = 'clear-duplicate-pending-vehicles script'
+
 // Explicitly named so a re-run after A1's office resolves them cannot
 // sweep them up by accident.
 const LEAVE_FOR_OFFICE = new Set([1024, 1082, 1510])
+
+// 🔴 THE REVIEWED SET. Jose read these 20 rows on 2026-10-07 and
+// approved exactly these.
+//
+// The rule is recomputed at apply time against live data — residents
+// keep submitting — but nothing outside this list is ever written. A
+// row that newly matches the rule is REPORTED and left alone, because
+// "the script decided it qualified" is not the same as "a person looked
+// at it", and this is a destructive write on a live customer's data.
+//
+// To clear a newly-found duplicate, review it and add its id here.
+const REVIEWED: ReadonlyMap<number, number> = new Map([
+  // pending id -> the id whose plate is being kept
+  [796, 855], [831, 816], [953, 952], [959, 929], [1068, 1140],
+  [1069, 1089], [1087, 1086], [1094, 1106], [1103, 1106], [1131, 1107],
+  [1141, 1067], [1221, 1222], [1224, 1222], [1349, 1350], [1355, 1325],
+  [1426, 1417],
+  // pending-vs-pending, keeping the oldest
+  [1526, 1503], [1527, 1524], [1534, 1533], [1535, 1400],
+])
 
 const key = (s: unknown) => (s ?? '').toString().trim().toLowerCase()
 
@@ -126,11 +147,37 @@ const main = async () => {
     console.log(`⚠️  ${held.length} row(s) matched the clear rule but are on the hold-out list — skipping: ${held.map(h => h.row.id).join(', ')}\n`)
   }
 
-  console.log(`═══ WILL CLEAR — ${toClear.length} rows ═══`)
+  // ── Reviewed vs newly found ───────────────────────────────────────
+  const reviewed = toClear.filter(c => REVIEWED.has(Number(c.row.id)))
+  const unreviewed = toClear.filter(c => !REVIEWED.has(Number(c.row.id)))
+  const missing = [...REVIEWED.keys()].filter(id => !toClear.some(c => Number(c.row.id) === id))
+
+  // 🔴 A reviewed id that no longer matches the rule is NOT silently
+  // dropped. It means the row was approved, declined or edited since
+  // the review — which is information, not noise.
+  if (missing.length) {
+    console.log(`⚠️  ${missing.length} reviewed id(s) no longer match the duplicate rule — NOT written: ${missing.join(', ')}`)
+    for (const id of missing) {
+      const row = vehs.find(v => Number(v.id) === id)
+      console.log(`     ${id}: ${row ? `status=${row.status} is_active=${row.is_active}` : 'row is gone'}`)
+    }
+    console.log('')
+  }
+
+  if (unreviewed.length) {
+    console.log(`⚠️  ${unreviewed.length} NEW duplicate(s) found since the review — REPORTED, NOT CLEARED:`)
+    for (const c of unreviewed.sort((a, b) => a.row.id - b.row.id)) {
+      console.log(`     ${c.row.id} ${c.row.plate} @ ${c.row.property} u:${JSON.stringify(c.row.unit)} <${c.row.resident_email}>`)
+      console.log(`        └─ ${c.why} (would keep ${c.against.id}). Review it and add [${c.row.id}, ${c.against.id}] to REVIEWED.`)
+    }
+    console.log('')
+  }
+
+  console.log(`═══ WILL CLEAR — ${reviewed.length} reviewed rows ═══`)
   console.log(`  ${'id'.padStart(5)}  ${'plate'.padEnd(10)} ${'property'.padEnd(24)} ${'unit'.padEnd(16)} resident / why`)
-  for (const c of toClear.sort((a, b) => a.row.id - b.row.id)) {
+  for (const c of reviewed.sort((a, b) => a.row.id - b.row.id)) {
     console.log(`  ${String(c.row.id).padStart(5)}  ${String(c.row.plate).padEnd(10)} ${String(c.row.property).padEnd(24)} ${String(c.row.unit ?? '').padEnd(16)} ${c.row.resident_email}`)
-    console.log(`         └─ ${c.why} (active/kept ${c.against.id}, unit ${JSON.stringify(c.against.unit)})`)
+    console.log(`         └─ ${c.why} (keeping ${c.against.id}, unit ${JSON.stringify(c.against.unit)})`)
   }
 
   console.log(`\n═══ LEFT ALONE — ${office.length} rows (A1's office) ═══`)
@@ -140,33 +187,62 @@ const main = async () => {
   }
 
   const byCo = new Map<string, number>()
-  for (const c of toClear) byCo.set(c.co, (byCo.get(c.co) ?? 0) + 1)
+  for (const c of reviewed) byCo.set(c.co, (byCo.get(c.co) ?? 0) + 1)
   console.log(`\nby company: ${[...byCo.entries()].map(([k, v]) => `${k}=${v}`).join('  ') || '(none)'}`)
 
   if (!APPLY) { console.log('\nDry run — nothing written.'); return }
-  if (!toClear.length) { console.log('\nNothing to clear.'); return }
+  if (!reviewed.length) { console.log('\nNothing reviewed left to clear.'); return }
 
-  // ── Write. Re-assert status='pending' so a row approved between the
-  // read and the write is never clobbered. ──
-  const ids = toClear.map(c => Number(c.row.id))
-  const { data: updated, error } = await db.from('vehicles')
-    .update({
-      is_active: false,
-      status: 'deactivated',
-      deactivation_reason: REASON,
-      deactivation_note: 'Duplicate submission cleared in the 2026-10-07 sweep; the resident\'s original plate remains active.',
-      deactivated_by: ACTOR,
-      deactivated_at: new Date().toISOString(),
-    })
-    .in('id', ids)
-    .eq('status', 'pending')
-    .select('id, plate, property, unit, status, deactivation_reason')
-  if (error) { console.error('\nUPDATE failed:', error.message); process.exit(2) }
+  // ── Before counts ─────────────────────────────────────────────────
+  const countPending = async () => (await db.from('vehicles').select('*', { count: 'exact', head: true }).eq('status', 'pending')).count
+  const countDeact = async () => (await db.from('vehicles').select('*', { count: 'exact', head: true }).eq('status', 'deactivated')).count
+  const beforePending = await countPending()
+  const beforeDeact = await countDeact()
+  console.log(`\nBEFORE — pending: ${beforePending}   deactivated: ${beforeDeact}`)
 
-  console.log(`\ncleared: ${updated?.length ?? 0} of ${ids.length} requested`)
-  for (const u of updated ?? []) console.log(`   ${u.id} ${u.plate} -> ${u.status}/${u.deactivation_reason}`)
-  const missed = ids.filter(i => !(updated ?? []).some(u => u.id === i))
-  if (missed.length) console.log(`   ⚠️  not updated (no longer pending — approved or changed since the read): ${missed.join(', ')}`)
+  // ── Write, ONE ROW AT A TIME ──────────────────────────────────────
+  // 🔴 Not a bulk .in() update: the note has to name the specific row
+  // being kept ("duplicate of #855"), and a single UPDATE cannot write
+  // 20 different notes. A per-row write also means a row that stopped
+  // being pending between the read and the write is skipped
+  // individually instead of silently narrowing a bulk result.
+  //
+  // `.eq('status','pending')` is re-asserted on every row so a vehicle
+  // approved in the meantime is never clobbered.
+  const ids = reviewed.map(c => Number(c.row.id))
+  const done: { id: number; plate: string; note: string }[] = []
+  const skipped: { id: number; why: string }[] = []
+  const stamp = new Date().toISOString()
+  for (const c of reviewed.sort((a, b) => a.row.id - b.row.id)) {
+    const keptId = REVIEWED.get(Number(c.row.id))
+    if (keptId !== Number(c.against.id)) {
+      // The reviewed pairing no longer describes reality. Refuse rather
+      // than write a note that names the wrong row.
+      skipped.push({ id: Number(c.row.id), why: `reviewed as duplicate of #${keptId} but now collides with #${c.against.id}` })
+      continue
+    }
+    const note = `duplicate of #${keptId}`
+    const { data, error } = await db.from('vehicles')
+      .update({
+        is_active: false,
+        status: 'deactivated',
+        deactivation_reason: REASON,
+        deactivation_note: note,
+        deactivated_by: ACTOR,
+        deactivated_at: stamp,
+      })
+      .eq('id', c.row.id)
+      .eq('status', 'pending')
+      .select('id, plate, status, deactivation_reason, deactivation_note, deactivated_by')
+    if (error) { console.error(`\nUPDATE failed on ${c.row.id}:`, error.message); process.exit(2) }
+    if (!data?.length) { skipped.push({ id: Number(c.row.id), why: 'no longer pending at write time' }); continue }
+    done.push({ id: data[0].id as number, plate: data[0].plate as string, note: data[0].deactivation_note as string })
+  }
+
+  console.log(`\ncleared: ${done.length} of ${ids.length} reviewed`)
+  for (const d of done) console.log(`   ${String(d.id).padStart(5)} ${String(d.plate).padEnd(10)} -> deactivated / ${REASON} / "${d.note}"`)
+  const missed = skipped.map(x => x.id)
+  for (const sk of skipped) console.log(`   ⚠️  ${sk.id} SKIPPED — ${sk.why}`)
 
   const { error: aErr } = await db.from('audit_logs').insert({
     user_email: ACTOR,
@@ -175,8 +251,9 @@ const main = async () => {
     record_id: null,
     old_values: { status: 'pending', requested_ids: ids },
     new_values: {
-      cleared: (updated ?? []).map(u => ({ id: u.id, plate: u.plate, property: u.property, unit: u.unit })),
-      not_updated: missed,
+      cleared: done,
+      not_updated: skipped,
+      newly_found_not_cleared: unreviewed.map(c => ({ id: c.row.id, plate: c.row.plate, would_keep: c.against.id })),
       reason: REASON,
       left_for_office: [...LEAVE_FOR_OFFICE],
     },
@@ -184,6 +261,13 @@ const main = async () => {
   })
   if (aErr) { console.error('audit insert failed:', aErr.message); process.exit(2) }
   console.log('audit row written (DUPLICATE_PENDING_VEHICLES_CLEARED)')
+
+  const afterPending = await countPending()
+  const afterDeact = await countDeact()
+  console.log(`\nAFTER  — pending: ${afterPending} (${(beforePending ?? 0) - (afterPending ?? 0)} fewer)   deactivated: ${afterDeact} (${(afterDeact ?? 0) - (beforeDeact ?? 0)} more)`)
+  if ((beforePending ?? 0) - (afterPending ?? 0) !== done.length) {
+    console.log(`   ⚠️  pending fell by ${(beforePending ?? 0) - (afterPending ?? 0)} but ${done.length} rows were cleared — someone else wrote during the sweep.`)
+  }
 
   // ── Verify: no pending row still collides with an active plate ──
   const after = await all('vehicles', 'id, plate, property, unit, resident_email, status, is_active')

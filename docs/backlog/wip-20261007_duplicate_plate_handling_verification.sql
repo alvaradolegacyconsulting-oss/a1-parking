@@ -137,8 +137,8 @@ BEGIN
       v_fail := v_fail || 'G8: deactivate_vehicle(bigint,text,text) missing';
     ELSE
       v_src := (SELECT prosrc FROM pg_proc WHERE oid=v_dv);
-      IF v_src NOT LIKE '%v_vehicle.status = ''deactivated''%' THEN
-        v_fail := v_fail || 'G8: the shortcut is not keyed on status=deactivated — a pending row still short-circuits and Clear duplicate silently no-ops';
+      IF v_src NOT LIKE '%NOT IN (''active'', ''pending'', ''under_review'')%' THEN
+        v_fail := v_fail || 'G8: the shortcut is not the status allowlist — either a pending row still no-ops, or a DECLINED row can be overwritten';
       END IF;
       IF v_src LIKE '%IF v_vehicle.is_active = false THEN%' THEN
         v_fail := v_fail || 'G8: the OLD is_active=false shortcut is still present';
@@ -172,6 +172,6 @@ SELECT
          AND lower(trim(a.property)) = lower(trim(vehicles.property))
          AND public.normalize_plate(a.plate) = public.normalize_plate(vehicles.plate)
     ))                                                              AS pending_still_colliding,
-  (SELECT prosrc LIKE '%v_vehicle.status = ''deactivated''%' FROM pg_proc
+  (SELECT prosrc LIKE '%NOT IN (''active'', ''pending'', ''under_review'')%' FROM pg_proc
      WHERE oid = to_regprocedure('public.deactivate_vehicle(bigint,text,text)')) AS pending_is_not_deactivated,
   'NOT PROVEN HERE: manager + resident messages. Run npm run verify:dupeplate.'::TEXT AS execution_proof;
