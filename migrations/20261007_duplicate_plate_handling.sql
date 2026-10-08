@@ -31,7 +31,7 @@
 -- on active rows and the duplicates are all pending — but the sweep
 -- first keeps the two steps independent.)
 --
--- Paired: wip-20261007_duplicate_plate_handling_verification.sql
+-- Paired: 20261007_duplicate_plate_handling_verification.sql
 
 -- ══════════════════════════════════════════════════════════════════
 -- PART 1 — request_my_vehicle refuses a duplicate instead of queuing one

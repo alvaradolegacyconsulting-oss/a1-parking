@@ -115,7 +115,7 @@ const main = async () => {
   if (probe.error) { console.error('db unreachable'); process.exit(2) }
   const srcProbe = await db.rpc('approve_vehicle', { p_vehicle_id: -1, p_manager_note: null })
   if (srcProbe.error && /Could not find the function/i.test(srcProbe.error.message)) {
-    console.error('approve_vehicle missing — apply migrations/…duplicate_plate_handling.sql first'); process.exit(2)
+    console.error('approve_vehicle missing — apply migrations/20261007_duplicate_plate_handling.sql first'); process.exit(2)
   }
 
   console.log('\n── execution ──')
@@ -173,6 +173,24 @@ const main = async () => {
     const r6b = await M.client.rpc('deactivate_vehicle', { p_vehicle_id: vDupSame, p_reason: 'registered_in_error', p_note: null })
     chk('…and a second call still short-circuits', (r6b.data as Record<string, unknown>)?.action === 'already_deactivated',
       JSON.stringify((r6b.data as Record<string, unknown>)?.action))
+
+    // 6c — 🔴 THE DECLINED-ROW PROTECTION.
+    // The first draft of PART 4 short-circuited only on
+    // status='deactivated', which would have let a manager overwrite a
+    // DECLINED row (55 live). That is destructive: the resident portal
+    // fetches `is_active = true OR status = 'declined'`, so rewriting a
+    // decline to 'deactivated' erases it from the resident's view along
+    // with the manager's note. The allowlist prevents it, and nothing
+    // else proves the allowlist is doing that job.
+    const vDeclined = await veh(A.email, `ZZX${String(STAMP).slice(-6)}`, 'declined')
+    const r6c = await M.client.rpc('deactivate_vehicle', { p_vehicle_id: vDeclined, p_reason: 'vehicle_sold', p_note: null })
+    chk('a DECLINED row is NOT overwritten by deactivate_vehicle',
+      (r6c.data as Record<string, unknown>)?.action === 'already_deactivated',
+      JSON.stringify((r6c.data as Record<string, unknown>)?.action ?? r6c.error?.message))
+    const after6c = await db.from('vehicles').select('status, deactivation_reason').eq('id', vDeclined).single()
+    chk('…and its status is still declined, reason still unstamped',
+      after6c.data?.status === 'declined' && after6c.data?.deactivation_reason === null,
+      JSON.stringify(after6c.data))
 
     // 7 — a clean approve still works (positive control on PART 2)
     const r7 = await M.client.rpc('approve_vehicle', { p_vehicle_id: vPend, p_manager_note: null })

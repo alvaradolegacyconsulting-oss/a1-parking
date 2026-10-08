@@ -1,0 +1,86 @@
+-- ════════════════════════════════════════════════════════════════════
+-- user_roles — UNIQUE(lower(email)) — post-wipe email-uniqueness backstop
+-- Locked: July 4, 2026 (pre-written; APPLY ONLY AFTER pre-launch wipe +
+-- dedup complete)
+--
+-- ORIGIN
+--   B155.4 (2026-06-04) deferred `UNIQUE(lower(email))` on user_roles
+--   because 10 `sampyo+*` test-fixture duplicate rows would fail the
+--   constraint. Verify-live 2026-07-04 (§H) confirmed ~17 lowered-email
+--   duplicates today (sampyo+* + chris.tobar94+* etc.) — the pre-launch
+--   wipe subsumes the dedup; this migration locks the invariant so no
+--   real customer can create a duplicate-role state via a case-differing
+--   email.
+--
+-- WHY THIS INVARIANT MATTERS
+--   get_my_role() reads ONE row from user_roles WHERE lower(email) =
+--   lower(jwt.email) LIMIT 1 (no ORDER BY). Without UNIQUE, two rows
+--   with the same lowered email could exist with DIFFERENT roles — the
+--   LIMIT 1 result becomes non-deterministic. Ships as a subtle role
+--   escalation / demotion depending on which row Postgres picks. See
+--   the SCOPE GUARD comment block at
+--   migrations/20260613_b155_4_user_roles_role_write_lockdown.sql:94-96.
+--
+-- PRE-APPLY GATE (RUN BEFORE APPLYING — do NOT paste in the same run):
+--   -- Expected: 0 rows. If any rows returned, dedup first.
+--   SELECT lower(email) AS lowered_email, COUNT(*) AS dup_count,
+--          array_agg(role ORDER BY id) AS roles,
+--          array_agg(id ORDER BY id) AS ids
+--     FROM public.user_roles
+--    GROUP BY lower(email)
+--   HAVING COUNT(*) > 1
+--    ORDER BY dup_count DESC, lowered_email;
+--
+-- SCOPE GUARD
+--   • This migration is a SINGLE UNIQUE INDEX. It does NOT:
+--     - Touch RLS policies (B155.4 already in force)
+--     - Add a UNIQUE on the raw `email` column (case-sensitive would
+--       still admit `Foo@bar.com` + `foo@bar.com`; the point of the
+--       expression index is case-insensitive uniqueness)
+--     - Attempt data cleanup — that's the wipe's job
+--   • Uses CREATE UNIQUE INDEX (not ALTER TABLE ADD CONSTRAINT UNIQUE)
+--     so the expression `lower(email)` is supported (PG can't use an
+--     expression in a table constraint; index is the correct form).
+--   • Named user_roles_lower_email_uidx to match the shipped-index
+--     naming pattern in the codebase (vehicles_plate_norm_uniq,
+--     vehicles_authorized_plate_uidx precedents).
+--
+-- FAIL-CLOSED SEMANTIC
+--   If dedup wasn't run and a duplicate survives the wipe, CREATE UNIQUE
+--   INDEX fails with 23505 and the transaction rolls back cleanly. Safe
+--   to attempt — it either succeeds (invariant now locked) or refuses
+--   (surfaces the missed dedup loudly).
+-- ════════════════════════════════════════════════════════════════════
+
+BEGIN;
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_roles_lower_email_uidx
+  ON public.user_roles (lower(email));
+
+COMMIT;
+
+-- ════════════════════════════════════════════════════════════════════
+-- POST-APPLY VERIFY (paste into SQL Editor after commit)
+-- Also lives as a separate _verification.sql file for the go-live
+-- checklist.
+-- ════════════════════════════════════════════════════════════════════
+-- ── A. Index exists + correct expression
+--   SELECT indexname, indexdef
+--     FROM pg_indexes
+--    WHERE schemaname='public' AND tablename='user_roles'
+--      AND indexname='user_roles_lower_email_uidx';
+--   Expected: 1 row; indexdef contains 'UNIQUE INDEX' + 'lower(email)'.
+--
+-- ── B. Constraint enforcement smoke — attempt case-differing dup insert
+--   -- (Run manually; expect 23505 unique_violation)
+--   -- INSERT INTO public.user_roles (email, role, company)
+--   -- VALUES ('foo@bar.com', 'resident', 'X'),
+--   --        ('FOO@BAR.COM', 'resident', 'X');
+--   Expected: second INSERT raises 23505.
+--   Rollback the transaction after confirming.
+--
+-- ── C. get_my_role() determinism now guaranteed
+--   -- Every JWT email maps to AT MOST one user_roles row via lower(email).
+--   -- LIMIT-1-no-ORDER-BY in the helper body is now spec-safe by
+--   -- construction.
+-- ════════════════════════════════════════════════════════════════════
