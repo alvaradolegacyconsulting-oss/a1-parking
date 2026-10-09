@@ -1,4 +1,74 @@
 -- ══════════════════════════════════════════════════════════════════════
+-- 🟢 STATUS UPDATE — 2026-10-10. READ THIS BEFORE SCOPING FROM THIS FILE.
+-- ══════════════════════════════════════════════════════════════════════
+--
+-- Query G was run. ITS ANSWER CLOSES QUERY F'S CLASS.
+--
+--   user_roles_company_no_sql_metachar
+--     CHECK (company IS NULL OR company !~ '[%_\\]')
+--   user_roles_property_no_sql_metachar
+--     CHECK (property IS NULL OR array_to_string(property, ',') !~ '[%_\\]')
+--
+-- Both constraints exist. Query G proposed constraining the PATTERN
+-- SIDE as "the better fix" — it had already landed.
+--
+-- ── WHAT THIS MEANS ─────────────────────────────────────────────────
+--
+-- Every policy Query F found reads its pattern from user_roles.company
+-- or user_roles.property, by way of get_my_company() /
+-- get_my_properties(). A wildcard can no longer be STORED in either
+-- column, so the pattern can never hold one — no matter how many
+-- policies ILIKE against it. The cross-tenant reach described below
+-- ("a user_roles.company of '%' reads EVERY resident in EVERY tenant")
+-- has no route to be loaded, including through
+-- residents_manager_update, the UPDATE in that group.
+--
+-- 🔴 SO THE SEVERITY ORDERING IN THIS FILE IS NOW WRONG.
+--
+-- Query F's header says the company/property class is "THE REAL
+-- SURFACE" and should be weighed above the email class on cross-tenant
+-- reach. That ranking was correct when written and is not any more:
+--
+--   company/property class  → CLOSED at the pattern side. Rewriting
+--                             those policies to equality is hygiene,
+--                             not risk reduction. Do it when touching
+--                             them for other reasons; do not schedule
+--                             it as security work.
+--
+--   email class             → 🔴 STILL OPEN, and now the top item.
+--                             Tier 2 (drivers.driver_read_own,
+--                             residents.resident_read_own) plus
+--                             vehicles.resident_select_vehicles.
+--
+-- ── WHY THE EMAIL CLASS CANNOT BE CLOSED THE SAME WAY ───────────────
+--
+-- The constraint trick does not transfer, and this file already says
+-- why in its own header: john_smith@gmail.com is a legitimate address,
+-- so `_` cannot be forbidden on an email column. No real company is
+-- named '%' and none can be, which is exactly why the user_roles CHECKs
+-- cost nothing. The email fix has to be at the policy layer.
+--
+-- Exposure is still LATENT, not live — Query D returned zero pairs on
+-- 2026-09-11 and should be re-run before the rewrite, because the
+-- answer is a property of today's data and residents keep signing up.
+--
+-- ── WHEN THE REWRITE LANDS ──────────────────────────────────────────
+--
+-- 🔴 E4 in 20260911_email_ilike_tier1_equality_verification.sql is a
+-- DELIBERATE NEGATIVE expectation asserting residents.resident_read_own
+-- is STILL ILIKE, so that a green Tier 1 run cannot be misread as "the
+-- email vector is closed". Its own comment says: "If this ever returns
+-- 0, Tier 2 landed and this gate should be INVERTED — not deleted."
+-- Closing Tier 2 without inverting E4 turns a working gate into a lie.
+--
+-- And per this file's own METHOD NOTE: the gates for the fix must be
+-- EXECUTION-based — attempt the access as a real session and assert on
+-- the actual denial. String-matching `qual` found these; it cannot
+-- prove one is closed.
+-- ══════════════════════════════════════════════════════════════════════
+
+
+-- ══════════════════════════════════════════════════════════════════════
 -- READ-ONLY AUDIT — `email ~~* (auth.jwt() ->> 'email')` policy sites
 -- 2026-09-11. Resumes the audit stopped at §1 on 2026-09-07.
 --
@@ -236,8 +306,15 @@ ORDER BY cmd, policyname;
 
 
 -- ══════════════════════════════════════════════════════════════════════
--- F — 🔴 THE REAL SURFACE. SCOPE BY THE OPERATOR, NOT THE COLUMN.
+-- F — SCOPE BY THE OPERATOR, NOT THE COLUMN.
 --     Added 2026-09-11, after Query E.
+--
+-- 🟢 2026-10-10 — THIS CLASS IS CLOSED. Heading de-escalated from "THE
+-- REAL SURFACE": Query G's constraints exist, so the pattern side of
+-- every policy below cannot hold a wildcard. The analysis in this
+-- section is still accurate about the MECHANISM and is kept for that;
+-- the severity claim at the end of it is superseded by the status block
+-- at the top of this file. Run it to enumerate, not to prioritise.
 --
 -- Queries A-C above matched on the word `email`. That was a framing
 -- error, not a gap in the method: the vector is the OPERATOR, and the
@@ -267,12 +344,14 @@ ORDER BY cmd, policyname;
 -- literally %") was closed for get_company_admin_emails by moving that
 -- function to equality. Closed in ONE place; this is the rest of it.
 --
--- ⚠ RUN THIS BEFORE SCOPING TIER 3. Tier 3 as currently drawn is ten
--- email policies. The real remaining surface is whatever this returns,
--- and the ordering should weigh CROSS-TENANT reach rather than the
--- column the pattern happens to sit on. Expect the company/property
--- class to be sizeable — manager and company_admin read policies follow
--- a template, and templates get copied.
+-- ⚠ SUPERSEDED 2026-10-10 — this paragraph said to weigh cross-tenant
+-- reach above the email column and to run this before scoping Tier 3.
+-- The cross-tenant reach it was weighing is gone: user_roles can no
+-- longer carry a wildcard, so this class has no loaded pattern. The
+-- email class is the remaining surface and the top item. The
+-- expectation that the company/property class is "sizeable" held —
+-- templates were indeed copied — but a large closed class does not
+-- outrank a small open one.
 -- ══════════════════════════════════════════════════════════════════════
 SELECT schemaname, tablename, policyname, cmd, roles, qual, with_check
   FROM pg_policies
@@ -299,6 +378,19 @@ SELECT schemaname, tablename, policyname, cmd, roles, qual, with_check
 -- state. Four of the six Tier 1 policies were dashboard-created and
 -- appear in no migration at all, so a dashboard-added constraint is
 -- equally plausible. THIS QUERY IS THE ANSWER, not the grep.
+--
+-- 🟢 ANSWERED 2026-10-10. Both constraints exist and neither is in
+-- migrations/, which is precisely the case this header anticipated —
+-- the grep would have said "no constraint" and been wrong. Worth
+-- keeping as a worked example of why the catalog is the audit surface.
+--
+--   user_roles_company_no_sql_metachar
+--     CHECK (company IS NULL OR company !~ '[%_\\]')
+--   user_roles_property_no_sql_metachar
+--     CHECK (property IS NULL OR array_to_string(property, ',') !~ '[%_\\]')
+--
+-- Note both forbid `\\` as well as % and _ — the escape character,
+-- which a predicate-level rewrite would have had to handle separately.
 -- ══════════════════════════════════════════════════════════════════════
 SELECT conname, pg_get_constraintdef(oid) AS definition
   FROM pg_constraint
