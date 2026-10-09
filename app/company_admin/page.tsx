@@ -69,6 +69,7 @@ async function callSyncOnAdd(
 import { TIER_CONFIG, type TierType } from '../lib/tier-config'
 import { OFFERINGS } from '../lib/tier-display'
 import { tokenFor, PLANS } from '../lib/signup-tier-param'
+import PlateProhibitionPanel from '../components/PlateProhibitionPanel'
 import { useQuote } from '../lib/use-quote'
 import { formatUsd, describeQuote } from '../lib/pricing-quote'
 
@@ -7185,6 +7186,20 @@ export default function CompanyAdminPortal() {
                               </div>
                             </div>
                           )}
+                          {/* ── 2026-10-11 — plate prohibitions ─────────
+                              In the CA portal for EVERY tier, including
+                              Operator Starter (ruled). On Operator
+                              Starter there are no residents or visitors
+                              to block, so the payoff there is the driver
+                              lookup — which is why this is NOT gated on
+                              hasFeature(RESIDENT_PORTAL) like the QR
+                              block above it. canManage is true for a
+                              company admin at their own company;
+                              may_manage_prohibitions_at() is the real
+                              authority, server-side, inside each RPC. */}
+                          <div style={{ marginTop:'14px' }}>
+                            <PlateProhibitionPanel property={selectedName} canManage={true} />
+                          </div>
                         </>
                       )}
                     </div>

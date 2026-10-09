@@ -91,6 +91,7 @@ import CredentialsModal from '../components/CredentialsModal'
 // 2–6. Toggle: flip PM_CRM_ENABLED to false to fall back to the legacy
 // render below (kept intact for rollback until slice 2 retires it).
 import PmResidentCrm from '../components/PmResidentCrm'
+import PlateProhibitionPanel from '../components/PlateProhibitionPanel'
 import { buildCrmResidents, isVehicleUnauthorizedForRestore, isPlateClash, plateClashMessage, findPlateDuplicates, type CrmResident, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
 import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '../lib/unit-occupancy'
 
@@ -5663,6 +5664,22 @@ if (vehErr) {
                 })()}
               </div>
             )}
+
+            {/* ── Section B2 (2026-10-11) — plate prohibitions ──────
+                Managers manage this for their own properties (ruled).
+                Deliberately ABOVE the quota-exemption block, because
+                the two are easy to confuse and this one is the stronger
+                statement: an exemption only lifts a counting cap and
+                explicitly does NOT protect a vehicle from being towed,
+                while a prohibition refuses registration outright.
+                Reading them in this order makes the difference obvious.
+
+                isReadOnly covers the leasing-agent case — part-1 RLS
+                gives that role SELECT and no write, so the history is
+                visible and the controls are not. */}
+            <div style={{ marginBottom:'14px' }}>
+              <PlateProhibitionPanel property={manager.name} canManage={!isReadOnly} isReadOnly={isReadOnly} />
+            </div>
 
             {/* Section C — Visitor Pass Quota Exemptions
                 Formerly labeled "Exempt Plates" — that name misled property
