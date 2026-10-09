@@ -67,6 +67,7 @@ export type SystemReasonCode =
   | 'owner_trim'
   | 'admin_cascade'
   | 'resident_removed'
+  | 'plate_prohibited'
 
 export interface DeactivationReason<Code extends string = string> {
   readonly code:     Code
@@ -127,6 +128,18 @@ export const SYSTEM_DEACTIVATION_REASONS: readonly DeactivationReason<SystemReas
   // notifies: false — the resident performed the action; emailing them
   // about it is noise, not notice.
   { code: 'resident_removed',              label: '[system] Removed by the resident',            notifies: false },
+  // 2026-10-11 — plate prohibition. SYSTEM, for the same reason
+  // resident_removed is: a manager must not be able to claim a vehicle
+  // was removed because the plate is prohibited when no prohibition
+  // exists. Only add_plate_prohibition's retroactive revocation stamps
+  // it, and deactivate_vehicle's v_system_codes rejects it from the
+  // manager path.
+  //
+  // notifies: false — the resident is told at the point of refusal, in
+  // neutral language, by the surface they were using. A notification
+  // naming the deactivation would be the one place the word reached
+  // them, which is exactly what the copy rules forbid.
+  { code: 'plate_prohibited',              label: '[system] Plate not permitted at this property', notifies: false },
 ]
 
 // ── Precomputed per-entity lookups ───────────────────────────────────

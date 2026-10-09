@@ -10,6 +10,7 @@ import { logAudit } from '../lib/audit'
 import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 import SupportContact from '../components/SupportContact'
 import { normalizePlate } from '../lib/plate'
+import { isPlateProhibitedError, plateProhibitedCopy } from '../lib/plate-prohibition-copy'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { displayTowReason } from '../lib/tow-reasons'
 import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
@@ -843,7 +844,10 @@ export default function ResidentPortal() {
       // two messages are the whole point of refusing: each one tells
       // the resident that the thing they were about to re-do is already
       // done, and what the actual state is.
-      if (msg.includes('vehicle_already_registered')) {
+      if (isPlateProhibitedError(error)) {
+        // 🔴 Neutral. Never "prohibited", never the reason.
+        alert(plateProhibitedCopy('resident', normalizedPlate))
+      } else if (msg.includes('vehicle_already_registered')) {
         alert('This vehicle is already registered and approved at your property. You don\u2019t need to add it again.')
       } else if (msg.includes('vehicle_already_pending')) {
         alert('This vehicle is already waiting for approval by the property office. Submitting it again won\u2019t speed it up \u2014 you\u2019ll see it here as soon as they review it.')
@@ -1069,6 +1073,10 @@ export default function ResidentPortal() {
       setPassSubmitting(false)
     }
     if (error) {
+      if (isPlateProhibitedError(error)) {
+        setPassError(plateProhibitedCopy('visitor', plate))
+        return
+      }
       const friendly = parseLimitTriggerError(error as never)
       if (friendly) {
         setPassError(friendly)

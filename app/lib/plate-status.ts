@@ -30,6 +30,20 @@ export type PlateStatus =
   | 'otherproperty'       // active permit at a different property in scope (CA surface)
   | 'unauthorized'        // pm_plate_lookup RPC's default when no branch matches
   | 'notfound'            // driver's client-cascade equivalent of 'unauthorized'
+  // 2026-10-11 — an ACTIVE property_plate_prohibitions row.
+  //
+  // 🔴 doNotTow is FALSE for this one, and the pairing of names is why
+  // "banned" was rejected: a status whose doNotTow is false would have
+  // sat beside a table called do_not_tow_plates whose members are the
+  // LEAST towable things in the system. `prohibited` has no overlap.
+  //
+  // Ranked below every protective status deliberately. A prohibition
+  // cannot outrank a live grant in the HEADLINE, because the cascade's
+  // pick order is load-bearing (feedback_pending_vs_decided...) — the
+  // two are kept from colliding by add_plate_prohibition revoking
+  // conflicting grants when the prohibition is created, not by this
+  // status winning a race against them.
+  | 'prohibited'          // active property_plate_prohibitions row at the scanned property
 
 export type PlateSurface = 'driver' | 'pm'
 
@@ -154,6 +168,27 @@ export const PLATE_STATUS_META: Record<PlateStatus, PlateStatusMeta> = {
     doNotTow: false,
     driverHeadline: '✗ NO PERMIT FOUND',
     pmHeadline: 'No permit on file',
+  },
+  // 2026-10-11 — plate prohibition.
+  //
+  // 🔴 The driver copy carries NO REASON, by ruling. A prohibition
+  // reason is likely a dispute, a trespass notice or a person; a tow
+  // driver does not need it to act, and putting it on an enforcement
+  // card hands the office's internal note to whoever is holding the
+  // phone. This is the deliberate inverse of do_not_tow_plates.reason,
+  // which IS shown to drivers because there a bare flag invites
+  // second-guessing. The office contact is the actionable part.
+  //
+  // PM copy says the reason is available rather than containing it —
+  // the manager surface reads the row itself and can show it in full.
+  prohibited: {
+    label: 'NOT PERMITTED AT THIS PROPERTY',
+    bg: DENIED_BG, border: DENIED_BR, color: DENIED_FG,
+    doNotTow: false,
+    driverHeadline: '✗ NOT PERMITTED AT THIS PROPERTY',
+    driverSubtitle: 'This plate is not permitted here. Contact the property office before acting.',
+    pmHeadline: 'Not permitted at this property',
+    pmSubtitle: 'A prohibition is on file for this plate. Open the property\u2019s prohibition list for the reason and history.',
   },
 }
 

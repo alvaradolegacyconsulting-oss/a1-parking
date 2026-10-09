@@ -50,6 +50,11 @@ import PastDueBanner, { type PastDueBannerProps } from '../components/PastDueBan
 // adds visibility of the other records and widens the override gate.
 type CompositeRecord =
   | { type: 'do_not_tow';                    data: { plate: string; property: string; reason: string } }
+  // 2026-10-11 — plate prohibition. 🔴 NO `reason` field, deliberately:
+  // the driver is never shown it (ruled), so it is not carried into the
+  // driver's data model at all. A field that exists is a field someone
+  // renders.
+  | { type: 'prohibited';                    data: { plate: string; property: string } }
   | { type: 'vehicle_active';                data: { plate: string } }
   | { type: 'authorized_plate';              data: { plate: string; property: string } }
   | { type: 'vehicle_pending';               data: { plate: string } }
@@ -65,15 +70,29 @@ type CompositeRecord =
 // then recently-expired last (de-emphasised, informational).
 const COMPOSITE_SORT_PRIORITY: Record<CompositeRecord['type'], number> = {
   do_not_tow: 0,
-  vehicle_active: 1,
-  authorized_plate: 2,
-  guest_auth: 3,
-  visitor_pass_live: 4,
-  vehicle_pending: 5,
-  vehicle_declined: 6,
-  vehicle_expired: 7,
-  plate_under_review: 8,
-  visitor_pass_recently_expired: 9,
+  // 🔴 1, directly below do_not_tow and ABOVE every grant.
+  //
+  // This looks like it contradicts "the pick order can never change",
+  // so read carefully: the order is UNCHANGED for every existing type —
+  // vehicle_active and the rest keep their relative ranks, shifted by
+  // one. What is new is a type ranked above them, and it is safe to
+  // rank it there ONLY because add_plate_prohibition revokes
+  // conflicting grants when the prohibition is created. A prohibited
+  // plate therefore cannot also hold a live grant, so this never
+  // suppresses a protective record — there is none left to suppress.
+  //
+  // If revocation is ever removed, this rank becomes a
+  // declined-vehicle-bypass-class bug and must move.
+  prohibited: 1,
+  vehicle_active: 2,
+  authorized_plate: 3,
+  guest_auth: 4,
+  visitor_pass_live: 5,
+  vehicle_pending: 6,
+  vehicle_declined: 7,
+  vehicle_expired: 8,
+  plate_under_review: 9,
+  visitor_pass_recently_expired: 10,
 }
 
 // isDoNotTow-parity for composite record types. `do_not_tow` isn't in
@@ -91,6 +110,11 @@ function compositeTypeIsProtective(t: CompositeRecord['type']): boolean {
     case 'guest_auth':
     case 'visitor_pass_live':
       return true
+    // 🔴 NOT protective. A prohibition is the opposite of a grant: it
+    // says this plate may not be here. Classifying it protective would
+    // route it through the B71 violation intercept as though it were a
+    // reason NOT to act, which inverts the whole feature.
+    case 'prohibited':
     case 'vehicle_declined':
     case 'vehicle_expired':
     case 'visitor_pass_recently_expired':
@@ -2854,6 +2878,12 @@ export default function DriverPortal() {
                           case 'plate_under_review':       return { ...PLATE_STATUS_META.plate_under_review,opacity: 1 }
                           case 'guest_auth':               return { ...PLATE_STATUS_META.guest_authorized,  opacity: 1 }
                           case 'visitor_pass_live':        return { ...PLATE_STATUS_META.visitor,           opacity: 1 }
+                          // 2026-10-11 — reuses the shared `prohibited`
+                          // meta rather than its own literal, so the
+                          // composite row and the headline card cannot
+                          // drift in colour. Same discipline as the
+                          // authorized/authorized_plate shared constant.
+                          case 'prohibited':               return { ...PLATE_STATUS_META.prohibited,        opacity: 1 }
                         }
                       }
                       const p = paletteFor(r.type)
@@ -2865,6 +2895,16 @@ export default function DriverPortal() {
                       let plateText = ''
                       let detail: React.ReactNode = null
                       switch (r.type) {
+                        // 🔴 2026-10-11 — this switch has no default and
+                        // does NOT error on a missing case, so a new
+                        // record type renders with an EMPTY plate and a
+                        // blank detail. That is a visible defect the
+                        // compiler will not catch, unlike paletteFor
+                        // above. Adding the case explicitly.
+                        case 'prohibited':
+                          plateText = r.data.plate
+                          detail = 'Not permitted here'
+                          break
                         case 'do_not_tow':
                           plateText = r.data.plate
                           detail = <>Do Not Tow{r.data.reason ? ` · reason: ${r.data.reason}` : ''}</>

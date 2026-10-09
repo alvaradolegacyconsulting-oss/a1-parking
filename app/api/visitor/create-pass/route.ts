@@ -1,5 +1,6 @@
 import 'server-only'
 import { NextRequest, NextResponse } from 'next/server'
+import { isPlateProhibitedError, plateProhibitedCopy } from '../../../lib/plate-prohibition-copy'
 import { verifyTurnstile } from '../../../lib/turnstile-verify'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 
@@ -137,6 +138,16 @@ export async function POST(req: NextRequest) {
     // get_plate_pass_status. Detect the trigger's SQLSTATE and swap in
     // a generic-but-actionable message; log the full detail server-side.
     // Any other error class passes through unchanged.
+    // 🔴 2026-10-11 — plate prohibition, before the limit check.
+    // The visitor is anonymous and gets the neutral sentence; the word
+    // "prohibited" and the reason never leave the manager surfaces.
+    if (isPlateProhibitedError(rpcErr)) {
+      console.warn('[plate-prohibition] /api/visitor/create-pass refused', { plate, property })
+      return NextResponse.json(
+        { ok: false, error: plateProhibitedCopy('visitor', plate), error_class: 'plate_prohibited' },
+        { status: 400 },
+      )
+    }
     const isVisitorPassLimit = (rpcErr as { code?: string }).code === '23514'
       || rpcErr.message.includes('visitor passes at this property in the last 30 days')
     if (isVisitorPassLimit) {

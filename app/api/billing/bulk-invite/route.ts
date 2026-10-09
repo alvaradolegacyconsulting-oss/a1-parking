@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { isPlateProhibitedError, plateProhibitedCopy } from '../../../lib/plate-prohibition-copy'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { FEATURE_FLAGS } from '../../../lib/feature-flags'
@@ -351,7 +352,23 @@ export async function POST(req: NextRequest) {
             // companyData.tier resolved at L110 above.
             ...initialVehicleState(companyData.tier),
           }])
-          if (vehErr) {
+          // 🔴 2026-10-11 — a prohibited plate is REPORTED PER ROW and
+          // does NOT fail the batch (ruled). The resident row is
+          // already in, which is the right outcome: the person is a
+          // resident, the car is the thing not permitted. An import of
+          // 200 residents must not abort because one plate is on the
+          // list, and the operator must not have to diff two
+          // spreadsheets to find out which.
+          //
+          // Carried as a warning rather than status:'error' so the row
+          // still counts as an invited resident. The copy is the
+          // MANAGER variant — this surface is CA-only.
+          if (vehErr && isPlateProhibitedError(vehErr)) {
+            console.warn('[plate-prohibition] bulk-invite companion vehicle refused', { email: res.email, plate: res.vehicle_plate })
+            warnings.push(
+              `${res.email}: resident added, but the vehicle was not — ${plateProhibitedCopy('manager', res.vehicle_plate)}`
+            )
+          } else if (vehErr) {
             console.error('[bulk-invite] companion vehicle insert failed for', res.email, vehErr.message)
           }
         }

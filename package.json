@@ -21,7 +21,8 @@
     "verify:residentremove": "tsx scripts/verify-resident-vehicle-removal.ts",
     "verify:dupeplate": "tsx scripts/verify-duplicate-plate.ts",
     "verify:visitorpass": "tsx scripts/verify-visitor-pass-dedup.ts",
-    "verify:plannames": "tsx scripts/verify-plan-names.ts"
+    "verify:plannames": "tsx scripts/verify-plan-names.ts",
+    "verify:prohibitions": "tsx scripts/verify-plate-prohibitions.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

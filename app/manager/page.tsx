@@ -97,6 +97,7 @@ import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '
 const PM_CRM_ENABLED = true
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate, normalizeUnit, assertPlateUniqueAtProperty } from '../lib/plate'
+import { isPlateProhibitedError, plateProhibitedCopy } from '../lib/plate-prohibition-copy'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -2576,7 +2577,16 @@ export default function ManagerPortal() {
         year: parseInt(newVehicle.year) || null,
         permit_expiry: newVehicle.permit_expiry || null,
       }])
-      if (error) { alert('Error: ' + error.message) }
+      if (error && isPlateProhibitedError(error)) {
+        // 🔴 2026-10-11 — explicit for a manager. This is a direct
+        // .insert(), one of the five paths that never pass through an
+        // RPC, which is why the refusal is a TRIGGER and not an RPC
+        // check: a manager adding a car by hand has to hit the same
+        // wall a resident does.
+        alert(plateProhibitedCopy('manager', normalizedPlate))
+        return
+      }
+if (error) { alert('Error: ' + error.message) }
       else {
         await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name, resident_email: ownerEmail } })
         alert('Vehicle added!')
@@ -2978,7 +2988,13 @@ export default function ManagerPortal() {
           is_active: cascadeInitState.is_active,
           status:    cascadeInitState.status,
         }])
-        if (vehErr) {
+        if (vehErr && isPlateProhibitedError(vehErr)) {
+          // Add-resident-with-vehicle. The resident row is already in;
+          // refusing the VEHICLE must not read as "the resident failed".
+          alert(plateProhibitedCopy('manager', newResident.vehicle_plate) + ' The resident was added without it.')
+          return
+        }
+if (vehErr) {
           // Inline boundary — log + soft alert + CONTINUE. Do NOT throw.
           console.error('[B167-vehicle-insert-failed]', { residentEmail: targetEmail, plate: newResident.vehicle_plate, error: vehErr.message })
           alert('Resident created successfully, but the vehicle could not be added: ' + vehErr.message + '\n\nYou can add the vehicle later via the Edit Resident → Vehicles section.')
