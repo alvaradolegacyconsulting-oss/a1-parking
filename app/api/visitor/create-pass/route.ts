@@ -103,8 +103,24 @@ export async function POST(req: NextRequest) {
   // policy tightening; the RPC body remains the source of truth for
   // visitor-pass-limit + B19 per-plate concurrent enforcement +
   // VISITOR_TOS_ACCEPTED audit row.
+  // 🔴 2026-10-09 — issue_visitor_pass, not create_visitor_pass.
+  //
+  // The old RPC had no duplicate check, so a visitor who re-submitted
+  // because they did not believe it had worked got a second live pass.
+  // 22 bursts and 27 duplicate rows across 4 properties, with gaps up to
+  // 109 seconds — far too slow to be a double-click, so the page's
+  // in-flight guard never saw them. The new RPC returns the existing
+  // live pass instead, serialized by an advisory lock so concurrent
+  // submissions cannot both insert.
+  //
+  // Service-role is still used here for blast-radius isolation, and it
+  // now also carries meaning: anon is deliberately NOT granted EXECUTE
+  // on issue_visitor_pass, so this route is the only way an anonymous
+  // visitor can reach it and the CAPTCHA above cannot be skipped.
+  // create_visitor_pass granted anon directly, which allowed exactly
+  // that bypass; this arc revokes it.
   const admin = createSupabaseServiceClient()
-  const { error: rpcErr } = await admin.rpc('create_visitor_pass', {
+  const { data: rpcData, error: rpcErr } = await admin.rpc('issue_visitor_pass', {
     p_plate: plate,
     p_visitor_name: visitorName,
     p_visiting_unit: visitingUnit,
@@ -137,5 +153,14 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  return NextResponse.json({ ok: true })
+  // Tell the caller WHICH happened. 'existing' is a success, not an
+  // error — the visitor has a valid pass either way, and the page says
+  // so rather than implying a second one was created.
+  const result = rpcData as { action?: string; pass_id?: number; expires_at?: string } | null
+  return NextResponse.json({
+    ok: true,
+    action: result?.action ?? 'created',
+    pass_id: result?.pass_id ?? null,
+    expires_at: result?.expires_at ?? null,
+  })
 }

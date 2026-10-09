@@ -123,6 +123,9 @@ export default function ResidentPortal() {
   // already_deactivated) but a double-tap would fire two confirms and
   // two refreshes, which reads as a glitch.
   const [removingVehicleId, setRemovingVehicleId] = useState<string | null>(null)
+  // 2026-10-09 — visitor-pass submit guard. The button was disabled
+  // only at the pass limit, so nothing stopped a second tap.
+  const [passSubmitting, setPassSubmitting] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<any>({})
   // Slice 4 — resident's own pending plate changes, indexed by vehicle_id.
   // Fetched alongside vehicles; used to render the "Plate change under
@@ -1022,32 +1025,74 @@ export default function ResidentPortal() {
     // surfaces and the trigger agree on one policy. Submit-time errors
     // are caught below via parseLimitTriggerError.
 
-    const expires = new Date()
-    expires.setHours(expires.getHours() + parseInt(visitorForm.duration))
-    const { error } = await supabase
-      .from('visitor_passes')
-      .insert([{
-        plate,
-        visitor_name: visitorForm.name,
-        visiting_unit: resident.unit,
-        property: resident.property,
-        vehicle_desc: visitorForm.vehicle_desc,
-        duration_hours: parseInt(visitorForm.duration),
-        created_at: new Date().toISOString(),
-        expires_at: expires.toISOString(),
-        is_active: true
-      }])
+    // 🔴 2026-10-09 — issue_visitor_pass RPC replaces the direct
+    // .insert().
+    //
+    // THREE things the insert got wrong, and all three produced the
+    // Oct 8 incident where one resident issued the same 24h pass four
+    // times in 9 seconds:
+    //
+    //   1. No duplicate check. Each tap inserted another live pass.
+    //   2. created_at came from THE BROWSER CLOCK (new Date()), which
+    //      is why those four rows are out of chronological order
+    //      relative to their ids. The RPC uses now() and takes no
+    //      timestamp parameter.
+    //   3. It was a second write path. /visitor went through
+    //      create_visitor_pass; this went straight to the table. A
+    //      guard in either place could never have covered both, which
+    //      is why there is now exactly one.
+    //
+    // The RPC re-implements the (property, unit) scoping that
+    // resident_own_passes RLS applied to this insert — a SECURITY
+    // DEFINER function bypasses the policy, so losing that check was
+    // the one real risk in this move, and it is asserted by
+    // verify:visitorpass.
+    if (passSubmitting) return
+    setPassSubmitting(true)
+    let data: unknown = null
+    let error: { message: string } | null = null
+    try {
+      const res = await supabase.rpc('issue_visitor_pass', {
+        p_plate:          plate,
+        p_visitor_name:   visitorForm.name,
+        p_visiting_unit:  resident.unit,
+        p_property:       resident.property,
+        p_vehicle_desc:   visitorForm.vehicle_desc,
+        p_duration_hours: parseInt(visitorForm.duration),
+      })
+      data = res.data
+      error = res.error
+    } finally {
+      // finally, for the reason the manager guards now do: the failure
+      // paths below all return, and a button left disabled on a refused
+      // submit is the hang we spent this week removing.
+      setPassSubmitting(false)
+    }
     if (error) {
-      const friendly = parseLimitTriggerError(error)
+      const friendly = parseLimitTriggerError(error as never)
       if (friendly) {
         setPassError(friendly)
+      } else if (error.message.includes('not_your_unit')) {
+        setPassError('You can only issue a visitor pass for the unit you live in.')
+      } else if (error.message.includes('unauthenticated') || error.message.includes('caller is not a resident')) {
+        setPassError('Please sign in again before issuing a pass.')
       } else {
         alert('Error: ' + error.message)
       }
       return
     }
-    await logAudit({ action: 'ISSUE_VISITOR_PASS', table_name: 'visitor_passes', new_values: { plate, visiting_unit: resident.unit, duration_hours: parseInt(visitorForm.duration) } })
-    alert('Visitor pass issued!')
+    const result = data as { action?: string; expires_at?: string; plate?: string } | null
+    await logAudit({ action: 'ISSUE_VISITOR_PASS', table_name: 'visitor_passes', new_values: { plate, visiting_unit: resident.unit, duration_hours: parseInt(visitorForm.duration), action: result?.action ?? 'created' } })
+    // 🔴 'existing' is a SUCCESS. The visitor has a valid pass; saying
+    // "issued!" a second time is what taught people to tap again.
+    const expiryText = result?.expires_at
+      ? new Date(result.expires_at).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+      : null
+    if (result?.action === 'existing') {
+      alert(`${plate} already has an active visitor pass${expiryText ? `, good until ${expiryText}` : ''}. Nothing else to do — we didn't create a second one.`)
+    } else {
+      alert(`Visitor pass issued${expiryText ? ` — good until ${expiryText}` : ''}.`)
+    }
     setShowVisitorForm(false)
     setVisitorForm({ plate: '', name: '', vehicle_desc: '', duration: '4' })
     fetchPasses(resident.unit)
@@ -1903,9 +1948,9 @@ export default function ResidentPortal() {
                   </div>
                 )}
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={issueVisitorPass} disabled={isAtLimit(limitStatus)}
-                    style={{ flex:1, padding:'11px', background: isAtLimit(limitStatus) ? '#555' : '#C9A227', color: isAtLimit(limitStatus) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: isAtLimit(limitStatus) ? 'not-allowed' : 'pointer' }}>
-                    Issue Pass
+                  <button onClick={issueVisitorPass} disabled={isAtLimit(limitStatus) || passSubmitting}
+                    style={{ flex:1, padding:'11px', background: (isAtLimit(limitStatus) || passSubmitting) ? '#555' : '#C9A227', color: (isAtLimit(limitStatus) || passSubmitting) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: isAtLimit(limitStatus) ? 'not-allowed' : (passSubmitting ? 'wait' : 'pointer') }}>
+                    {passSubmitting ? 'Issuing…' : 'Issue Pass'}
                   </button>
                   <button onClick={() => { setShowVisitorForm(false); setPassError('') }}
                     style={{ padding:'11px 14px', background:'#1e2535', color:'#aaa', fontSize:'13px', border:'1px solid #3a4055', borderRadius:'8px', cursor:'pointer', fontFamily:'Arial' }}>

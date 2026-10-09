@@ -19,7 +19,8 @@
     "verify:quote": "tsx scripts/verify-signup-quote.ts",
     "verify:saasbind": "tsx scripts/verify-saas-binding-e2e.ts",
     "verify:residentremove": "tsx scripts/verify-resident-vehicle-removal.ts",
-    "verify:dupeplate": "tsx scripts/verify-duplicate-plate.ts"
+    "verify:dupeplate": "tsx scripts/verify-duplicate-plate.ts",
+    "verify:visitorpass": "tsx scripts/verify-visitor-pass-dedup.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",
