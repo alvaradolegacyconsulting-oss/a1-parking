@@ -36,7 +36,7 @@
 -- default of 'monthly' would make every unknown company look monthly,
 -- which is exactly the confident-wrong-answer shape being avoided.
 --
--- Paired: wip-20261010_companies_billing_interval_verification.sql
+-- Paired: 20261010_companies_billing_interval_verification.sql
 
 ALTER TABLE public.companies
   ADD COLUMN IF NOT EXISTS billing_interval TEXT;
