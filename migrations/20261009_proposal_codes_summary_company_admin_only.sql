@@ -52,7 +52,7 @@
 -- forgetting that line is how the CA plan card would silently start
 -- reporting "no negotiated deal" for A1.
 --
--- Paired: wip-20261009_proposal_codes_summary_company_admin_only_verification.sql
+-- Paired: 20261009_proposal_codes_summary_company_admin_only_verification.sql
 
 DROP VIEW IF EXISTS public.proposal_codes_summary;
 
