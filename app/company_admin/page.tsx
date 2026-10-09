@@ -7048,6 +7048,40 @@ export default function CompanyAdminPortal() {
                             />
                           </div>
 
+                          {/* ── NOT PERMITTED PLATES (2026-10-11) ────────
+                              Directly below Authorized Plates, as its own
+                              red-headed section, so the two read as the
+                              inverse of each other. Moved out of the
+                              property Settings area on Jose's ruling.
+
+                              In the CA portal for EVERY tier, including
+                              Operator Starter — deliberately NOT gated on
+                              hasFeature(RESIDENT_PORTAL) like the resident
+                              QR block, because on Operator Starter there
+                              are no residents to block and the payoff is
+                              the driver lookup.
+
+                              🔴 propertyId={selected.id} is the scoping
+                              fix. The panel previously took only the name
+                              and ran an unfiltered query, so it showed
+                              every property in the company under
+                              whichever one was selected. Enforcement was
+                              never affected — proven by execution in
+                              verify:prohibitions.
+
+                              NOT readOnly, unlike AuthorizedPlatesManager
+                              above: a company admin manages prohibitions
+                              for their own properties, and
+                              may_manage_prohibitions_at() is the real
+                              authority inside each RPC. */}
+                          <div style={{ marginTop:'16px' }}>
+                            <PlateProhibitionPanel
+                              propertyId={selected.id}
+                              property={selected.name}
+                              canManage={true}
+                            />
+                          </div>
+
                           {/* CA CRM refactor 2026-07-05 — Edit form fields carried
                               inline. Existing saveProperty handler + auth-doc
                               upload/remove helpers. Fields mirror legacy edit form. */}
@@ -7186,20 +7220,6 @@ export default function CompanyAdminPortal() {
                               </div>
                             </div>
                           )}
-                          {/* ── 2026-10-11 — plate prohibitions ─────────
-                              In the CA portal for EVERY tier, including
-                              Operator Starter (ruled). On Operator
-                              Starter there are no residents or visitors
-                              to block, so the payoff there is the driver
-                              lookup — which is why this is NOT gated on
-                              hasFeature(RESIDENT_PORTAL) like the QR
-                              block above it. canManage is true for a
-                              company admin at their own company;
-                              may_manage_prohibitions_at() is the real
-                              authority, server-side, inside each RPC. */}
-                          <div style={{ marginTop:'14px' }}>
-                            <PlateProhibitionPanel property={selectedName} canManage={true} />
-                          </div>
                         </>
                       )}
                     </div>

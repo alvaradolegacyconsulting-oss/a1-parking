@@ -5665,22 +5665,6 @@ if (vehErr) {
               </div>
             )}
 
-            {/* ── Section B2 (2026-10-11) — plate prohibitions ──────
-                Managers manage this for their own properties (ruled).
-                Deliberately ABOVE the quota-exemption block, because
-                the two are easy to confuse and this one is the stronger
-                statement: an exemption only lifts a counting cap and
-                explicitly does NOT protect a vehicle from being towed,
-                while a prohibition refuses registration outright.
-                Reading them in this order makes the difference obvious.
-
-                isReadOnly covers the leasing-agent case — part-1 RLS
-                gives that role SELECT and no write, so the history is
-                visible and the controls are not. */}
-            <div style={{ marginBottom:'14px' }}>
-              <PlateProhibitionPanel property={manager.name} canManage={!isReadOnly} isReadOnly={isReadOnly} />
-            </div>
-
             {/* Section C — Visitor Pass Quota Exemptions
                 Formerly labeled "Exempt Plates" — that name misled property
                 owners into thinking these plates were protected from
@@ -6104,6 +6088,31 @@ if (vehErr) {
             propertyName={manager.name}
             onCountChange={setApCount}
           />
+        )}
+
+        {/* ── NOT PERMITTED PLATES (2026-10-11, Jose's placement ruling)
+            Moved here from Settings, next to Authorized Plates, as its
+            own red-headed section.
+            🔴 WHY IT LEFT SETTINGS: in Settings it sat beside the
+            visitor-pass quota exemptions, which are nearly its opposite
+            — an exemption lifts a counting cap and explicitly does NOT
+            protect a vehicle from being towed, while a prohibition
+            refuses registration outright. Two plate lists with opposite
+            meanings in one panel is the same confusion that kept
+            "banned" out of the code. Here it reads as the inverse of
+            the list directly above it, which is what it is.
+            propertyId is what scopes the list — the same prop
+            AuthorizedPlatesManager takes, and the fix for the bug UI
+            testing found. */}
+        {activeTab === 'authorized-plates' && manager?.id && manager?.name && (
+          <div style={{ marginTop: '16px' }}>
+            <PlateProhibitionPanel
+              propertyId={manager.id}
+              property={manager.name}
+              canManage={!isReadOnly}
+              isReadOnly={isReadOnly}
+            />
+          </div>
         )}
 
         {/* AUTHORIZED GUESTS (B214) — manager-vetted multi-week vehicle authorizations.

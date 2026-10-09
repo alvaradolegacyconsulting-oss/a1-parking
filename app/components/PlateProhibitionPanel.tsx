@@ -65,21 +65,54 @@ export function isProhibitionActive(r: ProhibitionRow, now = Date.now()): boolea
 }
 
 export default function PlateProhibitionPanel({
-  property, canManage, isReadOnly = false,
+  propertyId, property, canManage, isReadOnly = false,
 }: {
+  // 🔴 2026-10-11 — propertyId is REQUIRED and is the fix for the
+  // scoping bug found in UI testing: the list query had no property
+  // filter, so it showed every row RLS allowed — all of a
+  // multi-property manager's properties, and a company admin's whole
+  // company — on whichever property happened to be selected.
+  //
+  // Enforcement was never affected: proven by execution in
+  // verify:prohibitions, which now permanently asserts that a plate
+  // prohibited at A is NOT prohibited at B, that a resident at B can
+  // still register it, and that one at A cannot. The bug was display
+  // only. AuthorizedPlatesManager beside this panel already took
+  // propertyId for exactly this reason.
+  propertyId: number
   property: string
   canManage: boolean
   isReadOnly?: boolean
 }) {
-  const [rows, setRows] = useState<ProhibitionRow[] | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  // 🔴 The result is STAMPED with the property it was loaded for, and
+  // only rendered when that matches the property now selected.
+  //
+  // The first attempt cleared state synchronously at the top of the
+  // effect, which trips react-hooks/set-state-in-effect and causes
+  // cascading renders. Deriving freshness is also strictly safer: there
+  // is no instant in which the previous property's list is on screen
+  // under the new property's heading, which is exactly the confusion
+  // that let the original scoping bug pass UI testing.
+  const [loaded, setLoaded] = useState<{ forProperty: number; rows: ProhibitionRow[] | null; error: string | null }>(
+    { forProperty: -1, rows: null, error: null }
+  )
   const [plate, setPlate] = useState('')
   const [reason, setReason] = useState('')
   const [note, setNote] = useState('')
   const [expires, setExpires] = useState('')
   const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  // Stamped with the property too, for the same reason as `loaded`:
+  // "ZZABC added." left on screen after switching properties reads as
+  // though it happened at the property now showing.
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string; forProperty: number } | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+
+  // Every message goes through here, so the property stamp cannot be
+  // forgotten at one of the nine call sites. Stamping by hand at each
+  // one is how eight get it and the ninth does not.
+  const say = useCallback((kind: 'ok' | 'err', text: string) => {
+    setMsg({ kind, text, forProperty: propertyId })
+  }, [propertyId])
 
   // 🔴 An error is NOT "no prohibitions". Rendering an empty list on a
   // failed read would tell a manager this property has none, which is
@@ -87,42 +120,55 @@ export default function PlateProhibitionPanel({
   // rows at null and shows the error, and the empty-state copy is only
   // reachable after a SUCCESSFUL read.
   const load = useCallback(async () => {
+    // 🔴 .eq('property_id', ...) is the whole fix. Without it RLS alone
+    // decided the list, and RLS is correctly WIDER than one property:
+    // it returns every property the caller manages. Scoping is the
+    // panel's job, not the policy's.
     const { data, error } = await supabase
       .from('property_plate_prohibitions')
       .select('id, plate, reason, note, added_by, added_at, expires_at, removed_at, removed_by, removed_reason, removed_note')
+      .eq('property_id', propertyId)
       .order('added_at', { ascending: false })
     return { data: (data ?? []) as ProhibitionRow[], error: error?.message ?? null }
-  }, [])
+  }, [propertyId])
 
   // The fetch lives in an async IIFE with a cancelled guard rather than
   // calling a setState-ing helper from the effect body — the latter
   // trips react-hooks/set-state-in-effect and causes cascading renders.
+  // load is keyed on propertyId, so switching property refetches. With
+  // the old [] deps it would not have, which is the second half of the
+  // same bug: even a filtered query would have kept showing the first
+  // property's list.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       const r = await load()
       if (cancelled) return
-      if (r.error) { setLoadError(r.error); setRows(null); return }
-      setLoadError(null); setRows(r.data)
+      setLoaded({ forProperty: propertyId, rows: r.error ? null : r.data, error: r.error })
     })()
     return () => { cancelled = true }
-  }, [load])
+  }, [load, propertyId])
 
-  // Manual refresh after a write. Safe to setState here — it is an event
+  // Manual refresh after a write. Safe to setState here — an event
   // handler path, not an effect body.
   const refresh = useCallback(async () => {
     const r = await load()
-    if (r.error) { setLoadError(r.error); setRows(null); return }
-    setLoadError(null); setRows(r.data)
-  }, [load])
+    setLoaded({ forProperty: propertyId, rows: r.error ? null : r.data, error: r.error })
+  }, [load, propertyId])
+
+  // A result for a DIFFERENT property is not a result. Until the stamp
+  // matches, this renders as loading rather than as "none".
+  const fresh     = loaded.forProperty === propertyId
+  const rows      = fresh ? loaded.rows  : null
+  const loadError = fresh ? loaded.error : null
 
   async function add() {
     if (busy) return
     const p = plate.trim()
-    if (!p) { setMsg({ kind: 'err', text: 'Enter a plate.' }); return }
-    if (!reason.trim()) { setMsg({ kind: 'err', text: 'A reason is required. Managers and company admins see it; residents never do.' }); return }
+    if (!p) { say('err', 'Enter a plate.'); return }
+    if (!reason.trim()) { say('err', 'A reason is required. Managers and company admins see it; residents never do.'); return }
     if (reason === 'Other — note required' && !note.trim()) {
-      setMsg({ kind: 'err', text: 'Add a note explaining the reason.' }); return
+      say('err', 'Add a note explaining the reason.'); return
     }
     setBusy(true)
     try {
@@ -131,10 +177,10 @@ export default function PlateProhibitionPanel({
       // uses. A dialog that promises "2 vehicles" and revokes 3 is
       // worse than no dialog.
       const pv = await supabase.rpc('preview_plate_prohibition_impact', { p_property: property, p_plate: p })
-      if (pv.error) { setMsg({ kind: 'err', text: `Couldn't check what this affects: ${pv.error.message}` }); return }
+      if (pv.error) { say('err', `Couldn't check what this affects: ${pv.error.message}`); return }
       const d = pv.data as { ok?: boolean; error?: string; vehicles?: number; visitor_passes?: number; guest_auths?: number; already_prohibited?: boolean }
-      if (!d?.ok) { setMsg({ kind: 'err', text: d?.error === 'not_authorized' ? 'You can only manage prohibitions for your own properties.' : `Couldn't check what this affects: ${d?.error}` }); return }
-      if (d.already_prohibited) { setMsg({ kind: 'err', text: `${p} is already on this property's list.` }); return }
+      if (!d?.ok) { say('err', d?.error === 'not_authorized' ? 'You can only manage prohibitions for your own properties.' : `Couldn't check what this affects: ${d?.error}`); return }
+      if (d.already_prohibited) { say('err', `${p} is already on this property's list.`); return }
 
       const parts: string[] = []
       if (d.vehicles)       parts.push(`${d.vehicles} registered vehicle${d.vehicles === 1 ? '' : 's'}`)
@@ -156,16 +202,16 @@ export default function PlateProhibitionPanel({
         p_note: note.trim() || null,
         p_expires_at: expires ? new Date(`${expires}T23:59:59`).toISOString() : null,
       })
-      if (res.error) { setMsg({ kind: 'err', text: res.error.message }); return }
+      if (res.error) { say('err', res.error.message); return }
       const r = res.data as { ok?: boolean; error?: string; revoked?: { vehicles?: number; visitor_passes?: number; guest_auths?: number } }
-      if (!r?.ok) { setMsg({ kind: 'err', text: r?.error ?? 'Could not add the prohibition.' }); return }
+      if (!r?.ok) { say('err', r?.error ?? 'Could not add the prohibition.'); return }
 
       // Report what ACTUALLY happened, not what the preview predicted.
       const did: string[] = []
       if (r.revoked?.vehicles)       did.push(`${r.revoked.vehicles} vehicle${r.revoked.vehicles === 1 ? '' : 's'} deactivated`)
       if (r.revoked?.visitor_passes) did.push(`${r.revoked.visitor_passes} pass${r.revoked.visitor_passes === 1 ? '' : 'es'} revoked`)
       if (r.revoked?.guest_auths)    did.push(`${r.revoked.guest_auths} guest authorization${r.revoked.guest_auths === 1 ? '' : 's'} revoked`)
-      setMsg({ kind: 'ok', text: `${p} added.${did.length ? ` ${did.join(', ')}.` : ''}` })
+      say('ok', `${p} added.${did.length ? ` ${did.join(', ')}.` : ''}`)
       setPlate(''); setReason(''); setNote(''); setExpires('')
       await refresh()
     } finally { setBusy(false) }
@@ -187,11 +233,11 @@ export default function PlateProhibitionPanel({
     let chosen = Number.isInteger(n) && n >= 1 && n <= REMOVAL_REASONS.length
       ? REMOVAL_REASONS[n - 1] as string
       : picked.trim()
-    if (!chosen) { setMsg({ kind: 'err', text: 'A reason is required to lift a prohibition.' }); return }
+    if (!chosen) { say('err', 'A reason is required to lift a prohibition.'); return }
     let rnote = ''
     if (chosen === 'Other — note required') {
       rnote = window.prompt('Explain the reason:')?.trim() ?? ''
-      if (!rnote) { setMsg({ kind: 'err', text: 'A note is required when the reason is "Other".' }); return }
+      if (!rnote) { say('err', 'A note is required when the reason is "Other".'); return }
       chosen = rnote
     }
     if (!window.confirm(
@@ -202,16 +248,16 @@ export default function PlateProhibitionPanel({
     setBusy(true)
     try {
       const res = await supabase.rpc('remove_plate_prohibition', { p_id: row.id, p_reason: chosen, p_note: rnote || null })
-      if (res.error) { setMsg({ kind: 'err', text: res.error.message }); return }
+      if (res.error) { say('err', res.error.message); return }
       const r = res.data as { ok?: boolean; error?: string }
       if (!r?.ok) {
-        setMsg({ kind: 'err', text: r?.error === 'removal_reason_required'
+        say('err', r?.error === 'removal_reason_required'
           ? 'A reason is required to lift a prohibition.'
           : r?.error === 'not_authorized' ? 'You can only manage prohibitions for your own properties.'
-          : r?.error ?? 'Could not lift the prohibition.' })
+          : r?.error ?? 'Could not lift the prohibition.')
         return
       }
-      setMsg({ kind: 'ok', text: `${row.plate} lifted. Nothing it deactivated has been restored.` })
+      say('ok', `${row.plate} lifted. Nothing it deactivated has been restored.`)
       await refresh()
     } finally { setBusy(false) }
   }
@@ -221,10 +267,17 @@ export default function PlateProhibitionPanel({
   const history = (rows ?? []).filter(r => !isProhibitionActive(r))
 
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '18px 20px' }}>
-      <p style={{ color: C.gold, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 'bold', margin: '0 0 6px' }}>
-        Not permitted at this property
-      </p>
+    <div style={{ background: C.card, border: `1px solid ${C.redLine}`, borderLeft: `3px solid ${C.red}`, borderRadius: '12px', padding: '18px 20px' }}>
+      {/* 🔴 RED header, and it NAMES the property (Jose's ruling).
+          Naming it removes the ambiguity that made the scoping bug
+          invisible in testing: an unfiltered list under a generic
+          heading looks exactly like a correct list. */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap', margin: '0 0 6px' }}>
+        <p style={{ color: C.red, fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 'bold', margin: 0 }}>
+          Not permitted plates
+        </p>
+        <span style={{ color: C.muted, fontSize: '12px' }}>{property}</span>
+      </div>
       <p style={{ color: C.faint, fontSize: '12px', margin: '0 0 14px', lineHeight: 1.5 }}>
         Plates on this list can&apos;t be registered by a resident, given a visitor pass, added by your office, or authorized as a guest.
         They show as <strong style={{ color: C.red }}>Not permitted at this property</strong> in plate lookups.
@@ -240,7 +293,7 @@ export default function PlateProhibitionPanel({
       {rows === null && !loadError && <p style={{ color: C.faint, fontSize: '12px' }}>Loading…</p>}
 
       {rows !== null && active.length === 0 && (
-        <p style={{ color: C.faint, fontSize: '12px', margin: '0 0 14px' }}>No plates are prohibited at this property.</p>
+        <p style={{ color: C.faint, fontSize: '12px', margin: '0 0 14px' }}>No plates are prohibited at {property}.</p>
       )}
 
       {active.map(r => (
@@ -296,7 +349,7 @@ export default function PlateProhibitionPanel({
         </div>
       )}
 
-      {msg && (
+      {msg && msg.forProperty === propertyId && (
         <p style={{ color: msg.kind === 'ok' ? '#86efac' : '#fca5a5', fontSize: '12px', margin: '10px 0 0' }}>{msg.text}</p>
       )}
 

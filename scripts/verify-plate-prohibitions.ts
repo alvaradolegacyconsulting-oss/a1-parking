@@ -28,8 +28,12 @@ const URL = g('NEXT_PUBLIC_SUPABASE_URL'), ANON = g('NEXT_PUBLIC_SUPABASE_ANON_K
 const db = createClient(URL, g('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } })
 
 const STAMP = Date.now()
-const COMPANY = 'Test-LEGACY', PROPERTY = 'Test Legacy Property'
+const COMPANY = 'Test-LEGACY'
+const PROPERTY = 'Test Legacy Property'      // property A
+const PROPERTY_B = 'Test VE4 Cross-Prop'     // property B — cross-property isolation
 const UNIT = `ZZPP-${STAMP}`
+const UNIT_B = `ZZPB-${STAMP}`
+const ISO = `ZZI${String(STAMP).slice(-6)}`  // prohibited at A only
 const BAD  = `ZZB${String(STAMP).slice(-6)}`   // to be prohibited
 const OK   = `ZZG${String(STAMP).slice(-6)}`   // positive control
 const EXP  = `ZZX${String(STAMP).slice(-6)}`   // expired prohibition
@@ -40,19 +44,19 @@ const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(
 const users: { email: string; uid: string }[] = []
 type R = Record<string, unknown>
 
-async function actor(tag: string, role: string, withResident = false) {
+async function actor(tag: string, role: string, withResident = false, prop = PROPERTY, unit = UNIT, props?: string[]) {
   const email = `zz-pp-${tag}-${STAMP}@test.invalid`
   const { data, error } = await db.auth.admin.createUser({ email, email_confirm: true, password: `Zz!${STAMP}q` })
   if (error || !data.user) throw new Error(`createUser ${tag}: ${error?.message}`)
   users.push({ email, uid: data.user.id })
   const r = await db.from('user_roles').insert({
-    email, role, company: COMPANY, property: [PROPERTY], is_active: true,
+    email, role, company: COMPANY, property: props ?? [prop], is_active: true,
     ...(role === 'manager' ? { can_approve_vehicles: true } : {}),
   })
   if (r.error) throw new Error(`user_roles ${tag}: ${r.error.message}`)
   if (withResident) {
     const rr = await db.from('residents').insert({
-      email, name: `ZZ PP ${tag}`, property: PROPERTY, unit: UNIT, company: COMPANY, is_active: true, status: 'active',
+      email, name: `ZZ PP ${tag}`, property: prop, unit, company: COMPANY, is_active: true, status: 'active',
     })
     if (rr.error) throw new Error(`residents ${tag}: ${rr.error.message}`)
   }
@@ -206,6 +210,53 @@ const main = async () => {
     const rm4 = (await MGR.client.rpc('remove_plate_prohibition', { p_id: caAdd.data!.id, p_reason: 'manager lifting a CA prohibition' })).data as R
     chk('a manager can lift a prohibition a CA added', rm4?.ok === true, JSON.stringify(rm4?.error ?? rm4?.action))
 
+    // ══ CROSS-PROPERTY ISOLATION ══════════════════════════════════
+    // 🔴 UI testing found the panel showing the same list on every
+    // property. This proves whether that is DISPLAY or ENFORCEMENT:
+    // the panel's list query had no property filter (display), but
+    // reading the trigger is not proof that a prohibition stays inside
+    // its property. These assertions are the proof, and they stay.
+    const RES_B = await actor('resb', 'resident', true, PROPERTY_B, UNIT_B)
+    // A manager scoped to BOTH properties — the realistic multi-property
+    // case, and the one where an unfiltered list is most misleading.
+    const MGR_BOTH = await actor('mgrboth', 'manager', false, PROPERTY, UNIT, [PROPERTY, PROPERTY_B])
+
+    const addIso = (await MGR_BOTH.client.rpc('add_plate_prohibition', {
+      p_property: PROPERTY, p_plate: ISO, p_reason: SECRET_REASON,
+    })).data as R
+    chk('ISO prohibition added at property A', addIso?.ok === true, JSON.stringify(addIso?.error ?? addIso?.action))
+
+    const atA = (await db.rpc('plate_prohibition_at', { p_property: PROPERTY, p_plate: ISO })).data as R | null
+    const atB = (await db.rpc('plate_prohibition_at', { p_property: PROPERTY_B, p_plate: ISO })).data as R | null
+    chk('ISO is prohibited at A', !!atA?.id, JSON.stringify(atA?.id))
+    chk('🔴 ISO is NOT prohibited at B (enforcement does not leak)', !atB?.id, JSON.stringify(atB?.id ?? null))
+
+    const regB = await RES_B.client.rpc('request_my_vehicle', { p_plate: ISO, p_state: 'TX', p_make: null, p_model: null, p_year: null, p_color: null })
+    chk('🔴 CONTROL a resident at B CAN register the plate prohibited at A',
+      !regB.error && typeof regB.data === 'number', regB.error?.message ?? `id ${regB.data}`)
+
+    const regA = await RES.client.rpc('request_my_vehicle', { p_plate: ISO, p_state: 'TX', p_make: null, p_model: null, p_year: null, p_color: null })
+    chk('…and a resident at A cannot', isPlateProhibitedError(regA.error), regA.error?.message ?? 'NO ERROR')
+
+    const passB = await db.rpc('issue_visitor_pass', { p_plate: ISO, p_visitor_name: 'z', p_visiting_unit: UNIT_B, p_property: PROPERTY_B, p_vehicle_desc: 'x', p_duration_hours: 4 })
+    chk('CONTROL a visitor pass at B still issues for that plate', !passB.error, passB.error?.message ?? 'ok')
+
+    // What the PANEL must do with what RLS returns. RLS correctly gives
+    // a multi-property manager every property they manage; the panel has
+    // to narrow that to the selected property itself.
+    const seen = await MGR_BOTH.client
+      .from('property_plate_prohibitions')
+      .select('id, plate, property_id')
+      .eq('plate', ISO)
+    const propAId = (await db.from('properties').select('id').eq('name', PROPERTY).single()).data!.id as number
+    chk('RLS shows the multi-property manager the row (so the PANEL must filter)',
+      (seen.data?.length ?? 0) === 1 && seen.data![0].property_id === propAId,
+      JSON.stringify(seen.data))
+    const filtered = (seen.data ?? []).filter(r => r.property_id === propAId)
+    const wouldShowAtB = (seen.data ?? []).filter(r => r.property_id === propAId).length
+    chk('…and filtering by the selected property is what isolates the list',
+      filtered.length === 1 && wouldShowAtB === 1)
+
     // A manager must not stamp the system reason by hand.
     const r10 = (await MGR.client.rpc('deactivate_vehicle', { p_vehicle_id: vehId, p_reason: 'plate_prohibited', p_note: null })).data as R
     chk('a manager CANNOT stamp plate_prohibited via deactivate_vehicle',
@@ -215,8 +266,11 @@ const main = async () => {
     await db.from('property_plate_prohibitions').delete().eq('property_id', propId).ilike('reason', 'ZZ%')
     await db.from('guest_authorizations').delete().eq('property', PROPERTY).ilike('visiting_unit', `ZZPP-${STAMP}%`)
     await db.from('visitor_passes').delete().eq('property', PROPERTY).ilike('visiting_unit', `ZZPP-${STAMP}%`)
-    await db.from('vehicles').delete().eq('property', PROPERTY).ilike('unit', `ZZPP-${STAMP}%`)
-    await db.from('residents').delete().eq('property', PROPERTY).ilike('unit', `ZZPP-${STAMP}%`)
+    for (const [pr, un] of [[PROPERTY, `ZZPP-${STAMP}%`], [PROPERTY_B, `ZZPB-${STAMP}%`]] as const) {
+      await db.from('visitor_passes').delete().eq('property', pr).ilike('visiting_unit', un)
+      await db.from('vehicles').delete().eq('property', pr).ilike('unit', un)
+      await db.from('residents').delete().eq('property', pr).ilike('unit', un)
+    }
     for (const u of users) {
       await db.from('user_roles').delete().ilike('email', u.email)
       await db.auth.admin.deleteUser(u.uid).catch(() => {})
