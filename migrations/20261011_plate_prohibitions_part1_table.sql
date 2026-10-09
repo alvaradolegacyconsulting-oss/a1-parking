@@ -43,7 +43,7 @@
 -- prohibition would be a different object with a different blast
 -- radius, and adding the column now would invite someone to set it.
 --
--- Paired: wip-20261011_plate_prohibitions_verification.sql (covers all three parts)
+-- Paired: 20261011_plate_prohibitions_verification.sql (covers all three parts)
 -- Parts 2 (triggers + RPCs) and 3 (reason code + lookups) follow.
 
 CREATE TABLE IF NOT EXISTS public.property_plate_prohibitions (

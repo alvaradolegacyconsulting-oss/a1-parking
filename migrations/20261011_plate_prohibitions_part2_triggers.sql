@@ -43,7 +43,7 @@
 -- That failure has no symptom. A gate that only tests a manager would
 -- certify it.
 --
--- Paired: wip-20261011_plate_prohibitions_verification.sql (covers all three parts)
+-- Paired: 20261011_plate_prohibitions_verification.sql (covers all three parts)
 
 -- ══════════════════════════════════════════════════════════════════
 -- The lookup

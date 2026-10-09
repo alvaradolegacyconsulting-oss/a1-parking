@@ -27,7 +27,7 @@
 -- Writing it twice is how the two drift, which is the
 -- preview-and-executor-share-line-items lesson from the Stripe arc.
 --
--- Paired: wip-20261011_plate_prohibitions_verification.sql (covers all three parts)
+-- Paired: 20261011_plate_prohibitions_verification.sql (covers all three parts)
 
 -- ══════════════════════════════════════════════════════════════════
 -- The shared impact query
