@@ -39,7 +39,7 @@
 -- order. Both created_at and expires_at are now computed from now()
 -- inside the function and are not parameters.
 --
--- Paired: wip-20261009_issue_visitor_pass_dedup_verification.sql
+-- Paired: 20261009_issue_visitor_pass_dedup_verification.sql
 
 CREATE OR REPLACE FUNCTION public.issue_visitor_pass(
   p_plate          TEXT,
