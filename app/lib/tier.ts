@@ -240,6 +240,21 @@ export function getUpgradePrompt(
     // stripe_prices catalog Checkout charges from. Do not read a price
     // out of TIER_PRICING. The quote endpoint takes a plan token, a
     // cycle and a property count and returns total_cents.
+    // 🔴 2026-10-09 — LEGACY IS NEVER AN UPGRADE TARGET.
+    //
+    // There is no self-serve upgrade INTO a Pro plan from this prompt:
+    // Pro is bought at /signup, and the step above Pro is Elite, which
+    // is contact-sales. So a `legacy` candidate has no upgrade price to
+    // quote — TIER_PRICING's stale 199 was the only thing that made it
+    // look like it did.
+    //
+    // Removing the path rather than repointing it at the quote endpoint:
+    // a correct price for an upgrade that cannot be bought here is still
+    // the wrong thing to show. TIER_LADDER is single-element per track
+    // so no candidate is reachable today either; this makes the
+    // dangerous one impossible rather than merely unreachable.
+    if (candidate === 'legacy') continue
+
     const priceEntry = getTierPricing(tt, candidate)
     if (priceEntry === undefined || priceEntry.base === null) continue
     const price = priceEntry.base

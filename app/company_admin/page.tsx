@@ -66,8 +66,9 @@ async function callSyncOnAdd(
     return { ok: false, reason: (e as Error).message }
   }
 }
-import { TIER_DISPLAY_NAME, TIER_PRICING, TIER_CONFIG, getTierPricing, type TierType } from '../lib/tier-config'
+import { TIER_CONFIG, type TierType } from '../lib/tier-config'
 import { OFFERINGS } from '../lib/tier-display'
+import { tokenFor, PLANS } from '../lib/signup-tier-param'
 
 // CA CRM redesign (Slice 1+) — mirrors PM_CRM_ENABLED precedent from the
 // resident CRM arc. Flipped true once Slices 1-5 land + UAT clears. Old
@@ -212,6 +213,24 @@ export default function CompanyAdminPortal() {
   } | null>(null)
   const [billingLoading, setBillingLoading] = useState(false)
   const [portalLoading, setPortalLoading] = useState(false)
+  // ── 2026-10-09 — does this company have a NEGOTIATED deal? ────────
+  //
+  // 🔴 NOT derivable from the tier. A1 and a self-serve Operator Pro
+  // both carry tier='legacy'; A1's rate is $325 flat with $0 per
+  // property, the self-serve rate is $299 + $20. Keying "Tailored rate"
+  // on the tier told every Pro subscriber their published price was
+  // negotiated.
+  //
+  // proposal_codes_summary is the right source and already exists: a
+  // view filtered to status='redeemed' AND the caller's own company,
+  // with the pricing columns deliberately excluded. One row = a deal.
+  //
+  // null = not yet loaded or the read failed. The render treats only
+  // an explicit true as "negotiated", so a failed read shows the
+  // self-serve wording rather than claiming a deal that may not exist —
+  // and an RLS denial returns { data: [], error: null }, which is a
+  // filter, not a failure, so `[]` legitimately means "no deal".
+  const [negotiatedDeal, setNegotiatedDeal] = useState<boolean | null>(null)
   const [portalError, setPortalError] = useState<string>('')
 
   const [plate, setPlate] = useState('')
@@ -687,6 +706,31 @@ export default function CompanyAdminPortal() {
       videoRef.current.play().catch(() => {})
     }
   }, [showCamera])
+
+  // Reads once on mount. The view is already scoped to the caller's own
+  // company by get_my_company(), so it needs no parameters — and after
+  // 20261009_proposal_codes_summary_company_admin_only.sql it returns
+  // nothing at all to a resident, driver, manager or leasing agent.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const { data, error } = await supabase
+        .from('proposal_codes_summary')
+        .select('id')
+        .limit(1)
+      if (cancelled) return
+      if (error) {
+        // Distinguish "no deal" from "could not tell". A transport
+        // failure must not render as a confident self-serve price line,
+        // so it stays null and the card shows the neutral wording.
+        console.warn('[CA plan card] proposal_codes_summary read failed', error.message)
+        setNegotiatedDeal(null)
+        return
+      }
+      setNegotiatedDeal((data?.length ?? 0) > 0)
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   async function loadUser() {
     setLoading(true)
@@ -9030,28 +9074,44 @@ export default function CompanyAdminPortal() {
           const tierKey = String(ctx.tier || 'legacy')
           const tierTypeKey = (ctx.tier_type === 'pm' ? 'property_management' : ctx.tier_type) as 'enforcement' | 'property_management'
           const isPM = tierTypeKey === 'property_management'
-          const isLegacy = tierKey === 'legacy'
           const propertyCount = properties.length
 
-          // Plan label — pull from TIER_DISPLAY_NAME when available so
-          // pm_starter renders "PM Starter", not "Property Management".
-          // Retains the "Legacy" suffix for legacy subscribers.
+          // ── Plan label — 2026-10-09 ────────────────────────────
+          //
+          // Was: `${trackLabel} · Legacy` for legacy subscribers, so an
+          // Operator Pro customer opened their own portal and read
+          // "Enforcement · Legacy" — our internal tier key, on the page
+          // they bought from. `legacy` is the backend key for BOTH Pro
+          // plans, which is why the tier alone could never name it;
+          // tokenFor() resolves the (track, tier) PAIR.
+          //
+          // The BARE label, not displayName(): that appends
+          // "(formerly Legacy)" while FORMERLY_LABELS_ON is true, which
+          // belongs on acquisition pages where the old printed name
+          // needs bridging — not inside the portal of a customer who
+          // already bought.
+          const planToken = tokenFor(tierTypeKey, tierKey)
+          // 🔴 NEVER a raw tier key. An unmapped (track, tier) falls
+          // back to the TRACK, which is true but vague, rather than
+          // printing `legacy` or `pm_only` at a paying customer. The
+          // gate asserts no tier key can reach the screen.
           const trackLabel = isPM ? 'Property Management' : 'Enforcement'
-          const tierDisplayName = TIER_DISPLAY_NAME[tierTypeKey]?.[tierKey]
-          const planLabel = isLegacy
-            ? `${trackLabel} · Legacy`
-            : (tierDisplayName ?? trackLabel)
+          const planLabel = planToken ? PLANS[planToken].label : trackLabel
 
-          // 2026-09-04 — read base + per-property from TIER_PRICING
-          // via getTierPricing() (widens the union-keyed map for the
-          // runtime-string lookup). base=null encodes negotiated /
-          // contact-sales. Kills the prior `isPM ? 20 : 15` hardcode
-          // which rendered "$20/property" for pm_starter on a $149/mo
-          // flat. Legacy is still handled by the isLegacy gate below.
-          const pricingEntry = getTierPricing(tierTypeKey, tierKey)
-          const baseMonthly = pricingEntry?.base ?? 0
-          const perPropertyRate = pricingEntry?.perProperty ?? 0
-          const catalogTotal = baseMonthly + perPropertyRate * propertyCount
+          // ── Tailored rate, keyed on the DEAL and not on the tier ──
+          //
+          // A1's negotiated rate is $325 flat with $0 per property. A
+          // self-serve Operator Pro pays $299 + $20. Both carry
+          // tier='legacy', so the tier CANNOT tell them apart — keying
+          // "Tailored rate" on it showed the negotiated wording to every
+          // Pro subscriber and would have shown published prices to A1,
+          // which is not merely untidy but wrong.
+          //
+          // proposal_codes_summary is the discriminator: a view filtered
+          // to status='redeemed' AND the caller's own company, with
+          // pricing columns deliberately excluded. A row means a
+          // negotiated deal.
+          const hasNegotiatedDeal = negotiatedDeal === true
 
           // 2026-09-04 — pm_starter renders differently (flat + per-permit
           // meter, no per-property line). Source the permit allowance
@@ -9059,7 +9119,6 @@ export default function CompanyAdminPortal() {
           // page a customer just paid from — one source of truth.
           const offering = OFFERINGS.find(o => o.slug === tierKey)
           const isPmStarter = tierKey === 'pm_starter'
-          const isKnownCatalogTier = tierKey === 'pm_starter' || tierKey === 'pm_only' || tierKey === 'enforcement_only' || tierKey === 'legacy'
 
           // Entitlements — driven by TIER_CONFIG; expandable "What's included".
           const tierCfg = TIER_CONFIG[tierTypeKey]?.[tierKey]
@@ -9072,30 +9131,37 @@ export default function CompanyAdminPortal() {
                   <div>
                     <p style={{ color:'#C9A227', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.1em', fontWeight:'bold', margin:'0 0 6px' }}>Your plan</p>
                     <h2 style={{ color:'white', fontSize:'22px', margin:'0', fontWeight:'bold' }}>{planLabel}</h2>
-                    {/* 2026-09-04 (Mateo Sep 4 §1) — explicit per-tier
-                        branches instead of silent fall-through to a
-                        numeric formula. Prior form rendered
-                        "$0/mo base + $20/property × 0 = $0/mo" for
-                        pm_starter because the fallthrough hardcoded PM's
-                        per-property rate. Now: legacy → tailored copy;
-                        pm_starter → flat + permit allowance from OFFERINGS;
-                        pm_only / enforcement_only → base + per-property;
-                        unrecognised → fail-closed "contact support". */}
-                    {isLegacy ? (
-                      <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>Tailored rate · see Stripe billing portal for the current amount.</p>
-                    ) : isPmStarter && offering?.permitAllowance ? (
-                      <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>
-                        <b style={{ color:'#C9A227' }}>${baseMonthly}/mo flat</b> · first {offering.permitAllowance.includedUpTo} approved permits/month included, then ${offering.permitAllowance.overageRate.toFixed(2)} each
-                        <span style={{ color:'#555', fontSize:'11px', marginLeft:'6px' }}>* plus applicable taxes</span>
-                      </p>
-                    ) : isKnownCatalogTier && baseMonthly > 0 ? (
-                      <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>
-                        ${baseMonthly}/mo base + ${perPropertyRate}/property × {propertyCount} = <b style={{ color:'#C9A227' }}>${catalogTotal}/mo</b>
-                        <span style={{ color:'#555', fontSize:'11px', marginLeft:'6px' }}>* plus applicable taxes</span>
-                      </p>
+                    {/* ── 2026-10-09 — NO PRICE NUMBERS HERE ──────────────
+                        Every figure on this card came from TIER_PRICING,
+                        a hardcoded map whose `legacy` entry still reads
+                        { base: 199, perProperty: 0 }. The same map put
+                        "$199.00" on /signup for a plan Stripe billed at
+                        $339 (fixed 2026-10-02). It was correct here only
+                        by accident: the isLegacy branch short-circuited
+                        before the arithmetic ran.
+
+                        The right source is the stripe_prices projection
+                        behind /api/signup/quote — but pricing this card
+                        from it needs the billing CYCLE, and the cycle is
+                        not stored anywhere: `companies` has
+                        current_period_end and cancel_at_period_end, no
+                        interval, and it lives only on the Stripe
+                        subscription. Persisting it is its own commit.
+
+                        Until then the card names the plan and points at
+                        the billing portal, which always shows the real
+                        amount. Showing nothing beats showing a number we
+                        cannot source. */}
+                    {hasNegotiatedDeal ? (
+                      <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>Tailored rate — see your billing portal for the current amount.</p>
                     ) : (
-                      <p style={{ color:'#f4a027', fontSize:'13px', margin:'6px 0 0' }}>
-                        Unrecognised plan ({tierKey}). Please contact support — this state shouldn't happen and we want to know about it.
+                      <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>
+                        {propertyCount} {propertyCount === 1 ? 'property' : 'properties'}
+                        {isPmStarter && offering?.permitAllowance
+                          ? ` · first ${offering.permitAllowance.includedUpTo} approved permits each month included`
+                          : ''}
+                        {' · '}
+                        <span style={{ color:'#777' }}>see your billing portal for the current amount</span>
                       </p>
                     )}
                   </div>
@@ -9271,7 +9337,15 @@ export default function CompanyAdminPortal() {
           // tier-config (closes the drift surface where the prior inline
           // map missed B89 Part 1's 'premium' tier addition).
           const tierTypeKey = ((ctx.tier_type as string) || 'enforcement') as TierType
-          const tierLabel = TIER_DISPLAY_NAME[tierTypeKey]?.[String(ctx.tier)] || String(ctx.tier)
+          // 🔴 2026-10-09 — was `TIER_DISPLAY_NAME[...] || String(ctx.tier)`,
+          // which rendered "Legacy" for both Pro plans and, for anything
+          // unmapped, printed the RAW TIER KEY at a paying customer. Same
+          // tokenFor() pair lookup as the plan card; the fallback is the
+          // track, never the key.
+          const tierLabelToken = tokenFor(tierTypeKey, String(ctx.tier))
+          const tierLabel = tierLabelToken
+            ? PLANS[tierLabelToken].label
+            : (tierTypeKey === 'property_management' ? 'Property Management' : 'Enforcement')
           const isEnf = ctx.tier_type === 'enforcement'
           const isPM = ctx.tier_type === 'property_management'
 

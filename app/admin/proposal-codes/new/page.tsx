@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../../supabase'
-import { TIER_CONFIG, TIER_PRICING, TIER_DISPLAY_NAME, TierType, getTierPricing } from '../../../lib/tier-config'
+import { TIER_CONFIG, TIER_DISPLAY_NAME, TierType } from '../../../lib/tier-config'
 import { FEATURE_FLAGS, isNumericFlag, FeatureFlag } from '../../../lib/feature-flags'
 
 const VALID_FLAGS = new Set(Object.values(FEATURE_FLAGS))
@@ -130,7 +130,16 @@ export default function NewProposalCode() {
   const tierDefaults = useMemo(() => {
     const cfg = TIER_CONFIG[tierType]?.[tier]
     // 2026-09-04 TIER_PRICING shape change: { base, perProperty }.
-    const base = getTierPricing(tierType, tier)?.base ?? 0
+    // 🔴 2026-10-09 — BLANK, not a published price.
+    //
+    // This prefilled getTierPricing()'s base, which is 199 for legacy —
+    // and an admin who accepted the default would have signed a
+    // proposal $100 under the Operator Pro list price. Prefilling the
+    // PUBLISHED price would be just as wrong, only less obviously: A1's
+    // negotiated rate is $325 flat with $0 per property, so no default
+    // is right for a form whose entire purpose is a negotiated deal.
+    // An empty field asks the question; a wrong default answers it.
+    const base = 0
     return {
       base,
       perProperty: cfg && typeof cfg['max_properties' as FeatureFlag] === 'number' ? null : null, // placeholder lookup not needed

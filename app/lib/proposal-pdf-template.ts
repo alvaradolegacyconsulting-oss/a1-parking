@@ -2,7 +2,7 @@
 // embeds whatever <img> URLs it can fetch, so the platform logo is
 // referenced by absolute URL in <img src>).
 
-import { TIER_PRICING, TIER_DISPLAY_NAME, TierType, getTierPricing } from './tier-config'
+import { TIER_DISPLAY_NAME, TierType } from './tier-config'
 
 export type ProposalForPdf = {
   code: string
@@ -53,7 +53,9 @@ export function renderProposalPdfHtml(p: ProposalForPdf, opts: { logoUrl: string
   const trackLabel = isEnf ? 'Enforcement' : 'Property Management'
 
   // 2026-09-04 TIER_PRICING shape change: { base, perProperty }.
-  const baseDefault = getTierPricing(tt, t)?.base ?? 0
+  // 🔴 2026-10-09 — blank. The PDF must not print a tier-table price
+  // as though it were the negotiated one.
+  const baseDefault = 0
   const propDefault = tierDefaultPerProperty(tt, t)
   const drvDefault = tierDefaultPerDriver(tt, t)
 
