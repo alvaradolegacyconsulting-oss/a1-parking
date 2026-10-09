@@ -497,103 +497,37 @@ export const TIER_CONFIG: Record<TierType, Record<string, TierConfigShape>> = {
   },
 }
 
-// Pricing (base monthly fees) — referenced by getUpgradePrompt(). Kept
-// separate from TIER_CONFIG so feature flags stay free of dollar amounts.
-// Matches Pricing v2 (May 8, 2026). If pricing changes, also update the
-// landing page tiers in app/page.tsx.
+// ════════════════════════════════════════════════════════════════════
+// TIER_PRICING — RETIRED 2026-10-10. Do not reintroduce it.
+// ════════════════════════════════════════════════════════════════════
 //
-// ── 2026-09-04 SHAPE CHANGE (Mateo Sep 4 §1) ────────────────────────
-// Prior shape: Record<TierType, Record<string, number>> — string key +
-// omission semantics meant a missing tier silently rendered $0 via
-// `?? 0` fallthrough at every call site. This exact pattern caused the
-// Sep 4 pm_starter portal gap: TIER_PRICING had no pm_starter entry,
-// consumer computed `baseMonthly = 0`, plan card displayed "$0/mo".
+// It was a hardcoded map of base + per-property dollars, and it was
+// wrong: its `legacy` entry read { base: 199, perProperty: 0 } while
+// Operator Pro is $299 + $20/property and PM Pro is $249 + $15. On
+// 2026-10-02 that number was the headline figure on /signup for a
+// subscription Stripe then billed at $339 — caught in a live
+// acceptance run, before anyone paid.
 //
-// New shape: keyed by track-specific tier UNIONS (EnforcementTier /
-// PropertyManagementTier), value is { base: number | null, perProperty:
-// number }. Union keying makes omission a build-time error rather than
-// a runtime $0. Adding a Tier to a union now REQUIRES adding a
-// TIER_PRICING entry — same discipline Mateo used two days ago with
-// Record<IntendedTier['tier'], number> in create-checkout-session,
-// which caught the same class the moment it was introduced.
+// The map could not be made correct, only less wrong. `legacy` is the
+// backend key for BOTH Pro plans, so one entry can never price two
+// plans; and no static map can price a graduated per-property band
+// (1-20 at the rate, 21+ at zero) or a billing cycle.
 //
-// base: null encodes "no published price" (contact-sales / custom /
-// negotiated). Renders NOT as $0 but as an explicit "custom pricing"
-// branch at the consumer — see isLegacy gate at company_admin/page.tsx:8466
-// for the pattern. Consumers that don't recognize null (`.base ?? 0`
-// fallback) render $0 — matches prior behavior for legacy (which was
-// silently absent) and is still preferable to a fabricated number.
+// 🔴 THE SOURCE OF TRUTH IS stripe_prices, reached through
+// /api/signup/quote — the same rows Checkout charges from. See
+// app/lib/pricing-quote.ts. A price you can show and a price you can
+// charge have to be the same query, not two that agree today.
 //
-// perProperty is the flat per-property monthly rate. Was hardcoded as
-// `isPM ? 20 : 15` at company_admin/page.tsx:8452 — one of the two
-// defects Sep 4 caught. Now sourced here.
+// If you want a dollar figure anywhere, you need a plan token, a
+// billing cycle and a property count. The cycle lives on
+// companies.billing_interval (added 2026-10-10) because it was the one
+// input that existed nowhere but the Stripe subscription.
 //
-// ── PRICING VALUES ──────────────────────────────────────────────────
-//   enforcement:
-//     enforcement_only { base: 199, perProperty: 15 }   — Slice 1 Commit 5
-//     legacy           { base: 199, perProperty: 0 }    — internal display value; marketing (tier-display.ts) renders customPrice
-//     premium          { base: null, perProperty: 0 }   — B89 contact-sales; explicit null (was silent omission)
-//     starter / growth — BACK-COMPAT for retired 6-tier proposal_codes; not used for any new company post-Jun 26 remap
-//   property_management:
-//     pm_starter { base: 149, perProperty: 0 }          — 2026-09-04 first self-serve PM tier; flat + per-permit meter (see permitAllowance in OFFERINGS), no per-property line
-//     pm_only    { base: 179, perProperty: 20 }         — Slice 1 Commit 5; negotiated-only post Aug 31 rewrite
-//     legacy     { base: null, perProperty: 0 }         — negotiated via proposal_code; explicit null (was silent omission)
-//     essential / professional / enterprise — BACK-COMPAT retired
-export interface TierPricingEntry {
-  /** Base monthly fee in USD. `null` = contact-sales / negotiated /
-   * custom pricing — consumers must branch explicitly, NEVER default
-   * to a number. Renders as isLegacy / customPrice / "Contact support"
-   * copy depending on surface. */
-  base: number | null
-  /** Flat per-property monthly rate in USD. 0 = no per-property line
-   * (e.g. pm_starter uses a per-permit meter instead). Was hardcoded
-   * `isPM ? 20 : 15` at company_admin/page.tsx:8452 pre-2026-09-04. */
-  perProperty: number
-}
-
-export type TierPricingByTrack = {
-  enforcement: Record<EnforcementTier, TierPricingEntry>
-  property_management: Record<PropertyManagementTier, TierPricingEntry>
-}
-
-export const TIER_PRICING: TierPricingByTrack = {
-  enforcement: {
-    enforcement_only: { base: 199,  perProperty: 15 },
-    legacy:           { base: 199,  perProperty: 0  },   // internal display; marketing renders customPrice via tier-display.ts
-    premium:          { base: null, perProperty: 0  },   // B89 contact-sales — explicit null
-    // Back-compat for retired 6-tier proposal_codes (Jun 26 remap):
-    starter:          { base: 129,  perProperty: 0  },
-    growth:           { base: 149,  perProperty: 0  },
-  },
-  property_management: {
-    pm_starter:   { base: 149,  perProperty: 0  },       // 2026-09-04 first self-serve PM tier; 500 permits included, then $1.25 each (permit meter, no per-property)
-    pm_only:      { base: 179,  perProperty: 20 },
-    legacy:       { base: null, perProperty: 0  },       // custom via proposal_code — explicit null
-    // Back-compat for retired 6-tier proposal_codes (Jun 26 remap):
-    essential:    { base: 129,  perProperty: 0  },
-    professional: { base: 199,  perProperty: 0  },
-    enterprise:   { base: 279,  perProperty: 0  },
-  },
-}
-
-// 2026-09-04 — runtime lookup helper. TIER_PRICING is union-keyed
-// per-track (Record<EnforcementTier, ...> | Record<PropertyManagementTier, ...>)
-// for compile-time enforcement AT THE DEFINITION SITE (adding a tier
-// requires adding an entry — this catches the pm_starter class of
-// bug). But TS can't narrow that union when the tier comes from a
-// runtime string (from DB, JWT, etc.). Consumers use this helper
-// instead of indexing directly.
-//
-// Returns undefined when the tier isn't in the map (unknown / stale
-// value from an older row). base can be null for known tiers whose
-// price isn't published (contact-sales / negotiated). Consumers must
-// distinguish undefined (unknown tier — fail-closed) from null base
-// (known tier, custom pricing — render "custom" copy).
-export function getTierPricing(tierType: TierType | string, tier: string): TierPricingEntry | undefined {
-  const map = TIER_PRICING[tierType as TierType]
-  if (!map) return undefined
-  return (map as unknown as Record<string, TierPricingEntry | undefined>)[tier]
-}
+// Removed with it: TierPricingEntry, TierPricingByTrack and
+// getTierPricing(). Every consumer is gone — the CA plan card, three
+// proposal-code prefill sites, the PDF template and getUpgradePrompt.
+// verify:signup-quote fails the build if /signup regains a local price
+// read.
 
 // Slice 1 Commit 5 — TIER_LADDER updated to the new model. Per-track
 // singletons (no within-track upgrades under new model — PM-Only and

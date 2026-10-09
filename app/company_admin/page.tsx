@@ -69,6 +69,8 @@ async function callSyncOnAdd(
 import { TIER_CONFIG, type TierType } from '../lib/tier-config'
 import { OFFERINGS } from '../lib/tier-display'
 import { tokenFor, PLANS } from '../lib/signup-tier-param'
+import { useQuote } from '../lib/use-quote'
+import { formatUsd, describeQuote } from '../lib/pricing-quote'
 
 // CA CRM redesign (Slice 1+) — mirrors PM_CRM_ENABLED precedent from the
 // resident CRM arc. Flipped true once Slices 1-5 land + UAT clears. Old
@@ -231,6 +233,11 @@ export default function CompanyAdminPortal() {
   // and an RLS denial returns { data: [], error: null }, which is a
   // filter, not a failure, so `[]` legitimately means "no deal".
   const [negotiatedDeal, setNegotiatedDeal] = useState<boolean | null>(null)
+  // 2026-10-10 — the billing cycle, persisted on companies by
+  // handleSubscriptionUpdated. NULL means unknown (no subscription, or a
+  // base price absent from the catalog) and the card then shows no
+  // price rather than assuming monthly.
+  const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual' | null>(null)
   const [portalError, setPortalError] = useState<string>('')
 
   const [plate, setPlate] = useState('')
@@ -729,8 +736,42 @@ export default function CompanyAdminPortal() {
       }
       setNegotiatedDeal((data?.length ?? 0) > 0)
     })()
+    ;(async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user?.email) return
+      const { data: role } = await supabase.from('user_roles').select('company').ilike('email', user.email).maybeSingle()
+      if (!role?.company) return
+      const { data: co, error: coErr } = await supabase
+        .from('companies').select('billing_interval').ilike('name', role.company).maybeSingle()
+      if (cancelled) return
+      if (coErr) { console.warn('[CA plan card] billing_interval read failed', coErr.message); return }
+      const iv = co?.billing_interval
+      setBillingInterval(iv === 'monthly' || iv === 'annual' ? iv : null)
+    })()
     return () => { cancelled = true }
   }, [])
+
+  // ── 2026-10-10 — the plan card's price, from the quote source ─────
+  //
+  // Same endpoint /signup uses, which reads the stripe_prices catalog
+  // Checkout charges from. Called at component top level because hooks
+  // cannot live inside the overview tab's render IIFE.
+  //
+  // 🔴 Needs all three of a plan token, a cycle and a property count.
+  // The cycle is why this could not ship on 2026-10-09: it was not
+  // stored anywhere. A null cycle yields no quote, and the card falls
+  // back to its no-price form — the same shape it has had since then.
+  const planCardCtx = getCompanyContext()
+  const planCardToken = tokenFor(
+    planCardCtx.tier_type === 'pm' ? 'property_management' : String(planCardCtx.tier_type),
+    String(planCardCtx.tier),
+  )
+  const activePropertyCount = properties.filter(p => p.is_active).length
+  const planCardQuote = useQuote(
+    billingInterval ? planCardToken : null,
+    billingInterval ?? 'monthly',
+    activePropertyCount,
+  )
 
   async function loadUser() {
     setLoading(true)
@@ -9153,15 +9194,39 @@ export default function CompanyAdminPortal() {
                         amount. Showing nothing beats showing a number we
                         cannot source. */}
                     {hasNegotiatedDeal ? (
+                      /* A negotiated deal is never priced from the
+                         published catalog. A1's rate is $325 flat with
+                         $0 per property; the list price for the same
+                         tier is $299 + $20. */
                       <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>Tailored rate — see your billing portal for the current amount.</p>
+                    ) : planCardQuote.quote ? (
+                      <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>
+                        <b style={{ color:'#C9A227' }}>{formatUsd(planCardQuote.quote.total_cents)}</b>
+                        {billingInterval === 'annual' ? '/year' : '/month'}
+                        {' · '}{describeQuote(planCardQuote.quote.lines)}
+                        {isPmStarter && offering?.permitAllowance
+                          ? ` · first ${offering.permitAllowance.includedUpTo} approved permits each month included`
+                          : ''}
+                        <span style={{ color:'#555', fontSize:'11px', marginLeft:'6px' }}>* plus applicable taxes</span>
+                      </p>
                     ) : (
+                      /* 🔴 No price rather than a guessed one. Reached
+                         when the cycle is unknown, the quote is still
+                         loading, or the quote endpoint refused — and a
+                         refusal is deliberate there too: it 503s on a
+                         short catalog rather than quoting a partial
+                         basket. Every one of those states means "we
+                         cannot source a figure", and the $199-for-$339
+                         defect is what showing one anyway looks like. */
                       <p style={{ color:'#aaa', fontSize:'13px', margin:'6px 0 0' }}>
                         {propertyCount} {propertyCount === 1 ? 'property' : 'properties'}
                         {isPmStarter && offering?.permitAllowance
                           ? ` · first ${offering.permitAllowance.includedUpTo} approved permits each month included`
                           : ''}
                         {' · '}
-                        <span style={{ color:'#777' }}>see your billing portal for the current amount</span>
+                        <span style={{ color:'#777' }}>
+                          {planCardQuote.loading ? 'loading your current amount…' : 'see your billing portal for the current amount'}
+                        </span>
                       </p>
                     )}
                   </div>

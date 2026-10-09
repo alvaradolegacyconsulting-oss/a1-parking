@@ -77,12 +77,12 @@ export async function handleSubscriptionUpdated(
     .map(it => it.price?.id)
     .filter((id): id is string => typeof id === 'string')
 
-  let resolvedTier: { tier_track: string; tier_name: string } | null = null
+  let resolvedTier: { tier_track: string; tier_name: string; cycle: string | null } | null = null
   if (subPriceIds.length > 0) {
     const mode = getStripeMode()
     const { data: priceRow, error: priceErr } = await supabase
       .from('stripe_prices')
-      .select('tier_track, tier_name')
+      .select('tier_track, tier_name, cycle')
       .in('stripe_price_id', subPriceIds)
       .eq('mode', mode)
       .eq('line_item', 'base')
@@ -92,7 +92,7 @@ export async function handleSubscriptionUpdated(
         subId: sub.id, companyId: company.id, error: priceErr.message,
       })
     } else if (priceRow) {
-      resolvedTier = { tier_track: priceRow.tier_track, tier_name: priceRow.tier_name }
+      resolvedTier = { tier_track: priceRow.tier_track, tier_name: priceRow.tier_name, cycle: priceRow.cycle ?? null }
     } else {
       // No base-line-item price match. Acceptable latent gap: if a sub's
       // base price ID isn't in stripe_prices (price created outside the
@@ -116,6 +116,53 @@ export async function handleSubscriptionUpdated(
   if (resolvedTier) {
     updatePayload.tier = resolvedTier.tier_name        // companies.tier   ← B141
     updatePayload.tier_type = resolvedTier.tier_track  // companies.tier_type ← B141
+  }
+
+  // ── 🔴 2026-10-09 — PERSIST THE BILLING INTERVAL ─────────────────
+  //
+  // WHY IT HAS TO BE STORED. The CA portal plan card cannot price
+  // itself from the stripe_prices catalog without knowing whether this
+  // subscriber is on monthly or annual — and that fact lived ONLY on
+  // the Stripe subscription. `companies` had current_period_end and
+  // cancel_at_period_end but no interval, so the card showed no price
+  // at all (2026-10-09 commit) rather than guess one.
+  //
+  // 🔴 FROM THE CATALOG ROW, NOT FROM Stripe's recurring.interval.
+  // The same stripe_prices row that resolves the tier also carries
+  // `cycle`, already in OUR vocabulary ('monthly' / 'annual') — the
+  // vocabulary /api/signup/quote takes. Reading Stripe's
+  // 'month' / 'year' and mapping it would introduce a second
+  // translation that can disagree with the catalog, and the tier and
+  // the cycle would then come from different places about the same
+  // line item. One row answers both, so they cannot drift.
+  //
+  // The Stripe interval is kept only as a BACKSTOP for the B141
+  // no-match path (a price created outside stripe_prices — A1's
+  // per-code prices are in the table, so this is for genuinely
+  // unknown prices). Mapped explicitly rather than passed through:
+  // 'monthly'/'annual' is what every consumer expects, and leaking
+  // 'month'/'year' into the column would quietly break the quote call.
+  if (resolvedTier?.cycle) {
+    updatePayload.billing_interval = resolvedTier.cycle
+  } else {
+    const stripeInterval = firstItem?.price?.recurring?.interval ?? null
+    const mapped = stripeInterval === 'month' ? 'monthly'
+                 : stripeInterval === 'year'  ? 'annual'
+                 : null
+    if (mapped) {
+      updatePayload.billing_interval = mapped
+      console.warn('[billing-interval] catalog cycle unresolved; fell back to Stripe interval', {
+        subId: sub.id, companyId: company.id, stripeInterval, mapped,
+      })
+    } else {
+      // 🔴 NOT written as NULL. Overwriting a previously-correct value
+      // with NULL because this one event could not resolve would make
+      // the card stop showing a price it had been showing correctly.
+      // Absence of a new value is not evidence the old one is wrong.
+      console.warn('[billing-interval] UNRESOLVED — leaving the existing value alone', {
+        subId: sub.id, companyId: company.id, stripeInterval,
+      })
+    }
   }
 
   const { error: updErr } = await supabase

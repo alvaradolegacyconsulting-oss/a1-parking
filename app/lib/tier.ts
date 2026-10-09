@@ -1,5 +1,6 @@
 import { FeatureFlag, FEATURE_FLAGS, isNumericFlag } from './feature-flags'
-import { TIER_CONFIG, TIER_PRICING, TIER_LADDER, TIER_DISPLAY_NAME, Tier, TierType, TierPricingEntry, getTierPricing } from './tier-config'
+import { TIER_CONFIG, TIER_LADDER, Tier, TierType } from './tier-config'
+import { tokenFor, PLANS } from './signup-tier-param'
 import { supabase } from '../supabase'
 
 export type { FeatureFlag, Tier, TierType }
@@ -186,7 +187,7 @@ export function getUpgradePrompt(
   flag: FeatureFlag,
   currentTier: Tier | string,
   tierType: TierType | string,
-): { message: string; targetTier: Tier; targetPrice: number } | null {
+): { message: string; targetTier: Tier } | null {
   const tt = normalizeTierType(String(tierType))
   const ladder = TIER_LADDER[tt]
   const tierMap = TIER_CONFIG[tt]
@@ -255,9 +256,17 @@ export function getUpgradePrompt(
     // dangerous one impossible rather than merely unreachable.
     if (candidate === 'legacy') continue
 
-    const priceEntry = getTierPricing(tt, candidate)
-    if (priceEntry === undefined || priceEntry.base === null) continue
-    const price = priceEntry.base
+    // 🔴 2026-10-10 — NO PRICE IN THIS MESSAGE, and TIER_PRICING is gone.
+    //
+    // Pricing an upgrade needs a cycle and a property count, and this
+    // helper has neither — it knows only a tier. TIER_PRICING supplied
+    // a number that needed neither because it was a flat lie: its
+    // `legacy` entry read 199 while Operator Pro is $299 + $20.
+    //
+    // Callers render `upgrade.message` only, so targetPrice is removed
+    // from the return type rather than typed as null — a field nobody
+    // reads is a field that invites someone to start. If a priced upgrade prompt is
+    // ever wanted, it goes through /api/signup/quote with a real cycle.
     const value = tierMap?.[candidate]?.[flag]
     let qualifies = false
     if (isNumericFlag(flag)) {
@@ -268,11 +277,18 @@ export function getUpgradePrompt(
       qualifies = value === true
     }
     if (qualifies) {
-      const display = TIER_DISPLAY_NAME[tt]?.[candidate] ?? candidate
+      // 🔴 Never the raw tier key. `?? candidate` used to print
+      // `legacy` or `pm_only` at a customer; tokenFor() resolves the
+      // (track, tier) pair to the public plan name, and an unmapped
+      // pair falls back to the track.
+      const upgradeToken = tokenFor(tt, candidate)
+      const display = upgradeToken
+        ? PLANS[upgradeToken].label
+        : (tt === 'property_management' ? 'Property Management' : 'Enforcement')
       const message = isNumericFlag(flag)
-        ? `Upgrade to ${display} ($${price}/mo) to expand this limit.`
-        : `Upgrade to ${display} ($${price}/mo) to enable this feature.`
-      return { message, targetTier: candidate, targetPrice: price }
+        ? `Upgrade to ${display} to expand this limit.`
+        : `Upgrade to ${display} to enable this feature.`
+      return { message, targetTier: candidate }
     }
   }
   return null
