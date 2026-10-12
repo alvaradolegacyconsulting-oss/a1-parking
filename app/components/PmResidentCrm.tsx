@@ -7,6 +7,7 @@
 // from the parent. Zero DB access here; grouping done in app/lib/pm-crm.ts.
 
 import { useMemo, useRef, useState } from 'react'
+import ParkingTagField from './ParkingTagField'
 import type { CrmResident, CrmFilter, CrmResidentSpace, CrmSpace, ResidentDisplayStatus, NoAuthorizedBucket, DuplicateFlag } from '@/app/lib/pm-crm'
 import {
   computeInsights, filterCrmRows, initials, residentDisplayStatus,
@@ -55,6 +56,8 @@ type SubTab = 'overview' | 'vehicles' | 'spaces' | 'guests' | 'activity'
 interface Props {
   crmResidents: CrmResident[]
   propertyName: string
+  /** Piece 1 — properties.parking_tags_enabled for THIS property. */
+  parkingTagsEnabled: boolean
   managerEmail: string
   // Slice 3.5 — available-spaces pool for the "Assign space" picker on
   // pending space requests. Sourced from crmSpacesAtProperty filtered
@@ -384,7 +387,7 @@ function useVehicleDecisionGuard(
 }
 
 export default function PmResidentCrm({
-  crmResidents, propertyName, availableSpaces, unitOccupancy, plateDuplicates,
+  crmResidents, propertyName, parkingTagsEnabled, availableSpaces, unitOccupancy, plateDuplicates,
   canApproveVehicles, isReadOnly,
   onApproveVehicle: onApproveVehicleRaw, onDeclineVehicle: onDeclineVehicleRaw,
   onApproveResident: onApproveResidentRaw, onDeclineResident: onDeclineResidentRaw,
@@ -673,6 +676,8 @@ export default function PmResidentCrm({
                 {subTab === 'vehicles' && (
                   <VehiclesPane
                     resident={selected}
+                    propertyName={propertyName}
+                    parkingTagsEnabled={parkingTagsEnabled}
                     canApproveVehicles={canApproveVehicles}
                     isReadOnly={isReadOnly}
                     onApproveVehicle={onApproveVehicle}
@@ -1289,7 +1294,9 @@ function OverviewPane({ resident, canApproveVehicles, isReadOnly, onApproveResid
   )
 }
 
-function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, onOpenAddVehicle, getVehicleDecisionBusy, plateDuplicates }: {
+function VehiclesPane({ resident, propertyName, parkingTagsEnabled, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, onOpenAddVehicle, getVehicleDecisionBusy, plateDuplicates }: {
+  propertyName: string
+  parkingTagsEnabled: boolean
   resident: CrmResident
   canApproveVehicles: boolean
   isReadOnly: boolean
@@ -1351,6 +1358,8 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
       {resident.vehicles.map(v => (
         <VehicleCard
           key={v.id} v={v}
+          propertyName={propertyName}
+          parkingTagsEnabled={parkingTagsEnabled}
           canApproveVehicles={canApproveVehicles}
           isReadOnly={isReadOnly}
           onApproveVehicle={onApproveVehicle}
@@ -1369,8 +1378,10 @@ function VehiclesPane({ resident, canApproveVehicles, isReadOnly, onApproveVehic
   )
 }
 
-function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, decisionBusy, duplicateOf }: {
+function VehicleCard({ v, propertyName, parkingTagsEnabled, canApproveVehicles, isReadOnly, onApproveVehicle, onDeclineVehicle, onApprovePlateChange, onDeclinePlateChange, onDeactivateVehicle, onReactivateVehicle, onEditVehicle, unitOccupancy, decisionBusy, duplicateOf }: {
   v: any
+  propertyName: string
+  parkingTagsEnabled: boolean
   canApproveVehicles: boolean
   isReadOnly: boolean
   onApproveVehicle: (id: string | number) => Promise<void>
@@ -1499,6 +1510,21 @@ function VehicleCard({ v, canApproveVehicles, isReadOnly, onApproveVehicle, onDe
           color: stat.color, background: stat.bg, border: `1px solid ${stat.border}`, whiteSpace: 'nowrap',
         }}>{stat.text}</span>
       </div>
+
+      {/* Piece 1 — physical parking tag. Mounted HERE, in PmResidentCrm,
+          because this is the LIVE manager surface: manager/page.tsx
+          renders this component under PM_CRM_ENABLED (true), and the
+          legacy residents/vehicles blocks behind !PM_CRM_ENABLED never
+          render. The first version of this mount went into the legacy
+          block and was invisible — the same dead-branch trap the CA
+          file documents, which is now gated for both flags. */}
+      <ParkingTagField
+        vehicleId={Number(v.id)}
+        plate={String(v.plate ?? '')}
+        propertyName={propertyName}
+        tagsEnabled={parkingTagsEnabled}
+        canManage={!isReadOnly}
+      />
       {/* Task 3 Commit 3 (2026-08-06) — deactivation panel on
           vehicles. Gated on vehicleDisplayStatus (isDeactivated), NOT
           raw v.is_active — pending vehicles are ALSO is_active=false,

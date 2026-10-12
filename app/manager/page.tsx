@@ -93,7 +93,6 @@ import CredentialsModal from '../components/CredentialsModal'
 import PmResidentCrm from '../components/PmResidentCrm'
 import PlateProhibitionPanel from '../components/PlateProhibitionPanel'
 import PhysicalPassSwitches from '../components/PhysicalPassSwitches'
-import ParkingTagField from '../components/ParkingTagField'
 import { buildCrmResidents, isVehicleUnauthorizedForRestore, isPlateClash, plateClashMessage, findPlateDuplicates, type CrmResident, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
 import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '../lib/unit-occupancy'
 
@@ -384,6 +383,12 @@ export default function ManagerPortal() {
   // mirrors the existing violations search in this file.
   const [guestAuthSearch, setGuestAuthSearch] = useState('')
   const [settingsMsg, setSettingsMsg] = useState('')
+  // Piece 1 — a partial success from Add Vehicle: the car landed, the
+  // parking tag did not. It cannot ride the modal's friendlyMessage,
+  // which renders only on failure and would imply the vehicle was NOT
+  // added — inviting a retry and a duplicate plate. So it surfaces
+  // here, above the CRM, and is dismissible.
+  const [tagNotice, setTagNotice] = useState<string | null>(null)
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [auditDateFilter, setAuditDateFilter] = useState('week')
   const [auditSearch, setAuditSearch] = useState('')
@@ -2741,6 +2746,39 @@ if (error) { alert('Error: ' + error.message) }
       }
     }
 
+    // 4b. Parking tag, if one was entered.
+    //
+    // 🔴 AFTER the approve step, not before: set_vehicle_tag requires
+    // is_active AND status='active', so on a pm_only tier the vehicle
+    // is still pending until step 4 runs.
+    //
+    // 🔴 A TAG FAILURE MUST NOT LOSE THE VEHICLE. The car is already
+    // added and approved by here; refusing the whole operation over a
+    // duplicate tag number would throw away work the manager has done
+    // and, worse, invite them to retry the insert. So the tag outcome
+    // is reported in the success message instead.
+    let tagNote: string | null = null
+    if (payload.tag) {
+      const { data: tagData, error: tagErr } = await supabase.rpc('set_vehicle_tag', {
+        p_vehicle_id: Number(insertData.id),
+        p_tag:        payload.tag,
+      })
+      const tr = (tagData ?? {}) as Record<string, unknown>
+      if (tagErr || tr.ok !== true) {
+        tagNote =
+          tr.error === 'tag_already_assigned'
+            ? `The vehicle was added, but parking tag ${tr.tag_number} is already assigned to ${tr.held_by_plate}${tr.held_by_unit ? `, unit ${tr.held_by_unit}` : ''}. Assign a different number on the vehicle card.`
+            : tr.error === 'parking_tags_not_enabled'
+            ? 'The vehicle was added, but parking tags are not switched on for this property, so no tag was recorded.'
+            : tr.error === 'vehicle_not_active'
+            ? 'The vehicle was added but is awaiting approval, so the parking tag was not recorded yet. Add it on the vehicle card once approved.'
+            : 'The vehicle was added, but the parking tag could not be recorded. Add it on the vehicle card.'
+        console.warn('[MANAGER_ADD_VEHICLE_FOR_RESIDENT] tag not recorded', {
+          vehicleId, plate: payload.plate, tagError: tagErr?.message ?? tr.error,
+        })
+      }
+    }
+
     // 5. Audit
     await logAudit({
       action: 'MANAGER_ADD_VEHICLE_FOR_RESIDENT',
@@ -2761,12 +2799,20 @@ if (error) { alert('Error: ' + error.message) }
         initial_status:     initState.status,
         auto_approved:      initState.status === 'pending' && approveAction === 'approved',
         approve_action:     approveAction,
+        parking_tag:        payload.tag ?? null,
+        parking_tag_recorded: payload.tag ? tagNote === null : null,
       },
     })
 
     // 6. Close modal + refresh
+    //
+    // A tag that did not land is surfaced rather than swallowed: the
+    // add succeeded, so ok stays true, but the manager is told the tag
+    // needs a second step. Reporting success for the whole operation
+    // when half of it did not happen is the failure mode to avoid.
     setAddVehicleFor(null)
     await refreshCrmData()
+    setTagNotice(tagNote)   // null clears any previous notice
     return { ok: true }
   }
 
@@ -4969,6 +5015,17 @@ if (vehErr) {
         )}
 
         {/* RESIDENTS — PM CRM (slice 1) */}
+        {activeTab === 'residents' && PM_CRM_ENABLED && manager && tagNotice && (
+          <div style={{ background:'#161b26', border:'1px solid #a16207', borderRadius:'10px', padding:'12px 14px', marginBottom:'12px', display:'flex', gap:'10px', alignItems:'flex-start' }}>
+            <div style={{ flex:1 }}>
+              <p style={{ color:'#fbbf24', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>Parking tag not recorded</p>
+              <p style={{ color:'#cbd5e1', fontSize:'12.5px', margin:0, lineHeight:'1.5' }}>{tagNotice}</p>
+            </div>
+            <button onClick={() => setTagNotice(null)}
+              style={{ background:'transparent', border:'none', color:'#888', fontSize:'16px', cursor:'pointer', lineHeight:1, padding:'0 2px' }}
+              aria-label="Dismiss">×</button>
+          </div>
+        )}
         {activeTab === 'residents' && PM_CRM_ENABLED && manager && (
           <PmResidentCrm
             crmResidents={buildCrmResidents({
@@ -4989,6 +5046,7 @@ if (vehErr) {
               pendingGuestRequests: crmPendingGuestRequestsAtProperty,
             })}
             propertyName={manager.name}
+            parkingTagsEnabled={!!(manager as any).parking_tags_enabled}
             managerEmail={managerEmail}
             plateDuplicates={plateDuplicates}
             availableSpaces={crmSpacesAtProperty.filter(s => s.status === 'available' && s.is_active).map(s => ({ id: s.id, label: s.label, type: s.type }))}
@@ -5269,19 +5327,6 @@ if (vehErr) {
                           <button onClick={() => removeVehicle(v.id)}
                             style={{ padding:'6px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Remove</button>
                         </div>
-                        {/* Piece 1 — physical parking tag. Renders its own
-                            "not switched on for this property" line rather
-                            than disappearing, so a manager who expects the
-                            field learns why it is inert and who can change
-                            it. Every write goes through set_vehicle_tag /
-                            void_vehicle_tag. */}
-                        <ParkingTagField
-                          vehicleId={v.id}
-                          plate={v.plate}
-                          propertyName={manager.name}
-                          tagsEnabled={!!(manager as any).parking_tags_enabled}
-                          canManage={!isReadOnly}
-                        />
                         <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
                           style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'6px 0 2px', display:'block' }}>
                           🔍 Search FindMyTowedCar.org
@@ -6728,6 +6773,7 @@ if (vehErr) {
       )}
       {addVehicleFor && manager?.name && (
         <AddVehicleForResidentModal
+          tagsEnabled={!!(manager as any)?.parking_tags_enabled}
           residentName={addVehicleFor.name ?? ''}
           residentEmail={addVehicleFor.email ?? ''}
           residentUnit={addVehicleFor.unit ?? ''}

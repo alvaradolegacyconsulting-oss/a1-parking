@@ -42,6 +42,11 @@ export interface AddVehiclePayload {
   model:  string | null
   year:   number | null
   color:  string | null
+  // Piece 1 — optional physical parking tag. Collected here only when
+  // the property has tags switched on. The parent assigns it AFTER the
+  // vehicle exists and is active, via set_vehicle_tag, and a tag
+  // failure must NOT lose the vehicle.
+  tag:    string | null
 }
 
 export interface AddVehicleSubmitResult {
@@ -54,6 +59,8 @@ interface Props {
   residentEmail:  string
   residentUnit:   string
   propertyName:   string
+  /** properties.parking_tags_enabled — hides the tag field when off. */
+  tagsEnabled:    boolean
   onCancel:       () => void
   onSubmit:       (payload: AddVehiclePayload) => Promise<AddVehicleSubmitResult>
 }
@@ -63,6 +70,7 @@ export default function AddVehicleForResidentModal({
   residentEmail,
   residentUnit,
   propertyName,
+  tagsEnabled,
   onCancel,
   onSubmit,
 }: Props) {
@@ -72,6 +80,7 @@ export default function AddVehicleForResidentModal({
   const [model,  setModel]  = useState('')
   const [year,   setYear]   = useState('')
   const [color,  setColor]  = useState('')
+  const [tag,    setTag]    = useState('')
   const [busy,   setBusy]   = useState(false)
   const [errMsg, setErrMsg] = useState<string | null>(null)
 
@@ -90,6 +99,7 @@ export default function AddVehicleForResidentModal({
         model:  model.trim().length > 0 ? model.trim() : null,
         year:   year.trim().length  > 0 && Number.isFinite(parseInt(year, 10)) ? parseInt(year, 10) : null,
         color:  color.trim().length > 0 ? color.trim() : null,
+        tag:    tagsEnabled && tag.trim().length > 0 ? tag.trim() : null,
       })
       if (result.ok) {
         // Parent will close by unmounting the component; leave state as-is.
@@ -166,6 +176,23 @@ export default function AddVehicleForResidentModal({
             <label style={lbl}>Color</label>
             <input value={color} onChange={e => setColor(e.target.value)} placeholder="Black" style={inp} disabled={busy} />
           </div>
+          {/* Shown only where the property uses tags. Optional — a
+              manager handing over a hangtag now can record it in the
+              same step; otherwise it is assigned later on the vehicle
+              card. Never "permit": that word is the billing meter. */}
+          {tagsEnabled && (
+            <div>
+              <label style={lbl}>Parking tag # (optional)</label>
+              <input
+                value={tag}
+                onChange={e => setTag(e.target.value.toUpperCase())}
+                placeholder="e.g. A1024"
+                maxLength={20}
+                style={{ ...inp, fontFamily: 'Courier New', textTransform: 'uppercase' }}
+                disabled={busy}
+              />
+            </div>
+          )}
           <div>
             <label style={lbl}>Make</label>
             <input value={make} onChange={e => setMake(e.target.value)} placeholder="Toyota" style={inp} disabled={busy} />

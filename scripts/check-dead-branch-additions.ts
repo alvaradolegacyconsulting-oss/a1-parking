@@ -28,17 +28,27 @@
 // ════════════════════════════════════════════════════════════════════
 import { execFileSync } from 'child_process'
 
-const FILE = 'app/company_admin/page.tsx'
+// 🔴 TWO files, two flags. The manager portal has the SAME pattern and
+// was NOT covered: PM_CRM_ENABLED is true, so everything behind
+// !PM_CRM_ENABLED — the legacy residents AND vehicles blocks — never
+// renders. A parking-tag field was mounted in that dead block on
+// 2026-10-13 and shipped invisible; the CA gate could not see it
+// because it only ever read one file. Any new always-on flag of this
+// shape belongs here the day it is introduced.
+const TARGETS: { file: string; flag: string }[] = [
+  { file: 'app/company_admin/page.tsx', flag: 'CA_CRM_REDESIGN' },
+  { file: 'app/manager/page.tsx',       flag: 'PM_CRM_ENABLED'  },
+]
 const sha = process.argv[2]
 
 const git = (...args: string[]) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 
-/** Line ranges (1-indexed, inclusive) inside a !CA_CRM_REDESIGN block. */
-function deadRanges(lines: string[]): [number, number][] {
+/** Line ranges (1-indexed, inclusive) inside a !<flag> block. */
+function deadRanges(lines: string[], flag: string): [number, number][] {
   const out: [number, number][] = []
   lines.forEach((l, i) => {
-    if (!l.includes('!CA_CRM_REDESIGN &&')) return
+    if (!l.includes(`!${flag} &&`)) return
     let depth = 0, started = false
     for (let j = i; j < lines.length; j++) {
       depth += (lines[j].match(/\(/g) ?? []).length - (lines[j].match(/\)/g) ?? []).length
@@ -63,34 +73,51 @@ function addedLines(diff: string): { n: number; text: string }[] {
   return out
 }
 
-const content = sha ? git('show', `${sha}:${FILE}`) : git('show', `HEAD:${FILE}`)
-// Ranges are computed from the version the added line numbers refer to.
-const after = sha ? git('show', `${sha}:${FILE}`) : require('fs').readFileSync(FILE, 'utf8')
-const ranges = deadRanges(after.split('\n'))
+let anyDead = false
+let checked = 0
 
-const diff = sha
-  ? git('show', '--unified=0', '--format=', sha, '--', FILE)
-  : git('diff', '--unified=0', 'HEAD', '--', FILE)
+for (const { file, flag } of TARGETS) {
+  // Ranges are computed from the version the added line numbers refer to.
+  const after = sha ? git('show', `${sha}:${file}`) : require('fs').readFileSync(file, 'utf8')
+  const ranges = deadRanges(after.split('\n'), flag)
 
-const adds = addedLines(diff)
-if (adds.length === 0) { console.log('no additions to', FILE); process.exit(0) }
+  // 🔴 A file whose flag guard has VANISHED is not "clean" — it means
+  // the flag was renamed or removed and this gate silently stopped
+  // checking anything. Absence must not be the pass.
+  if (ranges.length === 0 && !after.includes(flag)) {
+    console.log(`🔴 ${file}: no \`${flag}\` found at all. Either the flag was renamed — update TARGETS —`)
+    console.log('   or the dead branch was deleted, in which case drop it from TARGETS deliberately.')
+    anyDead = true
+    continue
+  }
 
-const inDead = adds.filter(a => ranges.some(([x, y]) => a.n >= x && a.n <= y))
-const inLive = adds.length - inDead.length
+  const diff = sha
+    ? git('show', '--unified=0', '--format=', sha, '--', file)
+    : git('diff', '--unified=0', 'HEAD', '--', file)
 
-console.log(`${FILE}: ${adds.length} added line(s) — ${inLive} live, ${inDead.length} in a dead branch`)
+  const adds = addedLines(diff)
+  if (adds.length === 0) { console.log(`no additions to ${file}`); continue }
+  checked++
 
-if (inDead.length === 0) { console.log('✅ nothing landed in a !CA_CRM_REDESIGN block'); process.exit(0) }
+  const inDead = adds.filter(a => ranges.some(([x, y]) => a.n >= x && a.n <= y))
+  const inLive = adds.length - inDead.length
+  console.log(`${file}: ${adds.length} added line(s) — ${inLive} live, ${inDead.length} in a dead (!${flag}) branch`)
 
-console.log(`\n🔴 ${inDead.length} added line(s) are inside a !CA_CRM_REDESIGN block and WILL NEVER RENDER:\n`)
-for (const a of inDead.slice(0, 15)) console.log(`   ${a.n}: ${a.text.trim().slice(0, 96)}`)
-if (inDead.length > 15) console.log(`   … and ${inDead.length - 15} more`)
+  if (inDead.length === 0) { console.log(`   ✅ nothing landed in a !${flag} block`); continue }
+  anyDead = true
 
-console.log(
-  inLive > 0
-    ? '\n⚠ There are live additions too, so this MAY be deliberate parallel maintenance —\n' +
-      '  the same change applied to both branches, which is correct. Confirm that is what\n' +
-      '  this is. If the dead lines are the only copy of something, they shipped nowhere.'
-    : '\n🔴 EVERY added line is in a dead branch. Nothing in this change will render.',
-)
-process.exit(1)
+  console.log(`\n🔴 ${inDead.length} added line(s) are inside a !${flag} block and WILL NEVER RENDER:\n`)
+  for (const a of inDead.slice(0, 15)) console.log(`   ${a.n}: ${a.text.trim().slice(0, 96)}`)
+  if (inDead.length > 15) console.log(`   … and ${inDead.length - 15} more`)
+  console.log(
+    inLive > 0
+      ? '\n⚠ There are live additions too, so this MAY be deliberate parallel maintenance —\n' +
+        '  the same change applied to both branches, which is correct. Confirm that is what\n' +
+        '  this is. If the dead lines are the only copy of something, they shipped nowhere.'
+      : `\n🔴 EVERY added line in ${file} is in a dead branch. None of it will render.`,
+  )
+}
+
+if (anyDead) process.exit(1)
+console.log(checked === 0 ? 'no additions to either CRM file' : '✅ all additions are in live branches')
+process.exit(0)
