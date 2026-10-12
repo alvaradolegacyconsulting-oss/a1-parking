@@ -68,14 +68,28 @@ BEGIN
   END IF;
 
   -- G3 — the guard trigger
+  --
+  -- 🔴 AMENDED 2026-10-12. Piece 0 installed
+  -- properties_feature_switch_guard_trigger, which guarded the two
+  -- switches. It was SUPERSEDED the same day by
+  -- properties_protected_columns_guard_trigger, covering those two plus
+  -- twelve more CA-only columns (company, is_active and the
+  -- authorization-document set). This file is amended rather than left
+  -- asserting a trigger that is deliberately gone — a verification that
+  -- fails on a correct schema trains people to ignore it.
   IF NOT EXISTS (SELECT 1 FROM pg_trigger
-                  WHERE tgname='properties_feature_switch_guard_trigger' AND NOT tgisinternal) THEN
+                  WHERE tgname='properties_protected_columns_guard_trigger' AND NOT tgisinternal) THEN
     v_fail := v_fail || 'G3: 🔴 no guard trigger — properties_manager_update lets a manager PATCH either switch directly';
   END IF;
-  IF to_regprocedure('public.properties_feature_switch_guard()') IS NOT NULL THEN
-    IF (SELECT prosrc FROM pg_proc WHERE oid=to_regprocedure('public.properties_feature_switch_guard()'))
-         NOT LIKE '%feature_switch_not_permitted%' THEN
-      v_fail := v_fail || 'G3: the guard does not raise feature_switch_not_permitted';
+  IF to_regprocedure('public.properties_protected_columns_guard()') IS NOT NULL THEN
+    IF (SELECT prosrc FROM pg_proc WHERE oid=to_regprocedure('public.properties_protected_columns_guard()'))
+         NOT LIKE '%protected_column_not_permitted%' THEN
+      v_fail := v_fail || 'G3: the guard does not raise protected_column_not_permitted';
+    END IF;
+    -- Both switches must still be covered by the wider guard.
+    IF (SELECT prosrc FROM pg_proc WHERE oid=to_regprocedure('public.properties_protected_columns_guard()'))
+         NOT LIKE '%parking_tags_enabled%' THEN
+      v_fail := v_fail || 'G3: the wider guard lost parking_tags_enabled';
     END IF;
   END IF;
 
@@ -98,5 +112,5 @@ SELECT
   (SELECT count(*) FROM public.properties)                                   AS properties,
   (SELECT count(*) FROM public.properties WHERE parking_tags_enabled)        AS tags_on_want_0,
   (SELECT count(*) FROM public.properties WHERE printable_visitor_passes_enabled) AS passes_on_want_0,
-  (SELECT count(*) FROM pg_trigger WHERE tgname='properties_feature_switch_guard_trigger' AND NOT tgisinternal) AS guard_trigger_want_1,
+  (SELECT count(*) FROM pg_trigger WHERE tgname='properties_protected_columns_guard_trigger' AND NOT tgisinternal) AS guard_trigger_want_1,
   'NOT PROVEN HERE: a manager being refused. Run npm run verify:switches.'::TEXT AS execution_proof;
