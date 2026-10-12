@@ -107,9 +107,56 @@ const stale = [...whitelisted].filter(t => !types.includes(t) && !KNOWN_CLIENT_O
 chk('no stale types in the manager whitelist', stale.length === 0,
   stale.length ? `${stale.join(', ')} — the RPC cannot return these` : 'none')
 
+// ════════════════════════════════════════════════════════════════════
+// The driver's tag statuses, same class of check.
+// ════════════════════════════════════════════════════════════════════
+const DRIVER_CANDIDATES = [
+  'migrations/20261013_piece1_partC_driver_tag_lookup.sql',
+  'docs/backlog/wip-20261013_piece1_partC_driver_tag_lookup.sql',
+]
+const drvPath = DRIVER_CANDIDATES.find(p => fs.existsSync(path.resolve(p)))
+if (!drvPath) {
+  console.log('\n── driver_tag_lookup: not present, skipping ──')
+  console.log('   (Part C is not applied yet; this section activates when it lands.)')
+} else {
+  console.log(`\n── driver tag statuses (${drvPath}) ──`)
+  const drvSql = fs.readFileSync(drvPath, 'utf8')
+  const drv = fs.readFileSync('app/driver/page.tsx', 'utf8')
+
+  const manifestLine = drvSql.match(/TAG_STATUS_MANIFEST:\s*(.+)/)?.[1] ?? ''
+  const statuses = manifestLine.trim().split(/\s+/).filter(Boolean)
+  chk(`manifest lists the tag statuses (${statuses.length})`, statuses.length >= 5, statuses.join(', '))
+
+  for (const st of statuses) {
+    // The manifest must not be able to lie: the value has to be in the
+    // function body, and it has to be handled in the driver UI.
+    const inSql = new RegExp(`'${st}'`).test(drvSql)
+    const inUi  = new RegExp(`'${st}'`).test(drv)
+    chk(`${st.padEnd(18)} inBody=${inSql ? 'yes' : 'NO'} inDriverUI=${inUi ? 'yes' : 'NO'}`,
+      inSql && inUi,
+      // Only explain a FAILURE. A detail string printed beside a ✅
+      // reads as a problem that isn't there, which trains people to
+      // ignore the gate.
+      inSql && inUi ? ''
+        : !inSql ? '🔴 listed in the manifest but never assigned in the function — stale manifest entry'
+        : '🔴 the function can return it and the driver UI has no branch, so it renders as a raw status string')
+  }
+
+  // 🔴 CONTROL, the other direction: every tag_status literal actually
+  // assigned in the body must be in the manifest. Otherwise someone
+  // adds a status, forgets the manifest, and the loop above certifies a
+  // list that no longer describes the function.
+  const assigned = new Set([...drvSql.matchAll(/'tag_status',\s*'([a-z_]+)'/g)].map(m => m[1]))
+  for (const m of drvSql.matchAll(/THEN '([a-z_]+)'/g)) assigned.add(m[1])
+  const unlisted = [...assigned].filter(a => !statuses.includes(a))
+  chk('every tag_status assigned in the body is in the manifest', unlisted.length === 0,
+    unlisted.length ? `missing from manifest: ${unlisted.join(', ')}` : 'none')
+}
+
 console.log('')
 if (fails) {
   console.log(`❌ ${fails} FAILURE(S). A result_type the client does not handle reaches the user as an error or a blank panel.`)
   process.exit(1)
 }
-console.log('✅ Every pm_plate_lookup result_type is whitelisted, rendered, and backed by PLATE_STATUS_META.')
+console.log('✅ Every pm_plate_lookup result_type is whitelisted, rendered and backed by PLATE_STATUS_META;')
+console.log('   every driver_tag_lookup tag_status is in the manifest, in the body, and handled in the driver UI.')

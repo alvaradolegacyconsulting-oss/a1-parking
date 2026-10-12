@@ -330,6 +330,12 @@ export default function DriverPortal() {
   // Plate lookup
   const [plate, setPlate] = useState('')
   const [result, setResult] = useState<any>(null)
+  // Piece 1 Part C (2026-10-13) — optional parking tag, kept in its OWN
+  // state and deliberately NOT folded into `result`. A tag never
+  // decides authorization, so it must not enter the composite pick
+  // order (COMPOSITE_SORT_PRIORITY), where a rank is load-bearing.
+  const [driverTag, setDriverTag] = useState('')
+  const [tagResult, setTagResult] = useState<Record<string, unknown> | null>(null)
   const [searching, setSearching] = useState(false)
   const [selectedProperty, setSelectedProperty] = useState('')
 
@@ -881,6 +887,7 @@ export default function DriverPortal() {
     setSearching(true)
     setScanMsg('')
     setResult(null)
+    setTagResult(null)
     setShowViolation(false)
     setPendingDecline(null)
     setTicketTarget(null)
@@ -1210,6 +1217,28 @@ export default function DriverPortal() {
       anyProtective,
       scanned_at:     scannedAt,
     })
+
+    // ── parking tag, as a separate answer ──────────────────────────
+    // 🔴 Runs AFTER the plate result is already on screen, and writes
+    // to its own state. The plate answer must never wait on, or be
+    // changed by, the tag: the plate is the source of truth, and a
+    // driver reading a green badge acts on it. Scoping is enforced
+    // inside driver_tag_lookup (property must exist, be active, belong
+    // to the caller's company, and be in assigned_properties) — NOT
+    // here, because the portal never validates selectedProperty, which
+    // is the filed open defect this surface declines to inherit.
+    if (driverTag.trim()) {
+      const { data: tagData, error: tagErr } = await supabase.rpc('driver_tag_lookup', {
+        p_tag:      driverTag.trim(),
+        p_property: selectedProperty,
+        p_plate:    clean,
+      })
+      // A failed tag read must not read as "no tag on file". Absence is
+      // not the failure output.
+      setTagResult(tagErr
+        ? { ok: false, error: 'lookup_failed' }
+        : (tagData as Record<string, unknown> | null))
+    }
   }
 
   // Override-gate helper for the two headline buttons that skip the
@@ -2377,7 +2406,7 @@ export default function DriverPortal() {
               </button>
               <input
                 value={plate}
-                onChange={e => { setPlate(normalizePlate(e.target.value)); setResult(null); setTicketTarget(null); setScanMsg(''); setSearchTimestamp(null) }}
+                onChange={e => { setPlate(normalizePlate(e.target.value)); setResult(null); setTagResult(null); setTicketTarget(null); setScanMsg(''); setSearchTimestamp(null) }}
                 onKeyDown={e => e.key === 'Enter' && searchPlate()}
                 placeholder="ABC1234"
                 maxLength={10}
@@ -2392,6 +2421,26 @@ export default function DriverPortal() {
               {scanMsg && (
                 <p style={{ color:'#C9A227', fontSize:'12px', margin:'4px 0 0', fontStyle:'italic' }}>{scanMsg}</p>
               )}
+              {/* Optional. Shown unconditionally because the driver
+                  portal never reads the properties table, so it cannot
+                  know whether this lot uses tags — driver_tag_lookup
+                  answers tags_not_enabled instead, which is why that
+                  status exists. */}
+              <label style={{ color: '#aaa', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.1em', display:'block', marginTop:'14px' }}>Parking tag # (optional)</label>
+              <input
+                value={driverTag}
+                onChange={e => { setDriverTag(e.target.value.toUpperCase()); setTagResult(null) }}
+                onKeyDown={e => e.key === 'Enter' && searchPlate()}
+                placeholder="tag on the mirror"
+                maxLength={20}
+                style={{
+                  display: 'block', width: '100%', padding: '12px',
+                  fontSize: '18px', fontFamily: 'Courier New', letterSpacing: '0.08em',
+                  background: '#1e2535', border: '2px solid #3a4055', borderRadius: '10px',
+                  color: 'white', textAlign: 'center', outline: 'none', boxSizing: 'border-box',
+                  textTransform: 'uppercase', marginTop: '8px'
+                }}
+              />
               <button onClick={() => searchPlate()} disabled={searching || !plate || !selectedProperty}
                 style={{
                   marginTop: '12px', width: '100%', padding: '14px',
@@ -2972,6 +3021,53 @@ export default function DriverPortal() {
                     </div>
                   )}
                 </div>
+
+                {/* ── PARKING TAG (Piece 1 Part C, 2026-10-13) ──────────
+                    🔴 A NOTE, never a headline, and never a composite
+                    row. The plate decides; a tag corroborates. Keeping
+                    it out of alsoOnRecord keeps it out of
+                    COMPOSITE_SORT_PRIORITY, where a rank is load-bearing
+                    — so a tag finding can never suppress a protective
+                    record. Amber, not red: nothing here is an
+                    instruction to act. */}
+                {tagResult && (() => {
+                  const st = String(tagResult.tag_status ?? '')
+                  const tag = String(tagResult.tag_number ?? driverTag)
+                  const line =
+                    tagResult.ok === false
+                      ? (tagResult.error === 'property_not_in_scope'
+                          ? 'This property is not available for tag lookups on your account.'
+                          : tagResult.error === 'not_a_driver'
+                          ? 'Your account cannot look up parking tags.'
+                          : tagResult.error === 'no_properties_assigned'
+                          ? 'No properties are assigned to your account.'
+                          // 🔴 A failed read must not read as "no tag on file".
+                          : 'Could not check the parking tag. Try again before deciding.')
+                      : st === 'tags_not_enabled'
+                      ? 'Parking tags are not in use at this property.'
+                      : st === 'unreadable'
+                      ? 'That tag number could not be read.'
+                      : st === 'unknown'
+                      ? `Tag ${tag} has not been issued at this property.`
+                      : st === 'voided'
+                      ? `Tag ${tag} was collected or replaced and should not be in use.`
+                      : st === 'match'
+                      ? `Tag ${tag} is issued to this plate.`
+                      : st === 'mismatch'
+                      ? `Tag ${tag} is issued to a different vehicle${tagResult.unit ? ` (unit ${tagResult.unit})` : ''}. The plate result above still applies.`
+                      : st === 'issued'
+                      ? `Tag ${tag} is issued to ${String(tagResult.plate ?? '—')}${tagResult.unit ? `, unit ${tagResult.unit}` : ''}.`
+                      : `Tag ${tag}: ${st}`
+                  const good = st === 'match'
+                  return (
+                    <div style={{ marginTop: '12px', padding: '12px 14px', background: good ? '#061406' : '#161b26', border: `1px solid ${good ? '#2e7d32' : '#a16207'}`, borderRadius: '10px' }}>
+                      <div style={{ color: good ? '#4caf50' : '#fbbf24', fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 6px' }}>
+                        ── Parking Tag ─
+                      </div>
+                      <p style={{ color: '#cbd5e1', fontSize: '12.5px', margin: 0, lineHeight: '1.5' }}>{line}</p>
+                    </div>
+                  )
+                })()}
                 </>
               )}
 
