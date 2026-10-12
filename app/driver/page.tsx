@@ -2830,7 +2830,12 @@ export default function DriverPortal() {
                       key — it's driver-only ad-hoc) so this doesn't render
                       the "UNKNOWN RESULT" warning alongside the intended
                       DNT card. */}
-                  {result.status !== 'do_not_tow' && !Object.prototype.hasOwnProperty.call(PLATE_STATUS_META, result.status as string) && (
+                  {/* 2026-10-13 — the `status !== 'do_not_tow'` guard that
+                      used to sit here is gone: do_not_tow IS a
+                      PLATE_STATUS_META key now (Piece 1 Part B added it,
+                      after finding it missing from the manager whitelist
+                      too). The hasOwnProperty check covers it. */}
+                  {!Object.prototype.hasOwnProperty.call(PLATE_STATUS_META, result.status as string) && (
                     <>
                       <p style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '16px', margin: '0 0 6px' }}>⚠ UNKNOWN RESULT</p>
                       <p style={{ color: '#aaa', fontSize: '13px', margin: '0' }}>Status: <span style={{ fontFamily: 'Courier New' }}>{result.status}</span>. Screenshot this and report to support.</p>

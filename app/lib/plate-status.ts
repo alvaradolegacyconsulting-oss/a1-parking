@@ -44,6 +44,19 @@ export type PlateStatus =
   // conflicting grants when the prohibition is created, not by this
   // status winning a race against them.
   | 'prohibited'          // active property_plate_prohibitions row at the scanned property
+  // 2026-10-13 — Piece 1 Part B. The RPC has returned 'do_not_tow' since
+  // the DNT branch shipped, but it was never in this union OR in the
+  // manager's result_type whitelist, so it degraded to "Unexpected
+  // response from server." Latent only because do_not_tow_plates is
+  // empty; the first DNT plate anyone adds would have hit it, on the
+  // single most protective status in the system.
+  | 'do_not_tow'          // active do_not_tow_plates row at the scanned property
+  // Parking tags. Both apply ONLY when the PLATE came back unauthorized
+  // — the plate is the source of truth, so a wrong tag never downgrades
+  // a protected vehicle. doNotTow is FALSE for both: the plate had no
+  // grant, and the tag is the reason we can say more than "unknown".
+  | 'tag_mismatch'        // the scanned tag is live here, but issued to a DIFFERENT vehicle
+  | 'tag_voided'          // the scanned tag was collected or re-issued; it should not be in use
 
 export type PlateSurface = 'driver' | 'pm'
 
@@ -181,6 +194,33 @@ export const PLATE_STATUS_META: Record<PlateStatus, PlateStatusMeta> = {
   //
   // PM copy says the reason is available rather than containing it —
   // the manager surface reads the row itself and can show it in full.
+  do_not_tow: {
+    label: 'DO NOT TOW ON FILE',
+    bg: AUTHORIZED_BG, border: AUTHORIZED_BR, color: AUTHORIZED_FG,
+    doNotTow: true,
+    driverHeadline: '✓ DO NOT TOW ON FILE',
+    driverSubtitle: 'This plate is on the property\u2019s do-not-tow list.',
+    pmHeadline: 'Do-not-tow on file',
+    pmSubtitle: 'This plate is on your property\u2019s do-not-tow list.',
+  },
+  tag_mismatch: {
+    label: 'TAG DOES NOT MATCH THIS PLATE',
+    bg: DENIED_BG, border: DENIED_BR, color: DENIED_FG,
+    doNotTow: false,
+    driverHeadline: '✗ TAG DOES NOT MATCH THIS PLATE',
+    driverSubtitle: 'The parking tag shown is issued to a different vehicle.',
+    pmHeadline: 'Parking tag belongs to another vehicle',
+    pmSubtitle: 'The plate has no active registration here, and the parking tag shown is issued to a different vehicle at this property.',
+  },
+  tag_voided: {
+    label: 'TAG NO LONGER VALID',
+    bg: DENIED_BG, border: DENIED_BR, color: DENIED_FG,
+    doNotTow: false,
+    driverHeadline: '✗ TAG NO LONGER VALID',
+    driverSubtitle: 'The parking tag shown was collected or replaced.',
+    pmHeadline: 'Parking tag no longer valid',
+    pmSubtitle: 'The plate has no active registration here, and the parking tag shown was collected or replaced.',
+  },
   prohibited: {
     label: 'NOT PERMITTED AT THIS PROPERTY',
     bg: DENIED_BG, border: DENIED_BR, color: DENIED_FG,

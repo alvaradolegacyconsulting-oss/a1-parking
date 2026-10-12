@@ -25,7 +25,8 @@
     "verify:prohibitions": "tsx scripts/verify-plate-prohibitions.ts",
     "verify:switches": "tsx scripts/verify-feature-switches.ts",
     "verify:propcolumns": "tsx scripts/verify-property-columns.ts",
-    "verify:parkingtags": "tsx scripts/verify-parking-tags.ts"
+    "verify:parkingtags": "tsx scripts/verify-parking-tags.ts",
+    "verify:lookuptypes": "tsx scripts/verify-lookup-result-types.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

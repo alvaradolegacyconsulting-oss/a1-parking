@@ -441,6 +441,9 @@ export default function ManagerPortal() {
   // B70: Plate Lookup tab state. Distinct name from the Spaces-tab
   // `plateQuery` further down to avoid the variable collision.
   const [lookupPlate, setLookupPlate] = useState('')
+  // Piece 1 (2026-10-13) — optional parking tag alongside the plate.
+  // Only collected when the property has parking tags switched on.
+  const [lookupTag, setLookupTag] = useState('')
   const [lookupBusy, setLookupBusy] = useState(false)
   // B220 (2026-06-26): widened result_type union to include 'guest_authorized'
   // + added guest_name/valid_through fields (populated only on guest_authorized;
@@ -449,7 +452,7 @@ export default function ManagerPortal() {
   // (Part A RPC changes now surface them; previously the manager's whitelist
   // rejected them as "Unexpected response" and users saw "not authorized"
   // instead of the actual under-review state).
-  const [lookupResult, setLookupResult] = useState<{ result_type: 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review' | 'authorized_plate'; unit_number: string | null; queriedPlate: string; guest_name?: string | null; valid_through?: string | null; ap_property_name?: string | null; ap_label?: string | null } | null>(null)
+  const [lookupResult, setLookupResult] = useState<{ result_type: 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review' | 'authorized_plate' | 'do_not_tow' | 'prohibited' | 'tag_mismatch' | 'tag_voided'; unit_number: string | null; queriedPlate: string; guest_name?: string | null; valid_through?: string | null; ap_property_name?: string | null; ap_label?: string | null; tag_number?: string | null; tag_status?: string | null } | null>(null)
   const [lookupError, setLookupError] = useState('')
   const [managerCompany, setManagerCompany] = useState('')
   const [managerEmail, setManagerEmail] = useState('')
@@ -1263,6 +1266,10 @@ export default function ManagerPortal() {
       const { data, error } = await supabase.rpc('pm_plate_lookup', {
         p_plate: raw,
         p_viewing_property: manager?.name ?? null,
+        // Only sent when the property has tags on AND one was typed.
+        // NULL means "no tag scanned", which the RPC treats as "the
+        // plate answer stands" — a tag never decides authorization.
+        p_tag: (manager?.parking_tags_enabled && lookupTag.trim()) ? lookupTag.trim() : null,
       })
       if (error) {
         setLookupError(error.message || 'Lookup failed. Please try again.')
@@ -1276,7 +1283,13 @@ export default function ManagerPortal() {
       // via branch 1.5. Any new pm_plate_lookup RPC return type must
       // land here or renders will silently degrade to "Unexpected
       // response from server."
-      if (kind !== 'resident' && kind !== 'visitor' && kind !== 'unauthorized' && kind !== 'guest_authorized' && kind !== 'pending' && kind !== 'plate_under_review' && kind !== 'authorized_plate') {
+      // 2026-10-13 — 'do_not_tow' added. It has been a possible return
+      // since the DNT branch shipped and was NEVER listed here, so it
+      // degraded to "Unexpected response from server." on the single
+      // most protective status in the system. Latent only because
+      // do_not_tow_plates is empty (0 rows). 'prohibited' added with
+      // Part B's new branch; 'tag_mismatch'/'tag_voided' with tags.
+      if (kind !== 'resident' && kind !== 'visitor' && kind !== 'unauthorized' && kind !== 'guest_authorized' && kind !== 'pending' && kind !== 'plate_under_review' && kind !== 'authorized_plate' && kind !== 'do_not_tow' && kind !== 'prohibited' && kind !== 'tag_mismatch' && kind !== 'tag_voided') {
         setLookupError('Unexpected response from server.')
         return
       }
@@ -1284,7 +1297,9 @@ export default function ManagerPortal() {
       // user sees exactly what got searched + logged in the audit row.
       const normalized = normalizePlate(raw)
       setLookupResult({
-        result_type: kind as 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review' | 'authorized_plate',
+        result_type: kind as 'resident' | 'visitor' | 'unauthorized' | 'guest_authorized' | 'pending' | 'plate_under_review' | 'authorized_plate' | 'do_not_tow' | 'prohibited' | 'tag_mismatch' | 'tag_voided',
+        tag_number:   (result.tag_number as string | null) ?? null,
+        tag_status:   (result.tag_status as string | null) ?? null,
         unit_number: (result.unit_number as string | null) ?? null,
         queriedPlate: normalized,
         guest_name:  (result.guest_name  as string | null) ?? null,
@@ -5788,6 +5803,18 @@ if (vehErr) {
                   spellCheck={false}
                   style={{ ...inputStyle, flex:1, fontFamily:'Courier New', textTransform:'uppercase' }}
                 />
+                {manager?.parking_tags_enabled && (
+                  <input
+                    value={lookupTag}
+                    onChange={e => setLookupTag(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !lookupBusy) runPlateLookup() }}
+                    placeholder="Parking tag # (optional)"
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    style={{ ...inputStyle, width:'170px', fontFamily:'Courier New', textTransform:'uppercase' }}
+                  />
+                )}
                 <button
                   onClick={runPlateLookup}
                   disabled={lookupBusy || !lookupPlate.trim()}
@@ -5960,6 +5987,66 @@ if (vehErr) {
                     <p style={{ color:'#888', fontSize:'12px', margin:'2px 0 0' }}>No active resident or visitor pass on your property.</p>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* 2026-10-13 — do_not_tow / prohibited / tag_voided /
+                tag_mismatch. All four route through PLATE_STATUS_META
+                WITHOUT an `as PlateStatus` cast, so removing any of
+                them from the union is a COMPILE error here rather than
+                a runtime blank card. (The older cards above cast, which
+                is why widening that union has been silent before.) */}
+            {lookupResult && (lookupResult.result_type === 'do_not_tow'
+                           || lookupResult.result_type === 'prohibited'
+                           || lookupResult.result_type === 'tag_voided'
+                           || lookupResult.result_type === 'tag_mismatch') && (() => {
+              const meta = PLATE_STATUS_META[lookupResult.result_type]
+              const icon = lookupResult.result_type === 'do_not_tow' ? '✓' : '✗'
+              return (
+                <div style={{ background: meta.bg, border: `1px solid ${meta.border}`, borderRadius:'10px', padding:'18px' }}>
+                  <p style={{ color:'#888', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 6px' }}>Result for</p>
+                  <p style={{ color: meta.color, fontFamily:'Courier New', fontSize:'20px', fontWeight:'bold', margin:'0 0 14px' }}>
+                    {lookupResult.queriedPlate}
+                    {lookupResult.tag_number && (
+                      <span style={{ color:'#888', fontSize:'13px', fontWeight:'normal' }}>{'  ·  tag '}{lookupResult.tag_number}</span>
+                    )}
+                  </p>
+                  <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+                    <div style={{ width:'40px', height:'40px', borderRadius:'50%', background: meta.bg, border:`1px solid ${meta.border}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px' }}>{icon}</div>
+                    <div>
+                      <p style={{ color: meta.color, fontSize:'14px', fontWeight:'bold', margin:'0' }}>{meta.pmHeadline}</p>
+                      <p style={{ color:'#aaa', fontSize:'12.5px', margin:'2px 0 0', lineHeight:'1.5' }}>{meta.pmSubtitle}</p>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* 🔴 The tag qualifier on a PROTECTED plate. The RPC
+                deliberately does NOT downgrade a protective result_type
+                because a tag was swapped — the plate is the source of
+                truth, and towing an authorized resident over a wrong
+                hangtag is a false negative on enforcement. So the tag
+                finding is shown as a note BESIDE the result, never
+                instead of it. Rendered only when the tag says something
+                the result_type is not already saying. */}
+            {lookupResult && lookupResult.tag_status
+              && lookupResult.tag_status !== 'match'
+              && lookupResult.result_type !== 'tag_mismatch'
+              && lookupResult.result_type !== 'tag_voided' && (
+              <div style={{ background:'#161b26', border:'1px solid #a16207', borderRadius:'8px', padding:'12px 14px', marginTop:'10px' }}>
+                <p style={{ color:'#fbbf24', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>
+                  Parking tag note
+                </p>
+                <p style={{ color:'#cbd5e1', fontSize:'12.5px', margin:'0', lineHeight:'1.5' }}>
+                  {lookupResult.tag_status === 'mismatch'
+                    ? <>Tag <strong>{lookupResult.tag_number}</strong> is issued to a different vehicle at this property. The plate above keeps the status shown — the tag does not change it.</>
+                    : lookupResult.tag_status === 'voided'
+                    ? <>Tag <strong>{lookupResult.tag_number}</strong> was collected or replaced and should not be in use. The plate above keeps the status shown.</>
+                    : lookupResult.tag_status === 'unknown'
+                    ? <>Tag <strong>{lookupResult.tag_number}</strong> has never been issued at this property.</>
+                    : <>The tag entered could not be read.</>}
+                </p>
               </div>
             )}
           </div>
