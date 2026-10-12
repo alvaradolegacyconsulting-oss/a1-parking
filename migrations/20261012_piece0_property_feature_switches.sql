@@ -41,7 +41,7 @@
 -- resolving after the switch goes off — while the MINT path does. That
 -- asymmetry is the point and is restated in piece 2.
 --
--- Paired: wip-20261012_piece0_property_feature_switches_verification.sql
+-- Paired: 20261012_piece0_property_feature_switches_verification.sql
 
 ALTER TABLE public.properties
   ADD COLUMN IF NOT EXISTS parking_tags_enabled             BOOLEAN NOT NULL DEFAULT false,
