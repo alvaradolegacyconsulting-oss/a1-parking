@@ -22,7 +22,8 @@
     "verify:dupeplate": "tsx scripts/verify-duplicate-plate.ts",
     "verify:visitorpass": "tsx scripts/verify-visitor-pass-dedup.ts",
     "verify:plannames": "tsx scripts/verify-plan-names.ts",
-    "verify:prohibitions": "tsx scripts/verify-plate-prohibitions.ts"
+    "verify:prohibitions": "tsx scripts/verify-plate-prohibitions.ts",
+    "verify:switches": "tsx scripts/verify-feature-switches.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",
