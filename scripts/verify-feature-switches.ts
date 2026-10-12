@@ -76,7 +76,17 @@ const main = async () => {
     const mPatch = await MGR.client.from('properties')
       .update({ parking_tags_enabled: false }).eq('name', PROPERTY).select('id')
     chk('🔴 a manager is refused by the TRIGGER on a direct PATCH',
-      !!mPatch.error && /feature_switch_not_permitted/.test(mPatch.error.message),
+      // 🔴 EITHER token, and only these two. Piece 0's own guard raised
+      // feature_switch_not_permitted; the properties protected-columns
+      // migration (2026-10-12) superseded it with a guard covering
+      // fourteen columns, which raises protected_column_not_permitted.
+      // Both mean "the trigger refused a manager on a switch column",
+      // which is what this asserts. NOT widened to "any error": a
+      // refusal for some unrelated reason would then pass, and the
+      // first canary of this kind already caught exactly that
+      // (invalid input syntax reported as a guard refusal).
+      !!mPatch.error
+        && /feature_switch_not_permitted|protected_column_not_permitted/.test(mPatch.error.message),
       mPatch.error ? mPatch.error.message.slice(0, 70) : `NO ERROR — updated ${mPatch.data?.length} row(s)`)
 
     const afterMgr = (await db.from('properties').select('parking_tags_enabled').eq('name', PROPERTY).single()).data

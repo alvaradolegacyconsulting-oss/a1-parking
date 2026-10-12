@@ -70,6 +70,7 @@ import { TIER_CONFIG, type TierType } from '../lib/tier-config'
 import { OFFERINGS } from '../lib/tier-display'
 import { tokenFor, PLANS } from '../lib/signup-tier-param'
 import PlateProhibitionPanel from '../components/PlateProhibitionPanel'
+import PhysicalPassSwitches from '../components/PhysicalPassSwitches'
 import { useQuote } from '../lib/use-quote'
 import { formatUsd, describeQuote } from '../lib/pricing-quote'
 
@@ -1973,7 +1974,19 @@ export default function CompanyAdminPortal() {
   async function updateProperty() {
     if (!editingProperty) return
     setPropMsg('')
-    const { id, company, created_at, ...fields } = editingProperty
+    // 🔴 parking_tags_enabled / printable_visitor_passes_enabled are
+    // stripped here, not merely absent from the form. editingProperty is
+    // built with { ...selected }, so the loaded row carries them, and
+    // this spread would send them in a direct UPDATE — succeeding for a
+    // CA while skipping the audit row that records the prior value.
+    // set_property_feature_switch is the only write path; the Physical
+    // passes panel above is what calls it.
+    const {
+      id, company, created_at,
+      parking_tags_enabled: _ptIgnored,
+      printable_visitor_passes_enabled: _pvpIgnored,
+      ...fields
+    } = editingProperty
     // B51a: normalize empty strings to null for the auth fields so DATE
     // doesn't choke on '' and notes don't store empty strings as data.
     // Fix 1 (2026-07-15): trim name at source too — DB trigger
@@ -7075,6 +7088,29 @@ export default function CompanyAdminPortal() {
                               may_manage_prohibitions_at() is the real
                               authority inside each RPC. */}
                           <div style={{ marginTop:'16px' }}>
+                            {/* Piece 0 — the ONLY write path for these two
+                                columns is set_property_feature_switch, which
+                                the component calls. Deliberately NOT a field
+                                in the edit-property form below: that form
+                                spreads its state into one direct UPDATE, so a
+                                checkbox there would skip the audit row that
+                                records the prior value. */}
+                            <PhysicalPassSwitches
+                              propertyId={selected.id}
+                              propertyName={selected.name}
+                              canEdit={true}
+                              parkingTags={!!(selected as any).parking_tags_enabled}
+                              printablePasses={!!(selected as any).printable_visitor_passes_enabled}
+                              onChanged={(name, enabled) => {
+                                // Keep the loaded property row in step so the
+                                // vehicle tag fields below react immediately,
+                                // without a refetch that would collapse the
+                                // open panel.
+                                const col = name === 'parking_tags' ? 'parking_tags_enabled' : 'printable_visitor_passes_enabled'
+                                setProperties(ps => ps.map((x: any) => x.id === selected.id ? { ...x, [col]: enabled } : x))
+                              }}
+                            />
+
                             <PlateProhibitionPanel
                               propertyId={selected.id}
                               property={selected.name}

@@ -92,6 +92,8 @@ import CredentialsModal from '../components/CredentialsModal'
 // render below (kept intact for rollback until slice 2 retires it).
 import PmResidentCrm from '../components/PmResidentCrm'
 import PlateProhibitionPanel from '../components/PlateProhibitionPanel'
+import PhysicalPassSwitches from '../components/PhysicalPassSwitches'
+import ParkingTagField from '../components/ParkingTagField'
 import { buildCrmResidents, isVehicleUnauthorizedForRestore, isPlateClash, plateClashMessage, findPlateDuplicates, type CrmResident, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
 import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '../lib/unit-occupancy'
 
@@ -5267,6 +5269,19 @@ if (vehErr) {
                           <button onClick={() => removeVehicle(v.id)}
                             style={{ padding:'6px 10px', background:'#3a1a1a', color:'#f44336', border:'1px solid #b71c1c', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontFamily:'Arial' }}>Remove</button>
                         </div>
+                        {/* Piece 1 — physical parking tag. Renders its own
+                            "not switched on for this property" line rather
+                            than disappearing, so a manager who expects the
+                            field learns why it is inert and who can change
+                            it. Every write goes through set_vehicle_tag /
+                            void_vehicle_tag. */}
+                        <ParkingTagField
+                          vehicleId={v.id}
+                          plate={v.plate}
+                          propertyName={manager.name}
+                          tagsEnabled={!!(manager as any).parking_tags_enabled}
+                          canManage={!isReadOnly}
+                        />
                         <a href={TOWED_CAR_LOOKUP_URL} target="_blank" rel="noopener noreferrer"
                           style={{ color:'#C9A227', fontSize:'11px', textDecoration:'underline', padding:'6px 0 2px', display:'block' }}>
                           🔍 Search FindMyTowedCar.org
@@ -6193,6 +6208,21 @@ if (vehErr) {
             testing found. */}
         {activeTab === 'authorized-plates' && manager?.id && manager?.name && (
           <div style={{ marginTop: '16px' }}>
+            {/* READ-ONLY for managers (ruled). They need to know whether
+                this property uses tags — the Plate Lookup tag field and
+                the per-vehicle tag field both depend on it — but only a
+                company admin may change it. canEdit={false} is the whole
+                difference from the CA mount; the component renders the
+                state and says it is read-only rather than hiding it,
+                because a hidden switch reads as "this feature does not
+                exist". */}
+            <PhysicalPassSwitches
+              propertyId={manager.id}
+              propertyName={manager.name}
+              canEdit={false}
+              parkingTags={!!(manager as any).parking_tags_enabled}
+              printablePasses={!!(manager as any).printable_visitor_passes_enabled}
+            />
             <PlateProhibitionPanel
               propertyId={manager.id}
               property={manager.name}

@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
+import ParkingTagField from '../components/ParkingTagField'
 import { logAudit } from '../lib/audit'
 // B213 — Turnstile widget on the change-password re-auth call.
 // signInWithPassword is captcha-gated when the Supabase toggle is ON;
@@ -153,6 +154,7 @@ export default function ResidentPortal() {
   const [supportEmail, setSupportEmail] = useState('')
   const [supportWebsite, setSupportWebsite] = useState('')
   const [propertyManager, setPropertyManager] = useState<{ name: string | null; email: string | null }>({ name: null, email: null })
+  const [parkingTagsEnabled, setParkingTagsEnabled] = useState(false)
   // 2026-08-20 house-rules arc Commit 3 — resident-portal render.
   // Populated from the SAME fetch as propertyManager below (rides
   // the existing property row per Mateo Aug 20 constraint: a separate
@@ -405,11 +407,16 @@ export default function ResidentPortal() {
       // visibly rather than silently hiding either surface.
       const { data: prop } = await supabase
         .from('properties')
-        .select('pm_name, pm_email, house_rules_text, house_rules_effective_date, house_rules_updated_at')
+        .select('pm_name, pm_email, house_rules_text, house_rules_effective_date, house_rules_updated_at, parking_tags_enabled')
         .ilike('name', data.property)
         .single()
       if (prop) {
         setPropertyManager({ name: prop.pm_name || null, email: prop.pm_email || null })
+        // Piece 1 — rides the same shared fetch rather than adding a
+        // second properties query. Residents see their tag number
+        // read-only; the field renders nothing at all when the property
+        // does not use tags, because there is no fact to state.
+        setParkingTagsEnabled(!!(prop as Record<string, unknown>).parking_tags_enabled)
         setHouseRules({
           text:           prop.house_rules_text ?? null,
           effective_date: prop.house_rules_effective_date ?? null,
@@ -1631,6 +1638,20 @@ export default function ResidentPortal() {
                             <div><span style={{ color:'#555' }}>State</span><br/><span style={{ color:'#aaa' }}>{v.state || '—'}</span></div>
                             <div><span style={{ color:'#555' }}>Permit Expiry</span><br/><span style={{ color:'#aaa' }}>{formatDate(v.permit_expiry)}</span></div>
                           </div>
+                          {/* READ-ONLY. canManage={false} is the whole
+                              difference from the manager/CA mount — the
+                              component renders a number and nothing else,
+                              and a resident has SELECT on their own
+                              vehicle's tag only (vpt_resident_select_own).
+                              Writes are refused by RLS regardless, since
+                              the table grants authenticated no write. */}
+                          <ParkingTagField
+                            vehicleId={v.id}
+                            plate={v.plate}
+                            propertyName={resident?.property || ''}
+                            tagsEnabled={parkingTagsEnabled}
+                            canManage={false}
+                          />
                           {(v.status === 'pending' || v.status === 'declined') && v.manager_note && (
                             <div style={{ background: v.status === 'declined' ? '#3a1a1a' : '#1e2535', border:`1px solid ${v.status === 'declined' ? '#b71c1c' : '#3a4055'}`, borderRadius:'6px', padding:'8px 10px', marginBottom:'10px' }}>
                               <p style={{ color:'#555', fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 0 3px' }}>Manager Note</p>
