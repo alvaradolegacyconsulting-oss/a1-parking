@@ -7044,7 +7044,13 @@ export default function CompanyAdminPortal() {
                               distinguishing standing authorization from
                               tow protection. */}
                           <div style={{ marginTop:'16px' }}>
+                            {/*
+                                Same reason as PhysicalPassSwitches. This mount is readOnly, so only
+                                the collapse state and the loaded list carried over — but the key
+                                costs nothing and removes the class from this panel entirely.
+                            */}
                             <AuthorizedPlatesManager
+                              key={selected.id}
                               propertyId={selected.id}
                               propertyName={selected.name}
                               readOnly
@@ -7086,7 +7092,14 @@ export default function CompanyAdminPortal() {
                                 spreads its state into one direct UPDATE, so a
                                 checkbox there would skip the audit row that
                                 records the prior value. */}
+                            {/*
+                                🔴 key, not just props. useState reads its initial value only on
+                                first mount, and `selected` changes while this panel stays
+                                mounted — so the switches kept the FIRST property's values. After
+                                viewing Northgate (both on) every property read ON. 2026-10-15.
+                            */}
                             <PhysicalPassSwitches
+                              key={selected.id}
                               propertyId={selected.id}
                               propertyName={selected.name}
                               canEdit={true}

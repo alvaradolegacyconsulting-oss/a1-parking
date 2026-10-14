@@ -37,7 +37,8 @@
     "verify:createuserguard": "tsx scripts/verify-create-user-records-bearing.ts",
     "verify:residentrole": "tsx scripts/verify-resident-role-shape.ts",
     "verify:useractive": "tsx scripts/verify-user-active-route.ts",
-    "verify:identityhelpers": "tsx scripts/verify-identity-helpers.ts"
+    "verify:identityhelpers": "tsx scripts/verify-identity-helpers.ts",
+    "verify:remountkeys": "tsx scripts/verify-crm-remount-keys.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

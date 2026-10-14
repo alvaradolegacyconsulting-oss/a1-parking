@@ -6304,8 +6304,17 @@ export default function ManagerPortal() {
           </Suspense>
         )}
 
+        {/* 🔴 key={manager.id} — THE ONE WITH TEETH. switchProperty() calls
+            setManager(prop) in place, so this component is reused across
+            properties, and this mount is NOT readOnly. targetRemove held a
+            plate row from the PREVIOUS property, so a pending
+            remove-confirmation could delete property A's plate while the
+            panel showed B; plateInput/labelInput carried over too. The two
+            hand-written stale-state clears in switchProperty (plate lookup,
+            AP filter) are this same class, patched one at a time. 2026-10-15. */}
         {activeTab === 'authorized-plates' && manager?.id && manager?.name && (
           <AuthorizedPlatesManager
+            key={manager.id}
             propertyId={manager.id}
             propertyName={manager.name}
             onCountChange={setApCount}
@@ -6335,8 +6344,16 @@ export default function ManagerPortal() {
                 difference from the CA mount; the component renders the
                 state and says it is read-only rather than hiding it,
                 because a hidden switch reads as "this feature does not
-                exist". */}
+                exist".
+                🔴 key={manager.id} added 2026-10-15. This mount was MISSED by
+                the hand sweep and caught by verify:remountkeys on its first
+                run. switchProperty() calls setManager(prop) in place, so
+                without the key a manager who viewed a tags-on property saw
+                the switches read ON for every property afterwards — the same
+                defect as the CA panel, in the portal where it is read-only
+                and therefore even harder to disbelieve. */}
             <PhysicalPassSwitches
+              key={manager.id}
               propertyId={manager.id}
               propertyName={manager.name}
               canEdit={false}
