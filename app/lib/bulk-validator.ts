@@ -123,7 +123,10 @@ export function validateBulkRows(rows: BulkRowInput[]): BulkError[] {
     if (st && !isKnownPlateState(st)) {
       add(r, 'plate_state', 'plate_state_unknown',
         st.length > 2
-          ? `Write the two-letter state code, not "${st}". For example TX, not Texas.`
+          // The state name spelled out is the common case, so name the
+          // code for it rather than giving a generic example that
+          // repeats the word back at them.
+          ? `Write the two-letter code, not the state name: ${codeFor(st) ?? 'for example TX'}, not "${st}".`
           : `"${st}" is not a state code we recognize. Use one of the ${PLATE_STATES.length} US state or DC codes.`)
     }
 
@@ -139,12 +142,24 @@ export function validateBulkRows(rows: BulkRowInput[]): BulkError[] {
   // Duplicate plate, keyed on the DATABASE's normalized form — so
   // 'ABC 1234' and 'ABC-1234' in two rows are caught as one plate,
   // which is what the index will say when the loader runs.
-  const seenPlate = new Map<string, number>()
+  // 🔴 EVERY row in a duplicate group is flagged, not just the later
+  // ones. Neither row is more wrong than the other, and the error file
+  // is the customer's work list — if only the second occurrence were
+  // listed, someone scanning it sees one row and may delete the wrong
+  // car. Each message names the others.
+  const plateRows = new Map<string, BulkRowInput[]>()
   for (const r of rows) {
     if (!r.plateNorm) continue
-    const first = seenPlate.get(r.plateNorm)
-    if (first === undefined) seenPlate.set(r.plateNorm, r.index + 2)
-    else add(r, 'plate', 'duplicate_plate', `This plate is also on row ${first}. A plate can only be listed once.`)
+    const g = plateRows.get(r.plateNorm)
+    if (g) g.push(r); else plateRows.set(r.plateNorm, [r])
+  }
+  for (const group of plateRows.values()) {
+    if (group.length < 2) continue
+    for (const r of group) {
+      const others = group.filter(o => o !== r).map(o => o.index + 2)
+      add(r, 'plate', 'duplicate_plate',
+        `This plate is on ${others.length === 1 ? 'row' : 'rows'} ${others.join(', ')} as well. A plate can only be listed once — decide which row is right and remove the other${others.length === 1 ? '' : 's'}.`)
+    }
   }
 
   // Rows sharing (email, unit) are ONE resident with several vehicles,
@@ -222,6 +237,26 @@ export function dbFlagErrors(rows: BulkRowInput[], flags: BulkDbFlags[]): BulkEr
     }
   }
   return errors
+}
+
+/** Spelled-out state name → its code, so the error can name the fix. */
+const STATE_NAMES: Record<string, string> = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
+  colorado: 'CO', connecticut: 'CT', delaware: 'DE', 'district of columbia': 'DC',
+  florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID', illinois: 'IL',
+  indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY', louisiana: 'LA',
+  maine: 'ME', maryland: 'MD', massachusetts: 'MA', michigan: 'MI',
+  minnesota: 'MN', mississippi: 'MS', missouri: 'MO', montana: 'MT',
+  nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ',
+  'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC',
+  'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK', oregon: 'OR',
+  pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+  'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT',
+  vermont: 'VT', virginia: 'VA', washington: 'WA', 'west virginia': 'WV',
+  wisconsin: 'WI', wyoming: 'WY',
+}
+function codeFor(v: string): string | null {
+  return STATE_NAMES[v.trim().toLowerCase().replace(/\s+/g, ' ')] ?? null
 }
 
 function label(f: string): string {
