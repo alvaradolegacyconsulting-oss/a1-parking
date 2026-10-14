@@ -114,16 +114,36 @@ BEGIN
     IF (SELECT prosrc FROM pg_proc WHERE oid = v_fn) !~ '\munder_review\M' THEN
       v_fail := array_append(v_fail, 'G5a: the RPC does not test status under_review — it would miss conflicts the index will raise');
     END IF;
+    -- Exactly two, named: the EXISTS for this property, and the
+    -- LATERAL for the sibling properties. An exact count is the point
+    -- — a third vehicle-matching site with a looser predicate would
+    -- hide behind a >= check, and this gate has already caught one.
     IF (SELECT count(*) FROM regexp_matches((SELECT prosrc FROM pg_proc WHERE oid = v_fn), 'under_review', 'g')) <> 2 THEN
-      v_fail := array_append(v_fail, format('G5b: under_review appears %s times in the RPC; want 2 (this property and the sibling properties)',
+      v_fail := array_append(v_fail, format('G5b: under_review appears %s times in the RPC; want exactly 2 — the EXISTS for this property and the LATERAL for the sibling properties. More means a third place matches vehicles and its predicate is unruled.',
         (SELECT count(*) FROM regexp_matches((SELECT prosrc FROM pg_proc WHERE oid = v_fn), 'under_review', 'g'))));
+    END IF;
+
+    -- ── G5c. 🔴 The sibling flag and the sibling NAME are one answer ─
+    -- They were two: an EXISTS for the boolean and a scalar subquery
+    -- for the name, each carrying its own copy of the index predicate.
+    -- That is what made under_review appear three times. A LATERAL
+    -- makes the boolean the name's presence, so they cannot disagree
+    -- and the predicate exists once.
+    IF (SELECT prosrc FROM pg_proc WHERE oid = v_fn) !~ 'LEFT JOIN LATERAL' THEN
+      v_fail := array_append(v_fail, 'G5c: the sibling check is not a LATERAL — plate_active_other and other_property are being derived separately');
+    END IF;
+    IF (SELECT prosrc FROM pg_proc WHERE oid = v_fn) !~ 'other\.property IS NOT NULL' THEN
+      v_fail := array_append(v_fail, 'G5d: plate_active_other is not derived from other.property — the flag and the name can disagree');
     END IF;
 
     -- ── G6. 🔴 No TypeScript-side normalizer crept in ───────────────
     -- The whole reason this RPC exists. Two calls to normalize_plate on
     -- the vehicles side plus one on the input.
-    IF (SELECT count(*) FROM regexp_matches((SELECT prosrc FROM pg_proc WHERE oid = v_fn), 'normalize_plate', 'g')) < 3 THEN
-      v_fail := array_append(v_fail, format('G6: normalize_plate appears %s times; want at least 3 (input, this property, siblings)',
+    -- Exactly three: the input key, this property, the siblings. Not
+    -- ">= 3" — a fourth call is a fourth place the key is derived, and
+    -- the whole reason this RPC exists is that the key has one source.
+    IF (SELECT count(*) FROM regexp_matches((SELECT prosrc FROM pg_proc WHERE oid = v_fn), 'normalize_plate', 'g')) <> 3 THEN
+      v_fail := array_append(v_fail, format('G6: normalize_plate appears %s times; want exactly 3 (the input key, this property, the sibling LATERAL)',
         (SELECT count(*) FROM regexp_matches((SELECT prosrc FROM pg_proc WHERE oid = v_fn), 'normalize_plate', 'g'))));
     END IF;
 

@@ -102,19 +102,17 @@ BEGIN
          AND v.is_active = TRUE
          AND v.status IN ('active', 'under_review')
     ),
-    EXISTS (
-      SELECT 1 FROM public.vehicles v
-       WHERE public.normalize_plate(v.plate) = i.plate_norm
-         AND v.property IN (SELECT s.name FROM siblings s)
-         AND v.is_active = TRUE
-         AND v.status IN ('active', 'under_review')
-    ),
-    (SELECT v.property FROM public.vehicles v
-      WHERE public.normalize_plate(v.plate) = i.plate_norm
-        AND v.property IN (SELECT s.name FROM siblings s)
-        AND v.is_active = TRUE
-        AND v.status IN ('active', 'under_review')
-      ORDER BY v.property LIMIT 1),
+    -- 🔴 ONE LATERAL, NOT AN EXISTS PLUS A SCALAR SUBQUERY.
+    -- The first version asked the sibling question twice: once as
+    -- EXISTS for the boolean and again as a scalar subquery for the
+    -- name. That wrote the index's predicate into the RPC a third
+    -- time — caught by the paired gate's occurrence count, which
+    -- expected two — and left the flag and the name as two
+    -- independently derived answers that could in principle disagree.
+    -- Now the boolean IS the name's presence, and there is one scan
+    -- per row instead of two.
+    other.property IS NOT NULL,
+    other.property,
     -- Prohibitions store the plate ALREADY normalized (ppp_plate_normalize
     -- trigger), so this is an indexed equality. Liveness is both
     -- predicates: not removed AND not expired.
@@ -139,7 +137,17 @@ BEGIN
          AND rr.property = v_property
          AND rr.is_active = TRUE
     )
-    FROM input i;
+    FROM input i
+    LEFT JOIN LATERAL (
+      SELECT v.property
+        FROM public.vehicles v
+       WHERE public.normalize_plate(v.plate) = i.plate_norm
+         AND v.property IN (SELECT s.name FROM siblings s)
+         AND v.is_active = TRUE
+         AND v.status IN ('active', 'under_review')
+       ORDER BY v.property
+       LIMIT 1
+    ) other ON TRUE;
 END
 $fn$;
 
