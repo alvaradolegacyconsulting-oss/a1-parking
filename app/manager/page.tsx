@@ -3505,20 +3505,46 @@ export default function ManagerPortal() {
     // trimDepartedResidentVehicles predicate exactly, opposite direction.
     // Wildcard-escape discipline matches the deactivate path. Does NOT
     // touch un-owned vehicles (B150 cascade casualties stay deactivated).
+    // 🔴 Through reactivate_resident_vehicles, not a direct write.
+    // Stage 1c refuses an `authenticated` client write that sets
+    // is_active=true — correctly: pm_plate_lookup's resident branch
+    // tests is_active ALONE, so this was an approval-equivalent write
+    // with no authority check. The RPC keeps this exact predicate
+    // (owner-stamped + unit + property + inactive only), gates on
+    // can_approve_vehicles, and SKIPS rows it must not bring back.
     let restoredVehicles: { id: number; plate: string }[] = []
+    let skippedVehicles: { plate: string; reason: string }[] = []
     if (willRestore > 0) {
-      const { data: restored, error: vErr } = await supabase
-        .from('vehicles')
-        .update({ is_active: true })
-        .eq('resident_email', email)
-        .ilike('unit', escUnit)
-        .ilike('property', escProperty)
-        .eq('is_active', false)
-        .select('id, plate')
-      if (vErr) {
-        console.error('[B206-reactivate-vehicles-restore-failed]', { id, email, unit, property, error: vErr.message })
+      const { data: reRes, error: reErr } = await supabase.rpc('reactivate_resident_vehicles', {
+        p_email:    email,
+        p_property: manager.name,
+        p_unit:     unit,
+      })
+      const rr = (reRes ?? {}) as Record<string, unknown>
+      if (reErr || rr.ok !== true) {
+        console.error('[B206-reactivate-vehicles-restore-failed]', { id, email, unit, property: manager.name, error: reErr?.message ?? rr.error })
+        // The RESIDENT is already reactivated by here. Say that, and say
+        // the vehicles need a second look — not a bare failure that
+        // reads as "nothing happened".
+        alert(
+          rr.error === 'authority_not_permitted'
+            ? 'The resident was reactivated, but their vehicles were not: this account lacks vehicle-approval authority. Ask your company administrator to restore them.'
+            : 'The resident was reactivated, but their vehicles could not be restored. Review the Vehicles tab.',
+        )
       } else {
-        restoredVehicles = (restored as { id: number; plate: string }[]) || []
+        restoredVehicles = ((rr.restored ?? []) as { vehicle_id: number; plate: string }[])
+          .map(v => ({ id: v.vehicle_id, plate: v.plate }))
+        skippedVehicles = ((rr.skipped ?? []) as { plate: string; reason: string }[])
+          .map(v => ({ plate: v.plate, reason: v.reason }))
+        // 🔴 Skipped rows are REPORTED. A vehicle that did not come back
+        // with no explanation is the thing a manager re-adds by hand.
+        if (skippedVehicles.length > 0) {
+          alert(
+            `Resident reactivated. ${restoredVehicles.length} vehicle${restoredVehicles.length === 1 ? '' : 's'} restored, ` +
+            `${skippedVehicles.length} skipped:\n\n` +
+            skippedVehicles.map(v => `• ${v.plate} — ${v.reason}`).join('\n'),
+          )
+        }
       }
     }
 
@@ -3548,6 +3574,9 @@ export default function ManagerPortal() {
         vehicles_restored: restoredVehicles.length,
         vehicles_not_restored: wontRestore,
         restored_plates: restoredVehicles.map(v => v.plate),
+        // Both halves, as the comment above this block demands.
+        vehicles_skipped: skippedVehicles.length,
+        skipped: skippedVehicles,
       },
     })
     await refreshCrmData()

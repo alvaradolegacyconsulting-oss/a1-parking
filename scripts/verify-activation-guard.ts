@@ -33,7 +33,7 @@ let cleaned = false
 async function cleanup(why: string) {
   if (cleaned) return
   cleaned = true
-  const { data: veh } = await db.from('vehicles').select('id').ilike('plate', 'ZZAG%')
+  const { data: veh } = await db.from('vehicles').select('id').or('plate.ilike.ZZAG%,plate.ilike.ZZAGR%,plate.ilike.ZZAGP%')
   const ids = (veh ?? []).map(v => (v as { id: number }).id)
   if (ids.length) {
     await db.from('audit_logs').delete().in('record_id', ids.map(String))
@@ -41,6 +41,13 @@ async function cleanup(why: string) {
     await db.from('vehicles').delete().in('id', ids)
   }
   await db.from('residents').delete().ilike('email', 'zz-ag-%@test.invalid')
+  // the control-8 probe property, and anything still pointing at it
+  const { data: pp } = await db.from('properties').select('id').ilike('name', 'ZZ AG Probe Property%')
+  for (const row of pp ?? []) {
+    const pid = (row as { id: number }).id
+    await db.from('vehicles').delete().eq('property_id' in (row as object) ? 'id' : 'id', pid).then(() => {})
+    await db.from('properties').delete().eq('id', pid)
+  }
   for (const u of users) {
     await db.from('user_roles').delete().ilike('email', u.email)
     await db.auth.admin.deleteUser(u.uid).catch(() => {})
@@ -171,6 +178,78 @@ const main = async () => {
     chk('an UNFLAGGED manager cannot INSERT an already-active vehicle',
       !!p2.error && /vehicle_activation_not_permitted/.test(p2.error.message),
       p2.error ? p2.error.message.slice(0, 70) : `🔴 ALLOWED — self-approval by INSERT`)
+
+    // ── 7. RESIDENT REACTIVATION (Stage 1e) ─────────────────────────
+    // 🔴 The verb neither the ruling nor my first gate enumerated, and
+    // the one that broke. It is a positive control now.
+    console.log('\n── POSITIVE CONTROLS 7-8: reactivation (the verb the first gate missed) ──')
+    const resUnit = 'AGR'
+    await db.from('residents').insert({
+      email: `zz-ag-react-${STAMP}@test.invalid`, name: 'ZZ AG React', property: PROPERTY,
+      company: COMPANY, unit: resUnit, status: 'active', is_active: true,
+    })
+    // three rows: one cascade casualty, one DECLINED, one prohibited-plate
+    const mk = async (plate: string, status: string) => (await db.from('vehicles').insert({
+      plate, state: 'TX', property: PROPERTY, company: COMPANY, unit: resUnit,
+      resident_email: `zz-ag-react-${STAMP}@test.invalid`, status, is_active: false,
+    }).select('id').single()).data as { id: number }
+    const cas = await mk(`ZZAGR1${STAMP % 10000}`, 'active')
+    const dec = await mk(`ZZAGR2${STAMP % 10000}`, 'declined')
+
+    const r7 = await call(MGRY.client, 'reactivate_resident_vehicles', {
+      p_email: `zz-ag-react-${STAMP}@test.invalid`, p_property: PROPERTY, p_unit: resUnit,
+    })
+    const restored = (r7.restored ?? []) as { plate: string }[]
+    const skipped  = (r7.skipped ?? []) as { plate: string; reason: string }[]
+    chk('7a. resident reactivation RESTORES the cascade casualty (status=active)',
+      r7.ok === true && restored.some(x => x.plate === `ZZAGR1${STAMP % 10000}`),
+      `restored=${JSON.stringify(restored)}`)
+    chk('7b. and SKIPS the DECLINED vehicle, with a reason — an explicit no stays no',
+      skipped.some(x => x.plate === `ZZAGR2${STAMP % 10000}` && /declined/.test(x.reason)),
+      `skipped=${JSON.stringify(skipped)}`)
+    const after7 = (await db.from('vehicles').select('plate, is_active, status')
+      .in('id', [cas.id, dec.id])).data as Array<Record<string, unknown>>
+    chk('7c. the declined row is still inactive afterwards',
+      after7.find(v => v.plate === `ZZAGR2${STAMP % 10000}`)?.is_active === false,
+      JSON.stringify(after7))
+    const r7b = await call(MGRN.client, 'reactivate_resident_vehicles', {
+      p_email: `zz-ag-react-${STAMP}@test.invalid`, p_property: PROPERTY, p_unit: resUnit,
+    })
+    chk('7d. an UNFLAGGED manager is refused — restoring makes a vehicle enforceable',
+      r7b.ok === false && r7b.error === 'authority_not_permitted', JSON.stringify(r7b))
+
+    // ── 8. PROPERTY REACTIVATION (super-admin) ──────────────────────
+    const ADM = await actor('adm', 'admin')
+    const probeProp = `ZZ AG Probe Property ${STAMP}`
+    const pRow = (await db.from('properties').insert({
+      name: probeProp, company: COMPANY, is_active: false, address: '1 ZZ', city: 'Houston', state: 'TX', zip: '77001',
+    }).select('id').single()).data as { id: number } | null
+    if (!pRow) {
+      chk('8. probe property created', false, 'could not create an inactive probe property — control 8 NOT exercised')
+    } else {
+      const mkp = async (plate: string, status: string) => (await db.from('vehicles').insert({
+        plate, state: 'TX', property: probeProp, company: COMPANY, unit: 'AGP',
+        resident_email: `zz-ag-react-${STAMP}@test.invalid`, status, is_active: false,
+      }).select('id').single()).data as { id: number }
+      await mkp(`ZZAGP1${STAMP % 10000}`, 'active')
+      await mkp(`ZZAGP2${STAMP % 10000}`, 'declined')
+      await mkp(`ZZAGP3${STAMP % 10000}`, 'pending')
+
+      const r8 = await call(ADM.client, 'admin_reactivate_property_vehicles', { p_property_id: pRow.id })
+      const rest8 = (r8.restored ?? []) as { plate: string }[]
+      chk('8a. property reactivation restores ONLY status=active + is_active=false',
+        r8.ok === true && rest8.length === 1 && rest8[0].plate === `ZZAGP1${STAMP % 10000}`,
+        JSON.stringify(r8).slice(0, 150))
+      const after8 = (await db.from('vehicles').select('plate, is_active, status').eq('property', probeProp)).data as Array<Record<string, unknown>>
+      chk('8b. the declined and pending rows are left alone — today\'s blanket cascade resurrected both',
+        after8.filter(v => v.is_active === true).length === 1,
+        JSON.stringify(after8))
+      const r8b = await call(MGRY.client, 'admin_reactivate_property_vehicles', { p_property_id: pRow.id })
+      chk('8c. a manager cannot run the property cascade',
+        r8b.ok === false && r8b.error === 'not_super_admin', JSON.stringify(r8b))
+      await db.from('vehicles').delete().eq('property', probeProp)
+      await db.from('properties').delete().eq('id', pRow.id)
+    }
 
     // ── and what must still be allowed from a client ────────────────
     console.log('\n── POSITIVE CONTROLS: ordinary manager writes still work ──')

@@ -536,7 +536,29 @@ export default function AdminPortal() {
       }
       // 2026-07-10 — escape ILIKE wildcards on the reactivate cascade.
       await supabase.from('residents').update({ is_active: true }).ilike('property', escapeIlikeValue(propertyName))
-      await supabase.from('vehicles').update({ is_active: true }).ilike('property', escapeIlikeValue(propertyName))
+      // 🔴 Through admin_reactivate_property_vehicles, not a blanket
+      // write. Two reasons:
+      //   1. Stage 1c refuses an `authenticated` client write that sets
+      //      is_active=true, and this is one.
+      //   2. The blanket version restored EVERY vehicle at the property
+      //      — including ones declined or removed BEFORE it went down,
+      //      brought back as enforceable. The RPC restores only
+      //      status='active' AND is_active=false, which is the shape
+      //      the deactivate cascade leaves (it flips is_active and
+      //      leaves status untouched), and reports anything it skipped.
+      const { data: reVeh, error: reVehErr } = await supabase.rpc('admin_reactivate_property_vehicles', {
+        p_property_id: p.id,
+      })
+      const rv = (reVeh ?? {}) as Record<string, unknown>
+      if (reVehErr || rv.ok !== true) {
+        console.error('[admin property-cascade] vehicle reactivation failed', { property: propertyName, error: reVehErr?.message ?? rv.error })
+        alert('The property was reactivated, but its vehicles were not. Review the property\u2019s vehicles before enforcing.')
+      } else if (Number(rv.skipped_count ?? 0) > 0) {
+        alert(
+          `${propertyName} reactivated. ${rv.restored_count} vehicle(s) restored, ${rv.skipped_count} skipped:\n\n` +
+          ((rv.skipped ?? []) as { plate: string; reason: string }[]).map(x => `\u2022 ${x.plate} — ${x.reason}`).join('\n'),
+        )
+      }
       await supabase.from('properties').update({ is_active: true }).eq('id', p.id)
       await auditLog(adminEmail, 'ACTIVATE_PROPERTY_CASCADE', 'properties', p.id, {
         property: propertyName, users_affected: propertyUsers?.length || 0,
