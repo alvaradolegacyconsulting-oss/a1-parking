@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { verifyTurnstile } from '../../../lib/turnstile-verify'
 import { guardEmail } from '../../../lib/email-guard'
+import { escapeIlikeValue } from '../../../lib/supabase-query-escape'
 
 // /api/register/create-user — public resident self-registration creator
 // (C′′, 2026-06-29). Replaces the /register path's call chain of
@@ -123,6 +124,75 @@ export async function POST(req: NextRequest) {
 
   // ── 3. Service-role admin client ───────────────────────────────
   const supabase = createSupabaseServiceClient()
+
+  // ══════════════════════════════════════════════════════════════
+  // 🔴 3b. RECORDS-BEARING EMAIL — REFUSE BEFORE CREATING ANYTHING
+  //        Added 2026-10-15 after an executed canary.
+  // ══════════════════════════════════════════════════════════════
+  // The 2026-09-11 fix stopped this route minting a token for an email
+  // that already has an AUTH ACCOUNT. Its reasoning — a brand-new email
+  // owns nothing, so creating it and handing back a session is harmless
+  // — silently assumed that "no auth account" means "no records".
+  //
+  // It does not. An identity can hold records and no login:
+  //
+  //   • a resident imported by bulk onboarding (none yet; 228 at Alden
+  //     Park alone once a batch loads), or a legacy resident who never
+  //     registered (35 today, all demo/test);
+  //   • 🔴 a user_roles row whose auth user was never created or was
+  //     deleted. Production holds ONE: a manager at A1 Wrecker llc with
+  //     is_active=false.
+  //
+  // Canary, executed 2026-10-15 on a Test-LEGACY row, never on A1:
+  // POSTing such an address returned 200 with a token_hash, createUser
+  // succeeded, and verifyOtp established a real session. For the
+  // resident canary that session read their record (and their vehicles
+  // once a user_roles row existed). For the manager canary:
+  //
+  //   get_my_role()    → "manager"      ← the row is is_active=false;
+  //   get_my_company() → the company       that helper does not check it
+  //
+  // So every policy written as get_my_role() = 'manager' evaluated in
+  // the caller's favour. Same shape as the takeover closed in
+  // September, reached through a different door: not "an account you do
+  // not own" but "a record whose account does not exist yet".
+  //
+  // 🔴 BOTH TABLES, not just residents. The ruling said "any residents
+  // row"; the manager canary is why this is wider. A role-bearing
+  // identity is the more dangerous of the two, and scoping the check to
+  // residents would have left the only live instance open.
+  //
+  // The response is byte-identical to the existing-email branch below —
+  // {ok:true}, 200, no token_hash — so a caller cannot tell "already
+  // registered" from "has records". The create/no-create distinction
+  // remains the enumeration delta accepted on 2026-09-11.
+  //
+  // 🔴 NO AUTH USER IS CREATED on this branch. Creating one would both
+  // consume the address and break the claim path, since
+  // inviteUserByEmail fails for an existing user.
+  //
+  // ILIKE with the value escaped: guardEmail blocks `%` and `\` but NOT
+  // `_`, which is a LIKE wildcard and is ordinary in real addresses
+  // (john_doe@…). Unescaped it would match john-doe@… too — a false
+  // refusal of a legitimate signup rather than a bypass, but wrong.
+  // Escaped, ILIKE is exact-but-case-insensitive, which is what
+  // residents.email and user_roles.email need.
+  const emailPattern = escapeIlikeValue(email)
+  const [residentHit, roleHit] = await Promise.all([
+    supabase.from('residents').select('id').ilike('email', emailPattern).limit(1),
+    supabase.from('user_roles').select('id').ilike('email', emailPattern).limit(1),
+  ])
+  if (residentHit.error || roleHit.error) {
+    // Fail CLOSED, in the shape that reveals nothing. A read failure
+    // here must not fall through to createUser: "we could not check"
+    // is not "there is nothing to find".
+    console.error('[register/create-user] records-bearing pre-check failed — refusing, fail-closed:',
+      residentHit.error ?? roleHit.error)
+    return NextResponse.json({ ok: true })
+  }
+  if ((residentHit.data ?? []).length > 0 || (roleHit.data ?? []).length > 0) {
+    return NextResponse.json({ ok: true })
+  }
 
   // ── 4. Admin-create OR resolve-existing (silent attach) ────────
   // Two-shape branch: create for new emails, attach for existing.

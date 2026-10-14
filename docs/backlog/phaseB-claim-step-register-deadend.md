@@ -4,6 +4,31 @@ Found 2026-10-15 while answering the architect's "15 residents have no
 vehicle" question. The answer to that is easy; this is the thing it
 surfaced.
 
+> ## 🔴 CORRECTION, same day, after executing the probe
+>
+> **The mechanic below was wrong, and the real one was worse.**
+>
+> I wrote that an imported resident hits `/register`'s "Please log in
+> instead" refusal. They do not: **anon has no SELECT grant on
+> `residents` at all** (`permission denied for table residents`,
+> measured), and the page's guard discards that error and tests
+> `if (existing)` on a `null`. The guard cannot fire for an
+> unauthenticated visitor, which is every `/register` visitor. See
+> `register-page-guard-cannot-fire.md`.
+>
+> So before 2026-10-15 an imported resident reaching `/register` did not
+> hit a dead end — they were **handed a session on their own record**,
+> and so was anyone else who knew the address. That is the takeover
+> documented in `phaseB-1-claim-step-design.md` §1b, which was then
+> executed, confirmed and fixed the same day in
+> `/api/register/create-user`.
+>
+> **The dead end is now real, and deliberate:** the route withholds the
+> token, so those users get the tokenless message instead. That is the
+> correct posture — a dead end is better than a takeover — and the claim
+> step is what removes it. Everything below still describes what has to
+> be built; only the "today it refuses" premise was wrong.
+
 ## The mechanic
 
 `app/register/page.tsx:177-190` refuses registration when an

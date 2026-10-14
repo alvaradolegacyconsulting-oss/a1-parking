@@ -241,12 +241,28 @@ function RegisterForm() {
       // (signInWithPassword is captcha-gated on this project and the
       // caller's only Turnstile token was consumed server-side by the
       // route), which is more UI than a hotfix should carry. Filed.
+      // 🔴 2026-10-15 — the copy no longer ASSERTS that an account
+      // exists. Since today the route also withholds the token when the
+      // address has records and NO account (a bulk-imported or legacy
+      // resident, or a user_roles row whose auth user was never
+      // created), and the two responses are byte-identical on purpose.
+      // The old wording told those people to sign in somewhere they
+      // have no login, which is a dead end dressed as an instruction.
+      //
+      // One message has to serve both branches, so it states what we
+      // did and offers the action that works in each case, without
+      // revealing which one the caller is in. "Ask your property
+      // manager" is real today — a manager or CA can send a setup
+      // invite from their portal. The claim screen replaces that clause
+      // with a self-serve button.
       if (!json.token_hash) {
         turnstileRef.current?.reset()
         setCaptchaToken(null)
         setError(
-          'An account already exists for this email. Please sign in at /login first, '
-          + 'then open this registration link again to add yourself at this property.',
+          'We could not set up a new account for this email here. '
+          + 'If you already have a sign-in, use the Log in page and then reopen this registration link. '
+          + 'If you do not have one yet, your property already has your details on file — '
+          + 'ask your property manager to send you a setup link.',
         )
         setSubmitting(false)
         return

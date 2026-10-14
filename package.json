@@ -33,7 +33,8 @@
     "verify:storagepolicies": "tsx scripts/verify-storage-policies.ts",
     "verify:bulkbucket": "tsx scripts/verify-bulk-bucket.ts",
     "verify:bulkvalidate": "tsx scripts/verify-bulk-validate.ts",
-    "rehearse:bulk": "tsx scripts/rehearse-bulk-fixtures.ts"
+    "rehearse:bulk": "tsx scripts/rehearse-bulk-fixtures.ts",
+    "verify:createuserguard": "tsx scripts/verify-create-user-records-bearing.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",
