@@ -31,8 +31,9 @@ None were found by looking for them. They were found because a change touched th
 | 13 | **ILIKE with unescaped input**: `_` is a LIKE wildcard, common in real emails | `guardEmail` blocks `%` and `\` but not `_` | Lint/grep: every ILIKE on user input escapes `_ % \`, or uses `lower()=lower()` equality |
 | 14 | **One identity carrying two roles** (staff and resident on one email) | amandacanchol | UNIQUE (email) on `user_roles`; invite paths refuse a second role |
 | 15 | **Bulk operations whose reverse restores more than the forward took** | property cascade reactivation restores unrelated deactivations | Cascades stamp what they changed; reverses act only on their own stamps |
+| 16 | **Same operation from two portals, only the dialog shared** | `/admin` deactivating a property cascades (bans users, deactivates residents + vehicles); the CA's `togglePropertyActive` flips `properties.is_active` and nothing else — while both showed the SAME confirm dialog promising "this will suspend account access for 31 residents" | for each operation reachable from more than one portal, assert the two produce the same **end state** on canaries — not merely that they call the same helper |
 
-*Classes 11–15 were added Oct 14 from Mateo's `security-sweep-2-candidate-classes.md`.*
+*Classes 11–15 were added Oct 14 from Mateo's `security-sweep-2-candidate-classes.md`. Class 16 accepted Oct 15.*
 
 ## The sweep, in phases
 1. **Inventory (≈1 d):** one capture of all policies, grants, functions (definer, search_path, EXECUTE), storage policies, buckets, API routes with their auth, edge functions, and service-role call sites.
@@ -71,6 +72,26 @@ read. So "deactivation revokes nothing" was not a manager-specific
 defect; it was every role, and `verify:identityhelpers` is the first
 slice of `verify:rolematrix` with its baseline already in hand.
 
+**Step 3 applied 2026-10-15. The after picture, same canaries:**
+
+| deactivated role | before → after |
+|---|---|
+| admin | residents 423→0 · vehicles 852→0 · properties 28→0 · user_roles 388→**1** · passes 2079→0 · violations 134→0 |
+| company_admin | residents 32→0 · vehicles 32→0 · properties 11→0 · user_roles 34→**1** · passes 61→0 |
+| manager / leasing_agent | residents 31→0 · vehicles 31→0 · properties 1→0 · passes 58→0 |
+| driver | vehicles 32→0 · properties 11→0 · passes 61→0 · violations 26→0 |
+
+All six **active** roles: byte-identical, on all six tables.
+
+🔴 **`user_roles` goes to 1, not 0, and that is required.** A
+deactivated user must still read their OWN row or `/deactivated` cannot
+tell them what happened — they get a login loop instead of an
+explanation. The gate's first version asserted "reads nothing it read
+before", which failed this correct outcome *and* would have passed a
+regression where the self-row became unreadable, since 0 satisfies
+"reads nothing". It now asserts both directions: no tenant data above a
+declared self-allowance, and the self-row survives.
+
 **Class 15 is now ruled** (2026-10-15): the cascade stamps every user
 it deactivates with the property id and a cascade id, in the audit and
 in a field reactivation can read; reactivation acts only on its own
@@ -78,9 +99,19 @@ stamps; pre-existing deactivations of unknown provenance are skipped
 and listed as *"deactivated separately; reactivate individually if
 intended."*
 
-**One more candidate for the table**, found while reporting on the CA
-property path and not yet numbered:
+**Class 16 is in the table above** (accepted Oct 15). The confirm
+helper was deliberately shared "to close the divergent-paths bypass",
+but it shared the *warning* and not the *work* — which is worse than
+not sharing it, because it made a confident, specific, wrong statement
+about a destructive action.
 
-| # | Class | Example | Standing check |
-|---|---|---|---|
-| 16? | **Two paths to one operation where only the dialog is shared** | `/admin` deactivating a property cascades (bans users, deactivates residents + vehicles); the CA's `togglePropertyActive` flips `properties.is_active` and nothing else. The confirm helper was deliberately shared "to close the divergent-paths bypass" — but it shares the *warning*, not the *work*, so the dialog promises a cascade the CA path does not perform | for each operation reachable from more than one portal, assert the two produce the same end state on canaries — not that they call the same helper |
+**Interim fix shipped with step 3.**
+`promptDeactivatePropertyConfirm` now takes a **required**
+`variant: 'cascade' | 'flag_only'`. Required rather than defaulted: the
+compiler named both call sites the instant it was added, and a default
+would hand the next one the wrong promise silently. `/admin` declares
+`cascade`; the CA declares `flag_only` and its copy now says the
+property is marked inactive, that anyone assigned only to it loses
+portal access, and that **no accounts, residents or vehicles are
+deactivated and logins are unchanged**. Routing the CA path through the
+same per-user machinery remains the cascade work item.
