@@ -23,6 +23,9 @@ grouped as one resident, so they must carry the same name. If two
 leaseholders in one unit each want their own login, give each their own
 email and their own rows.
 
+**Residents without a vehicle are not included in this file.** They can
+sign up themselves using the property's QR code.
+
 **Every row needs:** unit, first name, last name, email, plate, plate
 state. **Phone is optional.**
 
