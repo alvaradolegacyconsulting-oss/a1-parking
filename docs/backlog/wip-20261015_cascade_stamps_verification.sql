@@ -101,9 +101,36 @@ BEGIN
     END;
 
     -- 3b. an `authenticated` session is refused.
+    --
+    -- 🔴 TWO TEMP POLICIES, NOT ONE. The first version created only
+    -- FOR UPDATE and the gate reported 0 rows — correctly refusing to
+    -- call that a pass. The cause: for `UPDATE … WHERE`, PostgreSQL
+    -- requires SELECT privilege and APPLIES THE SELECT POLICIES, and
+    -- under SET LOCAL ROLE authenticated there is no JWT, so no
+    -- email- or company-scoped SELECT policy on user_roles matches the
+    -- probe row. The row was INVISIBLE, not protected — and an
+    -- invisible row and a guarded one produce the same 0.
+    --
+    -- So visibility is established first and asserted SEPARATELY,
+    -- because "authenticated could not see the row" and "the guard
+    -- refused the write" are different outcomes that must not share a
+    -- diagnosis.
     BEGIN
+      CREATE POLICY zz_tmp_stamp_select ON public.user_roles
+        FOR SELECT TO authenticated USING (TRUE);
       CREATE POLICY zz_tmp_stamp_update ON public.user_roles
         FOR UPDATE TO authenticated USING (TRUE) WITH CHECK (TRUE);
+
+      -- Visibility first. If this is 0 the gate says so plainly rather
+      -- than blaming the guard.
+      SET LOCAL ROLE authenticated;
+      SELECT count(*) INTO v_rows FROM public.user_roles WHERE id = v_id;
+      RESET ROLE;
+      IF v_rows <> 1 THEN
+        v_fail := array_append(v_fail, format(
+          'G3b-pre: an authenticated session cannot SEE the probe row (%s visible), so the write below would return 0 for the wrong reason. The temp SELECT policy did not take. NOT a pass.', v_rows));
+      END IF;
+
       SET LOCAL ROLE authenticated;
       v_msg := NULL; v_rows := -1;
       BEGIN
@@ -116,7 +143,7 @@ BEGIN
 
       IF v_msg IS DISTINCT FROM 'cascade_stamp_not_permitted' THEN
         IF v_msg IS NULL AND v_rows = 0 THEN
-          v_fail := array_append(v_fail, 'G3b: the UPDATE matched 0 rows and raised nothing — the temp policy did not take, so the guard was NOT exercised. Do not accept this as a pass.');
+          v_fail := array_append(v_fail, 'G3b: the UPDATE matched 0 rows and raised nothing. With G3b-pre passing, the row WAS visible, so this is the UPDATE policy failing to take — the guard was still NOT exercised. Do not accept this as a pass.');
         ELSIF v_msg IS NULL THEN
           v_fail := array_append(v_fail, format('G3b: 🔴 THE GUARD DID NOT FIRE. An authenticated session cleared the provenance (%s row(s)) — which is exactly the hole it exists for.', v_rows));
         ELSE
@@ -143,10 +170,27 @@ BEGIN
       v_fail := array_append(v_fail, format('G3b: the execution gate itself failed: %s', SQLERRM));
     END;
 
+    DROP POLICY IF EXISTS zz_tmp_stamp_select ON public.user_roles;
     DROP POLICY IF EXISTS zz_tmp_stamp_update ON public.user_roles;
     DELETE FROM public.user_roles WHERE id = v_id;
     IF EXISTS (SELECT 1 FROM public.user_roles WHERE id = v_id) THEN
       v_fail := array_append(v_fail, format('G3d: the probe row %s was NOT removed', v_id));
+    END IF;
+
+    -- 🔴 And the temp policies must be GONE. A leftover
+    -- USING(TRUE) FOR SELECT TO authenticated on user_roles would let
+    -- every signed-in user read every role row in the system — far
+    -- worse than the hole this gate was testing for.
+    IF EXISTS (SELECT 1 FROM pg_policy
+                WHERE polrelid='public.user_roles'::regclass
+                  AND polname LIKE 'zz_tmp_stamp%') THEN
+      -- Accurate about the blast radius: this file's terminal RAISE
+      -- aborts the DO block, and the CREATE POLICY went in the same
+      -- transaction, so a reported failure here is ALSO rolled back.
+      -- The check earns its place as the one that would notice if that
+      -- stopped being true — and the DROPs below are the fallback if a
+      -- future edit ever commits mid-block.
+      v_fail := array_append(v_fail, '🔴 G3e: a zz_tmp_stamp policy is still present at the end of the block. The failure below rolls this transaction back, so it should disappear with it — but CONFIRM, because a surviving USING(TRUE) FOR SELECT TO authenticated on user_roles would let every signed-in user read every role row in the system. Confirm with: SELECT polname FROM pg_policy WHERE polrelid = ''public.user_roles''::regclass AND polname LIKE ''zz_tmp_stamp%'';');
     END IF;
   END;
 
