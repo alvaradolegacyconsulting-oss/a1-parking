@@ -2777,8 +2777,24 @@ export default function ManagerPortal() {
     // duplicates the plate. A row that landed PENDING, or a tag that
     // did not record, is surfaced in the notice instead. Reporting
     // plain success when half of it did not happen is the failure mode.
+    //
+    // 🔴 THE SPINNER COVERS THE WRITE, NOT THE RE-READ.
+    // AddVehicleForResidentModal holds busy=true — the "Adding…" label —
+    // for the WHOLE of onSubmit. This used to `await refreshCrmData()`
+    // before returning, so the button sat on "Adding…" through five
+    // parallel fetches that each fan out further. The row is already
+    // committed by here; the refresh is cosmetic, so it must not gate
+    // the modal closing.
+    //
+    // Measured 2026-10-14 against prod as a flagged demo manager:
+    // pre-check 94-305 ms, RPC 118-256 ms, refresh fan-out ~150 ms wall
+    // clock. Under 400 ms warm. Not awaiting the refresh removes the
+    // refresh entirely from what the operator waits on.
+    //
+    // .catch rather than a bare void: an unhandled rejection in a
+    // fire-and-forget refresh would surface as a console error with no
+    // context, and a failed refresh is not a failed add.
     setAddVehicleFor(null)
-    await refreshCrmData()
     setTagNotice(
       !landedActive
         ? `${payload.plate} was added and is waiting for approval by an authorized manager. It is not active yet.`
@@ -2790,6 +2806,9 @@ export default function ManagerPortal() {
             : `${payload.plate} was added, but the parking tag could not be recorded. Add it on the vehicle card.`)
         : null,
     )
+    refreshCrmData().catch(err => {
+      console.error('[MANAGER_ADD_VEHICLE_RPC] post-add refresh failed', err)
+    })
     return { ok: true }
   }
 

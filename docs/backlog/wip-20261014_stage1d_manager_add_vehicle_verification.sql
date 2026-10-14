@@ -18,6 +18,8 @@ DECLARE
   v_r     JSONB;
   v_ids   BIGINT[] := ARRAY[]::BIGINT[];
   v_via   JSONB;
+  v_t0    TIMESTAMPTZ;
+  v_ms    NUMERIC;
 BEGIN
   v_mgrN := 'zz-s1d-mgrno-'||v_stamp||'@test.invalid';
   v_mgrY := 'zz-s1d-mgryes-'||v_stamp||'@test.invalid';
@@ -72,7 +74,20 @@ BEGIN
 
     -- ── G3: 🔴 POSITIVE CONTROL — flagged manager → ACTIVE ──────────
     PERFORM set_config('request.jwt.claims', json_build_object('email',v_mgrY,'role','authenticated')::TEXT, TRUE);
+    v_t0 := clock_timestamp();
     v_r := public.manager_add_vehicle(v_prop,'S1D',v_mgrY,'ZZS1DB'||right(v_stamp,4),'TX');
+    v_ms := extract(epoch FROM (clock_timestamp() - v_t0)) * 1000;
+    -- 🔴 TIMING GUARD. Measured 118-256 ms end-to-end from a browser on
+    -- prod, of which the function body is a fraction; 1000 ms here is
+    -- loose on purpose. It is not a performance target — it is a
+    -- tripwire for a pathological regression, e.g. a pre-check losing
+    -- its index or a new trigger joining the INSERT chain. Network is
+    -- NOT included, so a client-side slowdown will not show up here;
+    -- that belongs in the browser timing, which is where the reported
+    -- ~10 s has to be explained.
+    IF v_ms > 1000 THEN
+      v_fail := v_fail || format('G3: 🔴 manager_add_vehicle took %s ms server-side (budget 1000). Something in the pre-checks or the INSERT trigger chain regressed.', round(v_ms));
+    END IF;
     IF (v_r->>'action') <> 'added_active' THEN
       v_fail := v_fail || format('G3: 🔴 a FLAGGED manager must land ACTIVE, got %s. A function that pends everything satisfies Stage 1c and breaks the product.', v_r);
     END IF;
@@ -174,4 +189,4 @@ SELECT
     WHERE role='manager' AND is_active AND can_approve_vehicles)             AS managers_who_land_active,
   (SELECT count(*) FROM public.user_roles
     WHERE role='leasing_agent' AND is_active)                                AS leasing_agents_now_pending_only,
-  'G2-G7 EXECUTED: unflagged manager pends with a reason; FLAGGED manager and CA both land ACTIVE (positive controls); leasing_agent pends even with the flag; duplicate and out-of-scope return codes; a flagged manager on a pm_only tier still lands ACTIVE (non-regression).'::TEXT AS execution_proof;
+  'timing guard: manager_add_vehicle asserted under 1000 ms server-side. G2-G7 EXECUTED: unflagged manager pends with a reason; FLAGGED manager and CA both land ACTIVE (positive controls); leasing_agent pends even with the flag; duplicate and out-of-scope return codes; a flagged manager on a pm_only tier still lands ACTIVE (non-regression).'::TEXT AS execution_proof;
