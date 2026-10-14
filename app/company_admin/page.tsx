@@ -71,6 +71,7 @@ import { OFFERINGS } from '../lib/tier-display'
 import { tokenFor, PLANS } from '../lib/signup-tier-param'
 import PlateProhibitionPanel from '../components/PlateProhibitionPanel'
 import PhysicalPassSwitches from '../components/PhysicalPassSwitches'
+import PlateStateSelect from '../components/PlateStateSelect'
 import { useQuote } from '../lib/use-quote'
 import { formatUsd, describeQuote } from '../lib/pricing-quote'
 
@@ -5709,7 +5710,7 @@ export default function CompanyAdminPortal() {
                   </div>
                   <div>
                     <label style={lbl}>State</label>
-                    <input value={newGuestAuth.state} onChange={e => setNewGuestAuth({ ...newGuestAuth, state: e.target.value.toUpperCase().slice(0, 2) })} style={inp} maxLength={2} />
+                    <PlateStateSelect value={newGuestAuth.state} onChange={v => setNewGuestAuth({ ...newGuestAuth, state: v })} style={inp} />
                   </div>
                 </div>
 

@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import ParkingTagField from '../components/ParkingTagField'
+import PlateStateSelect from '../components/PlateStateSelect'
 import { logAudit } from '../lib/audit'
 // B213 — Turnstile widget on the change-password re-auth call.
 // signInWithPassword is captcha-gated when the Supabase toggle is ON;
@@ -1541,9 +1542,7 @@ export default function ResidentPortal() {
                         </div>
                         <div>
                           <label style={lbl}>State</label>
-                          <select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inp}>
-                            {states.map(s => <option key={s}>{s}</option>)}
-                          </select>
+                          <PlateStateSelect value={newVehicle.state} onChange={v => setNewVehicle({...newVehicle, state: v})} style={inp} />
                         </div>
                         <div><label style={lbl}>Color</label><input value={newVehicle.color} onChange={e => setNewVehicle({...newVehicle, color: e.target.value})} placeholder="Black" style={inp} /></div>
                         <div><label style={lbl}>Make</label><input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} placeholder="Toyota" style={inp} /></div>

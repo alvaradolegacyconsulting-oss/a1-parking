@@ -28,12 +28,8 @@
 
 import { useState } from 'react'
 import { normalizePlate } from '../lib/plate'
-
-const US_STATES = [
-  'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS',
-  'KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY',
-  'NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY',
-]
+import PlateStateSelect from './PlateStateSelect'
+import { DEFAULT_PLATE_STATE } from '../lib/us-states'
 
 export interface AddVehiclePayload {
   plate:  string   // normalized
@@ -75,7 +71,7 @@ export default function AddVehicleForResidentModal({
   onSubmit,
 }: Props) {
   const [plate,  setPlate]  = useState('')
-  const [state,  setState]  = useState('TX')
+  const [state,  setState]  = useState(DEFAULT_PLATE_STATE)
   const [make,   setMake]   = useState('')
   const [model,  setModel]  = useState('')
   const [year,   setYear]   = useState('')
@@ -168,9 +164,7 @@ export default function AddVehicleForResidentModal({
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
           <div>
             <label style={lbl}>State</label>
-            <select value={state} onChange={e => setState(e.target.value)} style={inp} disabled={busy}>
-              {US_STATES.map(s => <option key={s}>{s}</option>)}
-            </select>
+            <PlateStateSelect value={state} onChange={setState} style={inp} disabled={busy} />
           </div>
           <div>
             <label style={lbl}>Color</label>

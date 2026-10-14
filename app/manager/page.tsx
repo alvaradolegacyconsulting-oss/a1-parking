@@ -92,6 +92,7 @@ import CredentialsModal from '../components/CredentialsModal'
 import PmResidentCrm from '../components/PmResidentCrm'
 import PlateProhibitionPanel from '../components/PlateProhibitionPanel'
 import PhysicalPassSwitches from '../components/PhysicalPassSwitches'
+import PlateStateSelect from '../components/PlateStateSelect'
 import { buildCrmResidents, isVehicleUnauthorizedForRestore, isPlateClash, plateClashMessage, findPlateDuplicates, type CrmResident, type CrmSpace, type CrmSpaceResidentTie, type CrmSpaceRequest, type CrmPendingPlateChange } from '../lib/pm-crm'
 import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '../lib/unit-occupancy'
 
@@ -4382,7 +4383,7 @@ export default function ManagerPortal() {
                 <p style={{ color:'white', fontWeight:'bold', fontSize:'13px', margin:'0 0 12px' }}>Add New Vehicle</p>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate *</label><input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inputStyle}>{['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}</select></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><PlateStateSelect value={newVehicle.state} onChange={v => setNewVehicle({...newVehicle, state: v})} style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Make</label><input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} placeholder="Toyota" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Model</label><input value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} placeholder="Camry" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Year</label><input value={newVehicle.year} onChange={e => setNewVehicle({...newVehicle, year: e.target.value})} placeholder="2022" style={inputStyle} /></div>
@@ -5014,7 +5015,7 @@ export default function ManagerPortal() {
                     <p style={{ color:'#777', fontSize:'10px', margin:'0' }}>Leave Plate empty to add the resident without a vehicle.</p>
                   </div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate</label><input value={newResident.vehicle_plate} onChange={e => setNewResident({...newResident, vehicle_plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
-                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><select value={newResident.vehicle_state} onChange={e => setNewResident({...newResident, vehicle_state: e.target.value})} style={inputStyle}>{['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}</select></div>
+                  <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><PlateStateSelect value={newResident.vehicle_state} onChange={v => setNewResident({...newResident, vehicle_state: v})} style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Make</label><input value={newResident.vehicle_make} onChange={e => setNewResident({...newResident, vehicle_make: e.target.value})} placeholder="Toyota" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Model</label><input value={newResident.vehicle_model} onChange={e => setNewResident({...newResident, vehicle_model: e.target.value})} placeholder="Camry" style={inputStyle} /></div>
                   <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Year</label><input value={newResident.vehicle_year} onChange={e => setNewResident({...newResident, vehicle_year: e.target.value})} placeholder="2022" style={inputStyle} /></div>
@@ -5343,7 +5344,7 @@ export default function ManagerPortal() {
                           2-col add-vehicle form. */}
                       <div className="pm-drawer-grid">
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Plate *</label><input value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: normalizePlate(e.target.value)})} placeholder="ABC1234" style={{ ...inputStyle, fontFamily:'Courier New', fontSize:'14px', fontWeight:'bold' }} /></div>
-                        <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><select value={newVehicle.state} onChange={e => setNewVehicle({...newVehicle, state: e.target.value})} style={inputStyle}>{['TX','CA','FL','NY','GA','OH','IL','PA','NC','AZ'].map(s => <option key={s}>{s}</option>)}</select></div>
+                        <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>State</label><PlateStateSelect value={newVehicle.state} onChange={v => setNewVehicle({...newVehicle, state: v})} style={inputStyle} /></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Make</label><input value={newVehicle.make} onChange={e => setNewVehicle({...newVehicle, make: e.target.value})} placeholder="Toyota" style={inputStyle} /></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Model</label><input value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} placeholder="Camry" style={inputStyle} /></div>
                         <div><label style={{ color:'#aaa', fontSize:'10px', textTransform:'uppercase' }}>Year</label><input value={newVehicle.year} onChange={e => setNewVehicle({...newVehicle, year: e.target.value})} placeholder="2022" style={inputStyle} /></div>

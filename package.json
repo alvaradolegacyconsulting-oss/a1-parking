@@ -28,7 +28,8 @@
     "verify:parkingtags": "tsx scripts/verify-parking-tags.ts",
     "verify:lookuptypes": "tsx scripts/verify-lookup-result-types.ts",
     "verify:deadbranch": "tsx scripts/check-dead-branch-additions.ts",
-    "verify:activationguard": "tsx scripts/verify-activation-guard.ts"
+    "verify:activationguard": "tsx scripts/verify-activation-guard.ts",
+    "verify:platestate": "tsx scripts/verify-plate-state.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

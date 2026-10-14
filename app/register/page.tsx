@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef, Suspense } from 'react'
+import PlateStateSelect from '../components/PlateStateSelect'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { useResolvedLogo } from '../lib/logo'
@@ -19,7 +20,6 @@ import {
 } from '../lib/legal-versions'
 import { guardEmail, suggestEmailCorrection } from '../lib/email-guard'
 
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY']
 
 const inp: React.CSSProperties = { display:'block', width:'100%', marginTop:'5px', marginBottom:'12px', padding:'10px 12px', fontSize:'13px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none', boxSizing:'border-box', fontFamily:'Arial' }
 const lbl: React.CSSProperties = { color:'#aaa', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em' }
@@ -638,9 +638,7 @@ function RegisterForm() {
                     </div>
                     <div>
                       <label style={lbl}>State</label>
-                      <select value={v.state} onChange={e => updateVehicle(i, 'state', e.target.value)} style={inp}>
-                        {US_STATES.map(s => <option key={s}>{s}</option>)}
-                      </select>
+                      <PlateStateSelect value={v.state} onChange={val => updateVehicle(i, 'state', val)} style={inp} />
                     </div>
                     <div>
                       <label style={lbl}>Color</label>
