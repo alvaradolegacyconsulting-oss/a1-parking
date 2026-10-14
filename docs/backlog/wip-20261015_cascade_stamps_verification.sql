@@ -3,12 +3,22 @@
 -- ════════════════════════════════════════════════════════════════════
 -- Re-runnable. No BEGIN/COMMIT.
 --
--- 🔴 THIS FILE IS THE DISCOVERABILITY MECHANISM FOR THE REVOKE. Piece
--- 0's objection to column grants was that they do not appear in a
--- pg_policies dump, so the next auditor concludes the columns are
--- writable. The REVOKE is asserted here, from pg_attribute.attacl —
--- NOT from information_schema.column_privileges, which under-reports
--- grants and would pass while the column was wide open.
+-- 🔴 THE FIRST VERSION OF THIS FILE DID ITS JOB AND FAILED THE
+-- MIGRATION. It asserted a column REVOKE from pg_attribute.attacl and
+-- got NULL for all three columns — because a column-level REVOKE
+-- CANNOT SUBTRACT FROM A TABLE-LEVEL GRANT. `authenticated` holds
+-- UPDATE on all of user_roles, so REVOKE UPDATE(col) recorded nothing;
+-- attacl stayed NULL, which means "default privileges apply", which
+-- means writable. The REVOKE looked installed and did nothing.
+--
+-- It was caught only because the gate treated attacl IS NULL as a
+-- FAILURE rather than an absence. Had it read NULL as "no grant
+-- recorded, therefore not granted", it would have passed a wide-open
+-- column — the absence-as-answer trap, in the gate rather than the
+-- product.
+--
+-- The guard is now a SECURITY INVOKER trigger, and what this file
+-- proves is that it REFUSES BY EXECUTION, not that its text exists.
 
 DO $do$
 DECLARE
@@ -33,30 +43,112 @@ BEGIN
       v_fail := array_append(v_fail, format('G1a: user_roles.%s is NOT NULL — an unstamped row is the point', v_col));
     END IF;
 
-    -- ── G2. 🔴 The REVOKE, from attacl. ─────────────────────────────
-    -- attacl NULL means "default privileges", i.e. the TABLE grant
-    -- applies and authenticated CAN write it. So NULL is a FAILURE
-    -- here, not an absence — exactly the absence-as-answer trap.
-    IF (SELECT attacl FROM pg_attribute
-         WHERE attrelid='public.user_roles'::regclass AND attname=v_col) IS NULL THEN
+    -- ── G2. The trigger must be scoped to THIS column ───────────────
+    -- `UPDATE OF` is what keeps the guard inert for the 8 existing
+    -- user_roles writers, none of which touches these columns.
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_trigger t
+        JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = ANY(t.tgattr)
+       WHERE t.tgrelid = 'public.user_roles'::regclass
+         AND t.tgname = 'user_roles_cascade_stamp_guard_trigger'
+         AND a.attname = v_col) THEN
       v_fail := array_append(v_fail, format(
-        'G2: 🔴 user_roles.%s has attacl NULL, so it inherits the TABLE grant and authenticated can write the provenance. A CA could then stamp a user and make a later cascade reactivation restore someone it never took.', v_col));
-    ELSIF has_column_privilege('authenticated', 'public.user_roles', v_col, 'UPDATE') THEN
-      v_fail := array_append(v_fail, format('G2a: 🔴 authenticated still holds UPDATE on user_roles.%s', v_col));
-    END IF;
-    IF has_column_privilege('anon', 'public.user_roles', v_col, 'UPDATE') THEN
-      v_fail := array_append(v_fail, format('G2b: 🔴 anon holds UPDATE on user_roles.%s', v_col));
+        'G2: the guard trigger is not scoped UPDATE OF %s, so a write to that column would not fire it', v_col));
     END IF;
   END LOOP;
 
-  -- ── G3. service_role must still be able to write them ─────────────
-  -- A REVOKE that catches the writer is a feature nobody can use. This
-  -- is the positive control: service_role bypasses RLS but NOT column
-  -- grants, so if the REVOKE was issued against the wrong role the
-  -- cascade silently stops stamping and reactivation skips everyone.
-  IF NOT has_column_privilege('service_role', 'public.user_roles', 'cascade_deactivated_by_property', 'UPDATE') THEN
-    v_fail := array_append(v_fail, 'G3: 🔴 service_role cannot UPDATE the stamp — the cascade could not write it, and reactivation would skip every user forever');
+  -- ── G2b. The guard exists, and is NOT DEFINER ─────────────────────
+  -- 🔴 As DEFINER current_user would be the OWNER, so the guard would
+  -- read `postgres` for every caller and permit everything while
+  -- looking perfectly installed.
+  IF to_regprocedure('public.user_roles_cascade_stamp_guard()') IS NULL THEN
+    v_fail := array_append(v_fail, 'G2b: user_roles_cascade_stamp_guard() is missing');
+  ELSE
+    IF (SELECT prosecdef FROM pg_proc WHERE oid = to_regprocedure('public.user_roles_cascade_stamp_guard()')) THEN
+      v_fail := array_append(v_fail, 'G2c: 🔴 the guard is SECURITY DEFINER — current_user would be the owner, so it permits everything while looking installed');
+    END IF;
+    IF (SELECT prosrc FROM pg_proc WHERE oid = to_regprocedure('public.user_roles_cascade_stamp_guard()'))
+         !~ 'current_user <> ''authenticated''' THEN
+      v_fail := array_append(v_fail, 'G2d: the guard does not exempt non-authenticated callers by current_user — service_role and every DEFINER RPC would be refused');
+    END IF;
   END IF;
+
+  -- ── G3. 🔴 EXECUTION, BOTH WAYS, ON A PROBE ROW ───────────────────
+  -- Reading the trigger proves it is installed, not that it refuses.
+  -- Same shape as the companies guard's G4c: a temporary permissive
+  -- policy so RLS cannot refuse FIRST and make this pass for the wrong
+  -- reason, then SET LOCAL ROLE authenticated and try the write.
+  DECLARE
+    v_probe TEXT := 'zz-stampguard-' || extract(epoch from now())::BIGINT || '@test.invalid';
+    v_id    BIGINT;
+    v_msg   TEXT;
+    v_rows  INT;
+    v_prop  BIGINT;
+  BEGIN
+    SELECT id INTO v_prop FROM public.properties WHERE is_active ORDER BY id LIMIT 1;
+    INSERT INTO public.user_roles (email, role, company, property, is_active)
+    VALUES (v_probe, 'manager', 'Test-LEGACY', ARRAY['Test Legacy Property'], TRUE)
+    RETURNING id INTO v_id;
+
+    -- 3a. the OWNER (and so service_role, and every DEFINER RPC) passes.
+    -- A guard that catches the writer is a feature nobody can use: the
+    -- cascade would silently stop stamping and reactivation would skip
+    -- every user forever.
+    BEGIN
+      UPDATE public.user_roles SET cascade_deactivated_by_property = v_prop WHERE id = v_id;
+    EXCEPTION WHEN OTHERS THEN
+      v_fail := array_append(v_fail, format('G3a: 🔴 the guard refused the OWNER (%s) — the cascade could never stamp anything', SQLERRM));
+    END;
+
+    -- 3b. an `authenticated` session is refused.
+    BEGIN
+      CREATE POLICY zz_tmp_stamp_update ON public.user_roles
+        FOR UPDATE TO authenticated USING (TRUE) WITH CHECK (TRUE);
+      SET LOCAL ROLE authenticated;
+      v_msg := NULL; v_rows := -1;
+      BEGIN
+        UPDATE public.user_roles SET cascade_deactivated_by_property = NULL WHERE id = v_id;
+        GET DIAGNOSTICS v_rows = ROW_COUNT;
+      EXCEPTION WHEN OTHERS THEN
+        v_msg := SQLERRM;
+      END;
+      RESET ROLE;
+
+      IF v_msg IS DISTINCT FROM 'cascade_stamp_not_permitted' THEN
+        IF v_msg IS NULL AND v_rows = 0 THEN
+          v_fail := array_append(v_fail, 'G3b: the UPDATE matched 0 rows and raised nothing — the temp policy did not take, so the guard was NOT exercised. Do not accept this as a pass.');
+        ELSIF v_msg IS NULL THEN
+          v_fail := array_append(v_fail, format('G3b: 🔴 THE GUARD DID NOT FIRE. An authenticated session cleared the provenance (%s row(s)) — which is exactly the hole it exists for.', v_rows));
+        ELSE
+          v_fail := array_append(v_fail, format('G3b: expected cascade_stamp_not_permitted, got %L', v_msg));
+        END IF;
+      END IF;
+
+      -- 3c. and a write that changes NOTHING must still pass, or an
+      -- ordinary client sending the column with its existing value is
+      -- refused for no reason.
+      SET LOCAL ROLE authenticated;
+      v_msg := NULL;
+      BEGIN
+        UPDATE public.user_roles SET cascade_deactivated_by_property = v_prop WHERE id = v_id;
+      EXCEPTION WHEN OTHERS THEN
+        v_msg := SQLERRM;
+      END;
+      RESET ROLE;
+      IF v_msg IS NOT NULL THEN
+        v_fail := array_append(v_fail, format('G3c: the guard refused a no-change write (%L) — it must fire only when a stamp actually changes', v_msg));
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      RESET ROLE;
+      v_fail := array_append(v_fail, format('G3b: the execution gate itself failed: %s', SQLERRM));
+    END;
+
+    DROP POLICY IF EXISTS zz_tmp_stamp_update ON public.user_roles;
+    DELETE FROM public.user_roles WHERE id = v_id;
+    IF EXISTS (SELECT 1 FROM public.user_roles WHERE id = v_id) THEN
+      v_fail := array_append(v_fail, format('G3d: the probe row %s was NOT removed', v_id));
+    END IF;
+  END;
 
   -- ── G4. The FK direction ──────────────────────────────────────────
   -- ON DELETE SET NULL, so losing the property loses the provenance and
@@ -97,8 +189,12 @@ SELECT 'PASS — cascade stamps' AS result,
        (SELECT count(*) FROM pg_attribute
          WHERE attrelid='public.user_roles'::regclass
            AND attname LIKE 'cascade_deactivated%' AND attnum>0 AND NOT attisdropped) AS columns_want_3,
-       has_column_privilege('authenticated','public.user_roles','cascade_deactivated_by_property','UPDATE') AS authenticated_update_want_false,
-       has_column_privilege('service_role','public.user_roles','cascade_deactivated_by_property','UPDATE')  AS service_role_update_want_true,
+       (SELECT count(DISTINCT a.attname) FROM pg_trigger t
+          JOIN pg_attribute a ON a.attrelid=t.tgrelid AND a.attnum=ANY(t.tgattr)
+         WHERE t.tgrelid='public.user_roles'::regclass
+           AND t.tgname='user_roles_cascade_stamp_guard_trigger')                AS guard_scoped_columns_want_3,
+       (SELECT NOT prosecdef FROM pg_proc
+         WHERE oid=to_regprocedure('public.user_roles_cascade_stamp_guard()'))   AS guard_is_invoker_want_true,
        (SELECT count(*) FROM public.user_roles WHERE cascade_deactivated_by_property IS NOT NULL) AS stamped_want_0,
        (SELECT count(*) FROM public.user_roles WHERE is_active IS NOT TRUE) AS deactivated_all_unstamped_so_all_skipped,
        '🔴 these 4 will be SKIPPED by any reactivation — "deactivated separately", as ruled' AS note;
