@@ -387,7 +387,20 @@ export default function ManagerPortal() {
   // which renders only on failure and would imply the vehicle was NOT
   // added — inviting a retry and a duplicate plate. So it surfaces
   // here, above the CRM, and is dismissible.
-  const [tagNotice, setTagNotice] = useState<string | null>(null)
+  // 🔴 A STRUCTURED notice, not a string whose heading is sniffed from
+  // its own content. Four outcomes share this slot and they are not the
+  // same news: a clean add, an add that landed pending, an add whose
+  // parking tag did not record, and an add whose background refresh
+  // failed. The first is reassurance; the others are "the vehicle IS
+  // added, and here is the second step".
+  //
+  // Every variant states that the vehicle was added FIRST, because the
+  // failure mode to avoid is a manager reading a warning as a failure
+  // and adding the car again — the duplicate pre-check would refuse it
+  // and they would then see a confusing "already active" error.
+  const [addNotice, setAddNotice] = useState<
+    { kind: 'success' | 'warn'; title: string; body: string } | null
+  >(null)
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [auditDateFilter, setAuditDateFilter] = useState('week')
   const [auditSearch, setAuditSearch] = useState('')
@@ -2614,14 +2627,16 @@ export default function ManagerPortal() {
         )
         return
       }
+      // Pending and clean are different news; a generic "Vehicle added!"
+      // after the pending notice would contradict it.
+      const legacyMsg = lr.action === 'added_pending'
+        ? `${normalizedPlate} was added and is waiting for approval by an authorized manager. It is not active yet. Do not add it again.`
+        : 'Vehicle added!'
       const error = null as { message: string } | null
-      if (lr.action === 'added_pending') {
-        alert(`${normalizedPlate} was added and is waiting for approval by an authorized manager. It is not active yet.`)
-      }
       if (error) { alert('Error: ' + error.message) }
       else {
         await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name, resident_email: ownerEmail } })
-        alert('Vehicle added!')
+        alert(legacyMsg)
         setShowAddVehicle(false)
         setNewVehicle({ plate:'', state:'TX', make:'', model:'', year:'', color:'', unit:'', space:'', permit_expiry:'' })
         setVehicleOwnerEmail('')
@@ -2795,19 +2810,38 @@ export default function ManagerPortal() {
     // fire-and-forget refresh would surface as a console error with no
     // context, and a failed refresh is not a failed add.
     setAddVehicleFor(null)
-    setTagNotice(
+    setAddNotice(
       !landedActive
-        ? `${payload.plate} was added and is waiting for approval by an authorized manager. It is not active yet.`
+        ? { kind: 'warn',
+            title: 'Vehicle added — waiting for approval',
+            body: `${payload.plate} was added at ${propertyName} and is waiting for approval by an authorized manager. It is not active yet. Do not add it again.` }
       : (payload.tag && tagResult?.ok !== true)
-        ? (tagResult?.error === 'tag_already_assigned'
-            ? `${payload.plate} was added, but parking tag ${tagResult?.tag_number} is already assigned to ${tagResult?.held_by_plate}${tagResult?.held_by_unit ? `, unit ${tagResult.held_by_unit}` : ''}. Assign a different number on the vehicle card.`
-            : tagResult?.error === 'parking_tags_not_enabled'
-            ? `${payload.plate} was added, but parking tags are not switched on for this property, so no tag was recorded.`
-            : `${payload.plate} was added, but the parking tag could not be recorded. Add it on the vehicle card.`)
-        : null,
+        ? { kind: 'warn',
+            title: 'Vehicle added — parking tag not recorded',
+            body: tagResult?.error === 'tag_already_assigned'
+              ? `${payload.plate} was added and is active. Parking tag ${tagResult?.tag_number} is already assigned to ${tagResult?.held_by_plate}${tagResult?.held_by_unit ? `, unit ${tagResult.held_by_unit}` : ''}, so no tag was recorded. Assign a different number on the vehicle card.`
+              : tagResult?.error === 'parking_tags_not_enabled'
+              ? `${payload.plate} was added and is active. Parking tags are not switched on for ${propertyName}, so no tag was recorded.`
+              : `${payload.plate} was added and is active, but the parking tag could not be recorded. Add it on the vehicle card.` }
+      // 🔴 The clean case gets an EXPLICIT confirmation. The modal now
+      // closes before the refresh, so without this the surface simply
+      // goes quiet and the manager has no acknowledgement that anything
+      // happened.
+      : { kind: 'success',
+          title: 'Vehicle added',
+          body: `${payload.plate} is active at ${propertyName}${residentUnit ? `, unit ${residentUnit}` : ''}.` },
     )
     refreshCrmData().catch(err => {
       console.error('[MANAGER_ADD_VEHICLE_RPC] post-add refresh failed', err)
+      // 🔴 The add SUCCEEDED. The list is merely stale. Said plainly and
+      // with the instruction, because the alternative — a vehicle that
+      // does not appear in the list — looks exactly like a failed add,
+      // and the manager's next move is to add it again.
+      setAddNotice({
+        kind: 'warn',
+        title: 'Vehicle added — list not refreshed',
+        body: `${payload.plate} was added successfully. This list could not refresh, so it may not appear below yet. Reload the page to see it. Do not add it again.`,
+      })
     })
     return { ok: true }
   }
@@ -5019,20 +5053,20 @@ export default function ManagerPortal() {
         )}
 
         {/* RESIDENTS — PM CRM (slice 1) */}
-        {activeTab === 'residents' && PM_CRM_ENABLED && manager && tagNotice && (
-          <div style={{ background:'#161b26', border:'1px solid #a16207', borderRadius:'10px', padding:'12px 14px', marginBottom:'12px', display:'flex', gap:'10px', alignItems:'flex-start' }}>
+        {activeTab === 'residents' && PM_CRM_ENABLED && manager && addNotice && (
+          <div style={{
+            background: addNotice.kind === 'success' ? '#061406' : '#161b26',
+            border: `1px solid ${addNotice.kind === 'success' ? '#2e7d32' : '#a16207'}`,
+            borderRadius:'10px', padding:'12px 14px', marginBottom:'12px',
+            display:'flex', gap:'10px', alignItems:'flex-start',
+          }}>
             <div style={{ flex:1 }}>
-              <p style={{ color:'#fbbf24', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>
-                {/* One banner, two kinds of partial success: the vehicle
-                    landed pending, or the tag did not record. The heading
-                    is derived rather than fixed, because "Parking tag not
-                    recorded" over a waiting-for-approval message would be
-                    simply wrong. */}
-                {tagNotice.includes('waiting for approval') ? 'Vehicle added — waiting for approval' : 'Parking tag not recorded'}
+              <p style={{ color: addNotice.kind === 'success' ? '#4caf50' : '#fbbf24', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>
+                {addNotice.kind === 'success' ? '✓ ' : ''}{addNotice.title}
               </p>
-              <p style={{ color:'#cbd5e1', fontSize:'12.5px', margin:0, lineHeight:'1.5' }}>{tagNotice}</p>
+              <p style={{ color:'#cbd5e1', fontSize:'12.5px', margin:0, lineHeight:'1.5' }}>{addNotice.body}</p>
             </div>
-            <button onClick={() => setTagNotice(null)}
+            <button onClick={() => setAddNotice(null)}
               style={{ background:'transparent', border:'none', color:'#888', fontSize:'16px', cursor:'pointer', lineHeight:1, padding:'0 2px' }}
               aria-label="Dismiss">×</button>
           </div>
