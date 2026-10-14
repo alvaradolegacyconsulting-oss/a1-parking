@@ -3016,118 +3016,75 @@ export default function CompanyAdminPortal() {
     setTogglingUser(email)
     setDriverActionResult(null)
 
-    // ── Step 1: user_roles.is_active (LOAD-BEARING) ────────────────
-    const { error: urErr } = await supabase
-      .from('user_roles')
-      .update({ is_active: !wasActive })
-      .ilike('email', email)
-    if (urErr) {
+    // ── One server call, all-or-report ──────────────────────────────
+    // 🔴 Was: user_roles UPDATE, then drivers UPDATE, then a
+    // BEST-EFFORT swift-handler ban — three independent writes, any of
+    // which could fail while the next one proceeded. The honest-looking
+    // "did NOT complete … they can still authenticate" branch below
+    // existed because that state was reachable. It no longer is.
+    //
+    // /api/admin/user-active bans FIRST, reads the ban back, reverts
+    // the is_active flip if it cannot be confirmed, writes
+    // drivers.is_active itself, and audits what actually happened. It
+    // also re-implements the RLS scope, because it runs as
+    // service_role: a CA may toggle manager / leasing_agent / driver /
+    // resident in their own company and nothing else.
+    //
+    // drivers.is_active is still reported SEPARATELY. A driver whose
+    // login is revoked but who is still counted is a billing question,
+    // not an access one, and the amber state exists for exactly that.
+    let ok = false
+    let driverRowFailed = false
+    let unchanged = false
+    let failure: string | null = null
+    try {
+      const res = await fetch('/api/admin/user-active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, active: wasActive ? false : true }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok && json?.ok) {
+        ok = true
+        unchanged = json.changed === false
+        driverRowFailed = json.driver_row === 'FAILED'
+      } else {
+        failure = json?.message || json?.error || `HTTP ${res.status}`
+      }
+    } catch (e) {
+      failure = (e as Error).message
+    }
+
+    if (!ok) {
+      // The route reverted whatever it had changed, so this really is
+      // "nothing happened" — not the divergent state the old copy
+      // had to warn about.
       setDriverActionResult({
         severity: 'error',
-        text: wasActive
-          ? `Could not deactivate driver: ${urErr.message}. Nothing changed.`
-          : `Could not reactivate driver: ${urErr.message}. Nothing changed.`,
+        text: failure
+          ? `Could not ${wasActive ? 'deactivate' : 'reactivate'} driver: ${failure}`
+          : `Could not ${wasActive ? 'deactivate' : 'reactivate'} driver. Nothing changed.`,
       })
       setTogglingUser(null)
       return
     }
 
-    // ── Step 2: drivers.is_active (billing/filter/guard) ──────────
-    // Independent best-effort. Failure here means the driver is
-    // gated out (step 1 landed) but billing counters may not
-    // reflect the change until reconciliation. Captured in the
-    // audit and — if it fails — noted in the amber banner text.
-    const { error: drvErr } = await supabase
-      .from('drivers')
-      .update({ is_active: !wasActive })
-      .eq('id', driver.id)
-    if (drvErr) {
-      console.error('[toggleDriverActive] drivers.is_active write failed (user_roles column already landed)', drvErr.message, { email, driverId: driver.id, wasActive })
-    }
-
-    // ── Step 3: swift-handler ban/unban (defense-in-depth) ────────
-    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
-    const { data: { session } } = await supabase.auth.getSession()
-    let banApplied = false
-    let banError: string | null = null
-    try {
-      const res = await fetch(fnBase + '/swift-handler', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ action: wasActive ? 'deactivate_user' : 'activate_user', email }),
-      })
-      if (res.ok) {
-        banApplied = true
-      } else {
-        const json = await res.json().catch(() => ({}))
-        banError = json?.error || json?.message || `HTTP ${res.status}`
-        console.warn('[toggleDriverActive] swift-handler failure (column already gated driver out)', { email, wasActive, banError })
-      }
-    } catch (e) {
-      banError = (e as Error).message
-      console.warn('[toggleDriverActive] swift-handler threw (column already gated driver out)', { email, wasActive, banError })
-    }
-
-    // ── Step 4: audit ─────────────────────────────────────────────
-    // 🟢 2026-08-29 Item 2 Commit 3 — added outcome tag alongside
-    // ban_applied so the audit is grep-clean by explicit outcome.
-    // 'failed' when the swift-handler ban did not apply; 'ok'
-    // otherwise. Both fields kept — ban_applied is the historical
-    // key (existing Aug 5-8 remediation query uses it), outcome
-    // is the forward-looking discriminant now that swift-handler
-    // is fixed and ban failures should be rare.
-    await auditLog(
-      wasActive ? 'DEACTIVATE_DRIVER' : 'ACTIVATE_DRIVER',
-      'user_roles',
-      email,
-      {
-        email,
-        is_active: !wasActive,
-        driver_id: driver.id,
-        column_write_failed: false,
-        drivers_column_write_failed: !!drvErr,
-        ban_applied: banApplied,
-        ban_error: banError,
-        outcome: banApplied ? 'ok' : 'failed',
-      },
-    )
-
-    // ── Step 5: banner ────────────────────────────────────────────
-    // 🟢 2026-08-29 Item 2 Commit 3 — severity discipline changed
-    // per Mateo Aug 29 spec:
-    //   ban ok + drivers ok           → 'ok' (as before)
-    //   ban ok + drivers failed       → 'partial' (billing may drift)
-    //   ban FAILED                    → 'error' (was 'partial')
-    // A ban failure means the user can still authenticate at the
-    // auth layer, even though the column write above already gated
-    // them out of the portal. Calling that "partial" understated
-    // the two accounts of divergence at A1 (Aug 10) — this labels
-    // it honestly. Message names what's true, not just what's wrong,
-    // per Mateo Aug 29.
-    if (banApplied && !drvErr) {
+    if (unchanged) {
       setDriverActionResult({
         severity: 'ok',
-        text: wasActive ? 'Driver deactivated.' : 'Driver reactivated.',
+        text: wasActive ? 'That driver was already deactivated.' : 'That driver was already active.',
       })
-    } else if (banApplied) {
-      // Ban succeeded but drivers column write failed — billing may
-      // drift, ban itself worked. Partial is honest here.
-      const baseText = wasActive
-        ? 'Driver access revoked.'
-        : 'Driver access restored.'
+    } else if (driverRowFailed) {
       setDriverActionResult({
         severity: 'partial',
-        text: `${baseText} This driver may still be counted for billing until reconciliation.`,
+        text: `${wasActive ? 'Driver access revoked.' : 'Driver access restored.'} This driver may still be counted for billing until reconciliation.`,
       })
     } else {
-      // Ban FAILED. Hard error — the operation did not complete.
-      // The user is portal-blocked (column write above) but can
-      // still authenticate (no ban). Divergent state.
-      const baseAction = wasActive ? 'deactivation' : 'reactivation'
-      const billingSuffix = drvErr ? ' Billing counter may also be affected.' : ''
       setDriverActionResult({
-        severity: 'error',
-        text: `Driver ${baseAction} did NOT complete. The driver is blocked from the portal, but the login block was not applied and they can still authenticate. Retry.${billingSuffix}`,
+        severity: 'ok',
+        text: wasActive
+          ? 'Driver deactivated. Their login is revoked and existing sessions can no longer be refreshed.'
+          : 'Driver reactivated. Their login has been restored.',
       })
     }
 

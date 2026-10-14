@@ -51,6 +51,7 @@ const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(
 
 let server: ChildProcess | null = null
 const made: { email: string; uid: string | null; roleId: number }[] = []
+const driverIds: number[] = []
 let cleaned = false
 
 async function cleanup(why: string) {
@@ -66,6 +67,11 @@ async function cleanup(why: string) {
       if ((back.data?.users ?? []).some(u => u.id === m.uid)) { console.error(`   🔴 auth user ${m.uid} STILL PRESENT`); fails++ }
     }
   }
+  if (driverIds.length) {
+    const r = await db.from('drivers').delete().in('id', driverIds).select('id')
+    if (r.error || (r.data ?? []).length !== driverIds.length) console.error(`   🔴 drivers: removed ${(r.data ?? []).length}/${driverIds.length}`)
+  }
+  await db.from('drivers').delete().ilike('email', 'zz-ua-%').select('id')
   const stray = await db.from('user_roles').delete().ilike('email', 'zz-ua-%').select('id')
   if ((stray.data ?? []).length) console.error(`   ⚠ swept ${(stray.data ?? []).length} stray role row(s)`)
   await db.from('audit_logs').delete().ilike('record_id', 'zz-ua-%').select('id')
@@ -164,6 +170,13 @@ const main = async () => {
     const admT = await actor('tadm', 'admin')
     const xCo  = await actor('xco', 'manager', OTHER_CO)
     const noAu = await actor('noauth', 'manager', CO, false)
+    const drv  = await actor('drv', 'driver')
+    const dIns = await db.from('drivers').insert({
+      email: drv.email, name: `ZZ UA DRV ${S}`, company: CO,
+      assigned_properties: ['Test Legacy Property'], is_active: true, operator_license: 'N/A',
+    }).select('id').single()
+    if (dIns.error) throw new Error(`drivers canary: ${dIns.error.message}`)
+    driverIds.push(dIns.data.id as number)
 
     console.log(`starting next dev on ${PORT}…`)
     server = spawn('npx', ['next', 'dev', '-p', String(PORT)], {
@@ -254,6 +267,35 @@ const main = async () => {
     chk('an admin CAN deactivate a company_admin (CA cannot)', ad1.status === 200 && ad1.body.ok === true,
       `HTTP ${ad1.status} ${ad1.body.error ?? ''}`)
     if (ad1.status === 200) await call(admCookie, caT.email, true)
+
+    // ── 6b. 🔴 a DRIVER target: the route owns drivers.is_active now ─
+    // The CA driver toggle used to write user_roles, then drivers, then
+    // attempt a ban — three independent writes, any of which could fail
+    // while the next proceeded. The route does all three and reports
+    // the drivers row SEPARATELY, because a driver whose login is
+    // revoked but who is still COUNTED is a billing problem, not an
+    // access one.
+    console.log('\n── 6b. a driver target ──')
+    const dOff = await call(caCookie, drv.email, false)
+    chk('CA deactivates a driver', dOff.status === 200 && dOff.body.ok === true,
+      `HTTP ${dOff.status} ${JSON.stringify(dOff.body.driver_row ?? dOff.body.error)}`)
+    chk('   ...the drivers row was flipped by the ROUTE, not the client',
+      dOff.body.driver_row !== 'n/a' && dOff.body.driver_row !== 'FAILED',
+      `driver_row = ${JSON.stringify(dOff.body.driver_row)}`)
+    chk('   ...drivers.is_active is false in the table',
+      (await db.from('drivers').select('is_active').eq('id', driverIds[0]).single()).data?.is_active === false)
+    chk('   ...user_roles.is_active is false',
+      (await db.from('user_roles').select('is_active').eq('id', drv.roleId).single()).data?.is_active === false)
+    chk('   ...the driver is really banned', await bannedState(drv.uid!))
+    const dRef = await refreshWorks(drv.session!.refresh_token)
+    chk("🔴 ...and the driver's refresh is REFUSED", !dRef.ok, dRef.err ?? '🔴 STILL REFRESHES')
+
+    const dOn = await call(caCookie, drv.email, true)
+    chk('CA reactivates the driver', dOn.status === 200 && dOn.body.ok === true,
+      `HTTP ${dOn.status} ${JSON.stringify(dOn.body.driver_row ?? dOn.body.error)}`)
+    chk('   ...drivers.is_active is true again (billing counts restored)',
+      (await db.from('drivers').select('is_active').eq('id', driverIds[0]).single()).data?.is_active === true)
+    chk('🔴 ...and the driver is UNBANNED', !(await bannedState(drv.uid!)))
 
     // ── 7. the audit row says what happened ────────────────────────
     console.log('\n── 7. the audit trail ──')
