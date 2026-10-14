@@ -3397,87 +3397,82 @@ export default function CompanyAdminPortal() {
     setTogglingUser(email)
     setUserActionResult(null)
 
-    // ── Step 1: user_roles.is_active (LOAD-BEARING) ──────────────
-    const { error: urErr } = await supabase
-      .from('user_roles')
-      .update({ is_active: activate })
-      .ilike('email', email)
-    if (urErr) {
+    // ── One server call, all-or-report ──────────────────────────
+    // 🔴 Was: a direct user_roles UPDATE, then a BEST-EFFORT
+    // swift-handler ban whose failure was audited as
+    // ban_applied:false while this screen still said "User
+    // deactivated." That is how an A1 manager deactivated on
+    // 2026-08-10 signed in on 2026-08-21 — and measured on a canary,
+    // the old shape revoked NOTHING at the data layer: the session
+    // survived, get_my_role() still returned the role, and direct
+    // PostgREST still read tenant rows, because the portal gate is
+    // client-side and is not in that path.
+    //
+    // /api/admin/user-active bans and READS THE BAN BACK, reverts the
+    // is_active flip if the ban cannot be confirmed, and refuses to
+    // report success it did not achieve. It also audits, so there is
+    // no auditLog call here any more — two audit rows for one action
+    // is worse than one.
+    //
+    // 🔴 It re-implements the RLS scope rather than inheriting it,
+    // because it runs as service_role: a CA may toggle
+    // manager / leasing_agent / driver / resident in their own
+    // company and nothing else. Swept by execution 2026-10-15.
+    let banApplied = false
+    let banError: string | null = null
+    let unchanged = false
+    try {
+      const res = await fetch('/api/admin/user-active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, active: activate }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok && json?.ok) {
+        banApplied = true
+        unchanged = json.changed === false
+      } else {
+        // The route already reverted whatever it had changed, so this
+        // really is "nothing happened" rather than a partial state.
+        banError = json?.message || json?.error || `HTTP ${res.status}`
+      }
+    } catch (e) {
+      banError = (e as Error).message
+    }
+
+    if (!banApplied) {
       setUserActionResult({
         severity: 'error',
-        text: activate
-          ? `Could not reactivate user: ${urErr.message}. Nothing changed.`
-          : `Could not deactivate user: ${urErr.message}. Nothing changed.`,
+        text: banError
+          ? `Could not ${activate ? 'reactivate' : 'deactivate'} user: ${banError}`
+          : `Could not ${activate ? 'reactivate' : 'deactivate'} user. Nothing changed.`,
       })
       setTogglingUser(null)
       return
     }
 
-    // ── Step 2: swift-handler ban/unban (defense-in-depth) ──────
-    // Attempts the auth ban; captures response; does NOT abort on
-    // failure. Under a broken handler this fails on every call —
-    // that's the routine amber case, since the column write above
-    // already gated the user out of the portal.
-    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
-    const { data: { session } } = await supabase.auth.getSession()
-    let banApplied = false
-    let banError: string | null = null
-    try {
-      const res = await fetch(fnBase + '/swift-handler', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ action: activate ? 'activate_user' : 'deactivate_user', email }),
-      })
-      if (res.ok) {
-        banApplied = true
-      } else {
-        const json = await res.json().catch(() => ({}))
-        banError = json?.error || json?.message || `HTTP ${res.status}`
-        console.warn('[toggleUserActive] swift-handler failure (column already gated user out)', { email, activate, banError })
-      }
-    } catch (e) {
-      banError = (e as Error).message
-      console.warn('[toggleUserActive] swift-handler threw (column already gated user out)', { email, activate, banError })
+    if (!unchanged) {
+      setCompanyUsers(prev => prev.map(u => u.email === email ? { ...u, is_active: activate } : u))
     }
-
-    // ── Step 3: audit ───────────────────────────────────────────
-    // column_write_failed is always false here (we returned on step 1
-    // failure). ban_applied is the remediation-list key.
-    //
-    // 🟢 2026-08-29 Item 2 Commit 3 — added outcome tag alongside
-    // ban_applied. Same discipline as toggleDriverActive :2529
-    // (see comment there). 'failed' when swift-handler ban didn't
-    // apply; 'ok' otherwise. ban_applied kept for historical
-    // remediation queries; outcome is the forward discriminant.
-    await auditLog(activate ? 'activate_user' : 'deactivate_user', 'user_roles', email, {
-      email, is_active: activate,
-      column_write_failed: false,
-      ban_applied: banApplied,
-      ban_error: banError,
-      outcome: banApplied ? 'ok' : 'failed',
-    })
-    setCompanyUsers(prev => prev.map(u => u.email === email ? { ...u, is_active: activate } : u))
     setTogglingUser(null)
 
-    // ── Step 4: banner ──────────────────────────────────────────
-    // 🟢 2026-08-29 Item 2 Commit 3 — severity 'partial' → 'error'
-    // when ban failed (Mateo Aug 29 spec). Message names what's true
-    // (blocked from portal, still can authenticate) not just what's
-    // wrong. "Partial success" understated the two accounts of
-    // divergence at A1 (Aug 10); "did NOT complete" labels it
-    // honestly and prompts a retry.
-    if (banApplied) {
-      setUserActionResult({
-        severity: 'ok',
-        text: activate ? 'User reactivated.' : 'User deactivated.',
-      })
-    } else {
-      const baseAction = activate ? 'reactivation' : 'deactivation'
-      setUserActionResult({
-        severity: 'error',
-        text: `User ${baseAction} did NOT complete. The user is blocked from the portal, but the login block was not applied and they can still authenticate. Retry.`,
-      })
-    }
+    // ── Banner ──────────────────────────────────────────────────
+    // 🔴 The old "did NOT complete — blocked from the portal but can
+    // still authenticate" branch is GONE, not reworded. It described a
+    // divergence the route no longer permits: a ban that cannot be
+    // confirmed now reverts the is_active flip and returns an error,
+    // which the early return above surfaces. Keeping that branch would
+    // have left a dead path whose copy asserted a state the system can
+    // no longer be in — and a dead branch that explains a bug is how
+    // the next reader concludes the bug is still there.
+    setUserActionResult({
+      severity: 'ok',
+      text: unchanged
+        ? (activate ? 'That user was already active.' : 'That user was already deactivated.')
+        : (activate
+            ? 'User reactivated. Their login has been restored.'
+            : 'User deactivated. Their login is revoked and existing sessions can no longer be refreshed.'),
+    })
   }
 
   async function resetUserPassword() {
