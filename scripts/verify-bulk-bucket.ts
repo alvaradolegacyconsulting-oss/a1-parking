@@ -46,22 +46,39 @@ const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(
 
 const users: { email: string; uid: string }[] = []
 const uploaded: string[] = []
-let flagFlipped = false
+const flipped: string[] = []
 let cleaned = false
 
 // ── restore, armed before the first mutation, checked and verified ──
+// Every company this run turned on, turned back off, each read back.
 async function restoreFlag(): Promise<void> {
-  if (!flagFlipped) return
-  for (let i = 1; i <= 3; i++) {
-    const r = await db.from('companies')
-      .update({ bulk_onboarding_enabled: false }).eq('name', CO).select('name,bulk_onboarding_enabled')
-    const back = r.data?.[0]?.bulk_onboarding_enabled
-    if (!r.error && back === false) { flagFlipped = false; console.log(`   ↩ ${CO}.bulk_onboarding_enabled restored to false (verified)`); return }
-    console.error(`   🔴 restore attempt ${i}/3 failed: ${r.error?.message ?? `read back ${back}`}`)
+  while (flipped.length) {
+    const co = flipped[flipped.length - 1]
+    let ok = false
+    for (let i = 1; i <= 3 && !ok; i++) {
+      const r = await db.from('companies')
+        .update({ bulk_onboarding_enabled: false }).eq('name', co).select('name,bulk_onboarding_enabled')
+      const back = r.data?.[0]?.bulk_onboarding_enabled
+      if (!r.error && back === false) { ok = true; console.log(`   ↩ ${co}.bulk_onboarding_enabled restored to false (verified)`) }
+      else console.error(`   🔴 restore attempt ${i}/3 for ${co} failed: ${r.error?.message ?? `read back ${back}`}`)
+    }
+    if (!ok) {
+      console.error(`\n🔴🔴 MANUAL ACTION REQUIRED: ${co}.bulk_onboarding_enabled is still TRUE.`)
+      console.error(`     UPDATE public.companies SET bulk_onboarding_enabled = FALSE WHERE name = '${co}';`)
+      fails++
+    }
+    flipped.pop()
   }
-  console.error(`\n🔴🔴 MANUAL ACTION REQUIRED: ${CO}.bulk_onboarding_enabled is still TRUE.`)
-  console.error(`     UPDATE public.companies SET bulk_onboarding_enabled = FALSE WHERE name = '${CO}';`)
-  fails++
+}
+
+async function enable(co: string) {
+  const f = await db.from('companies').update({ bulk_onboarding_enabled: true })
+    .eq('name', co).select('name,bulk_onboarding_enabled')
+  if (f.error || f.data?.[0]?.bulk_onboarding_enabled !== true) {
+    throw new Error(`could not enable the flag for ${co}: ${f.error?.message ?? 'read back false'}`)
+  }
+  flipped.push(co)
+  console.log(`   ⚑ ${co}.bulk_onboarding_enabled = true (restored at exit)`)
 }
 
 async function cleanup(why: string) {
@@ -196,14 +213,18 @@ const main = async () => {
     chk('CA upload refused while bulk_onboarding_enabled = false', !!off.error,
       off.error ? why(off) : '🔴 ALLOWED — a flag-off tenant can park objects the route will never claim')
 
-    // ── 3. turn it on for this tenant only ──────────────────────────
-    const f = await db.from('companies').update({ bulk_onboarding_enabled: true })
-      .eq('name', CO).select('name,bulk_onboarding_enabled')
-    if (f.error || f.data?.[0]?.bulk_onboarding_enabled !== true) {
-      throw new Error(`could not enable the flag for ${CO}: ${f.error?.message ?? 'read back false'}`)
-    }
-    flagFlipped = true
-    console.log(`\n   ⚑ ${CO}.bulk_onboarding_enabled = true (restored at exit)`)
+    // ── 3. turn it on ───────────────────────────────────────────────
+    // 🔴 BOTH companies, and the second one is the whole point.
+    // With only this tenant enabled, the cross-company check below
+    // would be refused by the OTHER company's flag being off, and pass
+    // while proving nothing about company scoping. Two causes share one
+    // sqlstate here: "not your company" and "not switched on" are both
+    // a row-level-security refusal with identical text. Turning the
+    // other company's flag ON removes the second cause, so a refusal
+    // can only be the first.
+    console.log('')
+    await enable(CO)
+    await enable(theirs.company as string)
 
     // ── 4. positive controls — the CA's real upload, every MIME ─────
     // 🔴 Browsers do not agree on a type for .csv. Windows with Excel
@@ -227,9 +248,19 @@ const main = async () => {
 
     // ── 6. scope ────────────────────────────────────────────────────
     console.log('\n── 6. scope ──')
+    // 🔴 The isolated cross-company check: the other company's flag is
+    // ON, its property is active, and its CA could upload here — so the
+    // only thing left to refuse this is that it is not OUR company.
     const s1 = await up(CA.client, `${theirs.id}/${uuid()}.csv`)
-    chk(`CA refused on another company's property (${theirs.id})`, !!s1.error,
-      s1.error ? why(s1) : '🔴 ALLOWED — cross-tenant upload')
+    chk(`CA refused on another company's property (${theirs.id}, ${theirs.company}) WITH THAT COMPANY'S FLAG ALSO ON`,
+      !!s1.error, s1.error ? why(s1) : '🔴 ALLOWED — cross-tenant upload')
+    // Positive control for the control: that company's own CA CAN
+    // upload there. Without it, the refusal above is also what a
+    // blanket "nobody may upload for 136" would look like.
+    const other = await actor('ca2', 'company_admin', theirs.company as string, [theirs.name as string])
+    const s1b = await up(other.client, `${theirs.id}/${uuid()}.csv`)
+    chk(`   ...and ${theirs.company}'s OWN company_admin can upload there`, !s1b.error,
+      s1b.error ? '🔴 REFUSED — the check above proves nothing: ' + why(s1b) : 'ok')
     const s2 = await up(CA.client, `${myDead.id}/${uuid()}.csv`)
     chk(`CA refused on their own INACTIVE property (${myDead.id})`, !!s2.error,
       s2.error ? why(s2) : '🔴 ALLOWED — a deactivated property still accepts residents')
