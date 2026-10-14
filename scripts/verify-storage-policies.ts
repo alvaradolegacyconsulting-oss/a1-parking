@@ -153,6 +153,32 @@ const main = async () => {
     const c4 = await up(CA.client, 'vehicle-removal-photos', `${prop.id}/zz-sp-tow-${S}.png`, 'image/png')
     chk('7. tow-log removal photo (lib/tow-log-writes.ts)', !c4.error, c4.error?.message.slice(0, 60) ?? 'ok')
 
+    // ── 6c. 🔴 THE REPLACE PATH, which an upload to a fresh path does
+    // NOT exercise. All three logo sites use upsert:true, and an upsert
+    // that replaces an existing object needs UPDATE on storage.objects,
+    // not just INSERT. The first version of this gate only ever wrote
+    // new paths, so it would have passed with the UPDATE policy absent
+    // and logo REPLACEMENT broken.
+    const replacePath = `companies/zz-sp-replace-${S}.png`
+    const r1 = await CA.client.storage.from('logos')
+      .upload(replacePath, new Blob(['one'], { type: 'image/png' }), { contentType: 'image/png', upsert: true })
+    if (!r1.error) uploaded.push(['logos', replacePath])
+    const r2 = await CA.client.storage.from('logos')
+      .upload(replacePath, new Blob(['two-longer'], { type: 'image/png' }), { contentType: 'image/png', upsert: true })
+    let replaced = false
+    if (!r2.error) {
+      const d = await db.storage.from('logos').download(replacePath)
+      replaced = d.data ? (await d.data.text()) === 'two-longer' : false
+    }
+    chk('6c. logo REPLACE via upsert works, and the bytes actually change',
+      !r1.error && !r2.error && replaced,
+      r2.error ? r2.error.message.slice(0, 60) : (replaced ? 'content replaced' : '🔴 upsert reported ok but the bytes did not change'))
+
+    const anonUpsert = await anon.storage.from('logos')
+      .upload(replacePath, new Blob(['anon'], { type: 'image/png' }), { contentType: 'image/png', upsert: true })
+    chk('6d. anon cannot upsert OVER an existing object either',
+      !!anonUpsert.error, anonUpsert.error ? anonUpsert.error.message.slice(0, 50) : '🔴 ALLOWED')
+
     // ── 4. the ticket-view path — READ-only, so prove the read ──────
     // 🔴 It does NOT upload. The earlier belief that it did came from
     // grepping the WORD "storage" in `tow_storage_name` and "Contact
