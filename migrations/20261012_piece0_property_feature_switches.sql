@@ -27,9 +27,28 @@
 --   • a DEFINER RPC as the ONLY write path — visible, auditable, and
 --     it carries the role check where someone reading the function will
 --     see it.
--- The RPC, per ruling. The columns still carry a REVOKE as a second
--- layer, because the RPC is only the only path while nothing else
--- writes them.
+-- The RPC, per ruling.
+--
+-- 🔴 COMMENT CORRECTED 2026-10-15 (prose only — no SQL in this file
+-- changed, and nothing about the applied migration differs).
+--
+-- This sentence used to read "the columns still carry a REVOKE as a
+-- second layer". They do not and never did: the only REVOKE/GRANT
+-- statements here are on the FUNCTION (see below), and the second
+-- layer is the TRIGGER — which this file's own later section already
+-- explains it chose over a narrowed column grant.
+--
+-- And a column REVOKE would not have been a second layer anyway. A
+-- COLUMN-LEVEL REVOKE CANNOT SUBTRACT FROM A TABLE-LEVEL GRANT:
+-- `authenticated` holds UPDATE on properties, so REVOKE UPDATE(col)
+-- records nothing, pg_attribute.attacl stays NULL — which means
+-- "default privileges apply", which means writable. Found 2026-10-15
+-- when exactly that was attempted on user_roles and the paired
+-- verification failed it. Sweep class 17.
+--
+-- So the reason below for preferring the trigger (a narrowed grant
+-- silently drops every column added later) was right, and this is a
+-- second, stronger reason: the grant would not have worked at all.
 --
 -- NOT NULL DEFAULT false is correct here, unlike companies.billing_interval
 -- where NULL had to mean "unknown". "Off" is a KNOWN state: the feature
