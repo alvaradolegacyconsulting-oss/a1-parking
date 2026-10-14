@@ -1,11 +1,14 @@
 # Candidate defect classes for sweep 2's table
 
-🔴 `BACKLOG_security_sweep_2_plan_oct14_2026.md` is **not in this
-repo**. Searched `docs/`, `docs/backlog/`, the tree for `BACKLOG*`,
-and `git status` is clean. So I cannot diff against its table — paste
-it or give me the path and I will.
+✅ **Merged 2026-10-15.** The plan is now committed beside this file at
+`BACKLOG_security_sweep_2_plan_oct14_2026.md`. Five of these became
+new classes **11–15**; *records-bearing identity* and *best-effort
+reported as done* were already classes **5** and **8**. One further
+candidate (two paths to one operation, only the dialog shared) is
+appended to the plan as **16?**, unnumbered pending a ruling.
 
-Meanwhile, here are the classes I have actually hit, each with the
+This file stays as the evidence trail — each class with the instance
+that proved it. Below are the classes I have actually hit, each with the
 instance that proved it and what a standing
 `verify:securitybaseline` check would assert. Diff this against your
 table; the ones most likely missing are marked **NEW?**.

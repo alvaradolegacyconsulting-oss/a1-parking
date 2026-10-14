@@ -1,0 +1,161 @@
+{
+  "recorded_at": "2026-10-14T22:35:32.995Z",
+  "probes": {
+    "admin:active": {
+      "role": "admin",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 423,
+        "vehicles": 852,
+        "properties": 28,
+        "user_roles": 387,
+        "visitor_passes": 2079,
+        "violations": 134
+      }
+    },
+    "admin:deactivated": {
+      "role": "admin",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 423,
+        "vehicles": 852,
+        "properties": 28,
+        "user_roles": 388,
+        "visitor_passes": 2079,
+        "violations": 134
+      }
+    },
+    "company_admin:active": {
+      "role": "company_admin",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 32,
+        "vehicles": 32,
+        "properties": 11,
+        "user_roles": 33,
+        "visitor_passes": 61,
+        "violations": 26
+      }
+    },
+    "company_admin:deactivated": {
+      "role": "company_admin",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 32,
+        "vehicles": 32,
+        "properties": 11,
+        "user_roles": 34,
+        "visitor_passes": 61,
+        "violations": 26
+      }
+    },
+    "manager:active": {
+      "role": "manager",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 31,
+        "vehicles": 31,
+        "properties": 1,
+        "user_roles": 1,
+        "visitor_passes": 58,
+        "violations": 22
+      }
+    },
+    "manager:deactivated": {
+      "role": "manager",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 31,
+        "vehicles": 31,
+        "properties": 1,
+        "user_roles": 1,
+        "visitor_passes": 58,
+        "violations": 22
+      }
+    },
+    "leasing_agent:active": {
+      "role": "leasing_agent",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 31,
+        "vehicles": 31,
+        "properties": 1,
+        "user_roles": 1,
+        "visitor_passes": 58,
+        "violations": 0
+      }
+    },
+    "leasing_agent:deactivated": {
+      "role": "leasing_agent",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 31,
+        "vehicles": 31,
+        "properties": 1,
+        "user_roles": 1,
+        "visitor_passes": 58,
+        "violations": 0
+      }
+    },
+    "driver:active": {
+      "role": "driver",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 0,
+        "vehicles": 32,
+        "properties": 11,
+        "user_roles": 1,
+        "visitor_passes": 61,
+        "violations": 26
+      }
+    },
+    "driver:deactivated": {
+      "role": "driver",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 0,
+        "vehicles": 32,
+        "properties": 11,
+        "user_roles": 1,
+        "visitor_passes": 61,
+        "violations": 26
+      }
+    },
+    "resident:active": {
+      "role": "resident",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 1,
+        "vehicles": 0,
+        "properties": 1,
+        "user_roles": 1,
+        "visitor_passes": 0,
+        "violations": 0
+      }
+    },
+    "resident:deactivated": {
+      "role": "resident",
+      "company": "Test-LEGACY",
+      "properties": "[\"Test Legacy Property\"]",
+      "reads": {
+        "residents": 1,
+        "vehicles": 0,
+        "properties": 1,
+        "user_roles": 1,
+        "visitor_passes": 0,
+        "violations": 0
+      }
+    }
+  }
+}
