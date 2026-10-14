@@ -469,6 +469,10 @@ export default function AdminPortal() {
       // CA path (togglePropertyActive) to close the divergent-paths
       // bypass. Cancel here aborts the deactivation entirely.
       const confirmed = await promptDeactivatePropertyConfirm({
+        // This path really does cascade: it bans the single-property
+        // users, deactivates residents and vehicles, then flips the
+        // property. The dialog's counts describe actual work.
+        variant: 'cascade',
         supabase,
         propertyName,
         company: (p as any).company || '',

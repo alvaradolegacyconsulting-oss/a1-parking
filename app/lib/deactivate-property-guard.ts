@@ -46,6 +46,26 @@ export interface DeactivatePropertyGuardOpts {
   supabase:     SupabaseClient
   propertyName: string
   company:      string
+  /**
+   * 🔴 WHICH OPERATION IS ACTUALLY ABOUT TO HAPPEN. Required, not
+   * defaulted, so the compiler makes every caller say — a default
+   * would silently hand a new call site the wrong promise.
+   *
+   *   'cascade'   /admin: bans the assigned single-property users,
+   *               deactivates residents and vehicles, flips the
+   *               property. The counts below describe real work.
+   *   'flag_only' the CA portal: flips properties.is_active and
+   *               audits. Nothing else. Managers keep their logins,
+   *               residents and vehicles keep their records.
+   *
+   * This parameter exists because the two paths shared this dialog
+   * while doing different things, so the CA operator was told their
+   * action would "suspend account access for 31 residents" when it
+   * suspended nothing. Sharing the WARNING without sharing the WORK is
+   * worse than not sharing it: it is a confident, specific, wrong
+   * statement about a destructive action.
+   */
+  variant:      'cascade' | 'flag_only'
 }
 
 /**
@@ -61,7 +81,7 @@ export interface DeactivatePropertyGuardOpts {
 export async function promptDeactivatePropertyConfirm(
   opts: DeactivatePropertyGuardOpts,
 ): Promise<boolean> {
-  const { supabase, propertyName, company } = opts
+  const { supabase, propertyName, company, variant } = opts
 
   // Parallel count over the three assignment carriers, scoped by
   // company. Escape ILIKE wildcards on `company` (some carriers use
@@ -104,7 +124,23 @@ export async function promptDeactivatePropertyConfirm(
   //   C — has PMs/LAs and/or drivers but no residents: no asymmetry
   //       note needed (nothing to lose beyond login access).
   let body: string
-  if (totalAccounts === 0) {
+  if (variant === 'flag_only') {
+    // 🔴 Says what THIS path does, which is less than the cascade. The
+    // counts are still shown, because who is affected is what the
+    // operator is deciding about — but they are labelled "loses portal
+    // access", not "will be suspended", because no login is revoked
+    // and no record is deactivated here.
+    body =
+      `Mark "${propertyName}" inactive?\n\n` +
+      (totalAccounts === 0
+        ? `No users are currently assigned to it.\n\n`
+        : `The property stops appearing as active, and anyone assigned ONLY to it ` +
+          `loses portal access:\n${lines.join('\n')}\n\n`) +
+      `This does NOT deactivate their accounts and does NOT deactivate residents or ` +
+      `vehicles — their records stay as they are. Logins are unchanged.\n\n` +
+      `You can mark it active again later.\n\n` +
+      `Proceed?`
+  } else if (totalAccounts === 0) {
     body =
       `Deactivate "${propertyName}"?\n\n` +
       `No users are currently assigned to this property. It can be REACTIVATED later.\n\n` +

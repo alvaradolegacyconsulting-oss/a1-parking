@@ -45,6 +45,24 @@ const ROLES = ['admin', 'company_admin', 'manager', 'leasing_agent', 'driver', '
 // contents — a baseline file must not become a PII file.
 const TABLES = ['residents', 'vehicles', 'properties', 'user_roles', 'visitor_passes', 'violations'] as const
 
+// 🔴 WHAT A DEACTIVATED USER MAY STILL SEE: their OWN identity row,
+// and nothing else.
+//
+// This is not a leniency, it is a requirement. /deactivated has to be
+// able to tell the person their access was removed, and
+// get_my_effective_active() reads user_roles and residents.is_active to
+// decide that. A deactivated user who can read NOTHING gets a blank
+// page or a login loop instead of an explanation — the exact outcome
+// G7 in the SQL verification exists to prevent.
+//
+// The first version of this gate asserted "reads nothing it read
+// before", which failed the correct outcome: a deactivated admin going
+// from 388 user_roles rows to 1 is the fix working, and the assertion
+// called it a leak. Worse, it would have PASSED a regression where the
+// self-row became unreadable — so it was both wrong and blind in the
+// one direction that breaks a user-facing path.
+const SELF_MAX: Record<string, number> = { user_roles: 1, residents: 1 }
+
 type Probe = { role: string | null; company: string | null; properties: string | null; reads: Record<string, number | string> }
 
 let fails = 0
@@ -200,10 +218,28 @@ const main = async () => {
     chk(`${''.padEnd(14)}   ...and resolves to NULL now`, a.role === null, `now ${JSON.stringify(a.role)}`)
     chk(`${''.padEnd(14)}   ...company and properties also NULL`, a.company === null && a.properties === null,
       `${JSON.stringify(a.company)} / ${JSON.stringify(a.properties)}`)
-    const stillReads = TABLES.filter(t => typeof a.reads[t] === 'number' && (a.reads[t] as number) > 0)
-    chk(`${''.padEnd(14)}   ...and reads nothing it read before`,
-      stillReads.every(t => String(b.reads[t]) === String(a.reads[t]) && b.reads[t] === 0),
-      stillReads.length ? `🔴 still reads: ${stillReads.map(t => `${t}=${a.reads[t]} (was ${b.reads[t]})`).join(', ')}` : 'all zero or refused')
+    // 🔴 No TENANT data: every table down to its self-allowance.
+    const leaks = TABLES.filter(t => typeof a.reads[t] === 'number'
+      && (a.reads[t] as number) > (SELF_MAX[t] ?? 0))
+    chk(`${''.padEnd(14)}   ...reads no tenant data at all`, leaks.length === 0,
+      leaks.length
+        ? `🔴 LEAKS: ${leaks.map(t => `${t}=${a.reads[t]} (max ${SELF_MAX[t] ?? 0})`).join(', ')}`
+        : TABLES.map(t => `${t}=${a.reads[t]}`).join(' '))
+
+    // ...and the reduction is real where there was something to lose.
+    const lost = TABLES.filter(t => typeof b.reads[t] === 'number'
+      && (b.reads[t] as number) > (SELF_MAX[t] ?? 0))
+    chk(`${''.padEnd(14)}   ...and it LOST what it could see before`,
+      lost.every(t => typeof a.reads[t] === 'number' && (a.reads[t] as number) <= (SELF_MAX[t] ?? 0)),
+      lost.length ? `${lost.map(t => `${t} ${b.reads[t]}→${a.reads[t]}`).join(', ')}` : 'it had nothing beyond its own row to lose')
+
+    // 🔴 THE INVERSE CONTROL, which the first version was blind to.
+    // The self-row must SURVIVE. If user_roles drops to 0 the person
+    // cannot be told they are deactivated — they get a login loop, and
+    // "deactivated reads nothing" would have scored that as a pass.
+    chk(`${''.padEnd(14)}   🔴 ...but can STILL read its own row (so /deactivated works)`,
+      a.reads['user_roles'] === 1,
+      `user_roles=${a.reads['user_roles']} — must be 1, not 0`)
   }
 
   await cleanup('end')

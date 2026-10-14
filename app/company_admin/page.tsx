@@ -2230,6 +2230,13 @@ export default function CompanyAdminPortal() {
     // transition; reactivation goes through the tier-gate below.
     if (wasActive) {
       const confirmed = await promptDeactivatePropertyConfirm({
+        // 🔴 This path flips properties.is_active and audits. Nothing
+        // else — no bans, no user_roles, no residents, no vehicles. It
+        // shared the cascade's dialog and so told the operator it would
+        // "suspend account access" for people it never touched. Routing
+        // it through the same per-user machinery is the cascade work
+        // item; this is the copy telling the truth in the meantime.
+        variant: 'flag_only',
         supabase,
         propertyName: prop.name,
         company: prop.company || role?.company || '',
