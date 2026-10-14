@@ -15,7 +15,6 @@ import { tierCanSeeTowLog } from '../lib/tow-log-writes'
 // Permit-Door Piece 1 §1/§2 — centralized vehicle-insert state helper
 // (PM-Only → pending → approval is the metering chokepoint; all other
 // tiers → active, preserving today's behavior).
-import { initialVehicleState } from '../lib/vehicle-state'
 import { eligibleAgainAt } from '../lib/visitor-pass-cap'
 import { FEATURE_FLAGS } from '../lib/feature-flags'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
@@ -99,7 +98,7 @@ import { fetchUnitOccupancy, buildOccupancyStamp, type UnitOccupancyMap } from '
 const PM_CRM_ENABLED = true
 import { getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { normalizePlate, normalizeUnit, assertPlateUniqueAtProperty } from '../lib/plate'
-import { isPlateProhibitedError, plateProhibitedCopy } from '../lib/plate-prohibition-copy'
+import { plateProhibitedCopy } from '../lib/plate-prohibition-copy'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { generateTempPassword } from '../lib/temp-password'
 import { BarChart, Bar, LineChart, Line, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -2583,33 +2582,43 @@ export default function ManagerPortal() {
       const collisionErr = await assertPlateUniqueAtProperty(supabase, normalizedPlate, manager.name)
       if (collisionErr) { alert(collisionErr); return }
 
-      const initState = initialVehicleState(getCompanyContext().tier)
-      const { error } = await supabase.from('vehicles').insert([{
-        ...newVehicle,
-        plate: normalizedPlate,
-        unit: unit || newVehicle.unit,
-        property: manager.name,
-        // 🟢 2026-08-28 vehicles.company arc Commit 2 — manager.company
-        // is the properties row's company field (populated in the
-        // manager-bootstrap fetch at L465). Already in scope, no
-        // additional lookup.
-        company: manager.company,
-        resident_email: ownerEmail,
-        status: initState.status,
-        is_active: initState.is_active,
-        year: parseInt(newVehicle.year) || null,
-        permit_expiry: newVehicle.permit_expiry || null,
-      }])
-      if (error && isPlateProhibitedError(error)) {
-        // 🔴 2026-10-11 — explicit for a manager. This is a direct
-        // .insert(), one of the five paths that never pass through an
-        // RPC, which is why the refusal is a TRIGGER and not an RPC
-        // check: a manager adding a car by hand has to hit the same
-        // wall a resident does.
-        alert(plateProhibitedCopy('manager', normalizedPlate))
+      // 🔴 ROUTED THROUGH manager_add_vehicle like the live paths.
+      // These callers sit in !PM_CRM_ENABLED blocks, but that flag is a
+      // documented rollback switch — "flip to false to fall back to the
+      // legacy". Leaving this on a direct insert would mean a rollback
+      // breaks Add Vehicle the moment Stage 1c lands.
+      //
+      // permit_expiry is carried so this form behaves exactly as before.
+      const legacyAdd = await supabase.rpc('manager_add_vehicle', {
+        p_property:       manager.name,
+        p_unit:           unit || newVehicle.unit,
+        p_resident_email: ownerEmail,
+        p_plate:          normalizedPlate,
+        p_state:          newVehicle.state,
+        p_make:           newVehicle.make || null,
+        p_model:          newVehicle.model || null,
+        p_year:           parseInt(newVehicle.year) || null,
+        p_color:          newVehicle.color || null,
+        p_space:          newVehicle.space || null,
+        p_permit_expiry:  newVehicle.permit_expiry || null,
+      })
+      const lr = (legacyAdd.data ?? {}) as Record<string, unknown>
+      if (legacyAdd.error || lr.ok !== true) {
+        // The prohibition refusal keeps its own copy — a manager adding
+        // a car by hand has to hit the same wall a resident does.
+        if (lr.error === 'plate_prohibited') { alert(plateProhibitedCopy('manager', normalizedPlate)); return }
+        alert(
+          lr.error === 'plate_already_active'
+            ? `Plate ${lr.plate} is already active at this property${lr.existing_unit ? `, unit ${lr.existing_unit}` : ''}.`
+            : 'Could not add the vehicle. Try again, and tell us if it keeps happening.',
+        )
         return
       }
-if (error) { alert('Error: ' + error.message) }
+      const error = null as { message: string } | null
+      if (lr.action === 'added_pending') {
+        alert(`${normalizedPlate} was added and is waiting for approval by an authorized manager. It is not active yet.`)
+      }
+      if (error) { alert('Error: ' + error.message) }
       else {
         await logAudit({ action: 'ADD_VEHICLE', table_name: 'vehicles', new_values: { plate: normalizedPlate, make: newVehicle.make, model: newVehicle.model, unit: unit || newVehicle.unit, property: manager.name, resident_email: ownerEmail } })
         alert('Vehicle added!')
@@ -2631,40 +2640,41 @@ if (error) { alert('Error: ' + error.message) }
   // has had no move today. Also usable when the pre-e5369f8 companion-
   // vehicle proxy dropped a car and the plate needs to land now.
   //
-  // ── Shape (mirrors legacy addVehicle at :2260 ± tier discipline) ──
-  //   1. Collision — assertPlateUniqueAtProperty; enhanced 2026-08-08
-  //      to name the owning resident + unit (per-property scope makes
-  //      it safe within the manager's RLS reach)
-  //   2. Insert — status/is_active from initialVehicleState(tier).
-  //      PM-Only → pending; Enforcement/Legacy → active. Unit from the
-  //      DETAIL-VIEW resident row (never re-queried — same class as
-  //      the resident_row_precedence lock)
-  //   3. If PM-Only: call approveVehicleWrite inline to fire
-  //      approve_vehicle → callSyncOnAdd('permit'). One manager click,
-  //      right billing. The RPC server-side gates on can_approve_vehicles
-  //      per 20260628_permit_door_piece1_manager_approve_authority
-  //      (my earlier report cited a superseded migration; corrected
-  //      by grep across all CREATE OR REPLACE sites — recorded as an
-  //      extension in feedback_reading_vs_looking.md).
-  //   4. Audit — MANAGER_ADD_VEHICLE_FOR_RESIDENT (new action) with
-  //      tier_at_creation, auto_approved, approve_action so a later
-  //      billing question is answerable.
+  // ── Shape, as of Stage 1d (2026-10-14) ─────────────────────────
+  //   1. Collision — assertPlateUniqueAtProperty; kept because its
+  //      message names the owning resident + unit, which is richer
+  //      than the RPC's code. The RPC re-checks and is the authority.
+  //   2. ONE call to manager_add_vehicle. It decides active-vs-pending
+  //      and RETURNS which, plus a pending_reason. Unit comes from the
+  //      DETAIL-VIEW resident row, never re-queried — same class as
+  //      the resident_row_precedence lock.
+  //   3. Audit — MANAGER_ADD_VEHICLE_FOR_RESIDENT, action name
+  //      unchanged so existing queries keep working; `landed` and
+  //      `pending_reason` are what is new.
+  //
+  // 🔴 WHAT THIS REPLACED, and why the old comment was deleted rather
+  // than amended: the previous shape was
+  //   initialVehicleState(tier) → insert → if pending, approveVehicleWrite
+  //   inline → set tag
+  // Four steps, each able to half-succeed, with the active-vs-pending
+  // rule living in the CLIENT where three call sites could disagree.
+  // The server now owns that rule. Describing the old flow here would
+  // point the next reader at code that no longer exists.
   //
   // ── Partial-state note ──
-  //   If insert succeeds but the PM-Only inline approve fails, the row
-  //   is a benign PENDING vehicle in the approval queue — visible to
-  //   the manager, one click to finish. Contrast with the deactivation
-  //   cascades where a partial state produced a towable car; no
-  //   ordering ceremony needed on this path.
+  //   The RPC is one transaction, so there is no insert-succeeded-
+  //   approve-failed state left to reason about. What CAN be partial is
+  //   the optional parking tag: the vehicle lands, the tag may not, and
+  //   that is surfaced in the notice rather than failing the add —
+  //   returning ok:false would imply no vehicle was created and invite
+  //   a retry that duplicates the plate.
   //
   // ── Client gate (defense-in-depth) ──
-  //   PmResidentCrm's VehiclesPane already gates the button on
+  //   PmResidentCrm's VehiclesPane gates the button on
   //   canApproveVehicles && residentDisplayStatus(resident) === 'active'.
-  //   This handler assumes the caller passed those gates but does not
-  //   re-check — a crafted call from a compromised client would still
-  //   land at the server-side approve_vehicle gate (for PM-Only) and
-  //   the RLS on vehicles INSERT (for both tiers). Same defense-in-
-  //   depth pattern as approveVehicleWrite's caller sites.
+  //   This handler does not re-check: a crafted call now lands at
+  //   manager_add_vehicle, which gates scope AND authority server-side
+  //   and will store the row PENDING rather than refuse it outright.
   async function handleAddVehicleSubmit(
     resident: CrmResident,
     payload: AddVehiclePayload,
@@ -2682,104 +2692,61 @@ if (error) { alert('Error: ' + error.message) }
       return { ok: false, friendlyMessage: collisionErr }
     }
 
-    // 2. Determine initial state from tier
-    const ctx = getCompanyContext()
-    const initState = initialVehicleState(ctx.tier)
-
-    // 3. Insert vehicle
-    // 🟢 2026-09-07 vehicles.company arc parity — this handler
-    // (shipped 2026-08-08) was missed by the Aug 28 arc's writer
-    // sweep. NOT NULL constraint on vehicles.company (added Aug 28)
-    // fires without it. Same manager.company source the legacy
-    // addVehicle at L2462 and createResidentWithVehicle at L2826
-    // already use. Bug went unnoticed until Sep 7 A1/Green Acres
-    // customer report because this path fires only on "Add Vehicle
-    // for Resident" via PmResidentCrm's VehiclesPane.
-    const { data: insertData, error: insertErr } = await supabase
-      .from('vehicles')
-      .insert([{
-        plate:          payload.plate,
-        state:          payload.state,
-        make:           payload.make,
-        model:          payload.model,
-        year:           payload.year,
-        color:          payload.color,
-        unit:           residentUnit,
-        property:       propertyName,
-        company:        manager.company,
-        resident_email: residentEmail,
-        status:         initState.status,
-        is_active:      initState.is_active,
-      }])
-      .select('id')
-      .single()
-
-    if (insertErr || !insertData?.id) {
-      console.error('[MANAGER_ADD_VEHICLE_FOR_RESIDENT] insert failed:', insertErr?.message, { propertyName, residentEmail, plate: payload.plate })
-      return { ok: false, friendlyMessage: `Could not add vehicle: ${insertErr?.message ?? 'unknown error'}` }
+    // 2. 🔴 ONE CALL. manager_add_vehicle owns the decision.
+    //
+    // This used to be: initialVehicleState(tier) → insert → if pending,
+    // approveVehicleWrite inline → tag. Four steps, each of which could
+    // half-succeed, and the active-vs-pending rule lived in the client
+    // where a second call site could disagree with it. The RPC decides
+    // and RETURNS which, so the message below is the server's answer
+    // rather than a guess from the caller's role.
+    //
+    // The collision check above is KEPT: its message names the owning
+    // resident and unit, which is richer than the RPC's code. The RPC
+    // re-checks anyway and is the authority — this is belt, not brace.
+    const addRes = await supabase.rpc('manager_add_vehicle', {
+      p_property:       propertyName,
+      p_unit:           residentUnit,
+      p_resident_email: residentEmail,
+      p_plate:          payload.plate,
+      p_state:          payload.state,
+      p_make:           payload.make,
+      p_model:          payload.model,
+      p_year:           payload.year,
+      p_color:          payload.color,
+      p_tag:            payload.tag,
+    })
+    if (addRes.error) {
+      console.error('[MANAGER_ADD_VEHICLE_RPC] transport error:', addRes.error.message, { propertyName, residentEmail, plate: payload.plate })
+      return { ok: false, friendlyMessage: 'Could not add the vehicle. Try again, and tell us if it keeps happening.' }
     }
-    const vehicleId = String(insertData.id)
-
-    // 4. PM-Only: auto-approve inline so the permit meter fires
-    let approveAction: string | null = null
-    if (initState.status === 'pending') {
-      const companyIdForSync = await (async () => {
-        const { data } = await supabase.from('companies').select('id').ilike('name', managerCompany || '').maybeSingle()
-        return (data?.id as number | undefined) ?? null
-      })()
-      const approve = await approveVehicleWrite(supabase, {
-        vehicleId,
-        property: propertyName,
-        managerNote: null,
-        companyIdForSync,
-      })
-      approveAction = approve.action
-      if (!approve.ok) {
-        // Partial state — insert landed, approve failed. Vehicle is a
-        // benign PENDING row in the approval queue. Audit the intent
-        // (below) with auto_approved=false; UI surfaces success with
-        // a note the manager can finish the approval manually.
-        console.warn('[MANAGER_ADD_VEHICLE_FOR_RESIDENT] inline approve failed; vehicle left pending', {
-          vehicleId, propertyName, residentEmail, plate: payload.plate,
-          approveError: approve.error,
-        })
+    const r = (addRes.data ?? {}) as Record<string, unknown>
+    if (r.ok !== true) {
+      // Plain sentences keyed on the RPC's codes — never its raw text.
+      return {
+        ok: false,
+        friendlyMessage:
+          r.error === 'plate_already_active'
+            ? `Plate ${r.plate} is already active at this property${r.existing_unit ? `, unit ${r.existing_unit}` : ''}. Deactivate that record first, or check the plate.`
+          : r.error === 'plate_prohibited'
+            ? 'That plate is not permitted at this property. Open the prohibition list for the reason and history.'
+          : r.error === 'property_not_in_scope'
+            ? 'This property is not in your scope. Refresh and try again.'
+          : r.error === 'property_not_active'
+            ? 'This property is not active, so vehicles cannot be added to it.'
+          : r.error === 'plate_required'   ? 'Enter a license plate.'
+          : r.error === 'unit_required'    ? 'A unit is required.'
+          : r.error === 'not_signed_in'    ? 'Your session has expired. Sign in again.'
+          : 'Could not add the vehicle. Try again, and tell us if it keeps happening.',
       }
     }
 
-    // 4b. Parking tag, if one was entered.
-    //
-    // 🔴 AFTER the approve step, not before: set_vehicle_tag requires
-    // is_active AND status='active', so on a pm_only tier the vehicle
-    // is still pending until step 4 runs.
-    //
-    // 🔴 A TAG FAILURE MUST NOT LOSE THE VEHICLE. The car is already
-    // added and approved by here; refusing the whole operation over a
-    // duplicate tag number would throw away work the manager has done
-    // and, worse, invite them to retry the insert. So the tag outcome
-    // is reported in the success message instead.
-    let tagNote: string | null = null
-    if (payload.tag) {
-      const { data: tagData, error: tagErr } = await supabase.rpc('set_vehicle_tag', {
-        p_vehicle_id: Number(insertData.id),
-        p_tag:        payload.tag,
-      })
-      const tr = (tagData ?? {}) as Record<string, unknown>
-      if (tagErr || tr.ok !== true) {
-        tagNote =
-          tr.error === 'tag_already_assigned'
-            ? `The vehicle was added, but parking tag ${tr.tag_number} is already assigned to ${tr.held_by_plate}${tr.held_by_unit ? `, unit ${tr.held_by_unit}` : ''}. Assign a different number on the vehicle card.`
-            : tr.error === 'parking_tags_not_enabled'
-            ? 'The vehicle was added, but parking tags are not switched on for this property, so no tag was recorded.'
-            : tr.error === 'vehicle_not_active'
-            ? 'The vehicle was added but is awaiting approval, so the parking tag was not recorded yet. Add it on the vehicle card once approved.'
-            : 'The vehicle was added, but the parking tag could not be recorded. Add it on the vehicle card.'
-        console.warn('[MANAGER_ADD_VEHICLE_FOR_RESIDENT] tag not recorded', {
-          vehicleId, plate: payload.plate, tagError: tagErr?.message ?? tr.error,
-        })
-      }
-    }
+    const vehicleId = String(r.vehicle_id)
+    const landedActive = r.action === 'added_active'
+    const tagResult = (r.tag_result ?? null) as Record<string, unknown> | null
 
-    // 5. Audit
+    // 3. Audit. The action name is unchanged so existing queries keep
+    // working; `landed` and `pending_reason` are what is new.
     await logAudit({
       action: 'MANAGER_ADD_VEHICLE_FOR_RESIDENT',
       table_name: 'vehicles',
@@ -2795,24 +2762,34 @@ if (error) { alert('Error: ' + error.message) }
         property:           propertyName,
         resident_id:        resident.id,
         resident_email:     residentEmail,
-        tier_at_creation:   ctx.tier,
-        initial_status:     initState.status,
-        auto_approved:      initState.status === 'pending' && approveAction === 'approved',
-        approve_action:     approveAction,
+        landed:             r.status,
+        pending_reason:     r.pending_reason ?? null,
         parking_tag:        payload.tag ?? null,
-        parking_tag_recorded: payload.tag ? tagNote === null : null,
+        parking_tag_recorded: payload.tag ? tagResult?.ok === true : null,
+        via:                'manager_add_vehicle',
       },
     })
 
-    // 6. Close modal + refresh
+    // 4. Close + refresh, then say what actually happened.
     //
-    // A tag that did not land is surfaced rather than swallowed: the
-    // add succeeded, so ok stays true, but the manager is told the tag
-    // needs a second step. Reporting success for the whole operation
-    // when half of it did not happen is the failure mode to avoid.
+    // 🔴 The add succeeded either way, so ok stays true — returning
+    // false would imply no vehicle was created and invite a retry that
+    // duplicates the plate. A row that landed PENDING, or a tag that
+    // did not record, is surfaced in the notice instead. Reporting
+    // plain success when half of it did not happen is the failure mode.
     setAddVehicleFor(null)
     await refreshCrmData()
-    setTagNotice(tagNote)   // null clears any previous notice
+    setTagNotice(
+      !landedActive
+        ? `${payload.plate} was added and is waiting for approval by an authorized manager. It is not active yet.`
+      : (payload.tag && tagResult?.ok !== true)
+        ? (tagResult?.error === 'tag_already_assigned'
+            ? `${payload.plate} was added, but parking tag ${tagResult?.tag_number} is already assigned to ${tagResult?.held_by_plate}${tagResult?.held_by_unit ? `, unit ${tagResult.held_by_unit}` : ''}. Assign a different number on the vehicle card.`
+            : tagResult?.error === 'parking_tags_not_enabled'
+            ? `${payload.plate} was added, but parking tags are not switched on for this property, so no tag was recorded.`
+            : `${payload.plate} was added, but the parking tag could not be recorded. Add it on the vehicle card.`)
+        : null,
+    )
     return { ok: true }
   }
 
@@ -3034,31 +3011,39 @@ if (error) { alert('Error: ' + error.message) }
           alert(cascadeCollisionErr + '\n\nThe resident record was created without the vehicle. Add it later via Edit Resident.')
         } else {
 
-        const cascadeInitState = initialVehicleState(getCompanyContext().tier)
-        const { error: vehErr } = await supabase.from('vehicles').insert([{
-          plate: normalizePlate(newResident.vehicle_plate),
-          state: newResident.vehicle_state || 'TX',
-          make: newResident.vehicle_make.trim() || null,
-          model: newResident.vehicle_model.trim() || null,
-          year: parseInt(newResident.vehicle_year) || null,
-          color: newResident.vehicle_color.trim() || null,
-          unit: newResident.unit,
-          property: manager.name,
-          // 🟢 2026-08-28 vehicles.company arc Commit 2 — same
-          // manager.company source as the Add-Vehicle path above.
-          company: manager.company,
+        // 🔴 Same RPC as the other two add paths. The resident row is
+        // ALREADY committed by here, so a vehicle refusal must never
+        // read as "the resident failed" — the existing soft-alert
+        // boundary below is preserved exactly for that reason.
+        const cascadeAdd = await supabase.rpc('manager_add_vehicle', {
+          p_property:       manager.name,
+          p_unit:           newResident.unit,
           // B166 — owner stamp. targetEmail already lowercased at L522.
-          resident_email: targetEmail,
-          is_active: cascadeInitState.is_active,
-          status:    cascadeInitState.status,
-        }])
-        if (vehErr && isPlateProhibitedError(vehErr)) {
+          p_resident_email: targetEmail,
+          p_plate:          normalizePlate(newResident.vehicle_plate),
+          p_state:          newResident.vehicle_state || 'TX',
+          p_make:           newResident.vehicle_make.trim() || null,
+          p_model:          newResident.vehicle_model.trim() || null,
+          p_year:           parseInt(newResident.vehicle_year) || null,
+          p_color:          newResident.vehicle_color.trim() || null,
+        })
+        const cr = (cascadeAdd.data ?? {}) as Record<string, unknown>
+        if (cr.error === 'plate_prohibited') {
           // Add-resident-with-vehicle. The resident row is already in;
           // refusing the VEHICLE must not read as "the resident failed".
           alert(plateProhibitedCopy('manager', newResident.vehicle_plate) + ' The resident was added without it.')
           return
         }
-if (vehErr) {
+        // Shaped like the old { error } so the boundary below is
+        // untouched: log + soft alert + CONTINUE, never throw.
+        const vehErr: { message: string } | null =
+          cascadeAdd.error ? { message: cascadeAdd.error.message }
+          : cr.ok !== true ? { message: String(cr.error ?? 'unknown') }
+          : null
+        if (!vehErr && cr.action === 'added_pending') {
+          alert(`${newResident.vehicle_plate} was added and is waiting for approval by an authorized manager. It is not active yet.`)
+        }
+        if (vehErr) {
           // Inline boundary — log + soft alert + CONTINUE. Do NOT throw.
           console.error('[B167-vehicle-insert-failed]', { residentEmail: targetEmail, plate: newResident.vehicle_plate, error: vehErr.message })
           alert('Resident created successfully, but the vehicle could not be added: ' + vehErr.message + '\n\nYou can add the vehicle later via the Edit Resident → Vehicles section.')
@@ -5018,7 +5003,14 @@ if (vehErr) {
         {activeTab === 'residents' && PM_CRM_ENABLED && manager && tagNotice && (
           <div style={{ background:'#161b26', border:'1px solid #a16207', borderRadius:'10px', padding:'12px 14px', marginBottom:'12px', display:'flex', gap:'10px', alignItems:'flex-start' }}>
             <div style={{ flex:1 }}>
-              <p style={{ color:'#fbbf24', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>Parking tag not recorded</p>
+              <p style={{ color:'#fbbf24', fontSize:'11px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 4px', fontWeight:'bold' }}>
+                {/* One banner, two kinds of partial success: the vehicle
+                    landed pending, or the tag did not record. The heading
+                    is derived rather than fixed, because "Parking tag not
+                    recorded" over a waiting-for-approval message would be
+                    simply wrong. */}
+                {tagNotice.includes('waiting for approval') ? 'Vehicle added — waiting for approval' : 'Parking tag not recorded'}
+              </p>
               <p style={{ color:'#cbd5e1', fontSize:'12.5px', margin:0, lineHeight:'1.5' }}>{tagNotice}</p>
             </div>
             <button onClick={() => setTagNotice(null)}
