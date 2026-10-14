@@ -31,21 +31,32 @@ import { BULK_BUCKET, BULK_OBJECT_PATH, MAX_BULK_BYTES } from './bulk-onboarding
 // rather than ILIKE: there is no pattern side to escape, and trim()
 // covers the trailing-whitespace class.
 
-export interface BulkAuthOk {
+export interface BulkCompanyOk {
   ok: true
   email: string
   userId: string
   company: { id: number; name: string }
+  db: SupabaseClient
+}
+export interface BulkAuthOk extends BulkCompanyOk {
   property: { id: number; name: string }
   objectPath: string
-  db: SupabaseClient
 }
 export interface BulkAuthErr { ok: false; status: number; code: string; message: string }
 export type BulkAuth = BulkAuthOk | BulkAuthErr
+export type BulkCompany = BulkCompanyOk | BulkAuthErr
 
 const no = (status: number, code: string, message: string): BulkAuthErr => ({ ok: false, status, code, message })
 
-export async function authorizeBulkUpload(objectPathRaw: unknown): Promise<BulkAuth> {
+/**
+ * Everything up to and including the flag — no object path involved.
+ *
+ * Split out so the page's context endpoint runs the IDENTICAL gate
+ * rather than a lookalike. A context call that says "enabled" where
+ * the upload would refuse is how a customer ends up staring at a form
+ * that cannot submit.
+ */
+export async function authorizeBulkCompany(): Promise<BulkCompany> {
   const sb = await createSupabaseServerClient()
   const { data: { user }, error: authErr } = await sb.auth.getUser()
   if (authErr || !user?.email || !user.id) return no(401, 'unauthenticated', 'Please sign in again.')
@@ -89,6 +100,24 @@ export async function authorizeBulkUpload(objectPathRaw: unknown): Promise<BulkA
     return no(403, 'bulk_onboarding_not_enabled', 'Bulk resident upload is not switched on for your account. Contact support to have it enabled.')
   }
 
+  return { ok: true, email: user.email, userId: user.id,
+           company: { id: company.id as number, name: company.name as string }, db }
+}
+
+/**
+ * The same gate, plus the property derived from the object path.
+ *
+ * 🔴 THE PATH IS A CLAIM. Putting the property id in it means there is
+ * no second property identity in the payload that could disagree — but
+ * it is still client-chosen, so the id is looked up and its company
+ * compared. A successful upload is not taken as proof of anything.
+ */
+export async function authorizeBulkUpload(objectPathRaw: unknown): Promise<BulkAuth> {
+  const auth = await authorizeBulkCompany()
+  if (!auth.ok) return auth
+  const { db, company } = auth
+  const companyName = company.name.trim()
+
   const objectPath = typeof objectPathRaw === 'string' ? objectPathRaw : ''
   const m = BULK_OBJECT_PATH.exec(objectPath)
   if (!m) return no(400, 'bad_object_path', 'That upload could not be identified. Please upload the file again.')
@@ -108,10 +137,9 @@ export async function authorizeBulkUpload(objectPathRaw: unknown): Promise<BulkA
   if (!ok) return no(403, 'property_not_in_scope', 'That property is not one you can upload for. Please choose a property from the list and try again.')
 
   return {
-    ok: true, email: user.email, userId: user.id,
-    company: { id: company.id as number, name: company.name as string },
+    ...auth,
     property: { id: prop!.id as number, name: prop!.name as string },
-    objectPath, db,
+    objectPath,
   }
 }
 

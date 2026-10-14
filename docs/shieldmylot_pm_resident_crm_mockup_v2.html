@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShieldMyLot — PM Resident CRM v2 (mockup)</title>
+<style>
+  :root{
+    --bg:#14161c; --panel:#1b1e26; --panel2:#21252f; --panel3:#262b36;
+    --line:#2b303c; --line2:#353b48;
+    --gold:#C9A227; --gold-soft:rgba(201,162,39,.14); --gold-line:rgba(201,162,39,.4);
+    --green:#5fd08a; --green-bg:rgba(46,160,90,.15); --green-line:rgba(46,160,90,.45);
+    --red:#df7676; --red-bg:rgba(180,64,64,.15); --red-line:rgba(180,64,64,.45);
+    --amber:#f0a340; --amber-bg:rgba(224,145,47,.15); --amber-line:rgba(224,145,47,.55);
+    --blue:#6fb2e0; --blue-bg:rgba(80,150,210,.14); --blue-line:rgba(80,150,210,.4);
+    --text:#f2f3f5; --muted:#8b919e; --faint:#5a606c;
+    --radius:12px;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1300px;margin:0 auto;padding:0 20px 60px}
+  .brand{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);max-width:1300px;margin:0 auto}
+  .brand .logo{display:flex;align-items:center;gap:9px;font-weight:800;color:var(--gold)}
+  .brand .logo .mark{width:24px;height:24px;border-radius:6px;background:linear-gradient(135deg,var(--gold),#8a6f18);display:grid;place-items:center;color:#14161c;font-size:13px;font-weight:900}
+  .brand .nav{display:flex;gap:18px;color:var(--muted);font-size:13px}
+  .brand .who{color:var(--faint);font-size:12px}
+  .subttl{text-align:center;color:var(--muted);font-size:12px;padding:14px 0 10px}
+  .prop{display:flex;justify-content:space-between;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:12px}
+  .prop h1{margin:0 0 3px;font-size:19px} .prop .meta{color:var(--muted);font-size:13px} .prop .auth{color:var(--faint);font-size:12px;margin-top:6px;font-style:italic}
+  .btn{border:1px solid var(--line2);background:var(--panel2);color:var(--text);border-radius:8px;padding:8px 13px;font-size:12.5px;cursor:pointer;font-family:inherit;font-weight:600}
+  .btn:hover{background:var(--panel3)}
+  .btn.approve{background:var(--green-bg);border-color:var(--green-line);color:var(--green)}
+  .btn.danger{background:var(--red-bg);border-color:var(--red-line);color:var(--red)}
+  .btn.gold{background:var(--gold);border-color:var(--gold);color:#14161c}
+
+  /* insights strip */
+  .insights{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
+  @media(max-width:820px){.insights{grid-template-columns:repeat(2,1fr)}}
+  .ins{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .ins .n{font-size:22px;font-weight:800;line-height:1}
+  .ins .l{color:var(--muted);font-size:11.5px;margin-top:5px}
+  .ins.act .n{color:var(--gold)} .ins.rev .n{color:var(--amber)} .ins.ok .n{color:var(--green)}
+
+  .tabs{display:flex;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:6px;margin-bottom:16px;overflow:auto}
+  .tabs .t{padding:8px 13px;border-radius:8px;color:var(--muted);font-size:13px;white-space:nowrap;cursor:pointer}
+  .tabs .t.on{background:var(--gold);color:#14161c;font-weight:700}
+  .tabs .t .badge{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 4px;margin-left:5px;border-radius:9px;background:#c0392b;color:#fff;font-size:10px;font-weight:800;vertical-align:middle}
+
+  .crm{display:grid;grid-template-columns:370px 1fr;gap:16px}
+  @media(max-width:920px){.crm{grid-template-columns:1fr}}
+  .list{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;align-self:start}
+  .lhead{padding:14px 14px 10px;border-bottom:1px solid var(--line)}
+  .lhead .row1{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
+  .lhead h2{margin:0;font-size:15px} .lhead .count{color:var(--faint);font-size:12px}
+  .search{width:100%;background:var(--panel2);border:1px solid var(--line2);border-radius:9px;padding:9px 11px;color:var(--text);font-size:13px;font-family:inherit}
+  .search::placeholder{color:var(--faint)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .chip{padding:5px 10px;border-radius:20px;border:1px solid var(--line2);color:var(--muted);font-size:12px;cursor:pointer;background:transparent}
+  .chip.on{border-color:var(--gold-line);background:var(--gold-soft);color:var(--gold);font-weight:600}
+  .chip .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-right:5px}
+  .bulk{margin:11px 14px 0;padding:10px 12px;border:1px solid var(--gold-line);background:var(--gold-soft);border-radius:9px;display:none;align-items:center;justify-content:space-between;gap:10px}
+  .bulk.show{display:flex}
+  .bulk .txt{font-size:12.5px;color:var(--gold)}
+  .rows{max-height:600px;overflow:auto}
+  .r{display:flex;gap:11px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer;border-left:3px solid transparent}
+  .r:hover{background:var(--panel2)} .r.sel{background:var(--panel2);border-left-color:var(--gold)}
+  .av{width:34px;height:34px;border-radius:9px;background:var(--panel3);display:grid;place-items:center;font-weight:700;color:var(--gold);flex:none;font-size:13px}
+  .r .body{min-width:0;flex:1}
+  .r .nm{font-weight:600;font-size:13.5px}
+  .r .sub{color:var(--faint);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .r .vbadges{display:flex;gap:5px;margin-top:5px;flex-wrap:wrap}
+  .vb{font-size:10.5px;padding:2px 7px;border-radius:20px;font-weight:700;display:inline-flex;gap:4px;align-items:center}
+  .vb.ok{background:var(--green-bg);color:var(--green)} .vb.pend{background:var(--gold-soft);color:var(--gold)}
+  .vb.rev{background:var(--amber-bg);color:var(--amber)} .vb.spc{background:var(--blue-bg);color:var(--blue)}
+  .pill{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;flex:none}
+  .pill.active{background:var(--green-bg);color:var(--green);border:1px solid var(--green-line)}
+  .pill.pending{background:var(--gold-soft);color:var(--gold);border:1px solid var(--gold-line)}
+  .addbtn{margin:12px 14px;display:block;width:calc(100% - 28px);background:var(--gold);color:#14161c;font-weight:700;border:none;border-radius:9px;padding:11px;font-size:13px;cursor:pointer}
+
+  .detail{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;min-height:600px}
+  .dhead{padding:18px 20px 16px;border-bottom:1px solid var(--line)}
+  .dtop{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+  .idn{display:flex;gap:13px;align-items:center}
+  .av.big{width:46px;height:46px;font-size:17px;border-radius:11px}
+  .dtop h2{margin:0;font-size:19px;display:flex;align-items:center;gap:10px}
+  .contact{color:var(--muted);font-size:12.5px;margin-top:3px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .facts{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  @media(max-width:560px){.facts{grid-template-columns:repeat(2,1fr)}}
+  .fact{background:var(--panel);padding:13px 16px}
+  .fact .k{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px;display:flex;align-items:center;gap:5px}
+  .fact .v{font-size:14px;font-weight:600} .fact .v .mut{color:var(--faint);font-weight:400}
+  .src{font-size:9px;color:var(--faint);border:1px solid var(--line2);border-radius:5px;padding:1px 4px;text-transform:none;letter-spacing:0;font-weight:600}
+  .edit{font-size:10px;color:var(--gold);cursor:pointer;margin-left:6px;opacity:.8}
+
+  .stabs{display:flex;gap:4px;padding:12px 16px 0;overflow:auto}
+  .stab{padding:9px 13px;border-radius:8px 8px 0 0;color:var(--muted);font-size:13px;cursor:pointer;font-weight:600;white-space:nowrap}
+  .stab.on{color:var(--gold);border-bottom:2px solid var(--gold)}
+  .stab .mini{display:inline-grid;place-items:center;min-width:15px;height:15px;padding:0 3px;margin-left:4px;border-radius:8px;font-size:9.5px;font-weight:800;vertical-align:middle;background:var(--panel3);color:var(--muted)}
+  .stab .mini.hot{background:#c0392b;color:#fff}
+  .pane{padding:16px}
+
+  .section-h{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);margin:2px 0 10px;font-weight:700}
+  .callout{border:1px solid var(--gold-line);background:var(--gold-soft);border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .callout .c-txt{font-size:13px}
+  .callout .c-txt b{color:var(--gold)}
+
+  .veh{border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px;background:var(--panel2)}
+  .veh.rev{border-color:var(--amber-line)} .veh.pend{border-color:var(--gold-line)}
+  .vrow{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .plate{font-family:var(--mono);font-weight:800;font-size:16px;letter-spacing:1px;background:#0e1015;border:1.5px solid var(--line2);border-radius:6px;padding:5px 11px;display:inline-block}
+  .plate .st{display:block;font-size:7px;letter-spacing:2px;color:var(--faint);text-align:center;margin-bottom:1px;font-family:var(--sans);font-weight:700}
+  .vmeta{color:var(--muted);font-size:12.5px;margin-top:7px}
+  .vstat{font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;flex:none;white-space:nowrap}
+  .vstat.ok{background:var(--green-bg);color:var(--green);border:1px solid var(--green-line)}
+  .vstat.pend{background:var(--gold-soft);color:var(--gold);border:1px solid var(--gold-line)}
+  .vstat.rev{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-line)}
+  .caution{margin-top:12px;background:var(--amber-bg);border:1px solid var(--amber-line);border-radius:8px;padding:10px 12px;font-size:12.5px;display:flex;gap:9px;align-items:flex-start}
+  .caution .ic{color:var(--amber);font-size:15px;margin-top:1px} .caution b{color:var(--amber)}
+  .platechange{margin-top:11px;display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:13px;flex-wrap:wrap}
+  .platechange .old{opacity:.55;text-decoration:line-through} .platechange .arr{color:var(--amber)}
+  .vactions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+
+  .lineitem{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;margin-bottom:10px;background:var(--panel2)}
+  .lineitem .li-main{min-width:0}
+  .lineitem .li-t{font-weight:600;font-size:13.5px}
+  .lineitem .li-s{color:var(--muted);font-size:12px;margin-top:2px}
+  .li-tag{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;flex:none;white-space:nowrap}
+  .li-tag.ok{background:var(--green-bg);color:var(--green)} .li-tag.pend{background:var(--gold-soft);color:var(--gold)}
+  .li-tag.blue{background:var(--blue-bg);color:var(--blue)} .li-tag.red{background:var(--red-bg);color:var(--red)}
+
+  .tl{position:relative;padding-left:22px}
+  .tl:before{content:"";position:absolute;left:6px;top:4px;bottom:4px;width:2px;background:var(--line)}
+  .ev{position:relative;padding:0 0 16px} .ev:last-child{padding-bottom:0}
+  .ev .dot{position:absolute;left:-22px;top:3px;width:11px;height:11px;border-radius:50%;background:var(--panel3);border:2px solid var(--faint)}
+  .ev.g .dot{border-color:var(--green)} .ev.gold .dot{border-color:var(--gold)} .ev.a .dot{border-color:var(--amber)} .ev.r .dot{border-color:var(--red)}
+  .ev .ttl{font-size:13px;font-weight:600} .ev .when{color:var(--faint);font-size:11.5px} .ev .desc{color:var(--muted);font-size:12.5px;margin-top:2px}
+
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:640px){.grid2{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--panel2)}
+  .note-in{width:100%;background:var(--panel2);border:1px solid var(--line2);border-radius:9px;padding:11px;color:var(--text);font-family:inherit;font-size:13px;min-height:64px;resize:vertical}
+  .tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+  .tag{font-size:11.5px;padding:4px 10px;border-radius:20px;background:var(--panel3);border:1px solid var(--line2);color:var(--muted)}
+  .tag.gold{color:var(--gold);border-color:var(--gold-line);background:var(--gold-soft)}
+  .empty{padding:44px 20px;text-align:center;color:var(--faint)} .empty .big{font-size:15px;color:var(--muted);margin-bottom:5px}
+
+  .mocknote{max-width:1300px;margin:18px auto 0;padding:11px 16px;border:1px dashed var(--line2);border-radius:10px;color:var(--faint);font-size:12px;background:rgba(201,162,39,.03)}
+  .mocknote b{color:var(--gold)}
+</style>
+</head>
+<body>
+<div class="brand">
+  <div class="logo"><span class="mark">S</span> ShieldMyLot</div>
+  <div class="nav"><span>Dashboard</span><span>Help</span></div>
+  <div class="who">chris.tobar94+happy@gmail.com · Sign Out</div>
+</div>
+<div class="wrap">
+  <div class="subttl">Property Manager Portal</div>
+  <div class="prop">
+    <div><h1>French Quarter</h1><div class="meta">234 France · Happy Man · A1 Test Run 2</div>
+      <div class="auth">No authorization document on file</div></div>
+    <button class="btn">Sign Out</button>
+  </div>
+
+  <div class="insights">
+    <div class="ins act"><div class="n" id="i-pending">4</div><div class="l">Need approval</div></div>
+    <div class="ins"><div class="n" id="i-spc">1</div><div class="l">Space requests</div></div>
+    <div class="ins rev"><div class="n" id="i-rev">1</div><div class="l">Plates under review</div></div>
+    <div class="ins ok"><div class="n" id="i-active">4</div><div class="l">Active residents</div></div>
+    <div class="ins"><div class="n" style="color:var(--gold)">63</div><div class="l">Approved permits <span style="color:var(--faint)">· metered*</span></div></div>
+  </div>
+
+  <div class="tabs">
+    <div class="t">Overview</div>
+    <div class="t on">Residents <span class="badge">4</span></div>
+    <div class="t">Spaces</div>
+    <div class="t">Visitors</div>
+    <div class="t">Authorized Guests</div>
+    <div class="t">Violations</div>
+    <div class="t">Plate Lookup</div>
+    <div class="t">Settings</div>
+    <div class="t">Activity</div>
+  </div>
+
+  <div class="crm">
+    <div class="list">
+      <div class="lhead">
+        <div class="row1"><h2>Residents</h2><span class="count" id="count">7 people</span></div>
+        <input class="search" id="search" placeholder="Search name, email, unit, plate…" />
+        <div class="chips" id="chips">
+          <div class="chip on" data-f="all">All</div>
+          <div class="chip" data-f="active">Active</div>
+          <div class="chip" data-f="needs"><span class="dot"></span>Needs approval</div>
+          <div class="chip" data-f="review">Plate under review</div>
+        </div>
+      </div>
+      <div class="bulk" id="bulk">
+        <div class="txt"><b id="bulkn">4</b> residents with pending items</div>
+        <button class="btn gold" onclick="alert('Mock: approves each pending resident (cascades to their vehicles) + standalone pending vehicles.')">Approve all pending</button>
+      </div>
+      <div class="rows" id="rows"></div>
+      <button class="addbtn">+ Add Resident</button>
+    </div>
+    <div class="detail" id="detail"></div>
+  </div>
+
+  <div class="mocknote">
+    <b>Mockup v2.</b> Sample data. Design intents baked in:
+    <b>Approvals folded into residents</b> — pending vehicles + space requests live on each profile, and the “Needs approval” filter is the fast bulk lane (Approve all).
+    <b>Approving a resident cascades to their pending vehicles</b> (Model B).
+    <b>Assigned Space</b> reads the spaces table (single source of truth).
+    <b>Vehicle counts</b> derived from the property’s one vehicle fetch (no per-resident query → no new RLS load).
+    <b>Violations</b> are track-conditional (shown only when enforcement is enabled).
+    <br><span style="color:var(--faint)">*Approved permits is the billed meter on PM-Only plans; on other tracks it shows as an activity metric only.</span>
+  </div>
+</div>
+
+<script>
+const DATA = [
+  { id:1, name:"Alice Anderson", unit:"101", email:"resident1@demotowing.com", phone:"713-555-3001",
+    status:"active", lease:"May 31, 2026", reg:"Jan 12, 2026", tags:["Owner-occupant"], notes:"",
+    spaces:[{label:"A-14",authorized:[{plate:"HDX 4471",owner:"Alice Anderson",unit:"101"},{plate:"KLM 8820",owner:"Alice Anderson",unit:"101"},{plate:"GST 5521",owner:"Sam Anderson",unit:"101"}]}],
+    vehicles:[{plate:"HDX 4471",ymm:"2023 Toyota RAV4",color:"Silver",status:"ok"},{plate:"KLM 8820",ymm:"2019 Honda Civic",color:"Black",status:"ok"}],
+    spaceReq:null, guests:[{name:"J. Miller",plate:"GST 5521",window:"Jul 04 – Jul 06",status:"active"}],
+    passes:[{plate:"VZT 3390",window:"expires Jul 03, 9:00 PM",status:"active"}],
+    activity:[{t:"Registration approved",w:"Jan 13, 2026",d:"Approved by chris.tobar94+happy — 2 vehicles cascaded.",c:"g"},{t:"Self-registered",w:"Jan 12, 2026",d:"Submitted via property QR.",c:"gold"}]},
+  { id:2, name:"Marcus Reed", unit:"204", email:"mreed@example.com", phone:"713-555-2044",
+    status:"active", lease:"Aug 15, 2026", reg:"Feb 03, 2026", tags:[], notes:"Prefers text over email.",
+    spaces:[{label:"B-07",authorized:[{plate:"PRT 1190",owner:"Marcus Reed",unit:"204"}]}],
+    vehicles:[{plate:"PRT 1190",ymm:"2021 Ford F-150",color:"Blue",status:"ok"},{plate:"—",ymm:"2024 Tesla Model 3",color:"White",status:"pend"}],
+    spaceReq:null, guests:[], passes:[],
+    activity:[{t:"Vehicle submitted for approval",w:"Jun 28, 2026",d:"2024 Tesla Model 3 — awaiting review.",c:"gold"},{t:"Registration approved",w:"Feb 04, 2026",d:"Approved — 1 vehicle cascaded.",c:"g"}]},
+  { id:3, name:"Dana Whitfield", unit:"118", email:"dwhitfield@example.com", phone:"713-555-1188",
+    status:"active", lease:"Nov 30, 2026", reg:"Mar 09, 2026", tags:["Temp plate"], notes:"Paper tag at move-in; permanent plate expected early July.",
+    spaces:[{label:"A-22",authorized:[{plate:"TX-TEMP-882",owner:"Dana Whitfield",unit:"118"}]}],
+    vehicles:[{plate:"TX-TEMP-882",ymm:"2025 Kia Sportage",color:"Gray",status:"rev",change:{old:"TX-TEMP-882",neu:"RNK 5521",submitted:"Jul 02, 2026"}}],
+    spaceReq:null, guests:[{name:"R. Delacroix",plate:"HNT 9012",window:"Jul 03 – Jul 05",status:"active"}],
+    passes:[{plate:"HNT 9012",window:"expires Jul 05, 11:59 PM",status:"active"},{plate:"BQR 1188",window:"expires Jul 04, 6:00 PM",status:"active"}],
+    activity:[{t:"Plate change submitted",w:"Jul 02, 2026",d:"TX-TEMP-882 → RNK 5521. Flagged Do-Not-Tow pending review.",c:"a"},{t:"Registration approved",w:"Mar 10, 2026",d:"Approved with temporary plate on file.",c:"g"}]},
+  { id:4, name:"Priya Nair", unit:"309", email:"pnair@example.com", phone:"713-555-3099",
+    status:"active", lease:"Dec 31, 2026", reg:"Apr 21, 2026", tags:["3 vehicles · 2 spaces"], notes:"",
+    spaces:[{label:"C-03",authorized:[{plate:"GGR 7788",owner:"Priya Nair",unit:"309"},{plate:"WQZ 2210",owner:"Priya Nair",unit:"309"}]},{label:"C-04",authorized:[{plate:"BNM 5543",owner:"Priya Nair",unit:"309"}]}],
+    vehicles:[{plate:"GGR 7788",ymm:"2022 Subaru Outback",color:"Green",status:"ok"},{plate:"WQZ 2210",ymm:"2020 Mazda CX-5",color:"Red",status:"ok"},{plate:"BNM 5543",ymm:"2018 Nissan Leaf",color:"White",status:"ok"}],
+    spaceReq:null, guests:[], passes:[],
+    activity:[{t:"Registration approved",w:"Apr 22, 2026",d:"Approved — 3 vehicles cascaded.",c:"g"}]},
+  { id:5, name:"Jes Tobar", unit:"2", email:"chris.tobar94+jes@gmail.com", phone:"—",
+    status:"pending", lease:"—", reg:"Jul 03, 2026", tags:["New registration"], notes:"",
+    spaces:[],
+    vehicles:[{plate:"JES 1234",ymm:"2025 Toyota Camry",color:"Gray",status:"pend"}],
+    spaceReq:{label:"Requested a covered space",submitted:"Jul 03, 2026"}, guests:[], passes:[],
+    activity:[{t:"Space requested",w:"Jul 03, 2026",d:"Requested a covered space — awaiting assignment.",c:"gold"},{t:"Self-registered",w:"Jul 03, 2026",d:"Submitted via property QR. Awaiting approval.",c:"gold"}]},
+  { id:6, name:"Joe Tobar", unit:"3", email:"chris.tobar94+joe@gmail.com", phone:"—",
+    status:"pending", lease:"—", reg:"Jul 03, 2026", tags:["New registration"], notes:"",
+    spaces:[],
+    vehicles:[{plate:"EUY 8876",ymm:"2010 Toyota RAV4",color:"Black",status:"pend"}],
+    spaceReq:null, guests:[], passes:[],
+    activity:[{t:"Self-registered",w:"Jul 03, 2026",d:"Submitted via property QR. Awaiting approval.",c:"gold"}]},
+  { id:7, name:"May Tobar", unit:"5", email:"chris.tobar94+may@gmail.com", phone:"—",
+    status:"pending", lease:"—", reg:"Jul 03, 2026", tags:["New registration"], notes:"No vehicle submitted yet.",
+    spaces:[],
+    vehicles:[], spaceReq:null, guests:[], passes:[],
+    activity:[{t:"Self-registered",w:"Jul 03, 2026",d:"Submitted via property QR. No vehicle on file.",c:"gold"}]},
+];
+
+let filter="all", search="", selId=1, stab="overview";
+const initials=n=>n.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+const counts=v=>({ok:v.filter(x=>x.status==="ok").length,pend:v.filter(x=>x.status==="pend").length,rev:v.filter(x=>x.status==="rev").length});
+const needsApproval=r=>r.status==="pending"||r.vehicles.some(v=>v.status==="pend")||!!r.spaceReq;
+
+function match(r){
+  if(filter==="active"&&r.status!=="active")return false;
+  if(filter==="needs"&&!needsApproval(r))return false;
+  if(filter==="review"&&!r.vehicles.some(v=>v.status==="rev"))return false;
+  if(search){const q=search.toLowerCase();const hay=(r.name+" "+r.email+" "+r.unit+" "+r.vehicles.map(v=>v.plate).join(" ")).toLowerCase();if(!hay.includes(q))return false;}
+  return true;
+}
+function renderList(){
+  const rows=document.getElementById("rows");
+  const shown=DATA.filter(match);
+  document.getElementById("count").textContent=shown.length+" "+(shown.length===1?"person":"people");
+  const nNeeds=DATA.filter(needsApproval).length;
+  document.getElementById("bulk").classList.toggle("show",filter==="needs"&&nNeeds>0);
+  document.getElementById("bulkn").textContent=nNeeds;
+  rows.innerHTML=shown.map(r=>{
+    const c=counts(r.vehicles);
+    const badges=[c.ok?`<span class="vb ok">✓ ${c.ok}</span>`:"",c.pend?`<span class="vb pend">• ${c.pend} pending</span>`:"",c.rev?`<span class="vb rev">⚠ ${c.rev} review</span>`:"",r.spaceReq?`<span class="vb spc">◇ space req</span>`:"",(!c.ok&&!c.pend&&!c.rev&&!r.spaceReq)?`<span class="vb" style="color:var(--faint)">no vehicles</span>`:""].join("");
+    return `<div class="r ${r.id===selId?"sel":""}" data-id="${r.id}"><div class="av">${initials(r.name)}</div>
+      <div class="body"><div class="nm">${r.name}</div><div class="sub">Unit ${r.unit} · ${r.email}</div>
+      <div class="vbadges">${badges}</div></div>
+      <div class="pill ${r.status}">${r.status==="active"?"Active":"Pending"}</div></div>`;
+  }).join("")||`<div class="empty"><div class="big">No residents match</div>Try a different filter or search.</div>`;
+  rows.querySelectorAll(".r").forEach(el=>el.onclick=()=>{selId=+el.dataset.id;stab="overview";renderList();renderDetail();});
+}
+
+function vehCard(v){
+  const st=v.status==="ok"?`<span class="vstat ok">Approved</span>`:v.status==="pend"?`<span class="vstat pend">Pending approval</span>`:`<span class="vstat rev">Plate under review</span>`;
+  let extra="";
+  if(v.status==="rev"){extra=`<div class="caution"><span class="ic">⚠</span><div><b>Do not tow — plate change under review.</b> Authorization is on hold while the manager reviews a new plate. The prior plate stays valid until approved.</div></div>
+    <div class="platechange"><span class="old">${v.change.old}</span><span class="arr">→</span><span>${v.change.neu}</span><span style="font-family:var(--sans);color:var(--faint);font-size:11.5px">submitted ${v.change.submitted}</span></div>
+    <div class="vactions"><button class="btn approve">Approve new plate</button><button class="btn">Keep current plate</button><button class="btn danger" onclick="alert('Mock: removes enforcement protection, keeps the record. Vehicle drops out of the approved/do-not-tow set.')">Deactivate</button></div>`;}
+  else if(v.status==="pend"){extra=`<div class="vactions"><button class="btn approve">Approve</button><button class="btn danger">Decline</button></div>`;}
+  else {extra=`<div class="vactions"><button class="btn">Edit</button><button class="btn danger" onclick="alert('Mock: deactivating removes enforcement protection and frees the plate, but keeps the full record for audit. Confirm before applying.')">Deactivate</button></div>`;}
+  return `<div class="veh ${v.status}"><div class="vrow"><div><div class="plate"><span class="st">TEXAS</span>${v.plate}</div><div class="vmeta">${v.ymm} · ${v.color}</div></div>${st}</div>${extra}</div>`;
+}
+
+function renderDetail(){
+  const r=DATA.find(x=>x.id===selId);const d=document.getElementById("detail");
+  if(!r){d.innerHTML=`<div class="empty"><div class="big">Select a resident</div>Pick someone to see their profile.</div>`;return;}
+  const c=counts(r.vehicles);
+  const vsum=[c.ok?`${c.ok} approved`:"",c.pend?`${c.pend} pending`:"",c.rev?`${c.rev} under review`:""].filter(Boolean).join(" · ")||"none on file";
+  const pendCount=c.pend+(r.spaceReq?1:0)+c.rev;
+
+  let pane="";
+  if(stab==="overview"){
+    const pendingCallout = needsApproval(r) ? `<div class="callout"><div class="c-txt">
+      <b>Action needed.</b> ${r.status==="pending"?"New registration awaiting approval. ":""}${c.pend?c.pend+" vehicle(s) pending. ":""}${r.spaceReq?"1 space request. ":""}${c.rev?"1 plate under review.":""}</div>
+      ${r.status==="pending"?`<button class="btn approve" title="Cascades to pending vehicles">Approve resident</button>`:`<button class="btn approve">Approve all for this resident</button>`}</div>`:"";
+    pane = pendingCallout + `<div class="grid2">
+      <div class="card"><div class="section-h">Authorized guests</div>${r.guests.length?r.guests.map(g=>`<div style="font-size:13px;margin-bottom:6px">${g.name} · <span style="font-family:var(--mono)">${g.plate}</span> <span style="color:var(--faint)">(${g.window})</span></div>`).join(""):`<div style="color:var(--faint);font-size:12.5px">None on file.</div>`}</div>
+      <div class="card"><div class="section-h">Active visitor passes</div>${r.passes.length?r.passes.map(p=>`<div style="font-size:13px;margin-bottom:6px"><span style="font-family:var(--mono)">${p.plate}</span> <span style="color:var(--faint)">· ${p.window}</span></div>`).join(""):`<div style="color:var(--faint);font-size:12.5px">None currently parked.</div>`}</div></div>
+      <div class="card" style="margin-top:14px"><div class="section-h">Notes <span class="edit">✎ edit</span></div>
+        <textarea class="note-in" placeholder="Add a private note…">${r.notes||""}</textarea>
+        <div class="tags">${(r.tags.length?r.tags:[]).map((t,i)=>`<span class="tag ${i===0?"gold":""}">${t}</span>`).join("")}<span class="tag">+ tag</span></div></div>`;
+  } else if(stab==="vehicles"){
+    pane = (c.pend>1?`<div style="text-align:right;margin-bottom:10px"><button class="btn gold">Approve all vehicles</button></div>`:"")+
+      (r.vehicles.length?r.vehicles.map(vehCard).join(""):`<div class="empty"><div class="big">No vehicles on file</div>This resident hasn't submitted a vehicle yet.</div>`);
+  } else if(stab==="spaces"){
+    const spaceCards = r.spaces.length ? r.spaces.map(s=>{
+      const roommates = s.authorized.filter(a=>a.owner!==r.name);
+      const plates = s.authorized.map(a=>{
+        const mate = a.owner!==r.name;
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-top:1px solid var(--line)">
+          <span style="font-size:12.5px"><span style="font-family:var(--mono);color:var(--text)">${a.plate}</span> <span style="color:var(--muted)">· ${a.owner}${mate?` · Unit ${a.unit}`:""}</span></span>
+          ${mate?`<span class="li-tag blue">roommate</span>`:`<span class="li-tag ok">this resident</span>`}</div>`;
+      }).join("");
+      return `<div class="card" style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="li-t">Space ${s.label} <span class="li-tag ok" style="margin-left:4px">Assigned</span></div>
+          <button class="btn danger" onclick="alert('Mock: releases ${s.label} for reassignment and keeps the assignment history. Confirm before applying.')">Release</button>
+        </div>
+        <div class="section-h" style="margin:2px 0 2px">Plates authorized on this space${roommates.length?` · shared with ${roommates.length} other`:""}</div>
+        ${plates}</div>`;
+    }).join("") : `<div style="color:var(--faint);font-size:12.5px;margin-bottom:12px">No space assigned.</div>`;
+    const req=r.spaceReq?`<div class="lineitem" style="border-color:var(--gold-line)"><div class="li-main"><div class="li-t">${r.spaceReq.label}</div><div class="li-s">Requested ${r.spaceReq.submitted} · awaiting assignment</div></div><div style="display:flex;gap:8px"><button class="btn approve">Assign space</button><button class="btn danger">Decline</button></div></div>`:"";
+    pane = `<div class="section-h">Assigned space(s)</div>${spaceCards}${req}`;
+  } else if(stab==="guests"){
+    pane = r.guests.length?r.guests.map(g=>`<div class="lineitem"><div class="li-main"><div class="li-t">${g.name}</div><div class="li-s"><span style="font-family:var(--mono)">${g.plate}</span> · ${g.window}</div></div><span class="li-tag blue">${g.status}</span></div>`).join(""):`<div class="empty"><div class="big">No authorized guests</div>Guests this resident authorizes will appear here.</div>`;
+  } else {
+    pane = `<div class="tl">${r.activity.map(e=>`<div class="ev ${e.c}"><div class="dot"></div><div class="ttl">${e.t}</div><div class="when">${e.w}</div><div class="desc">${e.d}</div></div>`).join("")}</div>`;
+  }
+
+  const approveBtn=r.status==="pending"?`<button class="btn approve" title="Cascades to pending vehicles">Approve resident</button>`:"";
+  d.innerHTML=`<div class="dhead"><div class="dtop">
+    <div class="idn"><div class="av big">${initials(r.name)}</div><div>
+      <h2>${r.name} <span class="pill ${r.status}">${r.status==="active"?"Active":"Pending"}</span></h2>
+      <div class="contact">Unit ${r.unit} · ${r.email}${r.phone!=="—"?" · "+r.phone:""}</div></div></div>
+    <div class="actions">${approveBtn}<button class="btn">Edit</button><button class="btn">Reset password</button><button class="btn danger">Deactivate</button></div>
+  </div></div>
+  <div class="facts">
+    <div class="fact"><div class="k">Assigned space(s) <span class="src">spaces table</span></div><div class="v">${r.spaces.length?r.spaces.map(s=>s.label).join(", "):'<span class="mut">—</span>'}</div></div>
+    <div class="fact"><div class="k">Vehicles</div><div class="v">${vsum}</div></div>
+    <div class="fact"><div class="k">Lease end <span class="edit">✎</span></div><div class="v">${r.lease==="—"?'<span class="mut">—</span>':r.lease}</div></div>
+    <div class="fact"><div class="k">Registered</div><div class="v">${r.reg}</div></div>
+  </div>
+  <div class="stabs">
+    <div class="stab ${stab==="overview"?"on":""}" data-s="overview">Overview${pendCount?` <span class="mini hot">${pendCount}</span>`:""}</div>
+    <div class="stab ${stab==="vehicles"?"on":""}" data-s="vehicles">Vehicles <span class="mini">${r.vehicles.length}</span></div>
+    <div class="stab ${stab==="spaces"?"on":""}" data-s="spaces">Spaces${r.spaceReq?` <span class="mini hot">1</span>`:""}</div>
+    <div class="stab ${stab==="guests"?"on":""}" data-s="guests">Guests <span class="mini">${r.guests.length}</span></div>
+    <div class="stab ${stab==="activity"?"on":""}" data-s="activity">Activity</div>
+  </div>
+  <div class="pane">${pane}</div>`;
+  d.querySelectorAll(".stab").forEach(el=>el.onclick=()=>{stab=el.dataset.s;renderDetail();});
+}
+
+document.getElementById("chips").querySelectorAll(".chip").forEach(el=>el.onclick=()=>{
+  filter=el.dataset.f;document.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",c.dataset.f===filter));renderList();
+});
+document.getElementById("search").oninput=e=>{search=e.target.value;renderList();};
+renderList();renderDetail();
+</script>
+</body>
+</html>

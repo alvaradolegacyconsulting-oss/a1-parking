@@ -193,6 +193,12 @@ interface CompanyDetail {
   created_at:           string | null
   stripe_customer_id:   string | null
   tdlr_license_number:  string | null
+  // Phase A — the only thing that lets a tenant submit a resident
+  // onboarding file. Written through set_company_bulk_onboarding(),
+  // never by a direct UPDATE: companies_protected_columns_guard
+  // refuses an `authenticated` write to this column, and the RPC is
+  // what audits the PRIOR value.
+  bulk_onboarding_enabled: boolean | null
 }
 
 const GOLD = '#C9A227'
@@ -254,6 +260,7 @@ export default function AdminConsolePage() {
   const [deactivateReason, setDeactivateReason] = useState('')
   const [deactivating, setDeactivating] = useState(false)
   const [reactivating, setReactivating] = useState(false)
+  const [bulkToggling, setBulkToggling] = useState(false)
   // B228 Phase 4 — platform_settings state (Default Branding + Default
   // Support Info + Base Subscription Pricing). SAME id=1 row as legacy
   // /admin Platform tab writes — no fork; both surfaces write to
@@ -513,6 +520,62 @@ export default function AdminConsolePage() {
     alert(`Reactivated. Users restored: ${result.users_affected ?? 0}.`)
   }
 
+  // Phase A — bulk onboarding switch.
+  //
+  // 🔴 Through set_company_bulk_onboarding(), not an UPDATE.
+  // companies_protected_columns_guard refuses a direct `authenticated`
+  // write to this column, so an UPDATE here would fail; and the RPC is
+  // what writes the audit row carrying the PRIOR value, because
+  // "turned it on" and "re-saved it already on" are different events.
+  //
+  // The RPC takes the company NAME and is super-admin-only. It returns
+  // company_not_found rather than a quiet no-op for a name that does
+  // not resolve.
+  async function setBulkOnboarding(enabled: boolean) {
+    if (!drawerCompany) return
+    const verb = enabled ? 'Switch ON' : 'Switch OFF'
+    if (!window.confirm(
+      `${verb} bulk resident onboarding for ${drawerCompany.name}?\n\n` +
+      (enabled
+        ? 'Their company administrators will be able to upload a resident file for review. Nothing loads without your approval.'
+        : 'Their administrators will no longer be able to upload or submit. Batches already submitted are unaffected.')
+    )) return
+
+    setBulkToggling(true)
+    // 🔴 p_company, not p_company_name — the parameter names are the
+    // RPC's API under PostgREST, and a wrong one is PGRST202
+    // ("could not find the function"), not a type error. Read from the
+    // function definition, not from memory.
+    const { data, error } = await supabase.rpc('set_company_bulk_onboarding', {
+      p_company: drawerCompany.name,
+      p_enabled: enabled,
+    })
+    setBulkToggling(false)
+    if (error) {
+      alert('Could not change the switch: ' + error.message)
+      return
+    }
+    // The RPC reports refusals in `error` inside a 200 body — ok:false
+    // with not_signed_in / not_super_admin / company_not_found. A
+    // missing company is an explicit error there rather than a quiet
+    // no-op, so it must not be read as success.
+    const result = data as { ok?: boolean; error?: string; was?: boolean; changed?: boolean } | null
+    if (!result?.ok) {
+      alert('The switch did not change: ' + (result?.error ?? 'unknown'))
+      return
+    }
+    // 🔴 Read it back rather than trusting the call. The whole point of
+    // this switch is that it is the thing standing between a tenant and
+    // a bulk write, so "we asked" is not the same as "it is set".
+    const { data: back } = await supabase
+      .from('companies').select('bulk_onboarding_enabled').eq('id', drawerCompany.id).maybeSingle()
+    const now = (back as { bulk_onboarding_enabled?: boolean } | null)?.bulk_onboarding_enabled === true
+    setDrawerCompany({ ...drawerCompany, bulk_onboarding_enabled: now })
+    if (now !== enabled) {
+      alert(`The switch reads back as ${now ? 'ON' : 'OFF'}, not ${enabled ? 'ON' : 'OFF'}. Check the company before relying on it.`)
+    }
+  }
+
   // B228 Phase 4 — validate permit_tiers before save (matches legacy
   // /admin logic; catalog script would reject a malformed bands JSONB).
   function validatePermitTiers(tiers: PermitTier[]): string | null {
@@ -642,7 +705,7 @@ export default function AdminConsolePage() {
     setByPropExpanded(false)
     const { data, error } = await supabase
       .from('companies')
-      .select('id, name, primary_contact_name, billing_email, phone, address, tier, tier_type, account_state, is_active, created_at, stripe_customer_id, tdlr_license_number')
+      .select('id, name, primary_contact_name, billing_email, phone, address, tier, tier_type, account_state, is_active, created_at, stripe_customer_id, tdlr_license_number, bulk_onboarding_enabled')
       .eq('id', companyId)
       .single()
     if (error) {
@@ -1712,6 +1775,40 @@ export default function AdminConsolePage() {
               <DetailRow label="Created"        value={drawerCompany.created_at?.slice(0, 10) ?? null} />
               <DetailRow label="Stripe customer" value={drawerCompany.stripe_customer_id} mono />
               <DetailRow label="TDLR license"   value={drawerCompany.tdlr_license_number} />
+
+              {/* ── Phase A — bulk resident onboarding switch ───────
+                  In the drawer, not the row: the row is clickable, and
+                  a switch inside a clickable row is a misclick that
+                  opens a tenant's bulk-write path.
+                  State is shown before the action, and the label says
+                  what the switch does rather than what it is called. */}
+              <hr style={{ border: 'none', borderTop: '1px solid #2a2f3d', margin: '14px 0' }} />
+              <div>
+                <p style={{ color: GOLD, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 8px' }}>
+                  Bulk resident onboarding
+                </p>
+                <p style={{ color: drawerCompany.bulk_onboarding_enabled ? '#4caf50' : '#888', fontSize: 12, margin: '0 0 8px' }}>
+                  {drawerCompany.bulk_onboarding_enabled
+                    ? 'ON — their administrators can upload a resident file for your review.'
+                    : 'OFF — their administrators cannot upload or submit.'}
+                </p>
+                <button
+                  onClick={() => setBulkOnboarding(!drawerCompany.bulk_onboarding_enabled)}
+                  disabled={bulkToggling}
+                  style={{
+                    background: 'transparent',
+                    border: `1px solid ${drawerCompany.bulk_onboarding_enabled ? '#f44336' : GOLD}`,
+                    color: drawerCompany.bulk_onboarding_enabled ? '#f44336' : GOLD,
+                    borderRadius: 6, padding: '7px 14px', fontSize: 12, fontWeight: 'bold',
+                    cursor: bulkToggling ? 'wait' : 'pointer', opacity: bulkToggling ? 0.5 : 1,
+                  }}>
+                  {bulkToggling ? 'Saving…' : drawerCompany.bulk_onboarding_enabled ? 'Switch off' : 'Switch on'}
+                </button>
+                <p style={{ color: '#666', fontSize: 11, margin: '8px 0 0', lineHeight: 1.5 }}>
+                  Switching this on lets them submit. It does not load anything —
+                  every batch still needs your approval.
+                </p>
+              </div>
 
               {/* 2026-07-20 — Subscriber footprint. Collapsed by default;
                   expand for top-line role counts + optional login gap;

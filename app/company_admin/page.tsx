@@ -181,6 +181,11 @@ export default function CompanyAdminPortal() {
   // → button hidden (these states already redirect via gateAccountState;
   // this is belt-and-suspenders against race/stale-state edge cases).
   const [companyAccountState, setCompanyAccountState] = useState<string | null>(null)
+  // Phase A — whether this tenant may submit a resident onboarding
+  // file. Render only: the storage policy, may_bulk_upload_at() and
+  // both routes each check it themselves. Defaults to false, so a read
+  // that never lands hides the link rather than offering a dead end.
+  const [bulkOnboardingEnabled, setBulkOnboardingEnabled] = useState(false)
   // B144 (B66.5 commit 4.3): invite status map (email → 'activated'|'invited'|'unknown')
   // populated after fetchCompanyUsers via POST /api/admin/invite-status.
   const [inviteStatuses, setInviteStatuses] = useState<Record<string, 'activated' | 'invited' | 'unknown'>>({})
@@ -824,7 +829,13 @@ export default function CompanyAdminPortal() {
     if (roleData.role !== 'admin' && roleData.company) {
       const { data: companyRow } = await supabase
         .from('companies')
-        .select('id, name, display_name, account_state, past_due_grace_until')
+        // Phase A: bulk_onboarding_enabled rides along on the query
+        // that is already happening rather than adding a second one.
+        // Verified a company_admin can read the column before adding it
+        // here — a column-grant refusal would have failed this select
+        // and sent every CA to /account-cancelled on the null-check
+        // below.
+        .select('id, name, display_name, account_state, past_due_grace_until, bulk_onboarding_enabled')
         .ilike('name', roleData.company)
         .maybeSingle()
       // Defensive null-check — fail closed. See app/lib/portal-account-gate.ts
@@ -836,6 +847,7 @@ export default function CompanyAdminPortal() {
       // B66.5.1: persist account_state for downstream Q4 defense-in-depth
       // (Drivers tab Resend button disable on suspended/cancelled).
       setCompanyAccountState(companyRow.account_state as string)
+      setBulkOnboardingEnabled(companyRow.bulk_onboarding_enabled === true)
       const gate = gateAccountState(companyRow.account_state as AccountState)
       if (gate.kind === 'redirect') {
         if (gate.reason === 'cancelled') await supabase.auth.signOut()
@@ -4913,6 +4925,25 @@ export default function CompanyAdminPortal() {
                   refuses a non-CA server-side and E2 proves it. */}
               {isCA && (
                 <button style={styleFor(isSelected('plate-activity'))} onClick={() => goto('plate-activity')}>Plate Activity</button>
+              )}
+              {/* Phase A resident onboarding upload. 🔴 MOUNTED IN THE
+                  LIVE NAV, deliberately. The legacy nav below is dead
+                  while CA_CRM_REDESIGN is true, and it is where the
+                  B113 "Bulk Upload →" link still sits — so that link
+                  renders nowhere today and /company_admin/bulk-upload
+                  is reachable only by typing the URL. Filed, not fixed
+                  here. Two features were already lost to that branch in
+                  two days.
+                  Shown only when the tenant's flag is on, because a
+                  link every CA can see and no CA can use is noise. That
+                  is a render decision: the bucket policy, the RPC and
+                  both routes each read the flag themselves. */}
+              {bulkOnboardingEnabled && (
+                <button
+                  onClick={() => { window.location.href = '/company_admin/resident-upload' }}
+                  style={{ ...styleFor(false), border: '1px solid #C9A227', color: '#C9A227' }}>
+                  Resident Upload →
+                </button>
               )}
               <button style={styleFor(isSelected('insights'))} onClick={() => goto('insights')}>Insights</button>
               <button style={styleFor(isSelected('billing'))} onClick={() => goto('billing')}>Billing</button>

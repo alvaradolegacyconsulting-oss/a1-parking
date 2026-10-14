@@ -312,6 +312,36 @@ const main = async () => {
         admRead.error ? '🔴 REFUSED — Jose cannot read what he must approve: ' + why(admRead) : 'ok')
     }
 
+    // ── 9b. the console's write path, by its real API ───────────────
+    // 🔴 PARAMETER NAMES ARE THE API UNDER PostgREST. The console's
+    // first version called p_company_name; the function declares
+    // p_company, and the result is PGRST202 "could not find the
+    // function" — not a type error, and not something tsc or a build
+    // can see. Asserted both ways so the call site cannot drift back.
+    console.log('\n── 9b. set_company_bulk_onboarding, as the console calls it ──')
+    const wrongName = await ADM.client.rpc('set_company_bulk_onboarding',
+      { p_company_name: CO, p_enabled: true })
+    chk('the wrong parameter name is refused (PGRST202, not a type error)',
+      !!wrongName.error && /could not find the function/i.test(wrongName.error.message),
+      wrongName.error ? wrongName.error.code ?? 'error' : '🔴 ACCEPTED — the signature is not what the console assumes')
+
+    const viaRpc = await ADM.client.rpc('set_company_bulk_onboarding', { p_company: CO, p_enabled: true })
+    const rr = viaRpc.data as { ok?: boolean; was?: boolean; changed?: boolean } | null
+    chk('p_company + p_enabled returns ok with the PRIOR value', !viaRpc.error && rr?.ok === true && typeof rr?.was === 'boolean',
+      viaRpc.error ? '🔴 ' + viaRpc.error.message.slice(0, 50) : `was=${rr?.was} changed=${rr?.changed}`)
+    const readBack = await db.from('companies').select('bulk_onboarding_enabled').eq('name', CO).maybeSingle()
+    chk('   ...and the column really changed', (readBack.data as { bulk_onboarding_enabled?: boolean } | null)?.bulk_onboarding_enabled === true,
+      'read back from companies, not inferred from the call')
+    const missing = await ADM.client.rpc('set_company_bulk_onboarding', { p_company: `ZZ No Such Co ${S}`, p_enabled: true })
+    const mr = missing.data as { ok?: boolean; error?: string } | null
+    chk('an unresolvable company is an explicit error, not a quiet no-op',
+      mr?.ok === false && mr?.error === 'company_not_found', mr?.error ?? '🔴 reported success')
+    // A non-admin must not reach it at all.
+    const caTry = await CA.client.rpc('set_company_bulk_onboarding', { p_company: CO, p_enabled: false })
+    const cr = caTry.data as { ok?: boolean; error?: string } | null
+    chk('a company_admin cannot flip their own switch',
+      !!caTry.error || cr?.ok === false, caTry.error ? caTry.error.message.slice(0, 40) : (cr?.error ?? '🔴 ALLOWED'))
+
     // ── 10. byte ceiling ────────────────────────────────────────────
     console.log('\n── 10. byte ceiling ──')
     const big = await up(CA.client, `${mine.id}/${uuid()}.csv`, 'text/csv', new Uint8Array(3 * 1024 * 1024))

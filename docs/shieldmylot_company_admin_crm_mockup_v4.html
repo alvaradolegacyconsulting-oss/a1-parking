@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShieldMyLot — Company Admin Portal (CRM redesign v2)</title>
+<style>
+  :root{
+    --bg:#0a0e15; --panel:#121826; --panel-2:#0f1420; --card:#161d2c;
+    --line:#232c3d; --line-soft:#1b2331;
+    --gold:#c9a227; --gold-soft:rgba(201,162,39,.12);
+    --text:#e9edf4; --muted:#8b95a6; --faint:#5b6576;
+    --green:#4caf50; --green-bg:rgba(76,175,80,.14);
+    --red:#e5595b; --red-bg:rgba(229,89,91,.12);
+    --purple:#8b6dff; --purple-bg:rgba(139,109,255,.12);
+    --blue:#5b9bd5;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;padding-bottom:80px}
+  .wrap{max-width:1160px;margin:0 auto;padding:0 20px}
+  .mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+
+  .topbar{border-bottom:1px solid var(--line);background:var(--panel-2);position:sticky;top:0;z-index:5}
+  .topbar .wrap{display:flex;align-items:center;gap:14px;height:52px}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:800;color:var(--gold)}
+  .logo .mark{width:22px;height:22px;border-radius:5px;background:linear-gradient(135deg,#1c2536,#0f1420);border:1px solid var(--gold);display:grid;place-items:center;font-size:11px}
+  .topnav{display:flex;gap:4px;margin-left:8px}
+  .topnav span{font-size:13px;color:var(--muted);padding:6px 10px;border-radius:6px}
+  .topnav span.on{background:var(--gold-soft);color:var(--gold);font-weight:600}
+  .who{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--faint)}
+  .btn-ghost{border:1px solid var(--line);background:transparent;color:var(--muted);padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer}
+  .eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:700}
+
+  .account{padding:26px 0 6px}
+  .acct-head{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap}
+  .d-avatar{width:52px;height:52px;border-radius:12px;background:var(--card);border:1px solid var(--line);display:grid;place-items:center;font-size:18px;font-weight:800;color:var(--gold)}
+  .acct-title{font-size:22px;font-weight:800;letter-spacing:-.01em}
+  .acct-sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .badges{display:flex;gap:7px;align-items:center;margin-top:8px}
+  .logo-edit{position:absolute;bottom:-9px;left:50%;transform:translateX(-50%);font-size:8.5px;font-weight:700;color:var(--gold);background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:1px 6px;white-space:nowrap;cursor:pointer;letter-spacing:.02em}
+  .badge{font-size:10.5px;font-weight:800;letter-spacing:.08em;padding:3px 9px;border-radius:20px;text-transform:uppercase}
+  .badge.enf{color:var(--purple);border:1px solid var(--purple);background:var(--purple-bg)}
+  .badge.leg{color:var(--gold);border:1px solid var(--gold);background:var(--gold-soft)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px var(--green-bg)}
+  .acct-actions{margin-left:auto;display:flex;gap:8px;align-items:flex-start}
+  .btn{font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:8px;cursor:pointer;border:1px solid transparent;white-space:nowrap}
+  .btn.edit{border-color:var(--line);background:var(--panel);color:var(--text)}
+  .btn.danger{border-color:rgba(229,89,91,.4);background:var(--red-bg);color:var(--red)}
+  .btn.gold{background:var(--gold);color:#141414;border-color:var(--gold)}
+  .btn.stripe{border-color:rgba(91,155,213,.5);background:rgba(91,155,213,.1);color:var(--blue)}
+
+  .plan-label{margin:22px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .plan-label .hint{font-size:11px;color:var(--faint)}
+  .plan{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .metric{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden}
+  .metric .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:700}
+  .metric .v{font-size:22px;font-weight:800;margin-top:6px;letter-spacing:-.02em}
+  .metric .u{font-size:11.5px;color:var(--muted);margin-top:3px}
+  .metric.accent{border-color:rgba(201,162,39,.35)}
+  .metric.accent::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--gold)}
+  .metric .tag{position:absolute;top:12px;right:14px;font-size:9.5px;font-weight:700;letter-spacing:.06em;color:var(--faint);text-transform:uppercase}
+  .tax-note{font-size:11px;color:var(--faint);margin-top:8px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  .whatsin{margin-top:10px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .whatsin summary{list-style:none;padding:11px 16px;background:var(--panel);cursor:pointer;font-size:12.5px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .whatsin summary::-webkit-details-marker{display:none}
+  .whatsin summary::before{content:"▸";color:var(--faint)}
+  .whatsin[open] summary::before{content:"▾"}
+  .whatsin .inbody{padding:6px 16px 12px;display:grid;grid-template-columns:1fr 1fr;gap:2px 24px}
+  .inrow{display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid var(--line-soft);color:var(--muted)}
+  .inrow .yes{color:var(--green)}
+  .inrow .cap{color:var(--text)}
+
+  .variant-note{margin-top:12px;background:var(--panel);border:1px dashed var(--line);border-radius:12px;padding:12px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .variant-note .vn-tag{font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--blue);border:1px solid var(--blue);border-radius:20px;padding:2px 8px;text-transform:uppercase;white-space:nowrap}
+  .variant-note .vn-body{font-size:12px;color:var(--muted);flex:1;min-width:220px}
+  .variant-note .meter{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:9px 14px;min-width:220px}
+  .variant-note .meter .mk{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:700}
+  .variant-note .meter .mv{font-size:17px;font-weight:800;margin-top:2px}
+  .variant-note .meter .mu{font-size:10.5px;color:var(--muted)}
+
+  .sectabs{display:flex;gap:4px;margin:30px 0 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .sectab{font-size:13.5px;font-weight:600;color:var(--muted);padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;position:relative;top:1px}
+  .sectab.on{color:var(--gold);border-bottom-color:var(--gold)}
+  .sectab .count{font-size:11px;color:var(--faint);margin-left:5px}
+  .sectab .tk{font-size:9px;color:var(--purple);margin-left:5px;letter-spacing:.04em}
+
+  .crm{display:grid;grid-template-columns:320px 1fr;border:1px solid var(--line);border-top:none;border-radius:0 0 14px 14px;overflow:hidden;min-height:400px}
+  .list{border-right:1px solid var(--line);background:var(--panel-2)}
+  .list-head{padding:12px 14px;border-bottom:1px solid var(--line-soft)}
+  .search{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12.5px;color:var(--muted)}
+  .list-add{font-size:12px;color:var(--gold);border:1px dashed rgba(201,162,39,.4);border-radius:8px;padding:7px 10px;text-align:center;margin:10px 12px;cursor:pointer}
+  .row{padding:11px 14px;border-bottom:1px solid var(--line-soft);cursor:pointer;display:flex;align-items:center;gap:11px}
+  .row:hover{background:var(--panel)}
+  .row.sel{background:var(--panel);box-shadow:inset 3px 0 0 var(--gold)}
+  .avatar{width:30px;height:30px;border-radius:8px;background:var(--card);border:1px solid var(--line);display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--muted);flex-shrink:0}
+  .row .rn{font-size:13.5px;font-weight:600}
+  .row .rs{font-size:11.5px;color:var(--faint)}
+  .pill{font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.04em}
+  .pill.active{color:var(--green);background:var(--green-bg)}
+  .ml-auto{margin-left:auto}
+
+  .detail{padding:20px 22px}
+  .d-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line-soft);padding-bottom:16px}
+  .d-av2{width:44px;height:44px;border-radius:11px;background:var(--card);border:1px solid var(--line);display:grid;place-items:center;font-size:15px;font-weight:800;color:var(--gold)}
+  .d-title{font-size:18px;font-weight:800}
+  .d-sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .d-actions{margin-left:auto;display:flex;gap:8px}
+  .facts{display:grid;grid-template-columns:1fr 1fr;gap:0 26px;margin-top:16px}
+  .fact{padding:11px 0;border-bottom:1px solid var(--line-soft)}
+  .fact .fk{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:700}
+  .fact .fv{font-size:13.5px;margin-top:3px;display:flex;align-items:center;gap:8px}
+  .fact .fv.link{color:var(--gold)}
+  .qr{width:34px;height:34px;border-radius:6px;background:
+      conic-gradient(from 0deg,#0000 0 25%,#e9edf4 0 50%,#0000 0 75%,#e9edf4 0),
+      conic-gradient(from 90deg,#e9edf4 0 25%,#0000 0 50%,#e9edf4 0 75%,#0000 0);
+      background-size:8px 8px;background-color:#0a0e15;border:2px solid #e9edf4;flex-shrink:0}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+  .chip{font-size:11px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:3px 10px}
+  .warn{font-size:11.5px;color:#d9a441}
+
+  .group{border:1px solid var(--line);border-radius:12px;margin-top:14px;overflow:hidden}
+  .group-head{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--panel)}
+  .group-head .gt{font-weight:700;font-size:13.5px;color:var(--gold)}
+  .group-head .gc{font-size:11px;color:var(--faint);background:var(--gold-soft);border-radius:20px;padding:2px 9px;font-weight:700}
+  .group-head .tk{margin-left:auto;font-size:10px;color:var(--faint);letter-spacing:.06em;text-transform:uppercase}
+  .prow{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--line-soft)}
+  .prow .pn{font-size:13.5px;font-weight:600}
+  .prow .pe{font-size:11.5px;color:var(--faint)}
+  .prow .pmeta{font-size:11px;color:var(--muted)}
+  .prow .pacts{margin-left:auto;display:flex;gap:7px;align-items:center}
+  .approve{font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px}
+  .approve.can{color:var(--green);border:1px solid rgba(76,175,80,.5)}
+  .approve.cant{color:var(--red);border:1px solid rgba(229,89,91,.5)}
+  .mini{font-size:11.5px;padding:5px 11px;border-radius:7px;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--muted)}
+  .mini.red{color:var(--red);border-color:rgba(229,89,91,.35);background:var(--red-bg)}
+  .mini.gold{color:var(--gold);border-color:rgba(201,162,39,.4)}
+
+  .callout{margin-top:14px;background:rgba(201,162,39,.06);border:1px solid rgba(201,162,39,.3);border-radius:12px;padding:13px 16px;font-size:12.5px;color:#d8c07e}
+  .callout b{color:var(--gold)}
+  .block-title{display:flex;align-items:center;gap:10px;margin:34px 0 4px;flex-wrap:wrap}
+  .block-title h2{font-size:16px;font-weight:800;letter-spacing:-.01em}
+  .block-title .st{font-size:12px;color:var(--faint)}
+  .block-title .tkb{font-size:9.5px;color:var(--purple);border:1px solid var(--purple);border-radius:20px;padding:2px 8px;letter-spacing:.05em;text-transform:uppercase}
+  .concept-note{font-size:11.5px;color:var(--faint);margin-top:6px}
+
+  /* activity */
+  .filters{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .fbtn{font-size:12px;padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer}
+  .fbtn.on{background:var(--purple-bg);border-color:var(--purple);color:#c3b0ff}
+  .fbtn.on.status{background:var(--gold-soft);border-color:var(--gold);color:var(--gold)}
+  .vcard{border:1px solid var(--line);border-radius:12px;margin-top:12px;padding:15px 17px}
+  .vtop{display:flex;align-items:flex-start;gap:12px}
+  .vplate{font-family:"SF Mono",monospace;font-size:17px;font-weight:800;color:var(--red);letter-spacing:.06em}
+  .vmeta{margin-left:auto;text-align:right;font-size:11px;color:var(--faint)}
+  .vstatus{font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;display:inline-block;margin-top:4px}
+  .vstatus.open{color:#c3b0ff;background:var(--purple-bg)}
+  .vstatus.resolved{color:var(--green);background:var(--green-bg)}
+  .vstatus.disputed{color:#d9a441;background:rgba(217,164,65,.12)}
+  .vbody{display:flex;gap:26px;margin-top:8px;font-size:12.5px;color:var(--muted)}
+  .vbody .vk{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:700}
+  .vacts{display:flex;gap:8px;margin-top:12px}
+  .statussel{margin-top:5px;background:var(--panel);border:1px solid var(--gold);color:var(--gold);font-size:11px;font-weight:700;padding:4px 8px;border-radius:20px;cursor:pointer;font-family:inherit}
+
+  @media(max-width:820px){
+    .plan{grid-template-columns:repeat(2,1fr)}
+    .crm{grid-template-columns:1fr}
+    .list{border-right:none;border-bottom:1px solid var(--line)}
+    .facts,.whatsin .inbody{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar"><div class="wrap">
+  <div class="logo"><span class="mark">◈</span> ShieldMyLot</div>
+  <div class="topnav"><span class="on">Dashboard</span><span>Help</span></div>
+  <div class="who">alvaradolegacyconsulting+testrun2@gmail.com <button class="btn-ghost">Sign Out</button></div>
+</div></div>
+
+<div class="wrap">
+
+  <!-- ACCOUNT + PLAN -->
+  <div class="account">
+    <div class="acct-head">
+      <div class="d-avatar" style="position:relative">A1<span class="logo-edit">Change logo</span></div>
+      <div>
+        <div class="acct-title">A1 Test Run 2</div>
+        <div class="acct-sub">Company Admin Portal · alvaradolegacyconsulting+testrun2@gmail.com</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <span class="dot"></span>
+          <span style="font-size:11.5px;color:var(--muted)">Subscription active</span>
+        </div>
+      </div>
+      <div class="acct-actions">
+        <button class="btn stripe">Manage billing in Stripe →</button>
+        <button class="btn gold">All-property QR ↓</button>
+      </div>
+    </div>
+
+    <div class="plan-label">
+      <span class="eyebrow">Plan &amp; what drives your bill</span>
+      <span class="hint">— your negotiated Legacy rate, itemized</span>
+    </div>
+
+    <div class="plan">
+      <div class="metric">
+        <div class="k">Plan</div><div class="v">Legacy</div>
+        <div class="u">tailored rate</div>
+      </div>
+      <div class="metric accent">
+        <div class="tag">billing</div>
+        <div class="k">Base rate</div><div class="v">$249<span style="font-size:12px;color:var(--muted);font-weight:600">/mo</span></div>
+        <div class="u">tailored rate</div>
+      </div>
+      <div class="metric accent">
+        <div class="tag">billing</div>
+        <div class="k">Per property</div><div class="v">$0<span style="font-size:12px;color:var(--muted);font-weight:600">/ea</span></div>
+        <div class="u">3 properties · tailored</div>
+      </div>
+      <div class="metric">
+        <div class="k">Permit meter</div><div class="v" style="color:var(--faint)">—</div>
+        <div class="u">not metered on Enforcement</div>
+      </div>
+    </div>
+    <div class="tax-note">
+      <span>Est. <b style="color:var(--text)">$249 / mo</b> &nbsp;<span style="color:var(--muted)">* plus applicable taxes</span></span>
+      <span>Tailored rate set on your plan — contact ShieldMyLot to change.</span>
+    </div>
+
+    <details class="whatsin">
+      <summary>What's included in your plan</summary>
+      <div class="inbody">
+        <div class="inrow"><span>Properties</span><span class="cap">Unlimited</span></div>
+        <div class="inrow"><span>Drivers</span><span class="cap">Unlimited</span></div>
+        <div class="inrow"><span>Leasing-agent role</span><span class="yes">✓ included</span></div>
+        <div class="inrow"><span>Advanced analytics</span><span class="yes">✓ included</span></div>
+        <div class="inrow"><span>Tow records CSV export</span><span class="yes">✓ included</span></div>
+        <div class="inrow"><span>Read-only API access</span><span class="yes">✓ included</span></div>
+        <div class="inrow"><span>Video upload cap</span><span class="cap">120s max</span></div>
+        <div class="inrow"><span>Priority support</span><span class="yes">✓ included</span></div>
+      </div>
+    </details>
+
+    <div class="variant-note">
+      <span class="vn-tag">PM-track view</span>
+      <span class="vn-body">A PM-Only subscriber sees a live <b style="color:var(--gold)">permit meter</b> in the 4th slot instead of the dash — the approved-permit count driving the graduated meter.</span>
+      <div class="meter">
+        <div class="mk">Approved permits · metered</div>
+        <div class="mv">142 <span style="font-size:11px;color:var(--muted);font-weight:600">permits</span></div>
+        <div class="mu">1–50 @ $2.00 · 51–200 @ $1.75 this cycle</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION TABS (new narrative) -->
+  <div class="sectabs">
+    <div class="sectab on">Properties <span class="count">3</span></div>
+    <div class="sectab">People <span class="count">10</span></div>
+    <div class="sectab">Partners <span class="count">2</span><span class="tk">enf/leg</span></div>
+    <div class="sectab">Activity <span class="count">18</span><span class="tk">enf/leg</span></div>
+    <div class="sectab">Insights</div>
+    <div class="sectab" style="margin-left:auto;color:var(--faint)">Billing</div>
+  </div>
+
+  <!-- PROPERTIES CRM -->
+  <div class="crm">
+    <div class="list">
+      <div class="list-head"><input class="search" placeholder="Search properties…"></div>
+      <div class="list-add">+ Add property</div>
+      <div class="row sel"><div class="avatar">SA</div><div><div class="rn">Seed A</div><div class="rs">1 Bourbon St · Houston</div></div><span class="pill active ml-auto">Active</span></div>
+      <div class="row"><div class="avatar">SB</div><div><div class="rn">Seed B</div><div class="rs">2 Royal St · Houston</div></div><span class="pill active ml-auto">Active</span></div>
+      <div class="row"><div class="avatar">SC</div><div><div class="rn">Seed C</div><div class="rs">3 Dauphine St · Houston</div></div><span class="pill active ml-auto">Active</span></div>
+    </div>
+    <div class="detail">
+      <div class="d-head">
+        <div class="d-av2">SA</div>
+        <div><div class="d-title">Seed A <span class="pill active" style="vertical-align:middle">Active</span></div>
+          <div class="d-sub">1 Bourbon St, Houston TX 77002</div></div>
+        <div class="d-actions"><button class="btn edit">Edit</button><button class="btn danger">Deactivate</button></div>
+      </div>
+      <div class="facts">
+        <div class="fact"><div class="fk">Support email</div><div class="fv link">seed-a@a1wrecker.com</div></div>
+        <div class="fact"><div class="fk">Support phone</div><div class="fv">(713) 555-0142</div></div>
+        <div class="fact"><div class="fk">Address</div><div class="fv">1 Bourbon St, Houston TX 77002</div></div>
+        <div class="fact"><div class="fk">Authorization doc</div><div class="fv"><span class="warn">⚠ None on file</span></div></div>
+        <div class="fact"><div class="fk">Property QR</div><div class="fv"><span class="qr"></span> resident sign-up + visitor passes · <span class="link">Print sign</span></div></div>
+        <div class="fact"><div class="fk">Assigned managers</div><div class="fv"><div class="chips"><span class="chip">Happy Madison</span><span class="chip">Chepe Rosales</span></div></div></div>
+      </div>
+      <div class="concept-note">A1 is Legacy = <b>full functionality</b>, so its property QR drives both <b>resident self-registration</b> and <b>visitor passes</b>. (Enforcement-Only, with no resident portal, would show visitor-pass only.) The all-property QR for bulk printing is the existing button up in the account header.</div>
+    </div>
+  </div>
+
+  <!-- PEOPLE -->
+  <div class="block-title"><h2>People</h2><span class="st">— who's doing the work, grouped by role (track-aware)</span></div>
+  <div class="group">
+    <div class="group-head"><span class="gt">Property Managers</span><span class="gc">3</span><span class="tk">All tracks</span></div>
+    <div class="prow"><div class="avatar">CR</div><div><div class="pn">Chepe Rosales</div><div class="pe">a1wrecker2023+pm@gmail.com · (713) 555-0201 · Seed A</div></div>
+      <div class="pacts"><span class="approve cant">Can't approve</span><span class="pill active">Active</span><button class="mini gold">Edit</button><button class="mini">Reset password</button><button class="mini red">Deactivate</button></div></div>
+    <div class="prow"><div class="avatar">CS</div><div><div class="pn">Checkers Smith</div><div class="pe">chris.tobar94+checkers@gmail.com · (713) 555-0202 · Seed B</div></div>
+      <div class="pacts"><span class="approve cant">Can't approve</span><span class="pill active">Active</span><button class="mini gold">Edit</button><button class="mini">Reset password</button><button class="mini red">Deactivate</button></div></div>
+    <div class="prow"><div class="avatar">HM</div><div><div class="pn">Happy Madison</div><div class="pe">chris.tobar94+happy@gmail.com · (713) 555-0203 · Seed A</div></div>
+      <div class="pacts"><span class="approve can">✓ Can approve</span><span class="pill active">Active</span><button class="mini gold">Edit</button><button class="mini">Reset password</button><button class="mini red">Deactivate</button></div></div>
+  </div>
+  <div class="group">
+    <div class="group-head"><span class="gt">Leasing Agents</span><span class="gc">2</span><span class="tk">All tracks</span></div>
+    <div class="prow"><div class="avatar">LA</div><div><div class="pn">Lena Ash</div><div class="pe">lena@a1wrecker.com · (713) 555-0210 · Seed A</div></div>
+      <div class="pacts"><span class="approve cant">Can't approve</span><span class="pill active">Active</span><button class="mini gold">Edit</button><button class="mini">Reset password</button><button class="mini red">Deactivate</button></div></div>
+  </div>
+  <div class="group">
+    <div class="group-head"><span class="gt">Drivers</span><span class="gc">4</span><span class="tk" style="color:var(--purple)">Enforcement / Legacy only</span></div>
+    <div class="prow"><div class="avatar">JD</div><div><div class="pn">Jose Driver</div><div class="pe">josesalvro98022+dr@gmail.com · (713) 555-0220</div><div class="pmeta">License #TX-DR-4471 · 12 tickets · 6 mo</div></div>
+      <div class="pacts"><span class="pill active">Active</span><button class="mini gold">Edit</button><button class="mini">Reset password</button><button class="mini red">Deactivate</button></div></div>
+  </div>
+  <div class="concept-note">New <b style="color:var(--gold)">Edit</b> action per person — phone number, and driver's <b>license #</b> for drivers. (Small new capability — flagged in scoping.)</div>
+
+  <!-- PARTNERS -->
+  <div class="block-title"><h2>Partners</h2><span class="st">— storage facilities you work with</span><span class="tkb">Enforcement / Legacy only</span></div>
+  <div class="group">
+    <div class="group-head"><span class="gt">Storage Facilities</span><span class="gc">2</span><span class="tk">PM-Only won't show this</span></div>
+    <div class="prow"><div class="avatar">BS</div><div><div class="pn">Bayou Secure Storage</div><div class="pe">4400 Navigation Blvd · (713) 555-0190 · dispatch@bayousecure.com</div></div>
+      <div class="pacts"><span class="pill active">Active</span><button class="mini gold">Edit</button><button class="mini red">Deactivate</button></div></div>
+    <div class="prow"><div class="avatar">GT</div><div><div class="pn">Gulf Tow Yard</div><div class="pe">910 Harrisburg Blvd · (713) 555-0177 · office@gulftow.com</div></div>
+      <div class="pacts"><span class="pill active">Active</span><button class="mini gold">Edit</button><button class="mini red">Deactivate</button></div></div>
+  </div>
+  <div class="callout">⚠ <b>New capability:</b> storage <b>Edit</b> + <b>Deactivate</b> don't exist in the UI today — the gap you spotted. This is the main functional add; everything else re-lays-out existing data.</div>
+
+  <!-- ACTIVITY -->
+  <div class="block-title"><h2>Activity</h2><span class="st">— what we're doing &amp; what we've done</span><span class="tkb">Enforcement / Legacy only</span></div>
+  <div class="filters">
+    <button class="fbtn on status">6 months</button><button class="fbtn">This week</button><button class="fbtn">Today</button>
+    <button class="mini gold" style="margin-left:auto">↓ Export tow records (CSV)</button>
+  </div>
+  <div class="filters" style="margin-top:8px">
+    <span style="font-size:11px;color:var(--faint);align-self:center;letter-spacing:.06em;text-transform:uppercase;font-weight:700;margin-right:2px">Property</span>
+    <button class="fbtn on">All properties</button><button class="fbtn">Seed A</button><button class="fbtn">Seed B</button><button class="fbtn">Seed C</button>
+  </div>
+  <div class="filters" style="margin-top:8px">
+    <span style="font-size:11px;color:var(--faint);align-self:center;letter-spacing:.06em;text-transform:uppercase;font-weight:700;margin-right:2px">Driver</span>
+    <button class="fbtn on">All drivers</button><button class="fbtn">Jose Driver</button><button class="fbtn">Mara Cole</button><button class="fbtn">Rex Vega</button>
+  </div>
+  <div class="filters" style="margin-top:8px">
+    <span style="font-size:11px;color:var(--faint);align-self:center;letter-spacing:.06em;text-transform:uppercase;font-weight:700;margin-right:2px">Status</span>
+    <button class="fbtn on">All</button><button class="fbtn">New</button><button class="fbtn">Tow ticket</button><button class="fbtn">Resolved</button><button class="fbtn">Disputed</button><button class="fbtn">Void</button>
+  </div>
+  <div class="vcard">
+    <div class="vtop"><div><div class="vplate">UAT1006</div><div style="font-size:12px;color:var(--muted);margin-top:2px">Overnight · <b style="color:var(--text)">Seed A</b></div></div>
+      <div class="vmeta">6/15/2026 · 8:42 PM<br>
+        <select class="statussel"><option>New</option><option selected>Tow ticket</option><option>Resolved</option><option>Disputed</option><option>Void</option></select>
+      </div></div>
+    <div class="vbody"><div><div class="vk">Property</div>Seed A</div><div><div class="vk">Location</div>Lot entrance</div><div><div class="vk">Issued by</div>Jose Driver</div></div>
+    <div class="vacts"><button class="mini">Manage media</button><button class="mini gold">Regenerate tow ticket</button><button class="mini">View ticket</button></div>
+  </div>
+  <div class="vcard">
+    <div class="vtop"><div><div class="vplate">UAT1002</div><div style="font-size:12px;color:var(--muted);margin-top:2px">Handicap zone · <b style="color:var(--text)">Seed B</b></div></div>
+      <div class="vmeta">6/12/2026 · 3:15 PM<br>
+        <select class="statussel"><option>New</option><option>Tow ticket</option><option selected>Resolved</option><option>Disputed</option><option>Void</option></select>
+      </div></div>
+    <div class="vbody"><div><div class="vk">Property</div>Seed B</div><div><div class="vk">Location</div>H-2</div><div><div class="vk">Issued by</div>Jose Driver</div></div>
+    <div class="vacts"><button class="mini">Manage media</button><button class="mini">View ticket</button></div>
+  </div>
+  <div class="vcard" style="opacity:.72">
+    <div class="vtop"><div><div class="vplate" style="color:var(--faint);text-decoration:line-through">UAT0994</div><div style="font-size:12px;color:var(--muted);margin-top:2px">Fire lane · <b style="color:var(--text)">Seed A</b></div></div>
+      <div class="vmeta">6/10/2026 · 11:02 AM<br>
+        <select class="statussel"><option>New</option><option>Tow ticket</option><option>Resolved</option><option>Disputed</option><option selected>Void</option></select>
+      </div></div>
+    <div class="vbody"><div><div class="vk">Property</div>Seed A</div><div><div class="vk">Location</div>Fire lane N</div><div><div class="vk">Voided by</div>Company admin · wrong plate</div></div>
+    <div class="vacts"><button class="mini">View ticket</button></div>
+  </div>
+
+  <p class="concept-note" style="margin-top:26px;text-align:center">Concept mockup v2 · not wired · ShieldMyLot Company Admin CRM redesign · Insights &amp; Billing retained as their own surfaces · July 5 2026</p>
+
+</div>
+</body>
+</html>

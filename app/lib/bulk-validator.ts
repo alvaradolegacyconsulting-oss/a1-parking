@@ -105,7 +105,11 @@ export function validateBulkRows(rows: BulkRowInput[]): BulkError[] {
         add(r, 'unit', 'unit_empty', `"${r.unit}" has no letters or numbers in it.`)
       } else if (UNIT_NOISE.test(unitRaw) && normalizeUnit(unitRaw) !== normalizeUnit(unitRaw.replace(UNIT_NOISE, ''))) {
         const plain = unitRaw.replace(UNIT_NOISE, '').replace(/\s+/g, ' ').trim()
-        add(r, 'unit', 'unit_prefix', `Write the unit plainly: "${plain}", not "${unitRaw}". A unit written with "Apt" or "Unit" in front of it will not match what your managers search for.`)
+        // Name the word actually found, not a representative one. Told
+        // that a unit beginning "Suite" is wrong because of "Apt", a
+        // customer reasonably concludes the rule does not apply to them.
+        const found = (UNIT_NOISE.exec(unitRaw)?.[1] ?? '').trim().replace(/[.\s]+$/, '')
+        add(r, 'unit', 'unit_prefix', `Write the unit plainly: "${plain}", not "${unitRaw}". A unit with "${found}" written in front of it will not match what your managers search for.`)
       }
     }
 
