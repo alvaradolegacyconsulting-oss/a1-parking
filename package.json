@@ -31,7 +31,8 @@
     "verify:activationguard": "tsx scripts/verify-activation-guard.ts",
     "verify:platestate": "tsx scripts/verify-plate-state.ts",
     "verify:storagepolicies": "tsx scripts/verify-storage-policies.ts",
-    "verify:bulkbucket": "tsx scripts/verify-bulk-bucket.ts"
+    "verify:bulkbucket": "tsx scripts/verify-bulk-bucket.ts",
+    "verify:bulkvalidate": "tsx scripts/verify-bulk-validate.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

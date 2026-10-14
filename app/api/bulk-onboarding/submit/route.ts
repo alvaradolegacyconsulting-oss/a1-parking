@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
-import { createSupabaseServerClient } from '../../../lib/server-auth'
-import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
+import { authorizeBulkUpload, readBulkObject } from '../../../lib/bulk-onboarding-auth'
+import { BULK_BUCKET, BULK_CSV_COLUMNS, bulkBatchPath, parseBulkCsv } from '../../../lib/bulk-onboarding'
 import {
-  BULK_BUCKET, BULK_OBJECT_PATH, MAX_BULK_BYTES, MAX_BULK_ROWS,
-  bulkBatchPath, parseBulkCsv,
-} from '../../../lib/bulk-onboarding'
+  validateBulkRows, dbFlagErrors,
+  type BulkRowInput, type BulkDbFlags,
+} from '../../../lib/bulk-validator'
 
 // ════════════════════════════════════════════════════════════════════
 // Phase A — bulk-onboarding submission
@@ -14,44 +14,27 @@ import {
 // lets them write only {their property id}/{uuid}.csv), then calls this
 // route to turn it into an import_batches row for Jose to approve.
 //
-// AUTHORIZE SERVER-SIDE; NEVER TRUST THE RENDER. Nothing the client
-// sends is used to decide whether the caller may do this:
+// Authorization is authorizeBulkUpload(), shared with preview — see
+// that module for what is derived rather than trusted. status is
+// forced to 'submitted' here and never read from the payload.
 //
-//   identity    getUser(), never getSession — getSession returns
-//               whatever is in the cookie without verifying it
-//   role        read from user_roles by the authenticated email, and
-//               is_active is checked here because requireAuthenticated
-//               and get_my_role() both skip it
-//   company     derived from that role row, never from the payload
-//   the flag    companies.bulk_onboarding_enabled read here, not
-//               inferred from the fact that the upload succeeded
-//   property    derived from the OBJECT PATH, then checked against the
-//               company in the database
-//   status      forced to 'submitted'
-//
-// 🔴 THE PROPERTY COMES FROM THE PATH, AND THE PATH IS STILL A CLAIM.
-// Putting the property id in the object path means there is no second
-// property identity in the payload that could disagree with it — but
-// the path is client-chosen, so the id is then looked up and its
-// company compared. The storage policy already refused any other
-// property; this route refuses it again rather than inferring that a
-// successful upload proves anything.
+// 🔴 A DIRTY FILE IS NOT SUBMITTABLE. The same validation the preview
+// runs runs again here, because preview is a courtesy and this is the
+// gate. Otherwise a CA who skipped the preview puts a file in front of
+// Jose that cannot load, and the failure arrives in the loader —
+// halfway through a transaction, long after anyone was looking.
 //
 // 🔴 THE HASHED FILE MUST BE THE LOADED FILE. The bytes are hashed,
 // copied to batches/{batch_id}.csv, and the copy is re-downloaded and
 // re-hashed before the batch points at it. storage_path therefore names
 // the location of the hashed bytes at every instant: the CA's upload
 // first, the immutable copy once it is proven identical.
-//
-// Caps are enforced HERE, not borrowed from the bucket. The bucket's
-// 2 MB limit and MIME list are a convenience filter — proven this
-// morning when a MIME refusal was nearly read as RLS working.
 
 export const runtime = 'nodejs'          // crypto + Buffer
 export const maxDuration = 60
 
-const BAD = (status: number, code: string, message: string) =>
-  NextResponse.json({ error: code, message }, { status })
+const BAD = (status: number, code: string, message: string, extra: object = {}) =>
+  NextResponse.json({ error: code, message, ...extra }, { status })
 
 // Raw Postgres and storage errors never reach the UI; they are logged
 // with the batch context and the caller gets a stable code.
@@ -60,65 +43,13 @@ const oops = (where: string, detail: unknown) => {
   return BAD(500, 'submit_failed', 'Something went wrong saving your submission. Nothing was loaded. Please try again, and contact support if it happens twice.')
 }
 
-interface Body {
-  object_path?: unknown
-  source_filename?: unknown
-  attested_name?: unknown
-  attested_title?: unknown
-}
-
 export async function POST(req: NextRequest) {
-  // ── 1. identity ───────────────────────────────────────────────────
-  const sb = await createSupabaseServerClient()
-  const { data: { user }, error: authErr } = await sb.auth.getUser()
-  if (authErr || !user?.email || !user.id) return BAD(401, 'unauthenticated', 'Please sign in again.')
-
-  const db = createSupabaseServiceClient()
-
-  // ── 2. role + company, from the database ──────────────────────────
-  // No .single(): a second role row would make .single() throw rather
-  // than decide, and an inactive row must not count. Matching is done
-  // in Node on lower(trim(...)) so there is no ILIKE pattern side and
-  // no whitespace-sensitive equality — the drift class that has bitten
-  // this codebase more than once.
-  const want = user.email.trim().toLowerCase()
-  const { data: roleRows, error: roleErr } = await db
-    .from('user_roles').select('email, role, company, is_active')
-  if (roleErr) return oops('user_roles read', roleErr)
-  const mine = (roleRows ?? []).filter(r =>
-    (r.email ?? '').trim().toLowerCase() === want && r.is_active === true)
-  if (mine.length === 0) return BAD(403, 'no_active_role', 'Your account does not have an active role. Please contact support.')
-  if (!mine.some(r => r.role === 'company_admin')) {
-    return BAD(403, 'not_company_admin', 'Only a company administrator can submit a resident upload.')
-  }
-  const companyName = (mine.find(r => r.role === 'company_admin')?.company ?? '').trim()
-  if (!companyName) return BAD(403, 'no_company', 'Your administrator account is not linked to a company. Please contact support.')
-
-  const { data: companies, error: coErr } = await db
-    .from('companies').select('id, name, is_active, account_state, bulk_onboarding_enabled')
-  if (coErr) return oops('companies read', coErr)
-  const company = (companies ?? []).find(c =>
-    (c.name ?? '').trim().toLowerCase() === companyName.toLowerCase())
-  if (!company) return oops('company resolve', `role company ${JSON.stringify(companyName)} matches no companies row`)
-
-  // ── 3. the gates, each read here rather than assumed ──────────────
-  if (company.is_active !== true || ['suspended', 'cancelled'].includes(company.account_state ?? '')) {
-    return BAD(403, 'account_not_active', 'Your account is not active. Please contact support.')
-  }
-  if (company.bulk_onboarding_enabled !== true) {
-    // Stated as a fact, not as a permission the platform is granting.
-    return BAD(403, 'bulk_onboarding_not_enabled', 'Bulk resident upload is not switched on for your account. Contact support to have it enabled.')
-  }
-
-  // ── 4. the payload ────────────────────────────────────────────────
-  let body: Body
+  let body: { object_path?: unknown; source_filename?: unknown; attested_name?: unknown; attested_title?: unknown }
   try { body = await req.json() } catch { return BAD(400, 'bad_request', 'The request could not be read.') }
 
-  const objectPath = typeof body.object_path === 'string' ? body.object_path : ''
-  const m = BULK_OBJECT_PATH.exec(objectPath)
-  if (!m) return BAD(400, 'bad_object_path', 'That upload could not be identified. Please upload the file again.')
-  const propertyId = Number(m[1])
-  if (!Number.isSafeInteger(propertyId)) return BAD(400, 'bad_object_path', 'That upload could not be identified. Please upload the file again.')
+  const auth = await authorizeBulkUpload(body.object_path)
+  if (!auth.ok) return BAD(auth.status, auth.code, auth.message)
+  const { db, property, company, objectPath } = auth
 
   const attestedName = typeof body.attested_name === 'string' ? body.attested_name.trim() : ''
   const attestedTitle = typeof body.attested_title === 'string' ? body.attested_title.trim() : ''
@@ -130,61 +61,55 @@ export async function POST(req: NextRequest) {
   const sourceFilename = (typeof body.source_filename === 'string' ? body.source_filename : 'upload.csv')
     .replace(/[\r\n\t]/g, ' ').trim().slice(0, 200) || 'upload.csv'
 
-  // ── 5. the property, checked against the company ──────────────────
-  const { data: prop, error: propErr } = await db
-    .from('properties').select('id, name, company, is_active').eq('id', propertyId).maybeSingle()
-  if (propErr) return oops('properties read', propErr)
-  // One message for "no such property" and "not yours": a CA must not
-  // be able to probe which property ids exist outside their company.
-  const propOk = prop
-    && prop.is_active === true
-    && (prop.company ?? '').trim().toLowerCase() === companyName.toLowerCase()
-  if (!propOk) return BAD(403, 'property_not_in_scope', 'That property is not one you can upload for. Please choose a property from the list and try again.')
+  // ── the bytes, with both caps enforced here ───────────────────────
+  const read = await readBulkObject(db, objectPath)
+  if (!read.ok) return BAD(read.status, read.code, read.message)
 
-  // ── 6. the bytes ──────────────────────────────────────────────────
-  const dl = await db.storage.from(BULK_BUCKET).download(objectPath)
-  if (dl.error || !dl.data) {
-    return BAD(404, 'upload_not_found', 'We could not find that upload. Please upload the file again.')
-  }
-  const bytes = Buffer.from(await dl.data.arrayBuffer())
+  const parsed = parseBulkCsv(read.text)
+  if (!parsed.ok) return BAD(parsed.code === 'too_many_rows' ? 413 : 400, parsed.code, parsed.message)
 
-  // Byte ceiling BEFORE anything reads the content.
-  if (bytes.byteLength > MAX_BULK_BYTES) {
-    return BAD(413, 'file_too_large', `That file is ${(bytes.byteLength / 1048576).toFixed(1)} MB. The limit is 2 MB — a ${MAX_BULK_ROWS}-row file of this shape is well under it, so a file this size is usually the wrong file.`)
-  }
-  if (bytes.byteLength === 0) return BAD(400, 'empty_file', 'That file is empty.')
-
-  // Strict UTF-8: a file saved as ANSI or UTF-16 must be rejected, not
-  // silently turned into replacement characters inside resident names.
-  let text: string
-  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
-  catch {
-    return BAD(400, 'not_utf8', 'That file is not saved as UTF-8. In Excel, use "CSV UTF-8 (Comma delimited)" and upload again.')
-  }
-
-  // Row cap and header, both before hashing.
-  const parsed = parseBulkCsv(text)
-  if (!parsed.ok) {
-    return BAD(parsed.code === 'too_many_rows' ? 413 : 400, parsed.code, parsed.message)
+  // ── the same validation the preview ran ───────────────────────────
+  const col = (r: string[], name: typeof BULK_CSV_COLUMNS[number]) =>
+    (r[BULK_CSV_COLUMNS.indexOf(name)] ?? '').trim()
+  const rpc = await db.rpc('bulk_validate_rows', {
+    p_property_id: property.id,
+    p_rows: parsed.dataRows.map((r, i) => ({ i, email: col(r, 'email'), plate: col(r, 'plate') })),
+  })
+  if (rpc.error) return oops('bulk_validate_rows', rpc.error)
+  const flags = (rpc.data ?? []) as BulkDbFlags[]
+  const normByIndex = new Map(flags.map(f => [f.row_index, f.plate_norm]))
+  const rows: BulkRowInput[] = parsed.dataRows.map((r, i) => ({
+    index: i,
+    unit: col(r, 'unit'), first_name: col(r, 'first_name'), last_name: col(r, 'last_name'),
+    email: col(r, 'email'), phone: col(r, 'phone'), plate: col(r, 'plate'),
+    plate_state: col(r, 'plate_state'), make: col(r, 'make'), model: col(r, 'model'),
+    color: col(r, 'color'), tag_number: col(r, 'tag_number'),
+    plateNorm: normByIndex.get(i) ?? '',
+  }))
+  const errors = [...validateBulkRows(rows), ...dbFlagErrors(rows, flags)]
+  if (errors.length > 0) {
+    return BAD(422, 'file_has_errors',
+      `This file still has ${errors.length} ${errors.length === 1 ? 'error' : 'errors'}. Fix them and upload again — the preview lists them by row number.`,
+      { error_count: errors.length, first_errors: errors.slice(0, 10) })
   }
 
-  // ── 7. the hash ───────────────────────────────────────────────────
-  // Over the BYTES, not the decoded text: the hash has to identify the
-  // file the customer sent, byte for byte, so that the loader can prove
-  // it is loading that same file and not a re-encoded copy of it.
-  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex')
+  // ── the hash ──────────────────────────────────────────────────────
+  // Over the BYTES, not the decoded text: the hash identifies the file
+  // the customer sent, byte for byte, so the loader can prove it is
+  // loading that same file and not a re-encoded copy of it.
+  const sha256 = crypto.createHash('sha256').update(read.bytes).digest('hex')
 
-  // ── 8. the batch row, status forced ───────────────────────────────
+  // ── the batch row, status forced ──────────────────────────────────
   // storage_path is the CA's upload for now, which is where the hashed
   // bytes are at this instant. It moves to the immutable copy below,
   // once that copy is proven identical.
   const ins = await db.from('import_batches').insert({
     company_id: company.id,
-    property_id: propertyId,
+    property_id: property.id,
     source_filename: sourceFilename,
     storage_path: objectPath,
     file_sha256: sha256,
-    attested_by_user_id: user.id,
+    attested_by_user_id: auth.userId,
     attested_name: attestedName,
     attested_title: attestedTitle,
     status: 'submitted',
@@ -202,7 +127,7 @@ export async function POST(req: NextRequest) {
   }
   const batchId = ins.data.id as number
 
-  // ── 9. the immutable copy, verified ───────────────────────────────
+  // ── the immutable copy, verified ──────────────────────────────────
   // batches/ is outside every CA INSERT policy (the policy is anchored
   // on '^[0-9]+/', and 'batches' is not digits), so this copy cannot be
   // rewritten from a browser.
@@ -220,16 +145,14 @@ export async function POST(req: NextRequest) {
   }
 
   const copy = await db.storage.from(BULK_BUCKET)
-    .upload(immutable, bytes, { contentType: 'text/csv', upsert: false })
+    .upload(immutable, read.bytes, { contentType: 'text/csv', upsert: false })
   if (copy.error) return undo('immutable copy', copy.error)
 
   const back = await db.storage.from(BULK_BUCKET).download(immutable)
   if (back.error || !back.data) return undo('immutable copy read-back', back.error)
   const copiedSha = crypto.createHash('sha256')
     .update(Buffer.from(await back.data.arrayBuffer())).digest('hex')
-  if (copiedSha !== sha256) {
-    return undo('immutable copy hash mismatch', `wrote ${sha256}, read back ${copiedSha}`)
-  }
+  if (copiedSha !== sha256) return undo('immutable copy hash mismatch', `wrote ${sha256}, read back ${copiedSha}`)
 
   const point = await db.from('import_batches')
     .update({ storage_path: immutable }).eq('id', batchId).select('id, storage_path').single()
@@ -249,6 +172,7 @@ export async function POST(req: NextRequest) {
     ok: true,
     batch_id: batchId,
     status: 'submitted',
+    property: { id: property.id, name: property.name },
     resident_count: parsed.residentCount,
     vehicle_count: parsed.vehicleCount,
     file_sha256: sha256,

@@ -18,6 +18,32 @@ owns.
 🔴 **No unit normalization and no merging.** `Apt 1150` is an error, not a
 row to be turned into `1150`.
 
+### 🔴 The unit rule was narrowed after being measured
+
+The spec first said a unit must already equal `normalizeUnit()`'s
+output. Checked against the **423 resident units in production**, that
+rule rejects **90 of them (21%)** — including `B-1`, `Trlr 129`,
+`Traila 80` and `#197`, all of which the product stores and matches
+perfectly well. `normalizeUnit` is a **comparison key, not a storage
+format**; `app/lib/plate.ts` says so in as many words ("NOT for display
+and NOT for storage"). The template must not be stricter than the
+product — the same reason paper tags are accepted.
+
+What actually breaks matching is a leading noise word:
+
+| stored | comparison key | a manager typing `1150` / `197` |
+|---|---|---|
+| `#197` | `197` | ✅ matches — `#` is stripped by the key anyway |
+| `B-1` | `B1` | ✅ matches `B1` or `B-1` |
+| `Trlr 129` | `TRLR129` | a real designation at a mobile-home park, kept |
+| `Apt 1150` | `APT1150` | ❌ matches nothing anyone will type |
+
+So the rule is: **reject a unit when removing a leading noise word
+would change its comparison key.** That rejects **37 of 423 (9%)**, and
+for all 37 the key genuinely does break. `Trlr`, `Traila` and `Unidad`
+are deliberately not noise — A1 serves mobile-home parks and those read
+as designations, not prefixes.
+
 ## Checks
 
 | check | rule | why |
@@ -25,7 +51,7 @@ row to be turned into `1150`.
 | required fields | unit, first_name, last_name, email, plate, plate_state | phone, make, model, color, tag_number optional |
 | email format | `findBlockedEmailChar` (`app/lib/email-guard.ts`) | the same guard the bulk-invite path already uses |
 | email present | **required on every row** | without one the resident can never claim a login |
-| unit shape | must already equal what `normalizeUnit()` produces, after the apostrophe strip | if normalizing would change it, it is an error |
+| unit shape | reject only a leading **noise word** (`Apt`, `Apartment`, `Unit`, `Ste`, `Suite`, `No.`, `Num.`, and the Spanish `Apartamento`) — see below | the strict rule was measured and withdrawn |
 | plate length | **≥ 5 alphanumerics** after normalization | production holds vanity plates `LESLY`, `TWICE`, `1XYFR` at 5; a 6-minimum would reject 7 live rows |
 | plate pattern | **none**, and no maximum | `DLR67841` (dealer), `339P9T` (motorcycle), `8MCX006` (out-of-state) are all valid and no one regex covers them |
 | paper tags | **accepted** | production already holds 12 `TMP…` plates; the template must not be stricter than the product |

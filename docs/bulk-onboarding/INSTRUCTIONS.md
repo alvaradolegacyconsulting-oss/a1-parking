@@ -38,9 +38,11 @@ state code (`TX`, not `Texas`). US states and DC are accepted.
 letters or numbers. Temporary paper tags are fine. Specialty, motorcycle
 and out-of-state plates are fine.
 
-**Units must be written plainly.** `1150`, not `Apt 1150`, `#1150` or
-`Unit 1150`. If your spreadsheet shows `'1150` with a leading quote that
-is fine — we remove it. Anything else in the unit field is an error.
+**Units must be written plainly.** `1150`, not `Apt 1150` or
+`Unit 1150` — a unit with "Apt" or "Unit" written in front of it will not
+match what your managers search for. `#1150`, `B-1`, `Trlr 129` and
+`Traila 80` are all fine. If your spreadsheet shows `'1150` with a
+leading quote that is fine too — we remove it.
 
 **Only approved residents.** Leave out anyone still pending approval in
 your current system.
