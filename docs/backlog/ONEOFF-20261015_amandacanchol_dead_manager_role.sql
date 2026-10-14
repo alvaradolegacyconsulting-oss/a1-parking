@@ -1,169 +1,221 @@
 -- ════════════════════════════════════════════════════════════════════
--- ONE-OFF — close the live deactivated-manager login on
---           amandacanchol@gmail.com
+-- ONE-OFF — replace the dead manager role on amandacanchol@gmail.com
+--           with the resident role her live record needs
 -- ════════════════════════════════════════════════════════════════════
--- 🔴 DO NOT RUN ANY STEP WITHOUT READING STEP 0 FIRST.
+-- Option A as a REPLACEMENT, per the ruling. STEP B (the ban) is not
+-- used and has been removed from this file rather than left commented:
+-- the login serves a live resident, so a ban breaks a current process,
+-- and a dead branch that does exactly the harmful thing is an
+-- invitation.
 --
--- 🔴 AND DO NOT RUN STEP B WITHOUT READING WHY IT IS NOT THE
---    RECOMMENDATION. A ban was the instruction; the evidence found
---    after it was given says a ban breaks a current process.
+-- ── WHAT THIS ACCOUNT IS ────────────────────────────────────────────
+-- One address, two identities:
 --
--- ── WHAT THIS ACCOUNT ACTUALLY IS ───────────────────────────────────
--- One address, TWO identities:
---
---   user_roles 627   manager, A1 Wrecker llc, ["Sugarberry Place"]
+--   user_roles 627   manager, A1, ["Sugarberry Place"]
 --                    is_active = FALSE since 2026-08-10
---                    auth.users.banned_until = NULL  ← the exposure
---
+--                    auth.users.banned_until = NULL   ← the exposure
 --   residents  656   "Amanda Canchola", Southfork Lake Apartments
 --                    is_active = TRUE, status = 'active'
---                    created 2026-07-30                ← a LIVE resident
+--   vehicles   713   plate 1234BC, Southfork Lake, unit 101, active
+--   auth.users       created 2026-07-15, last_sign_in 2026-08-21
+--                    = 11 days AFTER the manager deactivation
 --
---   auth.users       created 2026-07-15T14:43:56 (1s before the role
---                    row — the invite flow makes auth first)
---                    🔴 last_sign_in_at 2026-08-21T16:19:41
---                       = 11 days AFTER the manager deactivation
+-- Deleting 627 alone would leave her login with no role at all, which
+-- is the blank-portal trap for a resident who demonstrably signs in.
+-- So the delete and the insert are ONE transaction.
 --
--- So the exposure is real and was exercised — but banning the auth
--- user would also lock out an active resident record. That is why this
--- file leads with deleting the dead ROLE rather than banning the LOGIN.
+-- ── 🔴 NOTHING HERE IS COPIED FROM A PEER, AND NOTHING IS INVENTED ──
+-- There are ZERO resident user_roles rows at Southfork Lake Apartments
+-- to copy (measured: 348 resident rows, 208 Green Acres, 113 Esperanza,
+-- none Southfork). So the shape comes from the A1 resident template and
+-- every VALUE is derived from her own data:
 --
--- ── WHY THE BAN WAS MISSING (answered from the audit log) ───────────
--- All four per-user deactivation sites DO call swift-handler
--- (action: deactivate_user / activate_user), which is what set the
--- 2126 bans on the other four deactivated A1 rows — ban_duration of
--- ~100 years. The ban is BEST-EFFORT, and its failures are audited:
+--   company, property  ← her residents row 656, not typed in
+--   consent versions   ← her OWN tos_acceptances rows (345 tos,
+--                        346 privacy, both 2026-07-12-v2, accepted
+--                        2026-07-26), resolved by subquery
 --
---   2026-08-10T21:40  deactivate_user  amandacanchol@gmail.com
---   {"ban_error":"User not found","is_active":false,"ban_applied":false}
+-- 🔴 Consent is never copied from another user. tos_acceptances is the
+-- authoritative source (row existence at the current version, not the
+-- user_roles stamp), and 2026-07-12-v2 is the CURRENT version for both
+-- documents, so she passes the hard gate and is not re-prompted. The
+-- user_roles columns are a stamp; this sets them to what she actually
+-- accepted.
 --
--- The auth user existed since 2026-07-15, so "User not found" was a
--- swift-handler lookup failure, not a missing user. company_admin's own
--- code comments carry the query for finding these; 7 audit rows have
--- ban_applied=false, and this is the only one on a live A1 account.
--- The step-2 route must therefore treat a ban failure as a FAILURE,
--- not a note.
+-- Defaults taken from the A1 resident template (id 751, 686):
+--   texas_confirmed=false, must_change_password=false,
+--   can_regenerate_tow_ticket=false, can_approve_vehicles=false,
+--   name=null, saas_accepted_version=null
 
--- ════════════════════════════════════════════════════════════════════
--- STEP 0 — REVIEW. Read-only. Run this and read it before anything.
--- ════════════════════════════════════════════════════════════════════
-SELECT 'user_roles' AS what, ur.id::TEXT AS id, ur.email, ur.role, ur.company,
-       ur.is_active::TEXT AS is_active, ur.created_at::TEXT AS created_at,
-       array_to_string(ur.property, ' | ') AS detail
-  FROM public.user_roles ur
- WHERE lower(btrim(ur.email)) = 'amandacanchol@gmail.com'
-UNION ALL
-SELECT 'residents', r.id::TEXT, r.email, r.status, r.company,
-       r.is_active::TEXT, r.created_at::TEXT, r.property || ' · ' || COALESCE(r.name,'')
-  FROM public.residents r
- WHERE lower(btrim(r.email)) = 'amandacanchol@gmail.com'
-UNION ALL
-SELECT 'auth.users', u.id::TEXT, u.email, '—', '—',
-       CASE WHEN u.banned_until IS NULL THEN 'LOGIN LIVE' ELSE 'banned' END,
-       u.created_at::TEXT,
-       'last_sign_in_at ' || COALESCE(u.last_sign_in_at::TEXT, 'never')
-  FROM auth.users u
- WHERE lower(btrim(u.email)) = 'amandacanchol@gmail.com'
- ORDER BY 1;
+BEGIN;
 
--- ════════════════════════════════════════════════════════════════════
--- STEP A — RECOMMENDED. Delete the dead manager role. Login untouched.
--- ════════════════════════════════════════════════════════════════════
--- Closes the escalation at its source: with no manager row, get_my_role()
--- returns nothing for this address and no manager policy can match it —
--- the same remedy already applied to row 875. Her resident record and
--- her login are left alone, so nothing a live user does today breaks.
---
--- Guard-claused: it refuses unless the row is EXACTLY the one reviewed
--- above — right id, right email, right role, and still deactivated. An
--- unfilled or stale target must fail loudly, not match something else.
+-- ── Pre-flight. Refuses unless the state is EXACTLY what was reviewed.
 DO $do$
 DECLARE
-  v_id    BIGINT := 627;     -- from STEP 0. Change only if STEP 0 disagrees.
-  v_email TEXT   := 'amandacanchol@gmail.com';
+  v_email TEXT := 'amandacanchol@gmail.com';
   v_row   public.user_roles;
+  v_live  INT;
+  v_tos   INT;
 BEGIN
-  SELECT * INTO v_row FROM public.user_roles WHERE id = v_id;
+  SELECT * INTO v_row FROM public.user_roles WHERE id = 627;
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'user_roles id % does not exist — STEP 0 output is stale, re-read it', v_id;
+    RAISE EXCEPTION 'user_roles 627 does not exist — the review is stale, re-read it';
   END IF;
   IF lower(btrim(v_row.email)) <> v_email THEN
-    RAISE EXCEPTION 'id % is %, not % — refusing to delete the wrong row', v_id, v_row.email, v_email;
+    RAISE EXCEPTION 'user_roles 627 is %, not % — refusing to touch the wrong row', v_row.email, v_email;
   END IF;
-  IF v_row.role <> 'manager' THEN
-    RAISE EXCEPTION 'id % is role %, expected manager — refusing', v_id, v_row.role;
+  IF v_row.role <> 'manager' OR v_row.is_active IS NOT FALSE THEN
+    RAISE EXCEPTION 'user_roles 627 is role=% is_active=% — expected an INACTIVE manager; refusing',
+      v_row.role, v_row.is_active;
   END IF;
-  IF v_row.is_active IS NOT FALSE THEN
-    RAISE EXCEPTION 'id % is is_active=% — it is NOT deactivated, so deleting it would remove live access', v_id, v_row.is_active;
+
+  -- Exactly one live residents row, or ARRAY[r.property] below would
+  -- insert one role row per property and quietly widen her access.
+  SELECT count(*) INTO v_live FROM public.residents r
+   WHERE lower(btrim(r.email)) = v_email AND r.is_active AND r.status = 'active';
+  IF v_live <> 1 THEN
+    RAISE EXCEPTION 'expected exactly 1 live residents row for %, found % — stop and look', v_email, v_live;
   END IF;
-  RAISE NOTICE 'pre-flight OK: id=% email=% role=% company=% is_active=%',
-    v_row.id, v_row.email, v_row.role, v_row.company, v_row.is_active;
+
+  -- Her consent must be real, not assumed. If it is missing, the
+  -- insert would stamp NULLs and she would be re-prompted at /consent —
+  -- survivable, but it should be a decision, not a surprise.
+  SELECT count(*) INTO v_tos FROM public.tos_acceptances ta
+    JOIN auth.users u ON u.id = ta.user_id
+   WHERE lower(btrim(u.email)) = v_email;
+  IF v_tos = 0 THEN
+    RAISE EXCEPTION 'no tos_acceptances rows for % — her consent is not on file; decide before inserting', v_email;
+  END IF;
+
+  RAISE NOTICE 'pre-flight OK: deleting manager 627, inserting resident for % (% consent row(s) on file)', v_email, v_tos;
 END
 $do$;
 
--- Run this second, after the NOTICE above says pre-flight OK.
--- RETURNING, so the write set is countable rather than assumed.
+-- ── 1. the dead manager role goes ───────────────────────────────────
 DELETE FROM public.user_roles
  WHERE id = 627
    AND lower(btrim(email)) = 'amandacanchol@gmail.com'
    AND role = 'manager'
    AND is_active IS FALSE
-RETURNING id, email, role, company, is_active, array_to_string(property, ' | ') AS property;
--- Expect exactly 1 row. Zero rows means the guard predicate no longer
--- matches — stop and re-read STEP 0 rather than loosening it.
+RETURNING 'DELETED' AS step, id, email, role, company, is_active,
+          array_to_string(property, ' | ') AS property;
 
--- ════════════════════════════════════════════════════════════════════
--- STEP A2 — then check whether her RESIDENT identity needs a role row
--- ════════════════════════════════════════════════════════════════════
--- She is the one live resident in the system with a login and no
--- resident user_roles row (measured: 343 live residents with a login,
--- 1 missing a resident role row). After STEP A she has none at all, so
--- her resident portal may land blank — the no-role-row dead-end class.
---
--- Read this, then decide. Do NOT create the row blind: a role row is
--- access, and inventing one is a product decision.
-SELECT r.id AS resident_id, r.name, r.email, r.property, r.unit, r.is_active, r.status,
-       (SELECT count(*) FROM public.user_roles ur
-         WHERE lower(btrim(ur.email)) = lower(btrim(r.email))) AS user_roles_rows_remaining
+-- ── 2. the resident role her live record needs ──────────────────────
+INSERT INTO public.user_roles (
+  email, role, company, property, is_active,
+  tos_accepted_at, tos_accepted_version, privacy_accepted_version,
+  texas_confirmed, must_change_password,
+  can_regenerate_tow_ticket, can_approve_vehicles
+)
+SELECT
+  r.email,
+  'resident',
+  r.company,                      -- from her residents row
+  ARRAY[r.property],              -- from her residents row
+  TRUE,
+  (SELECT max(ta.accepted_at) FROM public.tos_acceptances ta
+     JOIN auth.users u ON u.id = ta.user_id
+    WHERE lower(btrim(u.email)) = lower(btrim(r.email))),
+  (SELECT max(ta.tos_version) FROM public.tos_acceptances ta
+     JOIN auth.users u ON u.id = ta.user_id
+    WHERE lower(btrim(u.email)) = lower(btrim(r.email))
+      AND ta.tos_version IS NOT NULL),
+  (SELECT max(ta.privacy_version) FROM public.tos_acceptances ta
+     JOIN auth.users u ON u.id = ta.user_id
+    WHERE lower(btrim(u.email)) = lower(btrim(r.email))
+      AND ta.privacy_version IS NOT NULL),
+  FALSE, FALSE, FALSE, FALSE
   FROM public.residents r
- WHERE lower(btrim(r.email)) = 'amandacanchol@gmail.com';
+ WHERE lower(btrim(r.email)) = 'amandacanchol@gmail.com'
+   AND r.is_active
+   AND r.status = 'active'
+RETURNING 'INSERTED' AS step, id, email, role, company,
+          array_to_string(property, ' | ') AS property, is_active,
+          tos_accepted_version, privacy_accepted_version, tos_accepted_at;
+
+COMMIT;
 
 -- ════════════════════════════════════════════════════════════════════
--- STEP B — THE BAN. 🔴 NOT RECOMMENDED. Read this before running it.
+-- POST-APPLY VERIFICATION — re-runnable, read-only
 -- ════════════════════════════════════════════════════════════════════
--- This was the original instruction, and it does close the exposure.
--- It also 🔴 LOCKS OUT residents row 656 — "Amanda Canchola" at
--- Southfork Lake Apartments, is_active=true, status='active' — because
--- the ban is on the LOGIN and the login serves both identities. She
--- signed in on 2026-08-21, so this is a live account, not a dormant one.
---
--- Run it only if A1 confirms she does not use this address at all, in
--- which case deactivating the resident record is the honest companion
--- step and should be decided at the same time.
---
--- Reversible: UPDATE auth.users SET banned_until = NULL WHERE ... —
--- but a locked-out resident will not know that, and will call A1.
---
--- Uncomment deliberately, not by habit.
---
--- UPDATE auth.users
---    SET banned_until = (now() + INTERVAL '100 years')
---  WHERE lower(btrim(email)) = 'amandacanchol@gmail.com'
---    AND banned_until IS NULL
--- RETURNING id, email, banned_until, last_sign_in_at;
---
--- -- Refresh-token revocation. A ban already refuses a refresh
--- -- ("Invalid Refresh Token: User Banned", measured), so this is belt
--- -- rather than the control. 🔴 It does NOT revoke an access token
--- -- already issued: a raw bearer kept returning HTTP 200 for the full
--- -- 60-minute token life after both is_active=false AND the ban
--- -- (measured with a direct PostgREST call, no SDK session state). That
--- -- residual window is what the helper is_active term closes, and it is
--- -- why that step is still needed.
--- UPDATE auth.refresh_tokens t
---    SET revoked = TRUE
---  WHERE t.user_id::TEXT IN (
---          SELECT u.id::TEXT FROM auth.users u
---           WHERE lower(btrim(u.email)) = 'amandacanchol@gmail.com')
---    AND t.revoked IS NOT TRUE
--- RETURNING t.id, t.user_id, t.revoked;
+-- 🔴 This does NOT mint a session as a real customer. The shape is
+-- proven by execution against a canary in
+-- scripts/verify-resident-role-shape.ts (npm run verify:residentrole).
+-- What this block does is run the HELPERS' OWN PREDICATE against her
+-- actual row, which is the thing her session will evaluate.
+DO $do$
+DECLARE
+  v_email TEXT := 'amandacanchol@gmail.com';
+  v_fail  TEXT[] := '{}';
+  v_role  TEXT;
+  v_co    TEXT;
+  v_props TEXT[];
+  v_n     INT;
+BEGIN
+  -- get_my_role()'s body, verbatim, with her email in place of the JWT.
+  SELECT role, company, property INTO v_role, v_co, v_props
+    FROM public.user_roles
+   WHERE lower(email) = lower(v_email)
+   LIMIT 1;
+
+  IF v_role IS DISTINCT FROM 'resident' THEN
+    v_fail := array_append(v_fail, format('her session would resolve to role %L, want resident', v_role));
+  END IF;
+  IF v_co IS DISTINCT FROM 'A1 Wrecker llc' THEN
+    v_fail := array_append(v_fail, format('company resolves to %L', v_co));
+  END IF;
+  IF NOT ('Southfork Lake Apartments' = ANY(COALESCE(v_props, '{}'))) THEN
+    v_fail := array_append(v_fail, format('property resolves to %L, want Southfork Lake Apartments', v_props));
+  END IF;
+  IF 'Sugarberry Place' = ANY(COALESCE(v_props, '{}')) THEN
+    v_fail := array_append(v_fail, '🔴 Sugarberry Place is still in her property list — the manager scope survived');
+  END IF;
+
+  SELECT count(*) INTO v_n FROM public.user_roles
+   WHERE lower(btrim(email)) = lower(v_email);
+  IF v_n <> 1 THEN
+    v_fail := array_append(v_fail, format('%s user_roles rows for her, want exactly 1', v_n));
+  END IF;
+
+  SELECT count(*) INTO v_n FROM public.user_roles
+   WHERE lower(btrim(email)) = lower(v_email) AND role <> 'resident';
+  IF v_n <> 0 THEN
+    v_fail := array_append(v_fail, format('🔴 %s non-resident role row(s) remain', v_n));
+  END IF;
+
+  -- Her own data must still be there — the point was to keep it.
+  SELECT count(*) INTO v_n FROM public.residents
+   WHERE lower(btrim(email)) = lower(v_email) AND is_active AND status = 'active';
+  IF v_n <> 1 THEN
+    v_fail := array_append(v_fail, format('her live residents row count is %s, want 1', v_n));
+  END IF;
+  SELECT count(*) INTO v_n FROM public.vehicles
+   WHERE lower(btrim(resident_email)) = lower(v_email) AND is_active;
+  IF v_n < 1 THEN
+    v_fail := array_append(v_fail, 'her active vehicle is gone');
+  END IF;
+
+  -- And the login must be untouched: a ban here would be the outcome
+  -- this file exists to avoid.
+  IF EXISTS (SELECT 1 FROM auth.users WHERE lower(btrim(email)) = lower(v_email) AND banned_until IS NOT NULL) THEN
+    v_fail := array_append(v_fail, '🔴 her auth user is BANNED — that locks out a live resident');
+  END IF;
+
+  IF array_length(v_fail,1) > 0 THEN
+    RAISE EXCEPTION E'VERIFICATION FAILED:\n  %', array_to_string(v_fail, E'\n  ');
+  END IF;
+END
+$do$;
+
+SELECT 'PASS — amandacanchol@gmail.com'                                  AS result,
+       (SELECT role FROM public.user_roles
+         WHERE lower(email)='amandacanchol@gmail.com' LIMIT 1)           AS resolves_to,
+       (SELECT array_to_string(property,' | ') FROM public.user_roles
+         WHERE lower(email)='amandacanchol@gmail.com' LIMIT 1)           AS property_scope,
+       (SELECT count(*) FROM public.user_roles
+         WHERE lower(btrim(email))='amandacanchol@gmail.com')            AS role_rows_want_1,
+       (SELECT count(*) FROM public.vehicles
+         WHERE lower(btrim(resident_email))='amandacanchol@gmail.com' AND is_active) AS her_active_vehicles,
+       (SELECT COALESCE(banned_until::TEXT,'not banned — correct')
+          FROM auth.users WHERE lower(btrim(email))='amandacanchol@gmail.com') AS login_state,
+       '🔴 npm run verify:residentrole proves the SHAPE by execution on a canary' AS next;
