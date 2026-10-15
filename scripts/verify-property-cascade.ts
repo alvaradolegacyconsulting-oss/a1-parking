@@ -65,6 +65,7 @@ const propIds: number[] = []
 const roleIds: number[] = []
 const residentIds: number[] = []
 const vehicleIds: number[] = []
+const prohibitionIds: number[] = []
 const users: string[] = []
 let server: ChildProcess | null = null
 let cleaned = false
@@ -79,6 +80,7 @@ async function cleanup(why: string) {
     if (r.error || (r.data ?? []).length !== ids.length) console.error(`   🔴 ${t}: removed ${(r.data ?? []).length}/${ids.length} ${r.error?.message ?? ''}`)
     else console.log(`   ↩ ${ids.length} ${t}`)
   }
+  await del('property_plate_prohibitions', prohibitionIds)
   await del('vehicles', vehicleIds)
   await del('residents', residentIds)
   await del('user_roles', roleIds)
@@ -385,11 +387,81 @@ const main = async () => {
       'reactivating a property must not restore someone it never deactivated')
     chk('4c. ...and the skip says WHY', /deactivated separately/.test(m4skip?.reason ?? ''), JSON.stringify(m4skip))
 
-    chk('9a. 🔴 reactivation does NOT restore residents (deliberate, disclosed)',
-      (await db.from('residents').select('is_active').eq('id', atT.residentId).single()).data?.is_active === false)
-    chk('9b. 🔴 ...nor vehicles', (await db.from('vehicles').select('is_active').eq('id', atT.vehicleId).single()).data?.is_active === false)
-    chk('9c. ...but the property is active again',
+    // ── CONTROL 9 — 🔴 INVERTED 2026-10-15 ────────────────────────
+    // This used to assert "reactivation does NOT restore residents or
+    // vehicles" and it PASSED — so a gate I wrote was defending a
+    // regression. /admin has always restored both. I had read the claim
+    // off the DEACTIVATE dialog's wording, which is about space
+    // ASSIGNMENTS and pending requests, and never opened the reactivate
+    // branch. A wrong assertion that passes outlives the conversation
+    // that produced it, which is why the lesson is now a process rule:
+    // gate assertions come from the code path, never from dialog or doc
+    // wording.
+    chk('9a. 🔴 reactivation DOES restore residents',
+      (await db.from('residents').select('is_active').eq('id', atT.residentId).single()).data?.is_active === true,
+      'the blanket restore — which over-restores by 42 of 46 rows in production, reported separately')
+    chk('9b. 🔴 ...and restores status=active vehicles',
+      (await db.from('vehicles').select('is_active').eq('id', atT.vehicleId).single()).data?.is_active === true,
+      'through admin_reactivate_property_vehicles, called as the CALLER because it refuses service_role')
+    chk('9c. ...and the property is active again',
       (await db.from('properties').select('is_active').eq('id', T.id).single()).data?.is_active === true)
+
+    // ── 9d/9e — the RPC's TWO different non-restores ──────────────
+    // 🔴 WRITTEN FROM THE LOOP, NOT FROM ITS COMMENT. My first version
+    // of 9e asserted that a DECLINED vehicle appears in the `skipped`
+    // list, because the migration says the RPC "reports anything it
+    // skipped". It does not, and the loop is why:
+    //
+    //   FOR v_row IN SELECT … WHERE is_active = FALSE
+    //                           AND status    = 'active'
+    //
+    // Only that set are CANDIDATES. `skipped` holds candidates the RPC
+    // then refused — a prohibited plate, or the plate already active
+    // elsewhere. A declined vehicle is never a candidate at all: the
+    // RPC's own rule string says "declined/deactivated/pending left
+    // alone". It is silently not-restored, and silence is correct there
+    // because it was never under consideration.
+    //
+    // So the two behaviours are asserted separately. Conflating them is
+    // how I got control 9 wrong in the first place.
+    const declined = await db.from('vehicles').insert({
+      plate: `ZZPC${String(S).slice(-6)}DQ`, state: 'TX', property: T.name, company: CO,
+      status: 'declined', is_active: false, unit: '202',
+    }).select('id,plate').single()
+    if (declined.error) throw new Error(`declined canary: ${declined.error.message}`)
+    vehicleIds.push(declined.data.id as number)
+
+    // A genuine blocked CANDIDATE: status='active', is_active=false,
+    // and its plate prohibited at this property.
+    const blockedPlate = `ZZPC${String(S).slice(-6)}PR`
+    const blocked = await db.from('vehicles').insert({
+      plate: blockedPlate, state: 'TX', property: T.name, company: CO,
+      status: 'active', is_active: false, unit: '203',
+    }).select('id,plate').single()
+    if (blocked.error) throw new Error(`blocked canary: ${blocked.error.message}`)
+    vehicleIds.push(blocked.data.id as number)
+    const proh = await db.from('property_plate_prohibitions').insert({
+      property_id: T.id, plate: blockedPlate, reason: `gate probe ${S}`, added_by: 'verify:cascade',
+    }).select('id').single()
+    if (proh.error) throw new Error(`prohibition: ${proh.error.message}`)
+    prohibitionIds.push(proh.data.id as number)
+
+    await call(admCookie, { property_id: T.id, active: false, mode: 'apply' })
+    const back2 = await call(admCookie, { property_id: T.id, active: true, mode: 'apply' })
+    const skipLine = back2.lines.find(l => l.type === 'vehicles_skipped')
+    const skippedPlates = ((skipLine?.skipped ?? []) as { plate: string; reason: string }[])
+
+    chk('9d. 🔴 a DECLINED vehicle is not resurrected',
+      (await db.from('vehicles').select('is_active').eq('id', declined.data.id as number).single()).data?.is_active === false,
+      'a blanket restore would have brought it back as enforceable')
+    chk('9d2. ...and is NOT in the skip list — it was never a candidate',
+      !skippedPlates.some(x => x.plate === declined.data.plate),
+      'the RPC leaves declined/deactivated/pending alone; reporting them as "skipped" would bury the real skips')
+    chk('9e. 🔴 a BLOCKED candidate (prohibited plate) is skipped AND reported with a reason',
+      skippedPlates.some(x => x.plate === blockedPlate && !!x.reason),
+      `skipped=${JSON.stringify(skippedPlates)} — an operator must know which cars stayed off before enforcing`)
+    chk('9e2. ...and it really stayed off',
+      (await db.from('vehicles').select('is_active').eq('id', blocked.data.id as number).single()).data?.is_active === false)
 
     // ── the lookup's other branch, measured ───────────────────────
     // A genuine ban-API failure is not inducible without a test seam

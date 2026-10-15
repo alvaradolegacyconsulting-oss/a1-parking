@@ -51,6 +51,7 @@ None were found by looking for them. They were found because a change touched th
 **Estimate:** ≈5 days for phases 1–4. Phase 5 is external and scheduled separately.
 
 ## Process rules already adopted (keep)
+- 🔴 **Gate assertions come from the code path, never from dialog or doc wording.** (Binding, 2026-10-15.) `verify:cascade` control 9 asserted "reactivation does NOT restore residents or vehicles" and **passed** — read off the *deactivate* dialog's accurate but narrow line about space **assignments**, with the reactivate branch never opened. A gate was therefore defending a regression, and a wrong assertion that passes outlives the conversation that produced it. The same error recurred within the hour on the same gate: 9e asserted a declined vehicle appears in the RPC's `skipped` list because the migration says it "reports anything it skipped" — the loop selects only `is_active=false AND status='active'` as candidates, so a declined row is never a candidate and never reported. Open the loop, the policy, the trigger body. Prose describes intent; only the code describes behaviour.
 - A guard's positive controls come from a **full writer sweep done before** the guard is applied.
 - Verification must **execute**, not just read `prosrc`. Every negative check needs a positive control so that "refused" can't be a misread error.
 - Canary first; never prove a hole by exploiting a real customer account.

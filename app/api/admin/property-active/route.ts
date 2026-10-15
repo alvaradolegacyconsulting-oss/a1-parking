@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { setUserActive, type RoleRow } from '../../../lib/user-active'
@@ -66,6 +66,18 @@ interface PlanRow {
 
 interface Ctx {
   db: SupabaseClient
+  /** 🔴 The CALLER's access token, captured during the request.
+   *
+   * admin_reactivate_property_vehicles is super-admin only — it checks
+   * get_my_role() <> 'admin' — and service_role carries no email claim,
+   * so get_my_role() is NULL inside it and the call is refused. The
+   * route therefore calls that ONE rpc as the caller.
+   *
+   * The token is captured rather than reusing the cookie-backed server
+   * client, because `cookies()` is request-scoped and the streaming
+   * body runs after the response has been returned: a lazy cookie read
+   * inside the stream can throw. */
+  callerToken: string | null
   actor: string
   property: { id: number; name: string; company: string; is_active: boolean }
   plan: PlanRow[]
@@ -165,7 +177,11 @@ async function prepare(
   const { count: vehCount } = await db.from('vehicles')
     .select('*', { count: 'exact', head: true }).eq('property', property.name).eq('is_active', !active)
 
-  return { ok: true, ctx: { db, actor: caller.email, property, plan, residents: resCount ?? 0, vehicles: vehCount ?? 0 } }
+  const { data: sess } = await sb.auth.getSession()
+  return { ok: true, ctx: {
+    db, callerToken: sess?.session?.access_token ?? null,
+    actor: caller.email, property, plan, residents: resCount ?? 0, vehicles: vehCount ?? 0,
+  } }
 }
 
 export async function POST(req: NextRequest) {
@@ -187,7 +203,7 @@ export async function POST(req: NextRequest) {
   if (!prep.ok) {
     return NextResponse.json({ ok: false, error: prep.code, message: prep.message }, { status: prep.status })
   }
-  const { db, actor, property, plan, residents, vehicles } = prep.ctx
+  const { db, callerToken, actor, property, plan, residents, vehicles } = prep.ctx
 
   if (mode === 'plan') {
     return NextResponse.json({
@@ -205,13 +221,19 @@ export async function POST(req: NextRequest) {
       },
       residents_to_change: active ? 0 : residents,
       vehicles_to_change:  active ? 0 : vehicles,
-      // Stated here so the dialog cannot imply otherwise: reactivation
-      // restores the property and the users this cascade took, and does
-      // NOT restore residents, vehicles, space assignments or pending
-      // requests. Deliberate and long-standing.
+      // 🔴 CORRECTED 2026-10-15. The first version said reactivation
+      // does NOT restore residents or vehicles. It does — /admin has
+      // always restored residents (blanket) and vehicles (through
+      // admin_reactivate_property_vehicles, which restores only
+      // status='active' AND is_active=false and reports what it
+      // skipped). I had read that claim off the DEACTIVATE dialog's
+      // wording, which is about space ASSIGNMENTS and pending
+      // requests, and never opened the reactivate branch. A note that
+      // tells the operator the opposite of the truth is worse than no
+      // note.
       note: active
-        ? 'Reactivation restores the property and the users this property\'s cascade deactivated. Residents, vehicles, space assignments and pending requests are NOT restored.'
-        : 'Residents and vehicles at this property will be deactivated. Reactivating later does not restore space assignments or pending requests.',
+        ? 'Reactivation restores the property, the users this property\'s cascade deactivated, its residents, and its approved vehicles. Space assignments and pending space/guest requests are NOT restored and must be re-created.'
+        : 'Residents and vehicles at this property will be deactivated. Reactivating later restores residents and approved vehicles, but NOT space assignments or pending space/guest requests.',
     })
   }
 
@@ -255,8 +277,52 @@ export async function POST(req: NextRequest) {
           if (res.error || veh.error) dataDetail += ` 🔴 (${res.error?.message ?? ''}${veh.error?.message ?? ''})`
           send({ type: 'data', ok: !res.error && !veh.error, detail: dataDetail })
         } else {
-          // Deliberately NOT restored. Disclosed in the plan's note.
-          send({ type: 'data', ok: true, detail: 'residents and vehicles left as they are (reactivation does not restore them)' })
+          // ── reactivate: residents blanket, vehicles through the RPC ──
+          // Kept exactly as /admin does it today, per the ruling. The
+          // blanket resident restore over-restores by 42 of 46 rows —
+          // measured, reported in
+          // cascade-resident-restore-over-restores.md — and changing it
+          // is a separate decision, so this wiring does not.
+          const res = await db.from('residents').update({ is_active: true })
+            .eq('property', property.name).select('id')
+          let detail = `${(res.data ?? []).length} residents restored`
+          if (res.error) detail += ` 🔴 (${res.error.message})`
+
+          // 🔴 THE ONE CALL MADE AS THE CALLER, NOT AS service_role.
+          // The RPC refuses anyone whose get_my_role() is not 'admin',
+          // and service_role has no email claim, so as service_role it
+          // returns not_super_admin. Calling it as the caller keeps the
+          // authority check real and avoids a second implementation of
+          // "restore only status='active' AND is_active=false" — the
+          // rule that exists so vehicles declined or removed BEFORE the
+          // property went down are not brought back as enforceable.
+          let vehDetail = 'not attempted'
+          let vehOk = false
+          if (!callerToken) {
+            vehDetail = '🔴 no caller token — vehicles NOT restored'
+          } else {
+            const asCaller = createClient(
+              process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+              { auth: { persistSession: false }, global: { headers: { Authorization: `Bearer ${callerToken}` } } },
+            )
+            const rv = await asCaller.rpc('admin_reactivate_property_vehicles', { p_property_id: property.id })
+            const r = (rv.data ?? {}) as Record<string, unknown>
+            if (rv.error || r.ok !== true) {
+              vehDetail = `🔴 vehicles NOT restored: ${rv.error?.message ?? r.error ?? 'unknown'}`
+            } else {
+              vehOk = true
+              vehDetail = `${r.restored_count ?? 0} vehicles restored`
+              // The skip list is the point of using the RPC. Surfaced,
+              // not swallowed — an operator needs to know which cars
+              // stayed off and why before enforcing at that property.
+              if (Number(r.skipped_count ?? 0) > 0) {
+                vehDetail += `, ${r.skipped_count} skipped`
+                send({ type: 'vehicles_skipped', count: r.skipped_count, skipped: r.skipped })
+              }
+            }
+          }
+          dataDetail = `${detail} · ${vehDetail}`
+          send({ type: 'data', ok: !res.error && vehOk, detail: dataDetail })
         }
 
         const pf = await db.from('properties').update({ is_active: active }).eq('id', property.id).select('id, is_active')
