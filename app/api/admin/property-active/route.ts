@@ -224,8 +224,13 @@ export async function POST(req: NextRequest) {
       const results: { email: string; action: Action; ok: boolean; detail: string }[] = []
       try {
         const todo = plan.filter(p => p.action === 'revoke' || p.action === 'restore')
+        // raw_email is stripped here as well as from the plan response:
+        // it exists only so the write matches a row whose stored email
+        // may not be lowercased, and it has no business in a payload a
+        // client renders or logs.
         send({ type: 'start', run: runId, property: property.name, total: todo.length,
-               skipped: plan.filter(p => p.action === 'skip' || p.action === 'keep') })
+               skipped: plan.filter(p => p.action === 'skip' || p.action === 'keep')
+                            .map(({ raw_email: _raw, ...rest }) => rest) })
 
         // 🔴 Sequential and independent. One failure does not stop the
         // rest and does not undo the ones before it.

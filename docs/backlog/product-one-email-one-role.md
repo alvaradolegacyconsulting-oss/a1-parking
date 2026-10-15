@@ -24,8 +24,22 @@ the system, so "arbitrary" means a person's entire access could differ
 between two requests.
 
 Measured 2026-10-15: **0 of 386 distinct emails have more than one
-`user_roles` row.** So the system is single-role today by practice, and
-deterministic by luck rather than by construction.
+`user_roles` row.**
+
+🔴 **CORRECTION, same day.** I first wrote that this holds "by practice,
+and deterministic by luck rather than by construction". That was wrong.
+It is enforced:
+
+```sql
+CREATE UNIQUE INDEX user_roles_lower_email_uidx
+  ON public.user_roles (lower(email));      -- 2026-07-04
+```
+
+Found by trying to violate it: the cascade gate's planned fault
+injection was a second role row for one email, and Postgres rejected
+it with 23505. So the index does the job, and the `LIMIT 1` ordering
+question is about *robustness if that index were ever dropped*, not
+about a live ambiguity.
 
 ## What went wrong without the rule written down
 
@@ -49,12 +63,13 @@ layer knew it should.
 
 In rough order of value, none of it built:
 
-1. **A UNIQUE index on `lower(btrim(email))` in `user_roles`.** Already
-   noted as a Bar-2 item in `get_my_role`'s own history ("single-row-
-   per-email is the documented assumption; the UNIQUE constraint is a
-   separate Bar-2 item"). It is 0-violation today, so it would apply
-   clean — but it is a hard constraint on a table every portal writes,
-   so it needs its own writer sweep.
+1. ~~A UNIQUE index on `user_roles`~~ — **already done**, 2026-07-04,
+   `user_roles_lower_email_uidx ON public.user_roles (lower(email))`.
+   `get_my_role`'s own history calls the UNIQUE constraint "a separate
+   Bar-2 item", which is what misled me; the index had already shipped.
+   Nothing to build. It also means the individual route's
+   `targets.length > 1` branch is unreachable — defensive, and worth
+   keeping, but not a live case.
 2. **The invite path should refuse an address that already holds a
    different role**, with copy that says so: "that address is already a
    resident at Southfork Lake — invite a different address." Stating
