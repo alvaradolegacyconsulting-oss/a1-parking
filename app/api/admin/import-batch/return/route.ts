@@ -70,6 +70,11 @@ export async function POST(req: NextRequest) {
   // property is inactive, there is nothing for them to fix toward. In
   // both cases the batch stays where it is and the operator resolves
   // the reason first.
+  // 🔴 ONLY THE HARD BLOCK, NOT loadBlocked. A metered tenant cannot
+  // be LOADED, and sending the batch back is precisely the right
+  // answer for them — "we cannot bulk-load you, your plan bills per
+  // permit". Blocking this too would leave the batch stuck with no
+  // move anyone could make.
   if (review.block.blocked) {
     return NextResponse.json({
       error: 'blocked',

@@ -72,7 +72,7 @@ interface Verdict {
   validation:
     | { ran: true; clean: boolean; error_count: number; errors: RowError[]; errors_truncated: boolean }
     | { ran: false; why: string }
-  block: { blocked: boolean; reasons: string[] }
+  block: { blocked: boolean; reasons: string[]; loadBlocked: boolean; loadReasons: string[] }
   can_approve: boolean
   can_load: boolean
 }
@@ -293,6 +293,7 @@ function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
   // 🔴 Blocked hides Return as well as Approve. Returning a batch whose
   // company has bulk onboarding switched off hands the CA a list of
   // rows to fix and no way to send the fixed file back.
+  // 🔴 Return survives loadBlocked on purpose — see the panel above.
   const canReturn = !v.block.blocked && v.validation.ran && !v.validation.clean
     && ['submitted', 'approved'].includes(status)
   // 🔴 Reject is for a file that VALIDATES and still should not load.
@@ -300,6 +301,9 @@ function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
   // back as a Return so the company gets the row numbers, rather than a
   // sentence the operator had to type about rows the server already
   // measured. Hidden when blocked, like Return.
+  // 🔴 And so does Reject: a metered tenant whose file is perfectly
+  // clean still needs telling, in a sentence, why it will not be
+  // loaded. That is exactly what Reject is for.
   const canReject = !v.block.blocked && v.validation.ran && v.validation.clean
     && ['submitted', 'approved'].includes(status)
 
@@ -330,6 +334,26 @@ function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
           <p style={{ color: '#a98', fontSize: 11, lineHeight: 1.6, margin: '6px 0 0' }}>
             The batch stays as it is. Nothing to retry and nothing to send back — neither would help.
             Fix the reason above and review again.
+          </p>
+        </div>
+      )}
+
+      {/* 🔴 A DIFFERENT PANEL, BECAUSE IT IS A DIFFERENT ANSWER.
+          The block above means nothing can be done. This one means
+          Approve and Load cannot proceed but Return CAN — and saying so
+          is the difference between an operator knowing their next move
+          and staring at a batch with no buttons. */}
+      {!v.block.blocked && v.block.loadBlocked && (
+        <div style={{ background: '#2a1a0d', border: '1px solid #ff9800', borderRadius: 8, padding: '10px 13px', margin: '12px 0' }}>
+          <p style={{ color: '#ff9800', fontSize: 12, fontWeight: 'bold', margin: '0 0 6px' }}>
+            This batch cannot be approved or loaded
+          </p>
+          {v.block.loadReasons.map((why, i) => (
+            <p key={i} style={{ color: '#ffd9a0', fontSize: 12, lineHeight: 1.6, margin: '0 0 4px' }}>· {why}</p>
+          ))}
+          <p style={{ color: '#a98', fontSize: 11, lineHeight: 1.6, margin: '6px 0 0' }}>
+            You can still return it to the company — that is the right move here, and the
+            button below does it.
           </p>
         </div>
       )}

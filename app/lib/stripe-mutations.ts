@@ -290,6 +290,80 @@ async function updateLineItemPrice(
 
 // ─── Public API ─────────────────────────────────────────────────────
 
+// ════════════════════════════════════════════════════════════════════
+// 🔴 THE BILLING GUARD — is this company's plan metered per permit?
+// ════════════════════════════════════════════════════════════════════
+// Ruled 2026-10-16: refuse to approve or load a bulk batch for any
+// company whose subscription carries a per_permit line item.
+//
+// ── WHY A BULK LOAD AND A METERED PLAN CANNOT MEET ──────────────────
+// A load writes 358 active vehicles in one transaction. On a metered
+// plan each approved permit is billable, and syncOnAdd sets an ABSOLUTE
+// quantity rather than a delta — so a batch either bills 358 permits at
+// once with a proration the customer never agreed to, or (if nothing
+// calls syncOnAdd) silently under-bills by 358 and the drift is only
+// found at renewal. Neither is a thing to discover after the fact.
+//
+// So the answer is to refuse the load and have a person decide, which
+// is what this reports.
+//
+// ── 🔴 IT LIVES HERE, NOT IN THE QUEUE ─────────────────────────────
+// loadCompanyForSync and snapshotSubscription are module-private, and
+// the one thing worse than importing them would be a second copy of
+// "how to find a line item on a subscription" in the import code. When
+// the catalog adds a line item or renames one, there is one place that
+// has to learn about it.
+//
+// ── 🔴 AND IT FAILS CLOSED ─────────────────────────────────────────
+// If Stripe cannot be reached, the answer is "refuse", not "proceed".
+// Refusing a load because billing could not be confirmed costs an
+// operator a retry; proceeding costs a customer a charge they did not
+// agree to, or a silent under-bill nobody notices until renewal. Same
+// posture as authorizeBulkCompany on a read error.
+export type MeteredLineItemCheck =
+  | { ok: true; metered: true; lineItems: string[]; quantity: number }
+  | { ok: true; metered: false; reason: 'skipped_no_sub' | 'skipped_no_line_item' }
+  | { ok: false; reason: string }
+
+/**
+ * Does this company's live subscription carry a per_permit line item?
+ *
+ * Read-only: it retrieves and inspects, and mutates nothing.
+ *
+ * `metered: false` with reason 'skipped_no_sub' is the A1 shape — a
+ * legacy tenant with no Stripe subscription at all — and
+ * 'skipped_no_line_item' is a subscribed tenant on a plan that does not
+ * meter permits. Both are safe to load. The reasons are the same
+ * vocabulary syncOnAdd already returns, deliberately: an operator
+ * reading a queue refusal and a developer reading a sync log should see
+ * the same words for the same state.
+ */
+export async function companyPerPermitLineItems(
+  companyId: number,
+): Promise<MeteredLineItemCheck> {
+  const supabase = createSupabaseServiceClient()
+  const company = await loadCompanyForSync(supabase, companyId)
+  // No subscription row, or no stripe_subscription_id — the A1 shape.
+  if (!company) return { ok: true, metered: false, reason: 'skipped_no_sub' }
+
+  const snapshot = await snapshotSubscription(supabase, company.stripeSubId, companyId)
+  if (!snapshot) {
+    // 🔴 Fail closed. See the header: an unreachable Stripe is not
+    // permission to bill someone 358 permits.
+    return { ok: false, reason: 'the subscription could not be read (see [B147-*] logs)' }
+  }
+
+  const metered = snapshot.items.filter(i => i.lineItem === 'per_permit')
+  if (metered.length === 0) {
+    return { ok: true, metered: false, reason: 'skipped_no_line_item' }
+  }
+  return {
+    ok: true, metered: true,
+    lineItems: metered.map(i => i.lineItem),
+    quantity: metered.reduce((n, i) => n + (i.quantity ?? 0), 0),
+  }
+}
+
 export type SyncOnAddResult =
   | { ok: true; action: 'incremented' | 'noop_within_floor' | 'skipped_no_sub' | 'skipped_no_line_item' | 'skipped_manual_collection' }
   | { ok: false; reason: string }

@@ -76,11 +76,15 @@ export async function POST(req: NextRequest) {
     }, { status: 409 })
   }
 
-  if (review.block.blocked) {
+  // 🔴 BOTH KINDS OF BLOCK STOP THIS ACTION. The hard blocks mean
+  // nothing can be done with the batch at all; loadBlocked means this
+  // action specifically cannot proceed — today that is the metered-plan
+  // guard, where Return IS still the right move and so is not blocked.
+  if (review.block.blocked || review.block.loadBlocked) {
     return NextResponse.json({
       error: 'blocked', outcome: 'blocked',
       message: 'This batch cannot be loaded right now. Nothing was loaded and the batch is unchanged.',
-      reasons: review.block.reasons,
+      reasons: [...review.block.reasons, ...review.block.loadReasons],
       // 🔴 Stated in the payload so the UI cannot decide otherwise: a
       // retry would work and would be wrong.
       retryable: false,
