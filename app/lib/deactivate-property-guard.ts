@@ -46,26 +46,6 @@ export interface DeactivatePropertyGuardOpts {
   supabase:     SupabaseClient
   propertyName: string
   company:      string
-  /**
-   * 🔴 WHICH OPERATION IS ACTUALLY ABOUT TO HAPPEN. Required, not
-   * defaulted, so the compiler makes every caller say — a default
-   * would silently hand a new call site the wrong promise.
-   *
-   *   'cascade'   /admin: bans the assigned single-property users,
-   *               deactivates residents and vehicles, flips the
-   *               property. The counts below describe real work.
-   *   'flag_only' the CA portal: flips properties.is_active and
-   *               audits. Nothing else. Managers keep their logins,
-   *               residents and vehicles keep their records.
-   *
-   * This parameter exists because the two paths shared this dialog
-   * while doing different things, so the CA operator was told their
-   * action would "suspend account access for 31 residents" when it
-   * suspended nothing. Sharing the WARNING without sharing the WORK is
-   * worse than not sharing it: it is a confident, specific, wrong
-   * statement about a destructive action.
-   */
-  variant:      'cascade' | 'flag_only'
 }
 
 /**
@@ -81,7 +61,7 @@ export interface DeactivatePropertyGuardOpts {
 export async function promptDeactivatePropertyConfirm(
   opts: DeactivatePropertyGuardOpts,
 ): Promise<boolean> {
-  const { supabase, propertyName, company, variant } = opts
+  const { supabase, propertyName, company } = opts
 
   // Parallel count over the three assignment carriers, scoped by
   // company. Escape ILIKE wildcards on `company` (some carriers use
@@ -123,43 +103,39 @@ export async function promptDeactivatePropertyConfirm(
   //   B — has residents: honest asymmetry note about space/guest state.
   //   C — has PMs/LAs and/or drivers but no residents: no asymmetry
   //       note needed (nothing to lose beyond login access).
-  let body: string
-  if (variant === 'flag_only') {
-    // 🔴 Says what THIS path does, which is less than the cascade. The
-    // counts are still shown, because who is affected is what the
-    // operator is deciding about — but they are labelled "loses portal
-    // access", not "will be suspended", because no login is revoked
-    // and no record is deactivated here.
-    body =
-      `Mark "${propertyName}" inactive?\n\n` +
-      (totalAccounts === 0
-        ? `No users are currently assigned to it.\n\n`
-        : `The property stops appearing as active, and anyone assigned ONLY to it ` +
-          `loses portal access:\n${lines.join('\n')}\n\n`) +
-      `This does NOT deactivate their accounts and does NOT deactivate residents or ` +
-      `vehicles — their records stay as they are. Logins are unchanged.\n\n` +
-      `You can mark it active again later.\n\n` +
-      `Proceed?`
-  } else if (totalAccounts === 0) {
-    body =
-      `Deactivate "${propertyName}"?\n\n` +
-      `No users are currently assigned to this property. It can be REACTIVATED later.\n\n` +
-      `Proceed?`
-  } else if (residentCount > 0) {
-    body =
-      `Deactivate "${propertyName}"?\n\n` +
-      `This will suspend account access for:\n${lines.join('\n')}\n\n` +
-      `Reactivation will restore LOGIN ACCESS — but note: any resident parking-space ` +
-      `assignments and pending space/guest requests will NOT auto-restore and will need ` +
-      `to be re-created.\n\n` +
-      `Proceed with deactivation?`
-  } else {
-    body =
-      `Deactivate "${propertyName}"?\n\n` +
-      `This will suspend account access for:\n${lines.join('\n')}\n\n` +
-      `They can be REACTIVATED later to restore login access.\n\n` +
-      `Proceed?`
-  }
+  // 🔴 ONE COPY NOW, AND IT IS THE HONEST ONE.
+  //
+  // This helper used to take variant: 'cascade' | 'flag_only' because
+  // /admin and the CA portal showed the SAME dialog while doing
+  // different things — the CA operator was told their click would
+  // "suspend account access for 31 residents" when it suspended
+  // nothing.
+  //
+  // /admin moved to PropertyCascadeDialog on 2026-10-15, which shows the
+  // actual per-user PLAN from /api/admin/property-active instead of a
+  // count. So the 'cascade' branches had no caller left, and a dead
+  // branch whose copy describes a cascade this helper no longer fronts
+  // is exactly the artifact that makes the next reader believe the
+  // divergence is still here. Deleted rather than commented.
+  //
+  // What remains is the CA path, which genuinely only flips
+  // properties.is_active. When the CA path is routed through the
+  // cascade (Sweep #2 class 16) this helper goes entirely.
+  //
+  // The counts are still shown, because who is affected is what the
+  // operator is deciding about — labelled "loses portal access", not
+  // "will be suspended", because no login is revoked and no record is
+  // deactivated here.
+  const body =
+    `Mark "${propertyName}" inactive?\n\n` +
+    (totalAccounts === 0
+      ? `No users are currently assigned to it.\n\n`
+      : `The property stops appearing as active, and anyone assigned ONLY to it ` +
+        `loses portal access:\n${lines.join('\n')}\n\n`) +
+    `This does NOT deactivate their accounts and does NOT deactivate residents or ` +
+    `vehicles — their records stay as they are. Logins are unchanged.\n\n` +
+    `You can mark it active again later.\n\n` +
+    `Proceed?`
 
   return typeof window !== 'undefined' ? window.confirm(body) : false
 }

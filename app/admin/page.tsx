@@ -5,10 +5,12 @@ import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useResolvedLogo } from '../lib/logo'
-import { escapeIlikeValue, nameMetacharError } from '../lib/supabase-query-escape'
+// escapeIlikeValue went with the inline cascade (2026-10-15) — the route
+// does its own property-scoped writes server-side.
+import { nameMetacharError } from '../lib/supabase-query-escape'
 import { validateCompanyExists } from '../lib/company-validate'
 import { guardEmail } from '../lib/email-guard'
-import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
+import PropertyCascadeDialog from '../components/PropertyCascadeDialog'
 import CredentialsModal from '../components/CredentialsModal'
 import { generateTempPassword } from '../lib/temp-password'
 import { formatTimestamp } from '../lib/format-time'
@@ -66,6 +68,8 @@ export default function AdminPortal() {
   const resolvedLogo = useResolvedLogo()
   const [adminEmail, setAdminEmail] = useState('')
   const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null)
+  // The property cascade dialog's target, or null when closed.
+  const [cascade, setCascade] = useState<{ property: { id: number; name: string }; active: boolean; company: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('companies')
 
@@ -448,157 +452,54 @@ export default function AdminPortal() {
     }
   }
 
-  async function toggleProperty(p: any, active: boolean) {
-    const fnBase = process.env.NEXT_PUBLIC_SUPABASE_FUNCTIONS_URL || ''
-    const { data: { session } } = await supabase.auth.getSession()
-    const propertyName: string = p.name
+  // ── Property cascade — through /api/admin/property-active ────────
+  // 🔴 WAS ~145 LINES INLINE HERE. It did the right work and reported
+  // none of it: one audit row for the whole property, a best-effort
+  // swift-handler ban per user whose failure was logged and not
+  // surfaced, and a confirm dialog quoting a COUNT produced by the very
+  // filter that carried Finding B ("no other property" meant no other
+  // property AT ALL, so a manager whose other property was already
+  // down kept a login with zero active properties).
+  //
+  // The route does the same work with per-user results, a ban it reads
+  // back, a stamp so reactivation acts only on its own work, and
+  // Finding B fixed. The dialog shows the PLAN before anything happens.
+  //
+  // 🔴 WHAT STAYS HERE, AND WHY: the permit sync. It is a post-condition
+  // on a successful reactivation, and the route deliberately does not
+  // learn about Stripe. Same reasoning as the CA path's cap check being
+  // a pre-condition.
+  function toggleProperty(p: any, active: boolean) {
+    setCascade({ property: { id: p.id, name: p.name }, active, company: p.company || '' })
+  }
 
-    // Fetch managers / leasing_agents assigned to this property
-    const { data: propertyUsers } = await supabase
-      .from('user_roles')
-      .select('email, role, property')
-      .contains('property', [propertyName])
-      .in('role', ['manager', 'leasing_agent'])
-
-    if (!active) {
-      // Deactivate-guard Option A (2026-07-16) — force-confirm dialog
-      // BEFORE the cascade fires. Shows affected-account counts +
-      // honest asymmetry note when residents are present (space
-      // assignments and pending requests don't auto-restore on
-      // reactivate). Shared helper hooks BOTH this admin path AND the
-      // CA path (togglePropertyActive) to close the divergent-paths
-      // bypass. Cancel here aborts the deactivation entirely.
-      const confirmed = await promptDeactivatePropertyConfirm({
-        // This path really does cascade: it bans the single-property
-        // users, deactivates residents and vehicles, then flips the
-        // property. The dialog's counts describe actual work.
-        variant: 'cascade',
-        supabase,
-        propertyName,
-        company: (p as any).company || '',
-      })
-      if (!confirmed) return
-
-      // DEACTIVATING — only ban users with no other active properties
-      if (propertyUsers && propertyUsers.length > 0) {
-        const toDeactivate = propertyUsers.filter((u: any) =>
-          ((u.property as string[]) || []).filter((prop: string) => prop.toLowerCase() !== propertyName.toLowerCase()).length === 0
-        )
-        if (toDeactivate.length > 0) {
-          await Promise.all(toDeactivate.map((u: any) =>
-            fetch(fnBase + '/swift-handler', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-              body: JSON.stringify({ action: 'deactivate_user', email: u.email }),
-            })
-          ))
-          // Deactivation arc — also flip user_roles.is_active for the
-          // single-property PMs whose only assignment was this property
-          // (matches the auth-ban scope: PER-PROPERTY scoping for
-          // multi-property PMs is handled by properties.is_active +
-          // the assignment check in the helper; PMs assigned to OTHER
-          // active properties keep user_roles.is_active = true).
-          const emails = toDeactivate.map((u: any) => (u.email as string).toLowerCase())
-          const { error: urErr } = await supabase
-            .from('user_roles')
-            .update({ is_active: false })
-            .in('email', emails)
-          if (urErr) {
-            console.error('[admin property-cascade] user_roles.is_active=false write failed (auth bans intact):', urErr.message, { property: propertyName, count: emails.length })
-          }
-        }
+  // Fired after the dialog reports success on a REACTIVATION only.
+  // Already-approved vehicles (status='active') just re-entered the
+  // active count, so without this the permit meter stays stale until
+  // renewal-reconcile. Unconditional beyond that — syncOnAdd no-ops
+  // safely on non-PM tiers via skipped_no_line_item.
+  async function cascadePermitSync(companyName: string, propertyName: string) {
+    try {
+      const { data: comp } = await supabase
+        .from('companies').select('id').ilike('name', companyName).maybeSingle()
+      if (!comp?.id) {
+        console.warn('[B147-sync-skipped-no-companyid]', { site: 'admin-property-cascade', propertyName, companyName })
+        return
       }
-      // 2026-07-10 — escape ILIKE wildcards on the destructive cascade.
-      await supabase.from('residents').update({ is_active: false }).ilike('property', escapeIlikeValue(propertyName))
-      await supabase.from('vehicles').update({ is_active: false }).ilike('property', escapeIlikeValue(propertyName))
-      await supabase.from('properties').update({ is_active: false }).eq('id', p.id)
-      await auditLog(adminEmail, 'DEACTIVATE_PROPERTY_CASCADE', 'properties', p.id, {
-        property: propertyName, users_affected: propertyUsers?.length || 0,
+      const { data: { session: postSession } } = await supabase.auth.getSession()
+      const syncRes = await fetch('/api/billing/sync-on-add', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(postSession?.access_token ? { Authorization: `Bearer ${postSession.access_token}` } : {}),
+        },
+        body: JSON.stringify({ company_id: Number(comp.id), kind: 'permit' }),
       })
-    } else {
-      // REACTIVATING — unban all assigned managers / leasing_agents
-      if (propertyUsers && propertyUsers.length > 0) {
-        await Promise.all(propertyUsers.map((u: any) =>
-          fetch(fnBase + '/swift-handler', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-            body: JSON.stringify({ action: 'activate_user', email: u.email }),
-          })
-        ))
-        // Deactivation arc — restore user_roles.is_active = true for
-        // all assigned PMs (idempotent: PMs whose flag was never
-        // flipped stay at true). Mirrors the swift-handler unban
-        // shape above.
-        const emails = propertyUsers.map((u: any) => (u.email as string).toLowerCase())
-        const { error: urErr } = await supabase
-          .from('user_roles')
-          .update({ is_active: true })
-          .in('email', emails)
-        if (urErr) {
-          console.error('[admin property-cascade] user_roles.is_active=true restore failed (auth unbans intact):', urErr.message, { property: propertyName, count: emails.length })
-        }
-      }
-      // 2026-07-10 — escape ILIKE wildcards on the reactivate cascade.
-      await supabase.from('residents').update({ is_active: true }).ilike('property', escapeIlikeValue(propertyName))
-      // 🔴 Through admin_reactivate_property_vehicles, not a blanket
-      // write. Two reasons:
-      //   1. Stage 1c refuses an `authenticated` client write that sets
-      //      is_active=true, and this is one.
-      //   2. The blanket version restored EVERY vehicle at the property
-      //      — including ones declined or removed BEFORE it went down,
-      //      brought back as enforceable. The RPC restores only
-      //      status='active' AND is_active=false, which is the shape
-      //      the deactivate cascade leaves (it flips is_active and
-      //      leaves status untouched), and reports anything it skipped.
-      const { data: reVeh, error: reVehErr } = await supabase.rpc('admin_reactivate_property_vehicles', {
-        p_property_id: p.id,
-      })
-      const rv = (reVeh ?? {}) as Record<string, unknown>
-      if (reVehErr || rv.ok !== true) {
-        console.error('[admin property-cascade] vehicle reactivation failed', { property: propertyName, error: reVehErr?.message ?? rv.error })
-        alert('The property was reactivated, but its vehicles were not. Review the property\u2019s vehicles before enforcing.')
-      } else if (Number(rv.skipped_count ?? 0) > 0) {
-        alert(
-          `${propertyName} reactivated. ${rv.restored_count} vehicle(s) restored, ${rv.skipped_count} skipped:\n\n` +
-          ((rv.skipped ?? []) as { plate: string; reason: string }[]).map(x => `\u2022 ${x.plate} — ${x.reason}`).join('\n'),
-        )
-      }
-      await supabase.from('properties').update({ is_active: true }).eq('id', p.id)
-      await auditLog(adminEmail, 'ACTIVATE_PROPERTY_CASCADE', 'properties', p.id, {
-        property: propertyName, users_affected: propertyUsers?.length || 0,
-      })
-      // Permit-Door Piece 1 §5b — fire permit sync after the cascade.
-      // Already-approved vehicles (status='active') just re-entered the
-      // active count (is_active=true). Without this call, the meter
-      // stays stale until renewal-reconcile. Resolve company.id from
-      // p.company text → one extra query per cascade (admin-rare action;
-      // cost negligible). Unconditional — no-ops safely on non-PM via
-      // skipped_no_line_item per syncOnAdd's existing branch.
-      try {
-        const { data: comp } = await supabase
-          .from('companies').select('id')
-          .ilike('name', p.company || '')
-          .maybeSingle()
-        if (comp?.id) {
-          const { data: { session: postSession } } = await supabase.auth.getSession()
-          const syncRes = await fetch('/api/billing/sync-on-add', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(postSession?.access_token ? { 'Authorization': `Bearer ${postSession.access_token}` } : {}),
-            },
-            body: JSON.stringify({ company_id: Number(comp.id), kind: 'permit' }),
-          })
-          const json = await syncRes.json().catch(() => ({}))
-          console.info('[B147-sync-result]', { site: 'admin-property-cascade', kind: 'permit', companyId: comp.id, result: syncRes.ok && json.ok ? json.action : `failed:${json.reason ?? json.error ?? syncRes.status}` })
-        } else {
-          console.warn('[B147-sync-skipped-no-companyid]', { site: 'admin-property-cascade', propertyName, companyName: p.company })
-        }
-      } catch (e) {
-        console.warn('[B147-sync-failed]', { site: 'admin-property-cascade', propertyName, error: (e as Error).message })
-      }
+      const json = await syncRes.json().catch(() => ({}))
+      console.info('[B147-sync-result]', { site: 'admin-property-cascade', kind: 'permit', companyId: comp.id, result: syncRes.ok && json.ok ? json.action : `failed:${json.reason ?? json.error ?? syncRes.status}` })
+    } catch (e) {
+      console.warn('[B147-sync-threw]', { site: 'admin-property-cascade', propertyName, error: (e as Error).message })
     }
-    fetchProperties()
   }
 
   async function fetchUsers() {
@@ -2389,6 +2290,28 @@ export default function AdminPortal() {
         )}
 
       </div>
+      {/* 🔴 key on the property id AND the direction: the dialog loads
+          its plan in a mount effect, so reusing one instance across two
+          different targets would show the first one's plan for the
+          second one's property — the PhysicalPassSwitches defect, in a
+          dialog where it would be acted on. */}
+      {cascade && (
+        <PropertyCascadeDialog
+          key={`${cascade.property.id}:${cascade.active}`}
+          property={cascade.property}
+          active={cascade.active}
+          onClose={async ({ changed, ok }) => {
+            const target = cascade
+            setCascade(null)
+            if (changed) {
+              // Post-condition, reactivation only — see cascadePermitSync.
+              if (target.active && ok) await cascadePermitSync(target.company, target.property.name)
+              await fetchProperties()
+            }
+          }}
+        />
+      )}
+
       {credentials && (
         <CredentialsModal email={credentials.email} password={credentials.password} onClose={() => setCredentials(null)} />
       )}
