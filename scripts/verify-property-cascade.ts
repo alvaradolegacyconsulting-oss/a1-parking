@@ -15,6 +15,28 @@
 // property's residents untouched) are what prove it does the right
 // amount of work rather than none or too much.
 //
+// 🔴 KNOWN COVERAGE GAP, ACCEPTED 2026-10-15 — control 6.
+// The ban-failure REVERT path is covered by code reading, not by
+// execution. setUserActive bans first, reads the ban back, and puts the
+// login back exactly as it was if the is_active flip then fails; none
+// of that is exercised here, because none of its failure branches can
+// be reached from outside the request:
+//
+//   • a duplicate user_roles row is rejected by
+//     user_roles_lower_email_uidx (lower(email)), 2026-07-04;
+//   • the route re-plans at apply time, so a row mutated beforehand
+//     just produces a different plan;
+//   • deleting the auth user yields `no_auth_user`, a SUCCESS branch;
+//   • the ban-API error and read-back-mismatch branches need fault
+//     injection, and 🔴 NO FAULT-INJECTION SEAM GOES IN PRODUCTION
+//     CODE (ruled) — a seam that reaches production is exactly the
+//     class of thing that leaks.
+//
+// To revisit with Sweep #2 phase 4's test toolchain, where injection
+// is confined to the harness. Until then this gate asserts the verdict
+// FIELDS are computed from the per-user results (6a-6d) and does not
+// claim the revert.
+//
 // Usage: npm run verify:cascade
 
 import { createClient } from '@supabase/supabase-js'
