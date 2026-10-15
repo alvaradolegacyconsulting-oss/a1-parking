@@ -273,7 +273,15 @@ function RegisterForm() {
         setError(
           'We could not set up a new account for this email here. '
           + 'If you already have a sign-in, use the Log in page and then reopen this registration link. '
-          + 'If your property already has your details on file, use the button below and we will email you a setup link.',
+          // 🔴 Forgot password is named because it is the RECOVERY path
+          // for anyone who already received a setup link and lost it or
+          // let it expire. Proven by execution 2026-10-15: a recovery
+          // link works for an invited, never-accepted, unconfirmed user
+          // — it establishes a session, sets a password and confirms the
+          // email. Without this sentence the one-invite-per-address cap
+          // would read as a dead end for exactly those people.
+          + 'If you were already sent a link and it expired or went missing, use Forgot password instead. '
+          + 'Otherwise, if your property has your details on file, use the button below and we will email you a setup link.',
         )
         setSubmitting(false)
         return
@@ -589,6 +597,11 @@ function RegisterForm() {
                   <p style={{ color:'#e2e8f0', fontSize:'13px', margin:'0 0 10px', lineHeight:1.6 }}>
                     Already on file here? Solve the check below again, then we will email a setup
                     link to <strong>{account.email.trim() || 'your address'}</strong>.
+                  </p>
+                  <p style={{ color:'#888', fontSize:'12px', margin:'0 0 10px', lineHeight:1.6 }}>
+                    Already had a link and it expired? Use{' '}
+                    <a href="/forgot-password" style={{ color:'#C9A227' }}>Forgot password</a>{' '}
+                    instead — it works even if you never finished setting up.
                   </p>
                   <button
                     type="button"

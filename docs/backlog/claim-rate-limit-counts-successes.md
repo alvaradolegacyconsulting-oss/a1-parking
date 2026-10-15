@@ -1,8 +1,41 @@
-# 🔴 The claim route's rate limit counts successes, so it limits the wrong thing
+# ✅ CLOSED — the claim route's rate limit counted successes, so it was removed
 
-Found 2026-10-15, by my own gate passing for the wrong reason. Filed
-the same day the route was written. **Not yet fixed — it needs a
-decision about where a counter lives.**
+Found 2026-10-15 by my own gate passing for the wrong reason. **Closed
+the same day: option (b), ruled. The counter is gone.**
+
+The route now documents the three things that actually defend it, in
+its own header, so the next reader does not have to find this file:
+
+1. **Turnstile, per request**, checked before any lookup — the
+   per-request cost, and what stops probing at all.
+2. **The byte-identical answer** — what defeats enumeration.
+3. **The `uid` check** — caps unsolicited invites at **one per
+   address, ever**, bounded by construction rather than by a counter.
+
+🔴 And the gap that cap creates is closed too, proven by execution: a
+resident whose invite expired or went missing uses **Forgot password**.
+A recovery link for an invited, never-accepted, unconfirmed user is
+issued, establishes a session, allows a password to be set, resolves to
+`resident`, and confirms the email. That is now a standing assertion in
+`verify:claim` rather than a one-off probe, because it is Supabase
+behaviour we depend on and would not notice changing. The `/register`
+tokenless copy names Forgot password for exactly those people.
+
+What is NOT proven, stated so the coverage is not overclaimed: that the
+user-facing `resetPasswordForEmail` **dispatches** for an unconfirmed
+user. That call is refused by the project captcha before user state is
+considered, so it cannot be tested from a script, and delivery needs a
+real mailbox. The token mechanism is proven; the send is GoTrue's own
+behaviour on the endpoint `/forgot-password` already uses in
+production.
+
+**No `claim_attempts` table** unless the claim screen ever becomes a
+bare public form rather than something reached through a property QR
+link and a Turnstile solve. The original analysis is kept below.
+
+---
+
+## The original finding
 
 ## How it was found
 

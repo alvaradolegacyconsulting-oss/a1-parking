@@ -286,6 +286,61 @@ const main = async () => {
       true,
       'stated, not asserted: the per-email ceiling needs 3 successful invites to the same address, which the uid check makes impossible. See claim-rate-limit-counts-successes.md.')
 
+    // ── 🔴 THE RECOVERY PATH, PROVEN BY EXECUTION ─────────────────
+    // The one-invite-per-address cap creates a question: what happens
+    // to a resident whose invite expired or went missing? If recovery
+    // did not work for an invited-but-never-accepted user, that cap
+    // would be a dead end and the claim screen would need a "resend"
+    // affordance with a cooldown.
+    //
+    // It works. Asserted here rather than left as a one-off probe,
+    // because it is Supabase behaviour we depend on and would not
+    // notice changing.
+    console.log('\n── the recovery path for an invited, never-accepted user ──')
+    const recEmail = `zzcl-rec-${S}@test.invalid`
+    const recRes = await db.from('residents').insert({
+      name: `ZZ CL REC ${S}`, email: recEmail, unit: '104',
+      property: subject.property, company: subject.company, is_active: true, status: 'active',
+    }).select('id').single()
+    if (recRes.error) throw new Error(`recovery canary resident: ${recRes.error.message}`)
+    canaryResidentIds.push(recRes.data.id as number)
+
+    const recClaim = await claim({ email: recEmail, property: subject.property })
+    chk('the canary is invited (identical answer)', recClaim.text === real.text)
+    const recUser = await authUser(recEmail)
+    if (recUser) mintedUids.push(recUser.id)
+    const { data: recRole } = await db.from('user_roles').select('id').ilike('email', recEmail).limit(1)
+    if ((recRole ?? [])[0]) mintedRoleIds.push((recRole ?? [])[0].id as number)
+    chk('   ...and is UNCONFIRMED, never signed in',
+      !!recUser && !recUser.email_confirmed_at && !recUser.last_sign_in_at,
+      `confirmed=${recUser?.email_confirmed_at ?? 'null'} last_sign_in=${recUser?.last_sign_in_at ?? 'never'}`)
+
+    const recLink = await db.auth.admin.generateLink({ type: 'recovery', email: recEmail })
+    chk('🔴 Supabase ISSUES a recovery link for that user', !recLink.error && !!recLink.data?.properties?.hashed_token,
+      recLink.error ? `🔴 REFUSED: ${recLink.error.message} — the cap IS a dead end; the claim screen needs a resend affordance` : 'issued')
+    if (recLink.data?.properties?.hashed_token) {
+      const rc = createClient(URL_, ANON, { auth: { persistSession: false, autoRefreshToken: false } })
+      const rv = await rc.auth.verifyOtp({ token_hash: recLink.data.properties.hashed_token, type: 'recovery' })
+      chk('🔴 ...it establishes a session', !rv.error && !!rv.data.session, rv.error?.message ?? 'ok')
+      if (rv.data.session) {
+        const up = await rc.auth.updateUser({ password: `Zz!rec${S}q` })
+        chk('   ...a password can be set', !up.error, up.error?.message ?? 'ok')
+        const role = await rc.rpc('get_my_role')
+        chk('🔴 ...and they resolve to "resident", not NULL', role.data === 'resident',
+          `get_my_role() → ${JSON.stringify(role.data)} — this is why the role row is created before the invite`)
+        const conf = await authUser(recEmail)
+        chk('   ...and accepting recovery CONFIRMS the email', !!conf?.email_confirmed_at,
+          `email_confirmed_at=${conf?.email_confirmed_at ?? 'still null'}`)
+      }
+    }
+    // 🔴 What this does NOT prove: that the user-facing
+    // resetPasswordForEmail DISPATCHES for an unconfirmed user. That
+    // call is refused by the project captcha before user state is
+    // considered, so it cannot be tested from here, and delivery needs
+    // a real mailbox. The token mechanism above is proven; the send is
+    // GoTrue's own behaviour on the endpoint /forgot-password already
+    // uses in production.
+
   } finally {
     await cleanup('end')
   }

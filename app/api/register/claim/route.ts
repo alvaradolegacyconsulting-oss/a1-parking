@@ -34,6 +34,31 @@ import { guardEmail } from '../../../lib/email-guard'
 //
 // 🔴 ON DEMAND ONLY. Nothing here is triggered by a load or a batch.
 // The resident asks, one address at a time.
+//
+// ── WHAT DEFENDS THIS ENDPOINT ──────────────────────────────────────
+// Three things, and they are the whole list:
+//
+//   1. TURNSTILE, PER REQUEST, checked before any lookup. A bot cannot
+//      probe at all without solving one. This is the per-request cost.
+//   2. THE BYTE-IDENTICAL ANSWER. What defeats enumeration — a caller
+//      learns nothing from the response in any branch.
+//   3. THE uid CHECK. Caps unsolicited invites at ONE PER ADDRESS,
+//      EVER: once an auth user exists this route sends nothing more.
+//      Bounded by construction rather than by a counter.
+//
+// 🔴 THERE IS NO RATE-LIMIT COUNTER, DELIBERATELY. One was written and
+// removed on 2026-10-15 because it counted the wrong thing: it counted
+// audit rows, which exist only after a SUCCESSFUL invite, so a caller
+// probing unknown addresses wrote none and was never throttled. It
+// capped legitimate repeats — already capped by (3) — and did nothing
+// about abuse. A control that does not work is worse than a missing
+// one, because it stops anyone looking. Its own gate caught it: the
+// ceiling assertion passed because (3) short-circuited first.
+//
+// If the claim screen ever becomes a bare public form rather than
+// something reached through a property QR link and a Turnstile solve,
+// a REQUEST-counting store becomes necessary — see
+// docs/backlog/claim-rate-limit-counts-successes.md. Not before.
 
 export const runtime = 'nodejs'
 
@@ -46,11 +71,6 @@ const SAME_ANSWER = {
 }
 const answer = () => NextResponse.json(SAME_ANSWER)
 
-// Per-address and per-IP ceilings, counted from the audit trail rather
-// than a new table: "how many setup links went to this address in the
-// last hour" is a real audit question, so the log is the honest store.
-const PER_EMAIL_PER_HOUR = 3
-const PER_IP_PER_HOUR = 10
 const ACTION = 'RESIDENT_CLAIM_INVITE'
 
 export async function POST(req: NextRequest) {
@@ -88,29 +108,6 @@ export async function POST(req: NextRequest) {
 
   const db = createSupabaseServiceClient()
   const norm = (v: unknown) => String(v ?? '').trim().toLowerCase()
-
-  // ── rate limits, from the audit trail ───────────────────────────
-  // 🔴 Checked BEFORE the lookup, so a rate-limited caller cannot even
-  // cause a read — and refused with the SAME answer, because "you have
-  // asked too often" would itself confirm the address is interesting.
-  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-  const { data: recent, error: rlErr } = await db
-    .from('audit_logs').select('record_id, new_values')
-    .eq('action', ACTION).gte('created_at', since)
-  if (rlErr) {
-    // Fail CLOSED and silent: we cannot tell whether this is abuse.
-    console.error('[register/claim] rate-limit read failed — refusing:', rlErr)
-    return answer()
-  }
-  const rows = recent ?? []
-  if (rows.filter(r => norm(r.record_id) === email).length >= PER_EMAIL_PER_HOUR) {
-    console.warn(`[register/claim] per-email ceiling hit for ${email}`)
-    return answer()
-  }
-  if (rows.filter(r => (r.new_values as Record<string, unknown> | null)?.ip === remoteIp).length >= PER_IP_PER_HOUR) {
-    console.warn(`[register/claim] per-IP ceiling hit for ${remoteIp}`)
-    return answer()
-  }
 
   // ── is there a live record for this address AT THIS PROPERTY? ────
   // Matched in Node on lower(trim(...)) rather than with ILIKE: there
