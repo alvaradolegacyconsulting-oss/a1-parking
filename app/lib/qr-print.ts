@@ -34,7 +34,68 @@
 // If it grows dependencies on any of those, revisit the split.
 // ════════════════════════════════════════════════════════════════════
 
-export type QRSignKind = 'visitor' | 'resident'
+export type QRSignKind = 'visitor' | 'resident' | 'claim'
+
+// ════════════════════════════════════════════════════════════════════
+// The copy table, extracted so a gate can assert it WITHOUT a DOM
+// ════════════════════════════════════════════════════════════════════
+// printQRSign reads a canvas and opens a window, so it cannot be called
+// from a test runner. The part worth asserting is the copy — which sign
+// says "approval required" and which does not — so that part is a pure
+// function and the gate calls it directly.
+export interface QRSignCopy {
+  pageTitle: string
+  heading:   string
+  subhead:   string
+  noteTitle: string
+  noteBody:  string
+  /** Visitor-only. Residents being onboarded have not parked yet. */
+  warn:      boolean
+}
+
+export function qrSignCopy(kind: QRSignKind): QRSignCopy {
+  switch (kind) {
+    case 'resident':
+      return {
+        pageTitle: 'Resident Registration Sign',
+        heading:   'Resident Registration',
+        subhead:   'Scan to register your unit',
+        noteTitle: 'One-time setup',
+        noteBody:  'Manager approval required before access',
+        warn:      false,
+      }
+    // 🔴 A THIRD KIND, NOT A REUSE OF 'resident', FOR ONE REASON: the
+    // resident sign says "Manager approval required before access", and
+    // for a bulk-loaded resident that is FALSE. Their record was created
+    // and approved by their own property during the import — the only
+    // thing they lack is a login. Printing "approval required" on their
+    // flyer would tell them to wait for something that already happened,
+    // and the likeliest result is a call to the office.
+    //
+    // It also must not promise a link to someone with no record: the
+    // claim route mails nothing to an unknown address, so the copy says
+    // what the resident should EXPECT ("if your property added you"),
+    // not what will happen.
+    case 'claim':
+      return {
+        pageTitle: 'Resident Login Setup Sign',
+        heading:   'Set Up Your Login',
+        subhead:   'Scan and enter your email',
+        noteTitle: 'Already added by your property',
+        noteBody:  'Nothing to fill in — if your property added you, a setup link arrives by email',
+        warn:      false,
+      }
+    default:
+      return {
+        pageTitle: 'Visitor Parking Sign',
+        heading:   'Visitor Parking',
+        subhead:   'Scan to get your parking pass',
+        noteTitle: 'Required before parking',
+        noteBody:  'Valid up to 24 hours · No app download needed',
+        warn:      true,
+      }
+  }
+}
 
 export interface PrintQRSignOptions {
   /** DOM id of the container holding the on-screen <canvas> (from QRCodeCanvas). */
@@ -52,6 +113,11 @@ export interface PrintQRSignOptions {
    *   resident → "Resident Registration" / "Scan to register your unit"
    *              + "One-time setup · Manager approval required"
    *              + NO tow-warning (jarring on a signup sign)
+   *   claim    → "Set Up Your Login" / "Scan and enter your email"
+   *              + "Already added by your property"
+   *              + NO tow-warning, and 🔴 NO "approval required": a
+   *                bulk-loaded resident was approved by their own
+   *                property at import time. See qrSignCopy.
    * Default: 'visitor'.
    */
   kind?: QRSignKind
@@ -85,19 +151,18 @@ export function printQRSign(opts: PrintQRSignOptions): void {
   const tw = window.open('', '_blank')
   if (!tw) return
 
-  const isResident = kind === 'resident'
-  const pageTitle  = isResident ? 'Resident Registration Sign' : 'Visitor Parking Sign'
-  const heading    = isResident ? 'Resident Registration'      : 'Visitor Parking'
-  const subhead    = isResident ? 'Scan to register your unit' : 'Scan to get your parking pass'
-  const noteHtml   = isResident
-    ? '<div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">One-time setup</p><p style="color:#856404;font-size:11px">Manager approval required before access</p></div>'
-    : '<div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">Required before parking</p><p style="color:#856404;font-size:11px">Valid up to 24 hours · No app download needed</p></div>'
+  // One copy table for all three kinds — see qrSignCopy above. The old
+  // shape here was `const isResident = kind === 'resident'` and a pair
+  // of ternaries, which a third kind would have turned into a nest.
+  const copy = qrSignCopy(kind)
+  const { pageTitle, heading, subhead } = copy
+  const noteHtml = `<div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">${copy.noteTitle}</p><p style="color:#856404;font-size:11px">${copy.noteBody}</p></div>`
   // Tow warning is visitor-only. Residents are being onboarded — a "your
   // car will be towed" banner on their signup sign is jarring and
   // semantically wrong (they haven't registered yet).
-  const warnHtml = isResident
-    ? ''
-    : '<div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner\'s expense</p></div>'
+  const warnHtml = copy.warn
+    ? '<div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner\'s expense</p></div>'
+    : ''
   const urlFallback = url
     ? `<p style="font-size:10px;color:#666;margin-top:14px;word-break:break-all;font-family:'Courier New',monospace">${url}</p>`
     : ''

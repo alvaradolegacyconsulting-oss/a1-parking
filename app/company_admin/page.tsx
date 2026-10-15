@@ -8,6 +8,7 @@ import CaPlateActivityTab from '../components/CaPlateActivityTab'
 import SupportContact from '../components/SupportContact'
 import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { printQRSign } from '../lib/qr-print'
+import { showClaimFlyer, claimFlyerUrl } from '../lib/claim-flyer'
 import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
 // AP-MANAGE-CLIENT (2026-07-23): standing authorization per-property manager.
@@ -6584,6 +6585,55 @@ export default function CompanyAdminPortal() {
                 </div>
               )
             })}
+
+            {/* ════════════════════════════════════════════════════════
+                Login-setup QR — the SECOND flyer, for a bulk-loaded
+                property. Ruled 2026-10-15.
+                ════════════════════════════════════════════════════════
+                🔴 GATED ON bulk_onboarding_enabled, SO FLAG OFF = THIS
+                SCREEN UNCHANGED. A company that never uploaded a
+                resident file has nobody to claim an account, so a
+                second flyer would be one more thing to explain at every
+                property for no reason.
+
+                🔴 AND IT IS A SECOND FLYER, NOT A REPLACEMENT. The
+                registration QR above stays exactly as it is, for
+                everyone. A property that was bulk-loaded still gets new
+                residents who were never in the file, and they need the
+                normal three-step signup. The two flyers answer two
+                different questions:
+                  "I just moved in"            → Registration (above)
+                  "my office says I'm set up"  → Login setup (here)
+                and /claim itself carries a "Register here →" link, so a
+                resident who picks the wrong flyer is not stuck. */}
+            {showClaimFlyer({ bulkOnboardingEnabled, residentPortal: hasFeature(FEATURE_FLAGS.RESIDENT_PORTAL, getCompanyContext()) === true }) && (
+              <>
+                <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'20px 0 4px' }}>Resident Login Setup QR Codes</p>
+                <p style={{ color:'#888', fontSize:'12px', margin:'0 0 12px', lineHeight:'1.5' }}>
+                  For properties where you uploaded a resident file. Residents already on file enter
+                  their email and get a setup link — no forms, and no manager approval needed, because
+                  you already approved them when you uploaded them.
+                </p>
+                {properties.map((prop, i) => {
+                  const claimUrl = claimFlyerUrl(BASE_URL, prop.name, role?.company || '')
+                  const canvasId = `qr-claim-${i}`
+                  return (
+                    <div key={`claim-${i}`} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'20px', marginBottom:'12px', textAlign:'center' }}>
+                      <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0 0 4px' }}>{prop.name}</p>
+                      <p style={{ color:'#555', fontSize:'11px', margin:'0 0 14px' }}>Set Up Your Login</p>
+                      <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'12px' }}>
+                        <QRCodeCanvas value={claimUrl} size={160} level="H" includeMargin={true} />
+                      </div>
+                      <QRLinkAffordance url={claimUrl} />
+                      <button onClick={() => printQRSign({ canvasId, title: prop.name, subtitle: 'Already on file — set up your login', kind: 'claim', url: claimUrl, company: role?.company })}
+                        style={{ width:'100%', padding:'10px', background:'#C9A227', color:'#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'7px', cursor:'pointer', fontFamily:'Arial' }}>
+                        Print This Sign
+                      </button>
+                    </div>
+                  )
+                })}
+              </>
+            )}
           </div>
         )}
 
@@ -6981,7 +7031,17 @@ export default function CompanyAdminPortal() {
                           {/* QR block */}
                           <div>
                             <p style={{ color:'#C9A227', fontSize:'10.5px', textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px', fontWeight:'bold' }}>QR codes</p>
-                            <div style={{ display:'grid', gridTemplateColumns: showResidentQR ? '1fr 1fr' : '1fr', gap:'10px' }}>
+                            {/* 🔴 The claim card is gated on
+                                showResidentQR AS WELL AS the flag. A
+                                login-setup flyer for a company without
+                                the resident portal would point at a
+                                portal that is not in their tier — the
+                                claim would succeed and land them
+                                nowhere. The two gates mean different
+                                things: showResidentQR is "is there a
+                                portal to log into", the flag is "did
+                                anyone get loaded into it". */}
+                            <div style={{ display:'grid', gridTemplateColumns: `repeat(${1 + (showResidentQR ? 1 : 0) + (showClaimFlyer({ bulkOnboardingEnabled, residentPortal: showResidentQR }) ? 1 : 0)}, 1fr)`, gap:'10px' }}>
                               {/* Visitor Pass QR — always shown */}
                               {(() => {
                                 const visitorUrl = `${BASE_URL}/visitor?property=${encodeURIComponent(selected.name)}`
@@ -7015,6 +7075,25 @@ export default function CompanyAdminPortal() {
                                     </div>
                                     <QRLinkAffordance url={regUrl} />
                                     <button onClick={() => printQRSign({ canvasId, title: selected.name, subtitle: 'New resident self-registration', kind: 'resident', url: regUrl, company: role?.company })}
+                                      style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', fontSize:'11px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Print sign</button>
+                                  </div>
+                                )
+                              })()}
+                              {/* Login Setup QR — the second flyer for a
+                                  bulk-loaded property. Flag off → this
+                                  card is absent and the grid falls back
+                                  to its previous 1- or 2-column shape. */}
+                              {showClaimFlyer({ bulkOnboardingEnabled, residentPortal: showResidentQR }) && (() => {
+                                const claimUrl = claimFlyerUrl(BASE_URL, selected.name, role?.company || '')
+                                const canvasId = `qr-claim-${selected.id}`
+                                return (
+                                  <div style={{ background:'#0d1520', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', textAlign:'center' }}>
+                                    <p style={{ color:'white', fontSize:'12px', fontWeight:'bold', margin:'0 0 8px' }}>Login Setup</p>
+                                    <div id={canvasId} style={{ display:'flex', justifyContent:'center', marginBottom:'10px' }}>
+                                      <QRCodeCanvas value={claimUrl} size={140} level="H" includeMargin={true} />
+                                    </div>
+                                    <QRLinkAffordance url={claimUrl} />
+                                    <button onClick={() => printQRSign({ canvasId, title: selected.name, subtitle: 'Already on file — set up your login', kind: 'claim', url: claimUrl, company: role?.company })}
                                       style={{ width:'100%', padding:'7px', background:'#1e2535', color:'#C9A227', border:'1px solid #C9A227', borderRadius:'6px', fontSize:'11px', fontWeight:'bold', cursor:'pointer', fontFamily:'Arial' }}>Print sign</button>
                                   </div>
                                 )

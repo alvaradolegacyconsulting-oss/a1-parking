@@ -122,3 +122,64 @@ property is marked inactive, that anyone assigned only to it loses
 portal access, and that **no accounts, residents or vehicles are
 deactivated and logins are unchanged**. Routing the CA path through the
 same per-user machinery remains the cascade work item.
+
+---
+
+## Filed 2026-10-15 — two items from the /claim ruling
+
+### Revocable flyer tokens (deferred by Jose, "not now")
+
+`/claim` and every property QR today carry the property as a **plain
+name** in a query param: `?property=<name>&company=<name>`. There is no
+token column, no token table, nothing to rotate.
+
+That is fine for disclosure — `/claim` answers every input identically
+and mails no unknown address, so guessing a property name buys the same
+blank screen. What it costs is **revocability**: once a flyer is
+printed and posted, the link works forever. A property that changes
+management, or one whose flyer was photographed and posted somewhere,
+cannot invalidate it.
+
+Shape if it is wanted: `properties.claim_token` (random, unique),
+rotatable from the CA portal, `/claim/[token]` resolving to the
+property. `?property=` kept as a deprecated alias for a window so
+printed flyers keep working, then dropped.
+
+Scope note: this is **not** `/claim`-only. The same argument applies to
+`/register?property=` and `/visitor?property=`, which have the same
+shape and the same non-revocability, and `/visitor` is the one that
+issues something of value. Doing it for `/claim` alone would be the
+smaller and less useful half.
+
+### Invite off the request path (background send) — Sweep #2
+
+`/api/register/claim` pads every answer to a 900ms floor, which means
+nothing is distinguishably **fast**. It does not make the branches
+equal: a send is a Supabase round-trip and measured 32ms slower than
+the fastest send-nothing branch.
+
+🔴 What that leaks, precisely: it is observable only for an address that
+**is** a records-bearing resident at that property **and** has not yet
+claimed. An observer has to have already guessed the address and the
+property to learn anything, and what they learn is that the guess was
+right.
+
+The fix is structural, not a bigger floor: enqueue the invite and
+return immediately, so every branch does the same amount of work on the
+request path. Then the floor can come down and the timing becomes
+genuinely uniform rather than merely not-fast.
+
+Prerequisite: there is no job queue in this project today. The nearest
+thing is the Vercel cron set, which is minute-granularity and wrong for
+something a resident is waiting on. So this is "pick a queue" work, not
+a one-file change — which is why it is Sweep #2 rather than now.
+
+### Carried into the loader gate (not a backlog item, a binding note)
+
+🔴 When the bulk **loader** is built, its gate must assert that the
+loader cannot create a staff role — the same assertion the claim route
+now carries. Confirmed today for the template (11 columns, no role
+column) and for `bulk-onboarding.ts` / `bulk-validator.ts` (zero
+occurrences of the string "role"), but the loader does not exist yet,
+so for the loader this is *asserted by construction* and nothing more
+until there is code to gate.
