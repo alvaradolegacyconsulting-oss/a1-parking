@@ -39,7 +39,8 @@
     "verify:useractive": "tsx scripts/verify-user-active-route.ts",
     "verify:identityhelpers": "tsx scripts/verify-identity-helpers.ts",
     "verify:remountkeys": "tsx scripts/verify-crm-remount-keys.ts",
-    "verify:cascade": "tsx scripts/verify-property-cascade.ts"
+    "verify:cascade": "tsx scripts/verify-property-cascade.ts",
+    "verify:claim": "tsx scripts/verify-resident-claim.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

@@ -63,6 +63,13 @@ function RegisterForm() {
   // is not native-CAPTCHA-capable, hence the wrapper-route gate.
   // Token is single-use; reset on failure so the user can re-challenge.
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  // 🔴 The claim handoff. When create-user withholds a token — which it
+  // now does for any address that already has a residents or user_roles
+  // row — the right next step is a setup link to that mailbox, not a
+  // login they may not have. Offered here rather than on a separate
+  // page the resident would have to be told about.
+  const [offerClaim, setOfferClaim] = useState(false)
+  const [claimState, setClaimState] = useState<'idle' | 'sending' | 'sent'>('idle')
   const turnstileRef = useRef<TurnstileHandle>(null)
 
   useEffect(() => {
@@ -256,13 +263,17 @@ function RegisterForm() {
       // invite from their portal. The claim screen replaces that clause
       // with a self-serve button.
       if (!json.token_hash) {
+        // The captcha token was consumed server-side by the call above,
+        // so the widget is reset and the claim button waits for a fresh
+        // one. That is why the affordance is a second deliberate click
+        // rather than something that fires automatically.
         turnstileRef.current?.reset()
         setCaptchaToken(null)
+        setOfferClaim(true)
         setError(
           'We could not set up a new account for this email here. '
           + 'If you already have a sign-in, use the Log in page and then reopen this registration link. '
-          + 'If you do not have one yet, your property already has your details on file — '
-          + 'ask your property manager to send you a setup link.',
+          + 'If your property already has your details on file, use the button below and we will email you a setup link.',
         )
         setSubmitting(false)
         return
@@ -555,6 +566,70 @@ function RegisterForm() {
           {error && (
             <div style={{ background:'#3a1a1a', border:'1px solid #b71c1c', borderRadius:'8px', padding:'10px 14px', marginBottom:'16px' }}>
               <p style={{ color:'#f44336', fontSize:'13px', margin:'0' }}>{error}</p>
+            </div>
+          )}
+
+          {/* ── The claim handoff ──────────────────────────────────────
+              🔴 The copy says nothing about whether a record exists, and
+              the button's confirmation says nothing either. The route
+              returns a byte-identical answer in every case — found and
+              invited, found but already has a login, no record at all,
+              rate-limited — because anything else makes this form an
+              oracle for "is this person a resident at this property".
+              The UI must not undo that by being more helpful. */}
+          {offerClaim && (
+            <div style={{ background:'#161b26', border:'1px solid #C9A227', borderRadius:'8px', padding:'14px', marginBottom:'16px' }}>
+              {claimState === 'sent' ? (
+                <p style={{ color:'#6cc48e', fontSize:'13px', margin:0, lineHeight:1.6 }}>
+                  If we have your details on file for that property, we have emailed you a link to
+                  set up your login. It can take a minute to arrive — check your spam folder too.
+                </p>
+              ) : (
+                <>
+                  <p style={{ color:'#e2e8f0', fontSize:'13px', margin:'0 0 10px', lineHeight:1.6 }}>
+                    Already on file here? Solve the check below again, then we will email a setup
+                    link to <strong>{account.email.trim() || 'your address'}</strong>.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={!captchaToken || claimState === 'sending'}
+                    onClick={async () => {
+                      setClaimState('sending')
+                      try {
+                        await fetch('/api/register/claim', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            email: account.email.trim(),
+                            property: property ?? '',
+                            captchaToken,
+                          }),
+                        })
+                      } catch { /* the message below is the same either way */ }
+                      // 🔴 'sent' regardless of the response. A network
+                      // failure that said so would be one more signal
+                      // than a success gives, and the route itself never
+                      // distinguishes outcomes.
+                      turnstileRef.current?.reset()
+                      setCaptchaToken(null)
+                      setClaimState('sent')
+                    }}
+                    style={{
+                      background: captchaToken ? '#C9A227' : '#3a3a3a',
+                      color: captchaToken ? '#1a1a1a' : '#777',
+                      border: 'none', borderRadius: '6px', padding: '9px 16px',
+                      fontSize: '13px', fontWeight: 'bold',
+                      cursor: captchaToken && claimState !== 'sending' ? 'pointer' : 'not-allowed',
+                    }}>
+                    {claimState === 'sending' ? 'Sending…' : 'Email me a setup link'}
+                  </button>
+                  {!captchaToken && (
+                    <p style={{ color:'#888', fontSize:'12px', margin:'8px 0 0' }}>
+                      Solve the check at the bottom of the form to enable this.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
           )}
 

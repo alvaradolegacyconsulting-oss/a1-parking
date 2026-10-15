@@ -146,6 +146,13 @@ export const ROUTE_EXPOSURE: Record<string, Expectation> = {
   '/api/register/create-user': { kind: 'method-guard' },
   '/api/register/companion-vehicle': { kind: 'method-guard' },
   '/api/register/captcha-verify': { kind: 'method-guard' },
+  // 🔴 Public on purpose: a resident with a record and no login asks for
+  // a setup link, and they are by definition not signed in. POST-only,
+  // so 405 proves the allowlist has it AND that GET is refused. Its own
+  // defences are the Turnstile check, per-email and per-IP ceilings, and
+  // a byte-identical response in every branch so it cannot be used to
+  // ask "is this person a resident here".
+  '/api/register/claim': { kind: 'method-guard' },
   '/api/help-feedback': { kind: 'method-guard' },
   '/api/stripe/webhook': { kind: 'method-guard', note: 'Signature-verified in the handler; middleware must not gate it or Stripe retries would 307.' },
   '/api/signup/accept-saas': { kind: 'method-guard' },
@@ -161,6 +168,33 @@ export const ROUTE_EXPOSURE: Record<string, Expectation> = {
   '/api/cron/sync-permits': { kind: 'auth-required' },
 
   // ── Authenticated portals ─────────────────────────────────────────
+  // ── Phase A bulk onboarding + the deactivation/cascade routes ────
+  // All authenticated. None is in publicPaths, so middleware answers
+  // first and a 307 to /login is the correct result — these carry
+  // resident PII and staff-access changes.
+  '/api/bulk-onboarding/context': { kind: 'login' },
+  '/api/bulk-onboarding/preview': { kind: 'login' },
+  '/api/bulk-onboarding/submit':  { kind: 'login' },
+  '/api/admin/user-active':       { kind: 'login' },
+  '/api/admin/property-active':   { kind: 'login' },
+  '/company_admin/resident-upload': { kind: 'login' },
+
+  // 🔴 NOT MINE, and undeclared since it shipped — found by this gate
+  // on 2026-10-15 while declaring the routes above. /api/signup is in
+  // publicPaths, so this GET is reachable anonymously, which is correct
+  // for a pre-signup price quote. Declared as `page` rather than
+  // `method-guard` because it answers GET.
+  // 🔴 A `sample` with real parameters, not a bare GET. A param-less
+  // request answers 400 from the handler, which proves only that
+  // something is listening. With valid params it must return 200 — that
+  // is the assertion worth making, because the route's whole job is to
+  // price a plan for a visitor who is not signed in yet.
+  '/api/signup/quote': {
+    kind: 'page',
+    sample: '/api/signup/quote?token=pm_starter&cycle=monthly&properties=1',
+    note: 'Anonymous price quote for the public signup flow; /api/signup is allowlisted. Undeclared from its ship date until 2026-10-15, when this gate found it while the Phase B routes were being declared.',
+  },
+
   '/dashboard': { kind: 'login' },
   '/admin': { kind: 'login' },
   '/admin_console': { kind: 'login' },
