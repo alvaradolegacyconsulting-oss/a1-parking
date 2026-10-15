@@ -34,6 +34,7 @@
 // Usage: npm run verify:bulkhttp
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { say, warn } from './lib/safe-log'
 import { spawn, type ChildProcess } from 'child_process'
 import net from 'net'
 import fs from 'fs'
@@ -72,7 +73,7 @@ let cleaned = false
 async function cleanup(why: string) {
   if (cleaned) return
   cleaned = true
-  if (why !== 'end') console.error(`\n🔴 cleanup (${why})`)
+  if (why !== 'end') warn(`\n🔴 cleanup (${why})`)
 
   // 🔴 The flag goes back FIRST and is read back. Leaving bulk upload
   // switched on for a company because a gate died is the one piece of
@@ -81,29 +82,29 @@ async function cleanup(why: string) {
     const r = await db.from('companies').update({ bulk_onboarding_enabled: false })
       .eq('id', id).select('bulk_onboarding_enabled')
     const back = r.data?.[0]?.bulk_onboarding_enabled
-    if (r.error || back !== false) { console.error(`   🔴 FLAG NOT RESTORED on company ${id} (reads ${back})`); fails++ }
-    else console.log(`   ↩ bulk_onboarding_enabled back to false on company ${id}`)
+    if (r.error || back !== false) { warn(`   🔴 FLAG NOT RESTORED on company ${id} (reads ${back})`); fails++ }
+    else say(`   ↩ bulk_onboarding_enabled back to false on company ${id}`)
   }
   if (batchIds.length) {
     const r = await db.from('import_batches').delete().in('id', batchIds).select('id')
-    if (r.error || (r.data ?? []).length !== batchIds.length) { console.error(`   🔴 batches: removed ${(r.data ?? []).length}/${batchIds.length}: ${r.error?.message ?? ''}`); fails++ }
-    else console.log(`   ↩ removed ${batchIds.length} import_batches row(s)`)
+    if (r.error || (r.data ?? []).length !== batchIds.length) { warn(`   🔴 batches: removed ${(r.data ?? []).length}/${batchIds.length}: ${r.error?.message ?? ''}`); fails++ }
+    else say(`   ↩ removed ${batchIds.length} import_batches row(s)`)
   }
   if (storagePaths.length) {
     const r = await db.storage.from(BULK_BUCKET).remove(storagePaths)
-    if (r.error) console.error(`   ⚠ storage remove: ${r.error.message}`)
-    else console.log(`   ↩ removed ${(r.data ?? []).length} storage object(s)`)
+    if (r.error) warn(`   ⚠ storage remove: ${r.error.message}`)
+    else say(`   ↩ removed ${(r.data ?? []).length} storage object(s)`)
   }
   if (mintedEmails.length) {
     const r = await db.from('user_roles').delete().in('email', mintedEmails).select('id')
-    console.log(`   ↩ removed ${(r.data ?? []).length} role row(s)`)
+    say(`   ↩ removed ${(r.data ?? []).length} role row(s)`)
   }
   for (const uid of mintedUids) {
     const r = await db.auth.admin.deleteUser(uid).catch(e => ({ error: e }))
-    if ((r as { error?: unknown }).error) { console.error(`   🔴 could not delete auth user ${uid}`); fails++ }
+    if ((r as { error?: unknown }).error) { warn(`   🔴 could not delete auth user ${uid}`); fails++ }
   }
-  if (mintedUids.length) console.log(`   ↩ deleted ${mintedUids.length} auth user(s)`)
-  if (server && !server.killed) { server.kill('SIGTERM'); console.log('   ↩ stopped the server this gate started') }
+  if (mintedUids.length) say(`   ↩ deleted ${mintedUids.length} auth user(s)`)
+  if (server && !server.killed) { server.kill('SIGTERM'); say('   ↩ stopped the server this gate started') }
 }
 let dying = false
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGPIPE'] as const) {

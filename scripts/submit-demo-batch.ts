@@ -26,6 +26,7 @@
 // Usage: npm run seed:demobatch
 
 import { createClient } from '@supabase/supabase-js'
+import { say, warn } from './lib/safe-log'
 import { spawn, type ChildProcess } from 'child_process'
 import net from 'net'
 import fs from 'fs'
@@ -53,13 +54,13 @@ let cleaned = false
 async function cleanup(why: string) {
   if (cleaned) return
   cleaned = true
-  if (why !== 'end') console.error(`\n🔴 cleanup (${why})`)
+  if (why !== 'end') warn(`\n🔴 cleanup (${why})`)
   if (flaggedCompany !== null) {
     const r = await db.from('companies').update({ bulk_onboarding_enabled: false })
       .eq('id', flaggedCompany).select('bulk_onboarding_enabled')
     const back = r.data?.[0]?.bulk_onboarding_enabled
-    if (r.error || back !== false) console.error(`   🔴 FLAG NOT RESTORED on company ${flaggedCompany} (reads ${back}) — set it back by hand`)
-    else console.log(`   ↩ bulk_onboarding_enabled back to false on company ${flaggedCompany}`)
+    if (r.error || back !== false) warn(`   🔴 FLAG NOT RESTORED on company ${flaggedCompany} (reads ${back}) — set it back by hand`)
+    else say(`   ↩ bulk_onboarding_enabled back to false on company ${flaggedCompany}`)
   }
   // Only an upload the route did NOT consume. On success the route
   // removes the CA's original itself.
@@ -67,10 +68,10 @@ async function cleanup(why: string) {
     const left = await db.storage.from(BULK_BUCKET).download(uploadedPath)
     if (!left.error) {
       await db.storage.from(BULK_BUCKET).remove([uploadedPath])
-      console.log(`   ↩ removed the unconsumed upload ${uploadedPath}`)
+      say(`   ↩ removed the unconsumed upload ${uploadedPath}`)
     }
   }
-  if (server && !server.killed) { server.kill('SIGTERM'); console.log('   ↩ stopped the server this script started') }
+  if (server && !server.killed) { server.kill('SIGTERM'); say('   ↩ stopped the server this script started') }
 }
 let dying = false
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGPIPE'] as const) {

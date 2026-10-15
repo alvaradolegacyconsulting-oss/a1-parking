@@ -162,17 +162,24 @@ BEGIN
   IF n <> 2 THEN
     RAISE EXCEPTION 'G6 FAIL: expected both SELECT policies, found %. Without ib_company_admin_select the CA cannot read the error list a return attaches.', n;
   END IF;
-  SELECT count(*) INTO n FROM pg_trigger
+  -- 🔴 EXACTLY ONE TRIGGER, NAMED. This gate said "no trigger" until
+  -- 2026-10-16, when the status audit was added as a trigger rather
+  -- than as a line in each RPC. Asserting the NAME and the COUNT rather
+  -- than relaxing to "zero or more": the audit is expected, anything
+  -- else on this table is an unswept writer of every column above.
+  SELECT count(*), string_agg(tgname, ', ') INTO n, s FROM pg_trigger
    WHERE tgrelid = 'public.import_batches'::regclass AND NOT tgisinternal;
-  IF n > 0 THEN RAISE EXCEPTION 'G6 FAIL: % non-internal trigger(s) on import_batches', n; END IF;
-  RAISE NOTICE 'G6 ok: two SELECT policies, SELECT-only grants, no trigger, no write path';
+  IF n <> 1 OR s IS DISTINCT FROM 'import_batches_status_audit' THEN
+    RAISE EXCEPTION 'G6 FAIL: expected exactly import_batches_status_audit on this table, found % (%). Anything else is an unswept writer.', n, COALESCE(s, '(none)');
+  END IF;
+  RAISE NOTICE 'G6 ok: two SELECT policies, SELECT-only grants, one named audit trigger, no write path';
 END
 $do$;
 
 -- ── the PASS row ────────────────────────────────────────────────────
 SELECT
   'approval-queue schema' AS verification,
-  'PASS — G1..G6' AS result,
+  'PASS — G1..G6 (G6 expects the audit trigger)' AS result,
   (SELECT pg_get_constraintdef(oid) FROM pg_constraint
     WHERE conrelid = 'public.import_batches'::regclass
       AND conname = 'import_batches_status_allowed') AS status_allowlist,

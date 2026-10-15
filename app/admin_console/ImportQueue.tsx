@@ -25,6 +25,8 @@ import { useCallback, useEffect, useState } from 'react'
 
 const GOLD = '#C9A227'
 
+type Action = 'approve' | 'return' | 'reject'
+
 interface QueueRow {
   id: number
   company_name: string
@@ -79,7 +81,7 @@ export default function ImportQueue() {
   const [verdict, setVerdict] = useState<Verdict | null>(null)
   const [reviewing, setReviewing] = useState(false)
   const [reviewErr, setReviewErr] = useState('')
-  const [acting, setActing] = useState<'approve' | 'return' | null>(null)
+  const [acting, setActing] = useState<Action | null>(null)
   const [actionMsg, setActionMsg] = useState<{ kind: 'ok' | 'err'; text: string; reasons?: string[] } | null>(null)
 
   const loadList = useCallback(async () => {
@@ -113,20 +115,22 @@ export default function ImportQueue() {
     }
   }, [])
 
-  async function act(kind: 'approve' | 'return', id: number) {
+  async function act(kind: Action, id: number, reason?: string) {
     setActing(kind); setActionMsg(null)
     try {
       const r = await fetch(`/api/admin/import-batch/${kind}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ batch_id: id, trigger: 'review' }),
+        body: JSON.stringify({ batch_id: id, trigger: 'review', reason }),
       })
       const j = await r.json()
       if (!r.ok) {
         setActionMsg({ kind: 'err', text: j.message || 'That action was refused.', reasons: j.reasons })
       } else if (kind === 'approve') {
         setActionMsg({ kind: 'ok', text: `Batch ${id} approved. Loading it is a separate step.` })
-      } else {
+      } else if (kind === 'return') {
         setActionMsg({ kind: 'ok', text: `Batch ${id} returned to the company with ${j.error_count} row${j.error_count === 1 ? '' : 's'} to fix.` })
+      } else {
+        setActionMsg({ kind: 'ok', text: `Batch ${id} rejected. The company has been given your reason.` })
       }
       // 🔴 Re-read both the list and the verdict after any action, so
       // the screen shows what the server now holds rather than what the
@@ -240,15 +244,24 @@ export default function ImportQueue() {
 function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
   v: Verdict
   id: number
-  acting: 'approve' | 'return' | null
+  acting: Action | null
   actionMsg: { kind: 'ok' | 'err'; text: string; reasons?: string[] } | null
-  onAct: (k: 'approve' | 'return', id: number) => void
+  onAct: (k: Action, id: number, reason?: string) => void
 }) {
+  const [rejecting, setRejecting] = useState(false)
+  const [reason, setReason] = useState('')
   const status = String(v.batch.status)
   // 🔴 Blocked hides Return as well as Approve. Returning a batch whose
   // company has bulk onboarding switched off hands the CA a list of
   // rows to fix and no way to send the fixed file back.
   const canReturn = !v.block.blocked && v.validation.ran && !v.validation.clean
+    && ['submitted', 'approved'].includes(status)
+  // 🔴 Reject is for a file that VALIDATES and still should not load.
+  // Mutually exclusive with Return on purpose: a file with bad rows goes
+  // back as a Return so the company gets the row numbers, rather than a
+  // sentence the operator had to type about rows the server already
+  // measured. Hidden when blocked, like Return.
+  const canReject = !v.block.blocked && v.validation.ran && v.validation.clean
     && ['submitted', 'approved'].includes(status)
 
   return (
@@ -339,6 +352,52 @@ function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
         </div>
       )}
 
+      {/* ── 🔴 the typed reason, for a clean file ─────────────────
+          No generated text here. A Return explains itself from the row
+          numbers; a Reject is one sentence that reaches a customer who
+          spent time on this file, and only a person can write it. The
+          textarea says so, and Submit stays disabled until there is
+          something in it — with the reason stated, not just the button
+          greyed out. */}
+      {rejecting && (
+        <div style={{ background: '#161b26', border: '1px solid #3a4055', borderRadius: 8, padding: '12px 14px', margin: '12px 0' }}>
+          <p style={{ color: '#ccc', fontSize: 12, fontWeight: 'bold', margin: '0 0 3px' }}>
+            Why can this file not be loaded?
+          </p>
+          <p style={{ color: '#888', fontSize: 11, lineHeight: 1.6, margin: '0 0 8px' }}>
+            The file itself checks out, so there are no row numbers to send. This sentence is the
+            only thing {v.company.name} is told about it.
+          </p>
+          <textarea
+            value={reason} onChange={e => setReason(e.target.value)} rows={3}
+            placeholder="e.g. This is the resident list for Willowbrook Court, not Sunset Ridge. Please upload it against the right property."
+            style={{ width: '100%', padding: '8px 10px', background: '#0f1117', color: '#e2e8f0', border: '1px solid #2a2f3d', borderRadius: 6, fontSize: 12, fontFamily: 'Arial', lineHeight: 1.5, boxSizing: 'border-box', resize: 'vertical' }}
+          />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <button
+              onClick={() => onAct('reject', id, reason.trim())}
+              disabled={acting !== null || reason.trim().length < 10}
+              style={{
+                background: reason.trim().length >= 10 ? '#b71c1c' : '#3a3a3a',
+                color: reason.trim().length >= 10 ? 'white' : '#777',
+                border: 'none', borderRadius: 6, padding: '7px 14px', fontSize: 12, fontWeight: 'bold',
+                cursor: acting ? 'wait' : reason.trim().length >= 10 ? 'pointer' : 'not-allowed', fontFamily: 'Arial',
+              }}>
+              {acting === 'reject' ? 'Rejecting…' : 'Reject and tell the company'}
+            </button>
+            <button onClick={() => { setRejecting(false); setReason('') }} disabled={acting !== null}
+              style={{ background: 'none', border: 'none', color: '#888', fontSize: 12, textDecoration: 'underline', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>
+              Cancel
+            </button>
+            {reason.trim().length < 10 && (
+              <span style={{ color: '#777', fontSize: 11 }}>
+                {reason.trim().length === 0 ? 'Write a reason to continue' : 'A little more — this is all they will see'}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── the actions ─────────────────────────────────────────── */}
       {/* 🔴 APPROVE AND LOAD ARE SEPARATE AND NEVER CHAINED. Approving
           358 rows and writing them are different decisions, and only
@@ -354,6 +413,12 @@ function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
           <button onClick={() => onAct('return', id)} disabled={acting !== null}
             style={{ background: 'none', color: '#f44336', border: '1px solid #b71c1c', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 'bold', cursor: acting ? 'wait' : 'pointer', opacity: acting ? 0.6 : 1, fontFamily: 'Arial' }}>
             {acting === 'return' ? 'Returning…' : 'Return to company'}
+          </button>
+        )}
+        {canReject && !rejecting && (
+          <button onClick={() => setRejecting(true)} disabled={acting !== null}
+            style={{ background: 'none', color: '#888', border: '1px solid #3a4055', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Arial' }}>
+            Reject anyway
           </button>
         )}
         {status === 'approved' && (

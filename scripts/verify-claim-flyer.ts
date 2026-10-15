@@ -24,6 +24,7 @@
 // Usage: npm run verify:flyer
 
 import { spawn, type ChildProcess } from 'child_process'
+import { say, warn } from './lib/safe-log'
 import net from 'net'
 import fs from 'fs'
 import { showClaimFlyer, claimFlyerUrl } from '../app/lib/claim-flyer'
@@ -37,7 +38,7 @@ let fails = 0
 const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(`${ok ? '✅' : '❌'} ${n}${d ? '\n       ' + d : ''}`) }
 
 let server: ChildProcess | null = null
-const stop = () => { if (server && !server.killed) { server.kill('SIGTERM'); console.log('   ↩ stopped the server this gate started') } }
+const stop = () => { if (server && !server.killed) { server.kill('SIGTERM'); say('   ↩ stopped the server this gate started') } }
 let dying = false
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGPIPE'] as const) {
   process.on(sig, () => { if (dying) return; dying = true; stop(); process.exit(2) })

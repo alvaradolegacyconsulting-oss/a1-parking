@@ -22,6 +22,7 @@
 // Usage: npm run verify:validategate
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { say, warn } from './lib/safe-log'
 import fs from 'fs'
 import crypto from 'crypto'
 import { cookieHeaderFor } from './lib/ssr-session'
@@ -47,34 +48,38 @@ let cleaned = false
 async function cleanup(why: string) {
   if (cleaned) return
   cleaned = true
-  if (why !== 'end') console.error(`\n🔴 cleanup (${why})`)
+  if (why !== 'end') warn(`\n🔴 cleanup (${why})`)
+  if (storagePaths.length) {
+    const r = await db.storage.from(BULK_BUCKET).remove(storagePaths)
+    if (r.error) warn(`   ⚠ storage remove: ${r.error.message}`)
+    else say(`   ↩ removed ${(r.data ?? []).length} storage object(s)`)
+  }
+  // 🔴 Live privilege first, then the flag, then the rest — see
+  // scripts/lib/safe-log.ts for what an aborted cleanup left behind
+  // when this was ordered by creation instead.
+  if (mintedEmails.length) {
+    const r = await db.from('user_roles').delete().in('email', mintedEmails).select('id')
+    if (r.error || (r.data ?? []).length !== mintedEmails.length) { warn(`   🔴 role rows: removed ${(r.data ?? []).length}/${mintedEmails.length}`); fails++ }
+    else say(`   ↩ removed ${(r.data ?? []).length} role row(s)`)
+  }
+  for (const uid of mintedUids) {
+    const r = await db.auth.admin.deleteUser(uid).catch(e => ({ error: e }))
+    if ((r as { error?: unknown }).error) { warn(`   🔴 could not delete auth user ${uid}`); fails++ }
+  }
+  if (mintedUids.length) say(`   ↩ deleted ${mintedUids.length} auth user(s)`)
   if (flaggedCompany !== null) {
     const r = await db.from('companies').update({ bulk_onboarding_enabled: false })
       .eq('id', flaggedCompany).select('bulk_onboarding_enabled')
     const back = r.data?.[0]?.bulk_onboarding_enabled
-    if (r.error || back !== false) { console.error(`   🔴 FLAG NOT RESTORED on company ${flaggedCompany} (reads ${back})`); fails++ }
-    else console.log(`   ↩ bulk_onboarding_enabled back to false on company ${flaggedCompany}`)
+    if (r.error || back !== false) { warn(`   🔴 FLAG NOT RESTORED on company ${flaggedCompany} (reads ${back})`); fails++ }
+    else say(`   ↩ bulk_onboarding_enabled back to false on company ${flaggedCompany}`)
   }
-  if (storagePaths.length) {
-    const r = await db.storage.from(BULK_BUCKET).remove(storagePaths)
-    if (r.error) console.error(`   ⚠ storage remove: ${r.error.message}`)
-    else console.log(`   ↩ removed ${(r.data ?? []).length} storage object(s)`)
-  }
-  if (mintedEmails.length) {
-    const r = await db.from('user_roles').delete().in('email', mintedEmails).select('id')
-    if (r.error || (r.data ?? []).length !== mintedEmails.length) { console.error(`   🔴 role rows: removed ${(r.data ?? []).length}/${mintedEmails.length}`); fails++ }
-    else console.log(`   ↩ removed ${(r.data ?? []).length} role row(s)`)
-  }
-  for (const uid of mintedUids) {
-    const r = await db.auth.admin.deleteUser(uid).catch(e => ({ error: e }))
-    if ((r as { error?: unknown }).error) { console.error(`   🔴 could not delete auth user ${uid}`); fails++ }
-  }
-  if (mintedUids.length) console.log(`   ↩ deleted ${mintedUids.length} auth user(s)`)
+
   // 🔴 An admin role row surviving a crashed gate is the worst thing
   // this script can leave behind, so it is checked rather than assumed.
   const left = await db.from('user_roles').select('id,email,role').in('email', mintedEmails)
   if ((left.data ?? []).length > 0) {
-    console.error(`   🔴 ${(left.data ?? []).length} ROLE ROW(S) STILL PRESENT: ${JSON.stringify(left.data)}`); fails++
+    warn(`   🔴 ${(left.data ?? []).length} ROLE ROW(S) STILL PRESENT: ${JSON.stringify(left.data)}`); fails++
   }
 }
 let dying = false

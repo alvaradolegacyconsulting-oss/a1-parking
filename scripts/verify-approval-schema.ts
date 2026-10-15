@@ -27,6 +27,7 @@
 // Usage: npm run verify:approvalschema
 
 import { createClient, type PostgrestError } from '@supabase/supabase-js'
+import { say, warn } from './lib/safe-log'
 import fs from 'fs'
 import crypto from 'crypto'
 
@@ -44,14 +45,14 @@ let cleaned = false
 async function cleanup(why: string) {
   if (cleaned) return
   cleaned = true
-  if (why !== 'end') console.error(`\n🔴 cleanup (${why})`)
+  if (why !== 'end') warn(`\n🔴 cleanup (${why})`)
   if (probeIds.length) {
     // RETURNING, so a silently-filtered delete cannot read as success.
     const r = await db.from('import_batches').delete().in('id', probeIds).select('id')
     const got = (r.data ?? []).length
     if (r.error || got !== probeIds.length) {
-      console.error(`   🔴 probe rows: removed ${got}/${probeIds.length}${r.error ? ` — ${r.error.message}` : ''}`); fails++
-    } else console.log(`   ↩ removed ${got} probe batch row(s)`)
+      warn(`   🔴 probe rows: removed ${got}/${probeIds.length}${r.error ? ` — ${r.error.message}` : ''}`); fails++
+    } else say(`   ↩ removed ${got} probe batch row(s)`)
   }
 }
 let dying = false
