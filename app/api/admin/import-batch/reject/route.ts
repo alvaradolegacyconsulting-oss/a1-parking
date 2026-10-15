@@ -48,6 +48,29 @@ export async function POST(req: NextRequest) {
   const review = await reviewImportBatch(auth, batchId)
   if (!review.ok) return NextResponse.json({ error: review.code, message: review.message }, { status: review.status })
 
+  // ══════════════════════════════════════════════════════════════════
+  // 🔴 STATUS FIRST, BEFORE BLOCK AND BEFORE VALIDATION.
+  // Found 2026-10-16 by the loader gate. A second load of batch 8 was
+  // correctly refused and reported "1074 rows need fixing, return it to
+  // the company" — because the batch's OWN just-loaded 358 vehicles and
+  // 228 residents are what made its file look stale. The operator would
+  // have been offered Return for a batch that was already loaded.
+  //
+  // The general rule: the cheap unambiguous question comes before the
+  // expensive interpretable one. "Is this action applicable to this
+  // batch at all" cannot be answered by looking at records the action
+  // itself created.
+  // ══════════════════════════════════════════════════════════════════
+  if (!['submitted', 'approved'].includes(String(review.batch.status))) {
+    return NextResponse.json({
+      error: 'wrong_status',
+      message: String(review.batch.status) === 'loaded'
+        ? 'This batch is already loaded. A loaded batch is rolled back, not rejected.'
+        : `This batch is ${review.batch.status}. Only a submitted or approved batch can be rejected.`,
+      status: review.batch.status,
+    }, { status: 409 })
+  }
+
   if (review.block.blocked) {
     return NextResponse.json({
       error: 'blocked',

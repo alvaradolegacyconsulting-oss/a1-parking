@@ -53,6 +53,29 @@ export async function POST(req: NextRequest) {
   const review = await reviewImportBatch(auth, batchId)
   if (!review.ok) return NextResponse.json({ error: review.code, message: review.message }, { status: review.status })
 
+  // ══════════════════════════════════════════════════════════════════
+  // 🔴 STATUS FIRST, BEFORE BLOCK AND BEFORE VALIDATION.
+  // Found 2026-10-16 by the loader gate. A second load of batch 8 was
+  // correctly refused and reported "1074 rows need fixing, return it to
+  // the company" — because the batch's OWN just-loaded 358 vehicles and
+  // 228 residents are what made its file look stale. The operator would
+  // have been offered Return for a batch that was already loaded.
+  //
+  // The general rule: the cheap unambiguous question comes before the
+  // expensive interpretable one. "Is this action applicable to this
+  // batch at all" cannot be answered by looking at records the action
+  // itself created.
+  // ══════════════════════════════════════════════════════════════════
+  if (String(review.batch.status) !== 'approved') {
+    return NextResponse.json({
+      error: 'wrong_status', outcome: 'blocked',
+      message: String(review.batch.status) === 'loaded'
+        ? 'This batch is already loaded. Loading it again would insert every record twice.'
+        : `This batch is ${review.batch.status}. Only an approved batch can be loaded.`,
+      status: review.batch.status, retryable: false,
+    }, { status: 409 })
+  }
+
   if (review.block.blocked) {
     return NextResponse.json({
       error: 'blocked', outcome: 'blocked',
@@ -78,14 +101,6 @@ export async function POST(req: NextRequest) {
       retryable: false, offer_return: true,
     }, { status: 409 })
   }
-  if (!review.canLoad) {
-    return NextResponse.json({
-      error: 'wrong_status', outcome: 'blocked',
-      message: `This batch is ${review.batch.status}. Only an approved batch can be loaded.`,
-      status: review.batch.status, retryable: false,
-    }, { status: 409 })
-  }
-
   // ── the rows, from the bytes this request just hashed ─────────────
   // Re-read rather than threaded out of reviewImportBatch, because the
   // rows handed to the RPC must be the ones whose hash was checked in

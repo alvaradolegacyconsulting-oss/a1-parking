@@ -50,6 +50,10 @@ let srv: DevServer | null = null
 const mintedUids: string[] = []
 const mintedEmails: string[] = []
 const claimUids: string[] = []
+// 🔴 Role rows the CLAIM created. They carry no import_batch_id, so the
+// delete-by-stamp below cannot reach them — which is the finding, and
+// also why they need their own line here.
+const claimRoleEmails: string[] = []
 let flaggedCompany: number | null = null
 let batchSnapshot: Record<string, unknown> | null = null
 let batchId = 0
@@ -79,6 +83,14 @@ async function cleanup(why: string) {
       const { count } = await db.from(t).select('*', { count: 'exact', head: true }).eq('import_batch_id', batchId)
       if ((count ?? 0) !== 0) { warn(`   🔴 ${count} ${t} row(s) STILL stamped with batch ${batchId}`); fails++ }
     }
+  }
+  // 🔴 The claim-created role rows, by EMAIL, because they have no
+  // stamp. If this gate ever stops doing it, it leaks a resident role
+  // row at a real property every run.
+  if (claimRoleEmails.length) {
+    const r = await db.from('user_roles').delete().in('email', claimRoleEmails).select('id')
+    if (r.error) { warn(`   🔴 claim role rows: ${r.error.message}`); fails++ }
+    else say(`   ↩ removed ${(r.data ?? []).length} unstamped role row(s) the claim created`)
   }
   // Auth users the /claim leg created.
   for (const uid of claimUids) {
@@ -211,29 +223,46 @@ const main = async () => {
     if (!srv) { warn('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
     say('server up\n')
 
-    // ── 🔴 flag off: a blocked load is refused, never retried ───────
-    console.log('── 🔴 flag off: blocked, and NOT retryable ──')
-    const offLoad = await js(await post('/api/admin/import-batch/load', { batch_id: batchId }, admin))
-    chk('🔴 loading is refused with the reason', offLoad.error === 'blocked', str(offLoad, 160))
-    chk('🔴 ...and the response says a retry would NOT help',
-      offLoad.retryable === false,
-      `retryable=${offLoad.retryable} — a retry here would SUCCEED and load 228 residents into a property nobody can see, which is the whole reason this is not "transient"`)
-    const { count: afterOff } = await db.from('residents').select('*', { count: 'exact', head: true }).eq('import_batch_id', batchId)
-    chk('   ...and nothing was written', (afterOff ?? 0) === 0, `${afterOff} stamped row(s)`)
+    const setFlag = async (on: boolean) => {
+      const r = await db.from('companies').update({ bulk_onboarding_enabled: on })
+        .eq('id', demo.id).select('bulk_onboarding_enabled')
+      if (r.error || r.data?.[0]?.bulk_onboarding_enabled !== on) throw new Error(`could not set the flag to ${on}`)
+      if (on) flaggedCompany = demo.id as number
+    }
 
-    // flag on
-    const flip = await db.from('companies').update({ bulk_onboarding_enabled: true })
-      .eq('id', demo.id).select('bulk_onboarding_enabled')
-    if (flip.error || flip.data?.[0]?.bulk_onboarding_enabled !== true) throw new Error('could not enable the flag')
-    flaggedCompany = demo.id as number
-    say(`\nflag on for ${demo.name} (restored in cleanup)\n`)
-
-    // ── a submitted batch cannot be loaded ─────────────────────────
+    // ── Load is the second decision ────────────────────────────────
+    await setFlag(true)
+    say(`flag on for ${demo.name} (restored to false in cleanup)\n`)
     console.log('── approve first: Load is a second decision ──')
     const preLoad = await js(await post('/api/admin/import-batch/load', { batch_id: batchId }, admin))
     chk('a SUBMITTED batch cannot be loaded', preLoad.error === 'wrong_status', str(preLoad, 150))
     const ap = await js(await post('/api/admin/import-batch/approve', { batch_id: batchId }, admin))
     chk('the batch is approved', ap.ok === true, str(ap, 140))
+
+    // ── 🔴 NOW the blocked case, with the flag switched back off ────
+    // 🔴 ORDERING MATTERS IN THE GATE TOO, and this is where the first
+    // version got it wrong. It tested "flag off → blocked" while the
+    // batch was still SUBMITTED, and once the routes started checking
+    // status first — correctly — the answer became wrong_status. To
+    // measure a block you have to put the batch in a state where
+    // nothing else refuses it first. The same reasoning that fixed the
+    // route applies to the gate that tests it.
+    console.log('\n── 🔴 an APPROVED batch with the flag off: blocked, and NOT retryable ──')
+    await setFlag(false)
+    const offLoad = await js(await post('/api/admin/import-batch/load', { batch_id: batchId }, admin))
+    chk('🔴 loading is refused as BLOCKED, with the reason', offLoad.error === 'blocked', str(offLoad, 180))
+    chk('   ...and the reason names the switched-off flag',
+      (offLoad.reasons ?? []).some((r: string) => /switched off/i.test(r)), str(offLoad.reasons))
+    chk('🔴 ...and the response says a retry would NOT help',
+      offLoad.retryable === false,
+      `retryable=${offLoad.retryable} — a retry here would SUCCEED and load 228 residents into a property nobody can see, which is the whole reason this is not "transient"`)
+    const { count: afterOff } = await db.from('residents').select('*', { count: 'exact', head: true }).eq('import_batch_id', batchId)
+    chk('   ...and nothing was written', (afterOff ?? 0) === 0, `${afterOff} stamped row(s)`)
+    const { data: stillApproved } = await db.from('import_batches').select('status').eq('id', batchId).maybeSingle()
+    chk('   ...and the batch is still approved — a block is not a transition',
+      stillApproved?.status === 'approved', `status=${stillApproved?.status}`)
+    await setFlag(true)
+    say('')
 
     // ── 🔴 a non-admin is refused ──────────────────────────────────
     console.log('\n── 🔴 who cannot load ──')
@@ -338,9 +367,27 @@ const main = async () => {
       !!lr?.unit_number,
       `unit=${str(lr?.unit_number)}`)
 
-    // ── 🔴 /claim sends the invite for an imported resident ─────────
-    // The one journey that closes the arc: a resident the property
-    // uploaded asks for a login and gets one.
+    // ══════════════════════════════════════════════════════════════
+    // 🔴 /claim FOR AN IMPORTED RESIDENT — SPLIT IN TWO, BECAUSE THE
+    // FIXTURE'S ADDRESSES CANNOT RECEIVE MAIL.
+    // ══════════════════════════════════════════════════════════════
+    // Measured 2026-10-16: claiming resident029@example.com reached
+    // inviteUserByEmail and got back
+    //   AuthApiError: Error sending invite email (500 unexpected_failure)
+    // All 228 of the Alden fixture's addresses are @example.com, an
+    // RFC 2606 reserved domain this project's mail provider refuses.
+    // @test.invalid is accepted by the same provider — verify:claim
+    // creates auth users on it — so this is a property of the FIXTURE,
+    // not of the claim route or the loader.
+    //
+    // So the leg is two assertions instead of one wrong one:
+    //   (1) the route FINDS the imported resident and reaches the send,
+    //       and still answers identically — which is the disclosure
+    //       property, and the only part @example.com can show;
+    //   (2) the send itself works for a batch-stamped resident, proven
+    //       on an address the provider accepts.
+    // Asserting (2) on the fixture would be asserting the mail
+    // provider's allowlist.
     console.log('\n── 🔴 /claim for an imported resident ──')
     const victimEmail = String((vehSample ?? [])[0]?.resident_email ?? '')
     const claim = await fetch(`${BASE}/api/register/claim`, {
@@ -348,19 +395,54 @@ const main = async () => {
       body: JSON.stringify({ email: victimEmail, property: propName, captchaToken: 'dummy' }),
     })
     const claimBody = await claim.text()
-    chk('the claim answers', claim.status === 200, `HTTP ${claim.status} ${claimBody.slice(0, 120)}`)
-    const all = await db.auth.admin.listUsers({ perPage: 1000 })
-    const made = (all.data?.users ?? []).find(u => (u.email ?? '').toLowerCase() === victimEmail.toLowerCase())
-    if (made) claimUids.push(made.id)
-    chk(`🔴 an invite was sent for ${victimEmail} — an auth user now exists`,
-      !!made, made ? `uid ${made.id}` : '🔴 none: the loaded resident cannot get a login, which makes the load pointless')
-    chk('   ...unconfirmed until they accept it',
-      !made?.email_confirmed_at, `email_confirmed_at=${made?.email_confirmed_at ?? 'null'}`)
+    chk('the claim answers, and identically', claim.status === 200
+      && claimBody.includes('Check your email. If your property set you up'),
+      `HTTP ${claim.status} ${claimBody.slice(0, 110)}`)
+    chk(`🔴 ...even though the send to ${victimEmail} FAILED at the provider`,
+      claim.status === 200,
+      'the fixture is @example.com, which this provider refuses. A send failure must not change the answer — otherwise the screen distinguishes a records-bearing address from an unknown one by failing differently.')
     const { data: claimRole } = await db.from('user_roles').select('id,role,import_batch_id')
       .ilike('email', victimEmail).limit(2)
-    chk('🔴 ...and the claim reused the role row the LOADER made, not a second one',
+    chk('🔴 ...and no SECOND role row appeared — the loader\'s is reused',
       (claimRole ?? []).length === 1 && Number((claimRole ?? [])[0]?.import_batch_id) === batchId,
-      `${(claimRole ?? []).length} role row(s), import_batch_id=${(claimRole ?? [])[0]?.import_batch_id} — one email, one role, and the stamp survives the claim so rollback can still find it`)
+      `${(claimRole ?? []).length} role row(s), import_batch_id=${(claimRole ?? [])[0]?.import_batch_id} — one email one role, and the stamp survives the claim so rollback can still find it`)
+
+    // (2) the send, on an address the provider accepts. Stamped with
+    // the batch so the restore removes it by import_batch_id, exactly
+    // as it removes the loader's own rows.
+    console.log('\n── 🔴 ...and the invite itself, on a deliverable address ──')
+    const sendable = `zz-ld-claim-${S}@test.invalid`
+    const extra = await db.from('residents').insert({
+      name: `ZZ LD CLAIM ${S}`, email: sendable, unit: '1309',
+      property: propName, company: demo.name, is_active: true, status: 'active',
+      import_batch_id: batchId,
+    }).select('id').maybeSingle()
+    chk('a batch-stamped resident on a deliverable domain can be created',
+      !extra.error, extra.error?.message ?? `id ${extra.data?.id}`)
+    const claim2 = await fetch(`${BASE}/api/register/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: sendable, property: propName, captchaToken: 'dummy' }),
+    })
+    chk('the claim answers', claim2.status === 200, `HTTP ${claim2.status}`)
+    const all = await db.auth.admin.listUsers({ perPage: 1000 })
+    const made = (all.data?.users ?? []).find(u => (u.email ?? '').toLowerCase() === sendable)
+    if (made) claimUids.push(made.id)
+    chk('🔴 an invite WAS sent — an auth user now exists for the imported resident',
+      !!made, made ? `uid ${made.id}` : '🔴 none: a loaded resident who cannot get a login makes the load pointless')
+    chk('   ...unconfirmed until they accept it',
+      !!made && !made.email_confirmed_at, `email_confirmed_at=${made?.email_confirmed_at ?? 'null'}`)
+    // 🔴 THE ROLE ROW THE CLAIM CREATES CARRIES NO STAMP. The claim
+    // route does not set import_batch_id — it has no reason to know
+    // about batches — so rollback cannot find this row by the stamp.
+    // Measured here rather than assumed, because it is the central
+    // question for the rollback piece: a resident who has already
+    // claimed is not cleanly reversible.
+    const { data: claim2Role } = await db.from('user_roles')
+      .select('id,role,import_batch_id').ilike('email', sendable).limit(2)
+    claimRoleEmails.push(sendable)
+    chk('🔴 the claim-created role row has NO import_batch_id — rollback cannot find it by the stamp',
+      (claim2Role ?? []).length === 1 && (claim2Role ?? [])[0]?.import_batch_id === null,
+      `${str((claim2Role ?? [])[0])} — reported, not a failure: the loader stamps what IT creates, and the claim route has no reason to know about batches. It is the rollback piece's central question.`)
 
     // ── the batch's own record of the load ─────────────────────────
     console.log('\n── what the batch records ──')

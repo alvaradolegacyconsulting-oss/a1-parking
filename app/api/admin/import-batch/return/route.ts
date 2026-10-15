@@ -40,6 +40,29 @@ export async function POST(req: NextRequest) {
   const review = await reviewImportBatch(auth, batchId)
   if (!review.ok) return NextResponse.json({ error: review.code, message: review.message }, { status: review.status })
 
+  // ══════════════════════════════════════════════════════════════════
+  // 🔴 STATUS FIRST, BEFORE BLOCK AND BEFORE VALIDATION.
+  // Found 2026-10-16 by the loader gate. A second load of batch 8 was
+  // correctly refused and reported "1074 rows need fixing, return it to
+  // the company" — because the batch's OWN just-loaded 358 vehicles and
+  // 228 residents are what made its file look stale. The operator would
+  // have been offered Return for a batch that was already loaded.
+  //
+  // The general rule: the cheap unambiguous question comes before the
+  // expensive interpretable one. "Is this action applicable to this
+  // batch at all" cannot be answered by looking at records the action
+  // itself created.
+  // ══════════════════════════════════════════════════════════════════
+  if (!['submitted', 'approved'].includes(String(review.batch.status))) {
+    return NextResponse.json({
+      error: 'wrong_status',
+      message: String(review.batch.status) === 'loaded'
+        ? 'This batch is already loaded. A loaded batch is rolled back, not returned.'
+        : `This batch is ${review.batch.status}. Only a submitted or approved batch can be returned.`,
+      status: review.batch.status,
+    }, { status: 409 })
+  }
+
   // 🔴 BLOCKED MEANS NO RETURN, per the ruling, and the reason matters.
   // If bulk onboarding is switched off for the company, returning the
   // batch sends it to a company that cannot resubmit — the CA would see
@@ -67,13 +90,6 @@ export async function POST(req: NextRequest) {
       message: `This file still matches the records at ${review.property.name}. There are no rows to send back, and resubmitting the same bytes would be refused as a duplicate.`,
     }, { status: 409 })
   }
-  if (!['submitted', 'approved'].includes(String(review.batch.status))) {
-    return NextResponse.json({
-      error: 'wrong_status',
-      message: `This batch is ${review.batch.status}. Only a submitted or approved batch can be returned.`,
-    }, { status: 409 })
-  }
-
   const all = review.validation.errors
   const stored = all.slice(0, MAX_STORED_REJECT_ERRORS)
   let reason = buildReturnReason(review, trigger)

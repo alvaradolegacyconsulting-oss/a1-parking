@@ -12,12 +12,41 @@
 -- structural fact that makes "a failed load leaves the batch approved"
 -- true. G4 asserts that by position.
 --
+-- ── 🔴 COMMENTS ARE STRIPPED BEFORE ANY SOURCE-TEXT ASSERTION ───────
+-- The first version of this file failed G4 with
+--   the status UPDATE is AFTER the EXCEPTION block
+--   (update at 7065, exception at 3095)
+-- and the loader was fine. `position('EXCEPTION' IN prosrc)` had found
+-- the loader's own comment — "The EXCEPTION block creates a
+-- subtransaction" — three thousand characters before the keyword.
+--
+-- G5 was broken the same way and would have failed next: it counts
+-- occurrences of 'resident' and expects exactly one, and the comment
+-- above the INSERT says role = 'resident' in quotes. Two, not one.
+--
+-- 🔴 THE GENERAL SHAPE: a comment that explains a rule defeats a gate
+-- that checks for the rule, and the better the comment the more likely
+-- it is to quote the thing being asserted. Presence checks survive it
+-- (an extra mention still proves presence); COUNT and POSITION checks
+-- do not. So v_src is stripped of `--` comments once, into v_body, and
+-- every count and position below reads v_body. Measured after
+-- stripping: EXCEPTION once, 'resident' once, import_batch_id three
+-- times, tag_number zero.
+--
+-- 🔴 AND G4 FAILING MEANT G5..G8 NEVER RAN. A DO block aborts at the
+-- first RAISE, so a false failure early in the file hides every
+-- assertion after it. The error was loud, which is the only reason
+-- this was not read as "the loader is broken and everything else is
+-- fine".
+--
 -- 🔴 Every RAISE format string counted by hand; %% is a literal percent.
 
 DO $do$
 DECLARE
-  v_def TEXT;
-  v_src TEXT;
+  v_def  TEXT;
+  v_src  TEXT;
+  v_body TEXT;   -- v_src with `--` comments removed; see the header
+
   v_n   INT;
   v_s   TEXT;
   v_a   INT;
@@ -63,6 +92,11 @@ BEGIN
   SELECT p.prosrc INTO v_src
     FROM pg_proc p WHERE p.oid = to_regprocedure('public.load_import_batch(bigint, text, jsonb)')::oid;
   IF v_src IS NULL THEN RAISE EXCEPTION 'G3 FAIL: body unreadable'; END IF;
+  -- 🔴 The code, without the prose about the code. See the header.
+  v_body := regexp_replace(v_src, '--[^\n]*', '', 'g');
+  IF length(v_body) >= length(v_src) THEN
+    RAISE EXCEPTION 'G3 FAIL: stripping comments removed nothing (% vs % chars). Either the loader lost its comments or the strip stopped working — and every count below would then be reading prose.', length(v_body), length(v_src);
+  END IF;
   IF v_src !~ 'is_active_import_operator' THEN
     RAISE EXCEPTION 'G3 FAIL: the loader does not call the operator gate';
   END IF;
@@ -91,14 +125,14 @@ BEGIN
   -- after it, a failure would roll back the inserts and still mark the
   -- batch loaded — the worst of both: nothing written, nothing
   -- loadable, and no button that resolves it.
-  v_a := position('UPDATE public.import_batches' IN v_src);
-  v_b := position('EXCEPTION' IN v_src);
+  v_a := position('UPDATE public.import_batches' IN v_body);
+  v_b := position('EXCEPTION' IN v_body);
   IF v_a = 0 THEN RAISE EXCEPTION 'G4 FAIL: the loader never updates import_batches'; END IF;
   IF v_b = 0 THEN
     RAISE EXCEPTION 'G4 FAIL: the loader has no EXCEPTION block, so a failure propagates and the caller cannot tell a conflict from a transient fault.';
   END IF;
   IF v_a > v_b THEN
-    RAISE EXCEPTION 'G4 FAIL: the status UPDATE is AFTER the EXCEPTION block (update at %, exception at %). A failure would roll back the inserts and still mark the batch loaded.', v_a, v_b;
+    RAISE EXCEPTION 'G4 FAIL: the status UPDATE is AFTER the EXCEPTION block (update at %, exception at %, measured on the comment-stripped body). A failure would roll back the inserts and still mark the batch loaded.', v_a, v_b;
   END IF;
   IF v_src !~ 'WHEN unique_violation' THEN
     RAISE EXCEPTION 'G4 FAIL: the loader does not distinguish a unique violation. Offering a Retry on one is a button that fails identically every time.';
@@ -109,18 +143,18 @@ BEGIN
   RAISE NOTICE 'G4 ok: inserts and the status change share one EXCEPTION block; unique_violation separated from the catch-all';
 
   -- ── 🔴 G5. the staff-role assertion, BINDING ─────────────────────
-  SELECT count(*) INTO v_n FROM regexp_matches(v_src, '''resident''', 'g');
+  SELECT count(*) INTO v_n FROM regexp_matches(v_body, '''resident''', 'g');
   IF v_n <> 1 THEN
     RAISE EXCEPTION 'G5 FAIL: ''resident'' appears % time(s) in the loader; want exactly 1. One place writes the role, so there is one place to read.', v_n;
   END IF;
   -- Every other role the product has. None may appear.
   FOR v_s IN SELECT unnest(ARRAY['admin','company_admin','manager','leasing_agent','driver']) LOOP
-    IF v_src ~ ('''' || v_s || '''') THEN
+    IF v_body ~ ('''' || v_s || '''') THEN
       RAISE EXCEPTION 'G5 FAIL: the loader mentions the role %. Nothing in the ingest path can express a role, and this is the last place one could enter.', v_s;
     END IF;
   END LOOP;
   -- And it does not write parking tags, which are set_vehicle_tag's.
-  IF v_src ~ 'vehicle_parking_tags' OR v_src ~ 'tag_number' THEN
+  IF v_body ~ 'vehicle_parking_tags' OR v_body ~ 'tag_number' THEN
     RAISE EXCEPTION 'G5 FAIL: the loader touches parking tags. vehicle_parking_tags has no write policy and set_vehicle_tag owns the property switch, the one-live-tag invariant and the audit.';
   END IF;
   RAISE NOTICE 'G5 ok: role=resident exactly once, no other role named, no tag writes';
@@ -139,7 +173,7 @@ BEGIN
     RAISE EXCEPTION 'G6 FAIL: % of 3 write-once guards present (%). An unguarded stamp can be forged or cleared from a client, and rollback believes it.', v_n, COALESCE(v_s, '(none)');
   END IF;
   -- The loader stamps it in all three INSERTs: once per column list.
-  SELECT count(*) INTO v_n FROM regexp_matches(v_src, 'import_batch_id', 'g');
+  SELECT count(*) INTO v_n FROM regexp_matches(v_body, 'import_batch_id', 'g');
   IF v_n <> 3 THEN
     RAISE EXCEPTION 'G6 FAIL: the loader names import_batch_id % time(s); want exactly 3, one per INSERT. A missing one is rows rollback cannot find.', v_n;
   END IF;
@@ -179,7 +213,7 @@ $do$;
 -- ── the PASS row ────────────────────────────────────────────────────
 SELECT
   'loader' AS verification,
-  'PASS — G1..G8' AS result,
+  'PASS — G1..G8 (source checks read the comment-stripped body)' AS result,
   to_regprocedure('public.load_import_batch(bigint, text, jsonb)')::TEXT AS loader,
   (SELECT count(*)::INT FROM pg_attribute
     WHERE attrelid IN ('public.residents'::regclass, 'public.vehicles'::regclass, 'public.user_roles'::regclass)
