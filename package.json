@@ -53,7 +53,8 @@
     "verify:loader": "tsx scripts/verify-loader.ts",
     "verify:rollback": "tsx scripts/verify-rollback.ts",
     "derive:rehearsal": "tsx docs/bulk-onboarding/fixtures/derive-rehearsal.ts",
-    "verify:billingguard": "tsx scripts/verify-billing-guard.ts"
+    "verify:billingguard": "tsx scripts/verify-billing-guard.ts",
+    "rehearse:full": "tsx scripts/rehearse-full.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",
