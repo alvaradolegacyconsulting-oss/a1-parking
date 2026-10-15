@@ -66,14 +66,32 @@ export const runtime = 'nodejs'
 const SAME_ANSWER = {
   ok: true,
   message:
-    'If we have your details on file for that property, we have emailed you a link to set up your login. '
-    + 'It can take a minute to arrive — check your spam folder too.',
+    'Check your email. If your property set you up, your setup link arrives within a few minutes.',
 }
-const answer = () => NextResponse.json(SAME_ANSWER)
+
+// 🔴 A RESPONSE FLOOR, BECAUSE THE BRANCHES DO DIFFERENT AMOUNTS OF
+// WORK. A records-bearing address costs a residents read, an auth
+// lookup, a role insert and an invite over the network; an unknown one
+// costs the read and stops. That difference is measurable, and a timing
+// difference is an oracle just as surely as a different message.
+//
+// 🔴 THIS IS A FLOOR, NOT CONSTANT TIME, and the distinction matters:
+// every branch takes AT LEAST this long, so the fast paths stop being
+// distinguishable — but a slow invite can still exceed it. Constant
+// time would mean capping the slow path too, which would mean
+// abandoning sends. The floor is the honest 80%; it is not a promise of
+// indistinguishability under careful measurement.
+const FLOOR_MS = 900
+const answer = async (startedAt: number) => {
+  const elapsed = Date.now() - startedAt
+  if (elapsed < FLOOR_MS) await new Promise(r => setTimeout(r, FLOOR_MS - elapsed))
+  return NextResponse.json(SAME_ANSWER)
+}
 
 const ACTION = 'RESIDENT_CLAIM_INVITE'
 
 export async function POST(req: NextRequest) {
+  const t0 = Date.now()
   let body: { email?: unknown; property?: unknown; captchaToken?: unknown }
   try { body = await req.json() } catch {
     return NextResponse.json({ ok: false, error: 'bad_request', message: 'The request could not be read.' }, { status: 400 })
@@ -117,12 +135,33 @@ export async function POST(req: NextRequest) {
     .from('residents').select('id, email, name, unit, property, company, is_active, status')
   if (resErr) {
     console.error('[register/claim] residents read failed:', resErr)
-    return answer()
+    return answer(t0)
   }
   const match = (residents ?? []).find(r =>
     norm(r.email) === email && norm(r.property) === norm(property)
     && r.is_active === true && r.status === 'active')
-  if (!match) return answer()
+  if (!match) return answer(t0)
+
+  // 🔴 A STAFF ROLE ON THIS ADDRESS → SEND NOTHING. One address can
+  // hold a resident record AND a staff role; amandacanchol@gmail.com
+  // held a dead manager role beside a live resident record for two
+  // months. A claim link must never mint or invite on an address that
+  // carries staff authority, even when a matching resident record
+  // exists — the claim path writes role:'resident', and a second row is
+  // impossible anyway under user_roles_lower_email_uidx, so the attempt
+  // would either fail or shadow a staff identity. Refused with the
+  // identical answer.
+  const { data: anyRole, error: roleErr } = await db
+    .from('user_roles').select('role').ilike('email', match.email as string)
+  if (roleErr) {
+    console.error('[register/claim] user_roles read failed:', roleErr)
+    return answer(t0)
+  }
+  const staff = (anyRole ?? []).filter(r => String(r.role) !== 'resident')
+  if (staff.length > 0) {
+    console.warn(`[register/claim] ${email} holds a staff role (${staff.map(r => r.role).join(', ')}) — no invite sent`)
+    return answer(t0)
+  }
 
   // 🔴 Already has a login → send nothing. inviteUserByEmail would fail
   // for an existing user anyway, and re-inviting someone who can
@@ -132,11 +171,11 @@ export async function POST(req: NextRequest) {
   const { data: uid, error: lookErr } = await db.rpc('get_auth_user_id_by_email', { p_email: email })
   if (lookErr) {
     console.error('[register/claim] auth lookup failed:', lookErr)
-    return answer()
+    return answer(t0)
   }
   if (uid) {
     console.info(`[register/claim] ${email} already has a login — no invite sent`)
-    return answer()
+    return answer(t0)
   }
 
   // ── the role row, BEFORE the invite ─────────────────────────────
@@ -154,9 +193,8 @@ export async function POST(req: NextRequest) {
   // Not through insert_user_role(): that RPC is granted to
   // `authenticated` and carries its own caller-role guard, which a
   // service_role call does not satisfy.
-  const { data: existingRole } = await db
-    .from('user_roles').select('id').ilike('email', match.email as string).limit(1)
-  if ((existingRole ?? []).length === 0) {
+  const existingRole = anyRole ?? []
+  if (existingRole.length === 0) {
     const ins = await db.from('user_roles').insert({
       email: match.email,
       role: 'resident',
@@ -169,12 +207,18 @@ export async function POST(req: NextRequest) {
       // That is fine: the row exists, which is all this step wanted.
       if (ins.error.code !== '23505') {
         console.error(`[register/claim] could not create the resident role row for ${email} — refusing to invite into a blank portal:`, ins.error)
-        return answer()
+        return answer(t0)
       }
     }
   }
 
   // ── the invite ──────────────────────────────────────────────────
+  // The vehicle COUNT, never a plate. Enough for the recipient to
+  // recognise the record as theirs; nothing a wrong recipient could use.
+  const { count: vehicleCount } = await db
+    .from('vehicles').select('*', { count: 'exact', head: true })
+    .ilike('resident_email', match.email as string).eq('is_active', true)
+
   const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
   const { error: invErr } = await db.auth.admin.inviteUserByEmail(email, {
     redirectTo: `${origin}/reset-password-required`,
@@ -183,11 +227,19 @@ export async function POST(req: NextRequest) {
     // tell it is not theirs — while learning nothing about a vehicle.
     // The typo risk is an attestation risk, accepted; this is what
     // bounds it.
-    data: { claim_property: match.property, claim_unit: match.unit ?? null },
+    // 🔴 These render only once the shared Invite template carries a
+    // conditional block for them — see the report. Until then the
+    // email is the standard invite and these are inert metadata, which
+    // is a cosmetic gap and not a functional one.
+    data: {
+      claim_property: match.property,
+      claim_unit: match.unit ?? null,
+      claim_vehicle_count: vehicleCount ?? 0,
+    },
   })
   if (invErr) {
     console.error(`[register/claim] invite failed for ${email}:`, invErr)
-    return answer()
+    return answer(t0)
   }
 
   await db.from('audit_logs').insert({
@@ -203,5 +255,5 @@ export async function POST(req: NextRequest) {
     notes: `Setup link sent to ${email} for ${match.property}${match.unit ? ` unit ${match.unit}` : ''}. Requested from ${remoteIp}.`,
   })
 
-  return answer()
+  return answer(t0)
 }

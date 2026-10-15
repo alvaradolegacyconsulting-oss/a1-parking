@@ -1,6 +1,15 @@
 // ════════════════════════════════════════════════════════════════════
-// GATE — the resident claim step
+// GATE — the resident claim step, and the /claim door
 // ════════════════════════════════════════════════════════════════════
+//
+// Two things are gated here, because they share one route:
+//   • the claim STEP — the tokenless handoff inside /register, which
+//     stays as the safety net for anyone who scans the old QR;
+//   • the /claim DOOR — the separate per-property entry point a CA
+//     prints as its own flyer for a property it bulk-loaded. Its four
+//     assertions are the last four sections: one identical body, one
+//     timing class, an email for records-bearing only, and /register
+//     unchanged.
 //
 // 🔴 HOW "EXERCISED ON THE 35" IS DONE WITHOUT CLAIMING 35 RECORDS.
 // A full invite creates an auth user and a user_roles row. Doing that
@@ -340,6 +349,198 @@ const main = async () => {
     // a real mailbox. The token mechanism above is proven; the send is
     // GoTrue's own behaviour on the endpoint /forgot-password already
     // uses in production.
+
+    // ════════════════════════════════════════════════════════════════
+    // 🔴 THE /claim DOOR — one answer, one timing class, one send
+    // ════════════════════════════════════════════════════════════════
+    // Ruled 2026-10-15. /claim is a SEPARATE entry point for a
+    // bulk-loaded property, printed by the CA as its own flyer. The
+    // normal QR /register flow is untouched, which the last section of
+    // this gate asserts rather than assumes.
+    //
+    // Four inputs must be indistinguishable from the outside:
+    //   records-bearing · unknown · staff · already-claimed
+    // and exactly ONE of them may cause an email.
+    console.log('\n── 🔴 /claim: the four cases, built as canaries ──')
+
+    // A staff canary: a residents row AND a staff role on one address.
+    // 🔴 This is the ONLY branch that needs a resident record to exist
+    // in order to be reached — the route checks the record first, so a
+    // staff address with no record would exit through the no-match
+    // branch and prove nothing about the staff exclusion. The shape is
+    // amandacanchol@gmail.com's: a live resident record beside a
+    // manager role.
+    const staffEmail = `zzcl-staff-${S}@test.invalid`
+    const sResB = await db.from('residents').insert({
+      name: `ZZ CL STAFF ${S}`, email: staffEmail, unit: '201',
+      property: subject.property, company: subject.company, is_active: true, status: 'active',
+    }).select('id').single()
+    if (sResB.error) throw new Error(`staff canary resident: ${sResB.error.message}`)
+    canaryResidentIds.push(sResB.data.id as number)
+    const sRole = await db.from('user_roles').insert({
+      email: staffEmail, role: 'manager', company: subject.company,
+      property: [subject.property], is_active: true,
+    }).select('id').single()
+    if (sRole.error) throw new Error(`staff canary role: ${sRole.error.message}`)
+    mintedRoleIds.push(sRole.data.id as number)
+    chk('a staff canary exists: live resident record + manager role on one address',
+      true, `${staffEmail} — the amandacanchol shape`)
+
+    // A records-bearing canary with no auth user: the one case that
+    // MAY send. Fresh, because `subject` has been claimed above and is
+    // now the already-claimed case.
+    const sendEmail = `zzcl-send-${S}@test.invalid`
+    const sendRes = await db.from('residents').insert({
+      name: `ZZ CL SEND ${S}`, email: sendEmail, unit: '202',
+      property: subject.property, company: subject.company, is_active: true, status: 'active',
+    }).select('id').single()
+    if (sendRes.error) throw new Error(`send canary resident: ${sendRes.error.message}`)
+    canaryResidentIds.push(sendRes.data.id as number)
+
+    // ── 🔴 ZERO EMAILS FOR EVERYTHING BUT RECORDS-BEARING ───────────
+    // Measured as: no auth user appears for that address, and no
+    // RESIDENT_CLAIM_INVITE audit row is written. inviteUserByEmail is
+    // the route's only send, and it cannot send without creating the
+    // user — so an absent auth user IS an absent email. The audit row
+    // is the second, independent witness, so a change that moved the
+    // send off inviteUserByEmail could not pass this silently.
+    console.log('\n── 🔴 zero emails except for records-bearing ──')
+    const invitesFor = async (e: string) => {
+      const { data } = await db.from('audit_logs').select('id')
+        .eq('action', 'RESIDENT_CLAIM_INVITE').ilike('record_id', e)
+      return (data ?? []).length
+    }
+    const subjectInvitesBefore = await invitesFor(String(subject.email))
+
+    const timed = async (body: object) => {
+      const t = Date.now()
+      const r = await claim(body)
+      return { ...r, ms: Date.now() - t }
+    }
+    const unknownEmail = `zzcl-none-${S}@test.invalid`
+    const caseSend    = await timed({ email: sendEmail,    property: subject.property })
+    const caseUnknown = await timed({ email: unknownEmail, property: subject.property })
+    const caseStaff   = await timed({ email: staffEmail,   property: subject.property })
+    const caseClaimed = await timed({ email: subject.email, property: subject.property })
+
+    const sendUser = await authUser(sendEmail)
+    if (sendUser) mintedUids.push(sendUser.id)
+    const { data: sendRole } = await db.from('user_roles').select('id,role').ilike('email', sendEmail).limit(1)
+    if ((sendRole ?? [])[0]) mintedRoleIds.push((sendRole ?? [])[0].id as number)
+    chk('🔴 records-bearing → an invite WAS sent (auth user + audit row)',
+      !!sendUser && (await invitesFor(sendEmail)) === 1,
+      `uid=${sendUser?.id ?? 'none'} invites=${await invitesFor(sendEmail)}`)
+    chk('   ...and its role row is resident, not the canary manager role',
+      (sendRole ?? [])[0]?.role === 'resident', JSON.stringify((sendRole ?? [])[0]))
+
+    chk('🔴 unknown → NO auth user and NO invite audit row',
+      !(await authUser(unknownEmail)) && (await invitesFor(unknownEmail)) === 0,
+      `an address with no record is never mailed, which is what stops this page relaying spam`)
+    chk('🔴 staff → NO auth user and NO invite audit row',
+      !(await authUser(staffEmail)) && (await invitesFor(staffEmail)) === 0,
+      `a manager role beside a resident record is refused: the claim path writes role:'resident' and would shadow staff authority`)
+    chk('🔴 already-claimed → no SECOND invite audit row',
+      (await invitesFor(String(subject.email))) === subjectInvitesBefore,
+      `${subjectInvitesBefore} → ${await invitesFor(String(subject.email))}; a re-invite is a surprise password reset for someone who can already sign in`)
+
+    // ── 🔴 IDENTICAL BODY ACROSS ALL FOUR ───────────────────────────
+    console.log('\n── 🔴 identical response body across all four cases ──')
+    const bodies = { send: caseSend, unknown: caseUnknown, staff: caseStaff, claimed: caseClaimed }
+    const distinct = new Set(Object.values(bodies).map(b => `${b.status}|${b.text}`))
+    chk('🔴 all four return one byte-identical status+body',
+      distinct.size === 1,
+      distinct.size === 1
+        ? `HTTP ${caseSend.status} · ${caseSend.text.slice(0, 90)}`
+        : `🔴 ${distinct.size} distinct answers:\n       ` + Object.entries(bodies).map(([k, v]) => `${k}=${v.status} ${v.text.slice(0, 60)}`).join('\n       '))
+    chk('   ...and the body is the ruled copy, verbatim',
+      caseSend.text.includes('Check your email. If your property set you up, your setup link arrives within a few minutes.'),
+      caseSend.text.slice(0, 140))
+    chk('   ...and it names no property, no unit and no address',
+      !caseSend.text.includes(String(subject.property)) && !caseSend.text.includes(sendEmail) && !caseSend.text.includes('202'),
+      caseSend.text.slice(0, 140))
+
+    // ── 🔴 TIMING CLASS — AND WHAT THAT PHRASE CAN HONESTLY MEAN ────
+    // 🔴 THIS IS A FLOOR, NOT CONSTANT TIME, and the gate asserts the
+    // floor rather than pretending otherwise. The route pads every
+    // answer to FLOOR_MS before returning, so the fast branches cannot
+    // be told from the slow one by being quick. A send that takes
+    // LONGER than the floor still takes longer — Supabase's invite call
+    // is a network round-trip and no padding hides that — so what is
+    // defended is: nothing is distinguishably FAST, and the
+    // send-nothing branches (which is every branch an attacker can
+    // reach for an address they are probing) are one indistinguishable
+    // group.
+    const FLOOR = 900
+    console.log('\n── 🔴 timing class (a floor, not constant time) ──')
+    console.log(`   send=${caseSend.ms}ms unknown=${caseUnknown.ms}ms staff=${caseStaff.ms}ms claimed=${caseClaimed.ms}ms`)
+    chk(`🔴 every one of the four takes at least the ${FLOOR}ms floor`,
+      [caseSend, caseUnknown, caseStaff, caseClaimed].every(c => c.ms >= FLOOR - 40),
+      `min=${Math.min(...[caseSend, caseUnknown, caseStaff, caseClaimed].map(c => c.ms))}ms (40ms tolerance for the clock around fetch)`)
+    const noSend = [caseUnknown.ms, caseStaff.ms, caseClaimed.ms]
+    const spread = Math.max(...noSend) - Math.min(...noSend)
+    chk('🔴 the three send-nothing branches are one indistinguishable group',
+      spread < 250,
+      `spread=${spread}ms across unknown/staff/already-claimed. These are the branches a prober reaches; if they separated, the page would be an oracle for "is this person a resident here" despite the identical copy.`)
+    chk('   ...and the send branch is not distinguishable by being FASTER',
+      caseSend.ms >= Math.min(...noSend) - 40,
+      `send=${caseSend.ms}ms vs fastest send-nothing=${Math.min(...noSend)}ms. Stated plainly: a send may be SLOWER, and the floor does not hide that. Constant time would need the invite moved off the request path.`)
+
+    // ── 🔴 NON-REGRESSION: /register IS UNTOUCHED ───────────────────
+    // The ruling is explicit that the normal QR flow stays as it is for
+    // everyone, with its tokenless-card handoff as the safety net. A
+    // new door that quietly changed the old one would be the failure
+    // mode, so both are rendered and compared.
+    console.log('\n── 🔴 non-regression: the normal /register flow ──')
+    const qs = `property=${encodeURIComponent(String(subject.property))}&company=${encodeURIComponent(String(subject.company))}`
+    const regRes = await fetch(`${BASE}/register?${qs}`)
+    const regHtml = await regRes.text()
+    chk('/register still renders', regRes.status === 200, `HTTP ${regRes.status}`)
+    // 🔴 The first marker I reached for was the plate input's
+    // placeholder, and it FAILED: the plate field is on step 3, so a
+    // GET of /register never renders it. The assertion had come off a
+    // grep line instead of off the render — the same mistake as
+    // control 9, and the gate caught it this time. The marker that is
+    // actually in the initial render is the step-1 heading, which is
+    // also the better one: "Step 1 of 3" IS the three-screen flow the
+    // complaint was about, so its presence here and absence on /claim
+    // is exactly the difference the ruling asked for.
+    chk('🔴 ...and it is still the full three-step form, not the claim form',
+      regHtml.includes('Step 1 of 3') && !regHtml.includes('claim-email'),
+      `step-1 heading present=${regHtml.includes('Step 1 of 3')} claim form present=${regHtml.includes('claim-email')}`)
+    // Source-level, because the tokenless card renders only after a
+    // submit with no token and cannot be reached by a GET. Counted, so
+    // that a deletion cannot hide behind a surviving mention.
+    const regSrc = fs.readFileSync('app/register/page.tsx', 'utf8')
+    const offerHits = (regSrc.match(/\bofferClaim\b/g) ?? []).length
+    chk('🔴 ...and the tokenless-card handoff is still wired (the safety net stays)',
+      offerHits >= 2, `offerClaim appears ${offerHits}× (state + render); the ruling keeps this as the fallback for anyone who scans the old QR`)
+
+    const clmRes = await fetch(`${BASE}/claim?${qs}`)
+    const clmHtml = await clmRes.text()
+    chk('/claim renders', clmRes.status === 200, `HTTP ${clmRes.status}`)
+    chk('🔴 ...asking for an email and nothing else — no password, no unit, no plate',
+      clmHtml.includes('claim-email') && !/Step 1 of 3/.test(clmHtml) && !/type="password"/.test(clmHtml),
+      `email field=${clmHtml.includes('claim-email')} three-step flow=${/Step 1 of 3/.test(clmHtml)} password=${/type="password"/.test(clmHtml)}`)
+    chk('   ...and it names the property it was printed for',
+      clmHtml.includes(String(subject.property)),
+      `the flyer is per-property, and the "Register here" fallback must land on the SAME property`)
+    chk('🔴 ...and offers the Register-here fallback before anything is typed',
+      /Register here/.test(clmHtml) && clmHtml.includes(`/register?property=${encodeURIComponent(String(subject.property))}`),
+      'a resident the import missed must not hit a dead end')
+
+    const noProp = await fetch(`${BASE}/claim`)
+    const noPropHtml = await noProp.text()
+    chk('a /claim link with no property says so instead of asking for an email',
+      noProp.status === 200 && /incomplete/i.test(noPropHtml) && !noPropHtml.includes('claim-email'),
+      `HTTP ${noProp.status} — the route would answer a propertyless claim with "Please enter your email address", advice the user cannot act on`)
+
+    // ── the public-path allowlist ───────────────────────────────────
+    const mw = fs.readFileSync('middleware.ts', 'utf8')
+    chk("🔴 '/claim' is in middleware publicPaths — an imported resident has no login yet",
+      /'\/claim'/.test(mw), 'without it the one audience for this page is redirected to /login')
+    const expMap = fs.readFileSync('scripts/route-exposure-map.ts', 'utf8')
+    chk("   ...and '/claim' is declared in the route-exposure map",
+      /'\/claim':/.test(expMap), 'an undeclared public route fails verify:routes')
 
   } finally {
     await cleanup('end')

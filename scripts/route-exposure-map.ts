@@ -119,6 +119,12 @@ export const ROUTE_EXPOSURE: Record<string, Expectation> = {
   '/reset-password-required': { kind: 'page' },
   '/change-password': { kind: 'page' },
   '/register': { kind: 'page' },
+  // /claim — the per-property claim door for a bulk-loaded property.
+  // Public BY DESIGN and anonymous by necessity: an imported resident
+  // has no login yet, which is the entire point. It discloses nothing,
+  // because every input gets the same answer and only a records-bearing
+  // address is ever mailed.
+  '/claim': { kind: 'page' },
   '/visitor': { kind: 'page' },
   '/visitor-select': { kind: 'page' },
   '/auth/accept': { kind: 'page' },
