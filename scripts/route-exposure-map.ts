@@ -183,6 +183,14 @@ export const ROUTE_EXPOSURE: Record<string, Expectation> = {
   '/api/bulk-onboarding/submit':  { kind: 'login' },
   '/api/admin/user-active':       { kind: 'login' },
   '/api/admin/property-active':   { kind: 'login' },
+  // The approval queue. All four refuse anonymously through the
+  // middleware and then again through authorizeImportOperator(), which
+  // requires an ACTIVE admin — not requireAdmin(), which does not read
+  // is_active.
+  '/api/admin/import-batch/list':    { kind: 'login' },
+  '/api/admin/import-batch/review':  { kind: 'login' },
+  '/api/admin/import-batch/approve': { kind: 'login' },
+  '/api/admin/import-batch/return':  { kind: 'login' },
   '/company_admin/resident-upload': { kind: 'login' },
 
   // 🔴 NOT MINE, and undeclared since it shipped — found by this gate

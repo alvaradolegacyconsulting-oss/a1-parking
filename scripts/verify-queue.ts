@@ -1,0 +1,465 @@
+// ════════════════════════════════════════════════════════════════════
+// GATE — the approval queue, driven over HTTP against batch 8
+// ════════════════════════════════════════════════════════════════════
+// Ruled 2026-10-15: build the queue against a real batch. Batch 8 is
+// the Alden Park clean fixture on Sunset Ridge Apartments at Demo
+// Company — 358 rows, 228 residents, submitted through the CA's own
+// routes by demo-ca@test.shieldmylot.com.
+//
+// 🔴 IT MUTATES BATCH 8, AND RESTORES IT, AND CHECKS THE RESTORE.
+// Approving and returning a batch is the thing under test, so the
+// subject's status has to move. Its whole row is snapshotted first and
+// written back at the end, and the write-back is re-read — a restore
+// that silently did nothing would leave the loader's subject in the
+// wrong state and the next run would test something else.
+//
+// 🔴 STALENESS IS INDUCED WITH A CANARY RESIDENT, NOT BY EDITING THE
+// FILE. The immutable copy under batches/ is what the loader will hash;
+// corrupting it to make the validator complain would be proving a hole
+// by making one. Instead a resident is inserted at the property with an
+// email taken from the fixture, which is exactly what happens in real
+// life between submit and approve, and deleted afterwards with
+// RETURNING.
+//
+// Cookies, not a bearer token: every route reads the session through
+// createSupabaseServerClient.
+//
+// Usage: npm run verify:queue
+
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { spawn, type ChildProcess } from 'child_process'
+import net from 'net'
+import fs from 'fs'
+import { cookieHeaderFor } from './lib/ssr-session'
+import { parseBulkCsv, BULK_CSV_COLUMNS } from '../app/lib/bulk-onboarding'
+
+process.stdout.on('error', (e: NodeJS.ErrnoException) => { if (e.code !== 'EPIPE') throw e })
+
+const env = fs.readFileSync('.env.local', 'utf8')
+const g = (k: string) => (env.match(new RegExp('^' + k + '=(.*)$', 'm'))?.[1] || '').trim()
+const URL_ = g('NEXT_PUBLIC_SUPABASE_URL'), ANON = g('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+const db = createClient(URL_, g('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } })
+
+const PORT = 3995
+const BASE = `http://127.0.0.1:${PORT}`
+const S = Date.now()
+
+let fails = 0
+const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(`${ok ? '✅' : '❌'} ${n}${d ? '\n       ' + d : ''}`) }
+
+let server: ChildProcess | null = null
+const mintedUids: string[] = []
+const mintedEmails: string[] = []
+const canaryResidentIds: number[] = []
+let flaggedCompany: number | null = null
+let batchSnapshot: Record<string, unknown> | null = null
+let batchId = 0
+let cleaned = false
+
+async function cleanup(why: string) {
+  if (cleaned) return
+  cleaned = true
+  if (why !== 'end') console.error(`\n🔴 cleanup (${why})`)
+
+  // 🔴 THE SUBJECT GOES BACK FIRST, AND THE RESTORE IS VERIFIED.
+  if (batchSnapshot && batchId) {
+    const want = {
+      status: batchSnapshot.status,
+      approved_by: batchSnapshot.approved_by,
+      approved_at: batchSnapshot.approved_at,
+      reject_reason: batchSnapshot.reject_reason,
+      reject_errors: batchSnapshot.reject_errors,
+      reject_error_count: batchSnapshot.reject_error_count,
+    }
+    const r = await db.from('import_batches').update(want).eq('id', batchId)
+      .select('status,approved_by,reject_error_count').maybeSingle()
+    const ok = !r.error && r.data?.status === want.status
+      && (r.data?.approved_by ?? null) === (want.approved_by ?? null)
+      && (r.data?.reject_error_count ?? null) === (want.reject_error_count ?? null)
+    if (!ok) {
+      console.error(`   🔴 BATCH ${batchId} NOT RESTORED to ${JSON.stringify(want)} — reads ${JSON.stringify(r.data)}${r.error ? ` (${r.error.message})` : ''}`)
+      fails++
+    } else console.log(`   ↩ batch ${batchId} restored to status=${want.status}, approval and rejection cleared`)
+  }
+  if (canaryResidentIds.length) {
+    const r = await db.from('residents').delete().in('id', canaryResidentIds).select('id')
+    if (r.error || (r.data ?? []).length !== canaryResidentIds.length) {
+      console.error(`   🔴 canary residents: removed ${(r.data ?? []).length}/${canaryResidentIds.length}`); fails++
+    } else console.log(`   ↩ removed ${(r.data ?? []).length} canary resident(s)`)
+  }
+  if (flaggedCompany !== null) {
+    const r = await db.from('companies').update({ bulk_onboarding_enabled: false })
+      .eq('id', flaggedCompany).select('bulk_onboarding_enabled')
+    if (r.error || r.data?.[0]?.bulk_onboarding_enabled !== false) {
+      console.error(`   🔴 FLAG NOT RESTORED on company ${flaggedCompany}`); fails++
+    } else console.log(`   ↩ bulk_onboarding_enabled back to false on company ${flaggedCompany}`)
+  }
+  if (mintedEmails.length) {
+    const r = await db.from('user_roles').delete().in('email', mintedEmails).select('id')
+    if (r.error || (r.data ?? []).length !== mintedEmails.length) {
+      console.error(`   🔴 role rows: removed ${(r.data ?? []).length}/${mintedEmails.length}`); fails++
+    } else console.log(`   ↩ removed ${(r.data ?? []).length} role row(s)`)
+  }
+  for (const uid of mintedUids) {
+    const r = await db.auth.admin.deleteUser(uid).catch(e => ({ error: e }))
+    if ((r as { error?: unknown }).error) { console.error(`   🔴 could not delete auth user ${uid}`); fails++ }
+  }
+  if (mintedUids.length) console.log(`   ↩ deleted ${mintedUids.length} auth user(s)`)
+  const left = await db.from('user_roles').select('id,role').in('email', mintedEmails)
+  if ((left.data ?? []).length > 0) {
+    console.error(`   🔴 ${(left.data ?? []).length} ROLE ROW(S) STILL PRESENT — one of them is an admin`); fails++
+  }
+  if (server && !server.killed) { server.kill('SIGTERM'); console.log('   ↩ stopped the server this gate started') }
+}
+let dying = false
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGPIPE'] as const) {
+  process.on(sig, () => { if (dying) return; dying = true
+    cleanup(sig).then(() => process.exit(2)).catch(() => process.exit(2)) })
+}
+process.on('uncaughtException', e => {
+  console.error('🔴 uncaught:', (e as Error).message)
+  cleanup('uncaughtException').then(() => process.exit(2)).catch(() => process.exit(2))
+})
+
+const portBusy = () => new Promise<boolean>(res => {
+  const s = net.createServer()
+  s.once('error', () => res(true)); s.once('listening', () => s.close(() => res(false)))
+  s.listen(PORT, '127.0.0.1')
+})
+
+type Actor = { email: string; cookie: string; client: SupabaseClient }
+async function actor(label: string, role: string, company: string | null, property: string[], active = true): Promise<Actor> {
+  const email = `zz-q-${label}-${S}@test.invalid`
+  const u = await db.auth.admin.createUser({ email, email_confirm: true, password: `Zz!${S}q` })
+  if (u.error || !u.data.user) throw new Error(`createUser(${email}): ${u.error?.message}`)
+  mintedUids.push(u.data.user.id); mintedEmails.push(email)
+  const ins = await db.from('user_roles').insert({ email, role, company, property, is_active: active }).select('id')
+  if (ins.error) throw new Error(`user_roles(${email}): ${ins.error.message}`)
+  const { cookie, accessToken } = await cookieHeaderFor(db, URL_, ANON, email)
+  return { email, cookie, client: createClient(URL_, ANON, {
+    auth: { persistSession: false }, global: { headers: { Authorization: `Bearer ${accessToken}` } } }) }
+}
+
+const call = (path: string, body: unknown | null, a?: Actor) => fetch(`${BASE}${path}`, {
+  method: body === null ? 'GET' : 'POST', redirect: 'manual',
+  headers: { ...(body === null ? {} : { 'Content-Type': 'application/json' }), ...(a ? { Cookie: a.cookie } : {}) },
+  ...(body === null ? {} : { body: JSON.stringify(body) }),
+})
+const js = async (r: Response) => { try { return JSON.parse(await r.text()) as Record<string, any> } catch { return {} } }
+
+const main = async () => {
+  if (await portBusy()) {
+    console.error(`🔴 something is already listening on ${PORT}. Refusing: it may be a stale build.`)
+    process.exit(2)
+  }
+
+  // ── the subject ──────────────────────────────────────────────────
+  const { data: demos } = await db.from('companies')
+    .select('id,name,company_env,bulk_onboarding_enabled').eq('company_env', 'demo')
+  const demo = (demos ?? [])[0]
+  if (!demo) { console.error("🔴 no company with company_env='demo'. Refusing."); process.exit(2) }
+  if (demo.bulk_onboarding_enabled === true) {
+    console.error(`🔴 ${demo.name} already has bulk_onboarding_enabled=true; this gate restores it to false. Clear it first.`)
+    process.exit(2)
+  }
+  const { data: batch } = await db.from('import_batches').select('*')
+    .eq('company_id', demo.id).order('id').limit(1).maybeSingle()
+  if (!batch) {
+    console.error('🔴 no batch at the demo company. Run npm run seed:demobatch first — this gate is built against a real batch, not a fabricated one.')
+    process.exit(2)
+  }
+  batchId = Number(batch.id)
+  batchSnapshot = { ...batch }
+  if (batch.status !== 'submitted') {
+    console.error(`🔴 batch ${batchId} is '${batch.status}', not 'submitted'. Refusing: this gate starts from the review state, and restoring from an unexpected start would write the wrong value back.`)
+    process.exit(2)
+  }
+  const { data: prop } = await db.from('properties').select('id,name').eq('id', batch.property_id).maybeSingle()
+  console.log(`subject: batch ${batchId} · ${prop!.name} · ${demo.name} · ${batch.resident_count} residents\n`)
+
+  // ── the RPCs are applied, or refuse ──────────────────────────────
+  const ping = await db.rpc('is_active_import_operator')
+  if (ping.error) {
+    console.error(`🔴 is_active_import_operator() is not callable: ${ping.error.message}`)
+    console.error('   Apply docs/backlog/wip-20261015_approve_and_return_rpcs.sql first. Refusing to report on a queue whose transitions do not exist.')
+    process.exit(2)
+  }
+
+  try {
+    const admin = await actor('adm', 'admin', null, [])
+    const deadAdmin = await actor('dead', 'admin', null, [], false)
+    const mgr = await actor('mgr', 'manager', demo.name, [String(prop!.name)])
+    const ca = await actor('ca', 'company_admin', demo.name, [String(prop!.name)])
+    console.log('actors: admin, deactivated admin, manager, company_admin\n')
+
+    console.log(`starting next dev on ${PORT}…`)
+    server = spawn('npx', ['next', 'dev', '-p', String(PORT)], { stdio: ['ignore', 'ignore', 'pipe'] })
+    server.stderr?.on('data', d => { const s = String(d); if (/error/i.test(s)) process.stderr.write(`   [server] ${s}`) })
+    const until = Date.now() + 120_000
+    let up = false
+    while (Date.now() < until && !up) {
+      try { up = (await fetch(`${BASE}/login`)).status === 200 } catch {}
+      if (!up) await new Promise(r => setTimeout(r, 700))
+    }
+    if (!up) { console.error('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
+    console.log('server up\n')
+
+    const PATHS = ['list', 'review', 'approve', 'return'] as const
+    const bodyFor = (p: string) => p === 'list' ? null : { batch_id: batchId }
+
+    // ── anonymous ───────────────────────────────────────────────────
+    console.log('── anonymous ──')
+    for (const p of PATHS) {
+      const r = await call(`/api/admin/import-batch/${p}`, bodyFor(p))
+      chk(`/${p} refuses anonymous`, r.status === 307 || r.status === 302 || r.status === 401,
+        `HTTP ${r.status} → ${r.headers.get('location') ?? ''}`)
+    }
+
+    // ── 🔴 who is not an operator ───────────────────────────────────
+    // The deactivated admin is the one that matters: requireAdmin() in
+    // server-auth would let them through, because it reads role and
+    // never is_active. authorizeImportOperator does its own read.
+    console.log('\n── 🔴 who the queue refuses ──')
+    for (const [who, a] of [['a DEACTIVATED admin', deadAdmin], ['a manager', mgr], ['a company_admin', ca]] as const) {
+      const r = await call('/api/admin/import-batch/list', null, a)
+      const j = await js(r)
+      chk(`${who} is refused`, r.status === 403 && j.error === 'not_operator', `HTTP ${r.status} ${JSON.stringify(j)}`)
+    }
+    const deadReview = await call('/api/admin/import-batch/review', { batch_id: batchId }, deadAdmin)
+    chk('🔴 ...and a deactivated admin cannot review either',
+      deadReview.status === 403,
+      `HTTP ${deadReview.status} — requireAdmin() in server-auth would have let them through; it reads role and never is_active`)
+    // Direct RPC, bypassing the route, as the deactivated admin.
+    const deadRpc = await deadAdmin.client.rpc('approve_import_batch', { p_batch_id: batchId, p_file_sha256: String(batch.file_sha256) })
+    chk('🔴 ...and the RPC refuses them too, with the route bypassed',
+      (deadRpc.data as Record<string, unknown> | null)?.error === 'not_operator',
+      JSON.stringify(deadRpc.data ?? deadRpc.error))
+    const caRpc = await ca.client.rpc('approve_import_batch', { p_batch_id: batchId, p_file_sha256: String(batch.file_sha256) })
+    chk('   ...and so does it for the owning company\'s own CA',
+      (caRpc.data as Record<string, unknown> | null)?.error === 'not_operator',
+      JSON.stringify(caRpc.data ?? caRpc.error))
+
+    // ── the list ────────────────────────────────────────────────────
+    console.log('\n── the list ──')
+    const listR = await call('/api/admin/import-batch/list', null, admin)
+    const list = await js(listR)
+    chk('an active admin gets the queue', listR.status === 200 && list.ok === true, `HTTP ${listR.status}`)
+    const mine = (list.batches ?? []).find((b: Record<string, unknown>) => Number(b.id) === batchId)
+    chk('🔴 batch 8 is in it, with its company and property NAMED',
+      !!mine && mine.company_name === demo.name && mine.property_name === prop!.name,
+      JSON.stringify(mine && { id: mine.id, company_name: mine.company_name, property_name: mine.property_name, status: mine.status }))
+
+    // ── 🔴 CANNOT LOAD, WITH THE FLAG OFF ──────────────────────────
+    // Ruled: a reason, not a status. Batch 8 shows this until the flag
+    // is on, which is why the flag is flipped below rather than assumed.
+    console.log('\n── 🔴 "cannot load" is a reason, not a status (flag off) ──')
+    const offR = await call('/api/admin/import-batch/review', { batch_id: batchId }, admin)
+    const off = await js(offR)
+    chk('review answers', offR.status === 200, `HTTP ${offR.status}`)
+    chk('🔴 it is blocked, and says why', off.block?.blocked === true && (off.block?.reasons ?? []).length > 0,
+      JSON.stringify(off.block))
+    chk('   ...and the reason names the switched-off flag',
+      (off.block?.reasons ?? []).some((s: string) => /switched off/i.test(s)),
+      JSON.stringify(off.block?.reasons))
+    chk('🔴 the batch status has NOT changed — a block is not a transition',
+      String(off.batch?.status) === 'submitted', `status=${off.batch?.status}`)
+    chk('   ...and neither action is offered', off.can_approve === false && off.can_load === false,
+      `can_approve=${off.can_approve} can_load=${off.can_load}`)
+    const offApprove = await call('/api/admin/import-batch/approve', { batch_id: batchId }, admin)
+    const offApproveJ = await js(offApprove)
+    chk('🔴 approving a blocked batch is refused with the reasons',
+      offApprove.status === 409 && offApproveJ.error === 'blocked' && (offApproveJ.reasons ?? []).length > 0,
+      `HTTP ${offApprove.status} ${JSON.stringify(offApproveJ).slice(0, 180)}`)
+    const offReturn = await call('/api/admin/import-batch/return', { batch_id: batchId }, admin)
+    const offReturnJ = await js(offReturn)
+    chk('🔴 and so is RETURNING it — the company could not resubmit',
+      offReturn.status === 409 && offReturnJ.error === 'blocked',
+      `HTTP ${offReturn.status} ${JSON.stringify(offReturnJ).slice(0, 180)}`)
+
+    // ── flag on ─────────────────────────────────────────────────────
+    const flip = await db.from('companies').update({ bulk_onboarding_enabled: true })
+      .eq('id', demo.id).select('bulk_onboarding_enabled')
+    if (flip.error || flip.data?.[0]?.bulk_onboarding_enabled !== true) throw new Error('could not enable the flag')
+    flaggedCompany = demo.id as number
+    console.log(`\nflag on for ${demo.name} (restored in cleanup)\n`)
+
+    // ── 🔴 the live verdict ────────────────────────────────────────
+    console.log('── 🔴 re-validation point 1: the review screen ──')
+    const r1 = await js(await call('/api/admin/import-batch/review', { batch_id: batchId }, admin))
+    chk('not blocked any more', r1.block?.blocked === false, JSON.stringify(r1.block))
+    chk('🔴 the stored file still hashes to what was attested',
+      r1.file?.matches === true, `${r1.file?.sha256?.slice(0, 16)}… (${r1.file?.bytes} bytes)`)
+    chk('   ...and it still parses to the counts on the row',
+      r1.parsed?.data_rows === 358 && r1.parsed?.resident_count === Number(batch.resident_count),
+      `${r1.parsed?.data_rows} rows · ${r1.parsed?.resident_count} residents vs row's ${batch.resident_count}`)
+    chk('🔴 the record checks RAN — not assumed, and not defaulted to clean',
+      r1.validation?.ran === true, JSON.stringify(r1.validation).slice(0, 160))
+    chk('   ...and came back clean against the property as it stands',
+      r1.validation?.clean === true, `error_count=${r1.validation?.error_count}`)
+    chk('Approve is offered; Load is not this action',
+      r1.can_approve === true && r1.can_load === false,
+      `can_approve=${r1.can_approve} can_load=${r1.can_load} (status submitted)`)
+
+    // ── 🔴 nothing to return on a clean file ───────────────────────
+    const cleanReturn = await js(await call('/api/admin/import-batch/return', { batch_id: batchId }, admin))
+    chk('🔴 a clean batch cannot be returned — there would be nothing to attach',
+      cleanReturn.error === 'nothing_to_return',
+      `${JSON.stringify(cleanReturn).slice(0, 200)}`)
+
+    // ── 🔴 the RPC's own guards, route bypassed ────────────────────
+    console.log('\n── 🔴 the RPC guards, with the route bypassed ──')
+    const wrongSha = await admin.client.rpc('approve_import_batch',
+      { p_batch_id: batchId, p_file_sha256: 'f'.repeat(64) })
+    chk('approving with a hash that is not the row\'s is refused',
+      (wrongSha.data as Record<string, unknown> | null)?.error === 'sha_mismatch',
+      `${JSON.stringify(wrongSha.data)} — an approval is of bytes someone looked at`)
+    const emptyErrors = await admin.client.rpc('return_import_batch_to_company',
+      { p_batch_id: batchId, p_reason: 'probe', p_errors: [], p_error_count: 0 })
+    chk('returning with no errors attached is refused',
+      (emptyErrors.data as Record<string, unknown> | null)?.error === 'bad_error_count'
+      || (emptyErrors.data as Record<string, unknown> | null)?.error === 'errors_required',
+      JSON.stringify(emptyErrors.data))
+    const badCount = await admin.client.rpc('return_import_batch_to_company',
+      { p_batch_id: batchId, p_reason: 'probe', p_errors: [{ row: 1, message: 'x' }, { row: 2, message: 'y' }], p_error_count: 1 })
+    chk('🔴 returning with a count smaller than the list is refused',
+      (badCount.data as Record<string, unknown> | null)?.error === 'bad_error_count',
+      `${JSON.stringify(badCount.data)} — the count is the authority and cannot understate the evidence`)
+    const noReason = await admin.client.rpc('return_import_batch_to_company',
+      { p_batch_id: batchId, p_reason: '   ', p_errors: [{ row: 1, message: 'x' }], p_error_count: 1 })
+    chk('returning with a blank reason is refused',
+      (noReason.data as Record<string, unknown> | null)?.error === 'reason_required',
+      JSON.stringify(noReason.data))
+    console.log('   (no_caller_identity is unreachable from here: a service_role call has no')
+    console.log('    jwt email, so is_active_import_operator refuses it first. Code-read, not asserted.)')
+
+    // ── 🔴 re-validation point 2: approve ──────────────────────────
+    console.log('\n── 🔴 re-validation point 2: approve ──')
+    const apR = await call('/api/admin/import-batch/approve', { batch_id: batchId }, admin)
+    const ap = await js(apR)
+    chk('🔴 the batch is approved', apR.status === 200 && ap.ok === true,
+      `HTTP ${apR.status} ${JSON.stringify(ap).slice(0, 180)}`)
+    const { data: afterAp } = await db.from('import_batches')
+      .select('status,approved_by,approved_at').eq('id', batchId).maybeSingle()
+    chk('   ...and the row records WHO and WHEN', afterAp?.status === 'approved'
+      && !!afterAp?.approved_by && !!afterAp?.approved_at,
+      JSON.stringify(afterAp))
+    const adminUid = mintedUids[0]
+    chk('🔴 approved_by is the operator\'s user id, not an email',
+      String(afterAp?.approved_by) === adminUid,
+      `${afterAp?.approved_by} vs the admin's uid ${adminUid}`)
+    const again = await js(await call('/api/admin/import-batch/approve', { batch_id: batchId }, admin))
+    chk('approving twice is refused with the status, not silently repeated',
+      again.error === 'wrong_status', JSON.stringify(again).slice(0, 170))
+
+    // 🔴 THE DUPLICATE GUARD STILL COVERS AN APPROVED BATCH. This is
+    // the silent hole the schema migration closed, measured here on the
+    // real batch rather than on a probe row.
+    const dupe = await db.from('import_batches').insert({
+      company_id: batch.company_id, property_id: batch.property_id,
+      source_filename: 'zz-dupe.csv', storage_path: `${batch.property_id}/zz-dupe.csv`,
+      file_sha256: String(batch.file_sha256),
+      attested_by_user_id: adminUid, attested_name: 'Probe', attested_title: 'Probe',
+      resident_count: 1, vehicle_count: 1, status: 'submitted',
+    }).select('id').maybeSingle()
+    if (dupe.data?.id) await db.from('import_batches').delete().eq('id', dupe.data.id)
+    chk('🔴 the same bytes cannot be resubmitted while this batch is APPROVED',
+      !!dupe.error && /one_live_per_file/.test(dupe.error.message + (dupe.error.details ?? '')),
+      dupe.error ? dupe.error.message.slice(0, 130) : '🔴 accepted — an approved batch has fallen out of the live index and both copies could load')
+
+    // ── 🔴 re-validation point 3's input: induce staleness ─────────
+    // A resident is added at the property with an email from the file,
+    // which is exactly what happens between submit and load.
+    console.log('\n── 🔴 a file that was clean at submit goes stale ──')
+    const text = fs.readFileSync('docs/bulk-onboarding/fixtures/alden_fixture_clean.csv', 'utf8')
+    const parsed = parseBulkCsv(text)
+    if (!parsed.ok) throw new Error('fixture no longer parses')
+    const emailCol = BULK_CSV_COLUMNS.indexOf('email')
+    const victim = parsed.dataRows.map(r => (r[emailCol] ?? '').trim()).filter(Boolean)[0]
+    const canary = await db.from('residents').insert({
+      name: `ZZ Q ${S}`, email: victim, unit: '999',
+      property: prop!.name, company: demo.name, is_active: true, status: 'active',
+    }).select('id').maybeSingle()
+    if (canary.error) throw new Error(`canary resident: ${canary.error.message}`)
+    canaryResidentIds.push(canary.data!.id as number)
+    console.log(`   added a resident at ${prop!.name} with ${victim}, an address from the file\n`)
+
+    const r3 = await js(await call('/api/admin/import-batch/review', { batch_id: batchId }, admin))
+    chk('🔴 the review screen now reports the file as NOT clean',
+      r3.validation?.ran === true && r3.validation?.clean === false && r3.validation?.error_count > 0,
+      `error_count=${r3.validation?.error_count} — the same bytes, the same hash, a different answer`)
+    chk('   ...and the hash still matches, so this is the property changing, not the file',
+      r3.file?.matches === true, `matches=${r3.file?.matches}`)
+    chk('   ...and the error names the row and a fix',
+      typeof r3.validation?.errors?.[0]?.row === 'number' && String(r3.validation?.errors?.[0]?.message ?? '').length > 12,
+      JSON.stringify(r3.validation?.errors?.[0]))
+    chk('🔴 Load is no longer offered on the approved batch', r3.can_load === false,
+      `can_load=${r3.can_load} status=${r3.batch?.status}`)
+    const staleApprove = await js(await call('/api/admin/import-batch/approve', { batch_id: batchId }, admin))
+    chk('   ...and it cannot be re-approved into that state either',
+      staleApprove.error === 'wrong_status' || staleApprove.error === 'file_has_errors',
+      JSON.stringify(staleApprove).slice(0, 150))
+
+    // ── 🔴 Return to company, one click ───────────────────────────
+    console.log('\n── 🔴 Return to company ──')
+    const retR = await call('/api/admin/import-batch/return', { batch_id: batchId, trigger: 'load' }, admin)
+    const ret = await js(retR)
+    chk('🔴 the approved batch is returned', retR.status === 200 && ret.ok === true,
+      `HTTP ${retR.status} ${JSON.stringify({ status: ret.status, from: ret.from_status, n: ret.error_count })}`)
+    chk('   ...from approved, and to rejected — no new status',
+      ret.from_status === 'approved' && ret.status === 'rejected',
+      `${ret.from_status} → ${ret.status}`)
+    const { data: rejRow } = await db.from('import_batches')
+      .select('status,reject_reason,reject_errors,reject_error_count,approved_by').eq('id', batchId).maybeSingle()
+    chk('🔴 the row carries the auto-generated reason',
+      typeof rejRow?.reject_reason === 'string' && rejRow.reject_reason.length > 60,
+      String(rejRow?.reject_reason).slice(0, 200))
+    chk('   ...and the reason says the file was fine when they sent it',
+      /clean when you sent it/i.test(String(rejRow?.reject_reason)),
+      'the CA must not read this as a judgement about their work')
+    chk('🔴 the row-numbered errors are attached, with the TRUE count',
+      Array.isArray(rejRow?.reject_errors) && (rejRow!.reject_errors as unknown[]).length > 0
+      && Number(rejRow?.reject_error_count) >= (rejRow!.reject_errors as unknown[]).length,
+      `${(rejRow?.reject_errors as unknown[])?.length} attached of ${rejRow?.reject_error_count} found`)
+    chk('   ...and they are the errors the SERVER measured, matching the review',
+      Number(rejRow?.reject_error_count) === Number(r3.validation?.error_count),
+      `row says ${rejRow?.reject_error_count}, the review said ${r3.validation?.error_count} — a client-supplied list would not have to agree`)
+
+    // ── 🔴 THE CA SEES IT, which is the point of attaching it ─────
+    console.log('\n── 🔴 the company can read what it was told ──')
+    const caSees = await ca.client.from('import_batches')
+      .select('id,status,reject_reason,reject_errors,reject_error_count').eq('id', batchId).maybeSingle()
+    chk('🔴 the CA reads the returned batch through their own policy',
+      !caSees.error && caSees.data?.status === 'rejected',
+      caSees.error ? caSees.error.message : `status=${caSees.data?.status}`)
+    chk('   ...including the reason and the row-numbered errors',
+      typeof caSees.data?.reject_reason === 'string'
+      && Array.isArray(caSees.data?.reject_errors)
+      && (caSees.data!.reject_errors as unknown[]).length > 0,
+      `${(caSees.data?.reject_errors as unknown[])?.length} error(s) visible to the company — this is why the list lives on the row and not in the bucket, where the CA has INSERT and no SELECT`)
+    const mgrSees = await mgr.client.from('import_batches').select('id').eq('id', batchId)
+    chk('   ...and a manager at the same company sees nothing',
+      (mgrSees.data ?? []).length === 0,
+      `${(mgrSees.data ?? []).length} row(s) — RLS denials return an empty list, not an error`)
+
+    // ── the fixed file can be resubmitted ─────────────────────────
+    const resub = await db.from('import_batches').insert({
+      company_id: batch.company_id, property_id: batch.property_id,
+      source_filename: 'zz-resub.csv', storage_path: `${batch.property_id}/zz-resub.csv`,
+      file_sha256: String(batch.file_sha256),
+      attested_by_user_id: adminUid, attested_name: 'Probe', attested_title: 'Probe',
+      resident_count: 1, vehicle_count: 1, status: 'submitted',
+    }).select('id').maybeSingle()
+    if (resub.data?.id) await db.from('import_batches').delete().eq('id', resub.data.id)
+    chk('🔴 once returned, the company CAN resubmit — rejected is not live',
+      !resub.error,
+      resub.error ? `🔴 ${resub.error.message} — a return the company cannot act on is a dead end` : 'the fixed file is not blocked by the batch it replaces')
+
+  } finally {
+    await cleanup('end')
+  }
+
+  console.log(`\n${fails === 0 ? '✅ all green' : `❌ ${fails} failed`}`)
+  process.exit(fails === 0 ? 0 : 1)
+}
+
+main().catch(async e => { console.error('🔴', (e as Error).message); await cleanup('throw'); process.exit(2) })

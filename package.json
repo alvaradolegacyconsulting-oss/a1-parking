@@ -45,7 +45,8 @@
     "verify:bulkhttp": "tsx scripts/verify-bulk-http.ts",
     "seed:demobatch": "tsx scripts/submit-demo-batch.ts",
     "verify:approvalschema": "tsx scripts/verify-approval-schema.ts",
-    "verify:validategate": "tsx scripts/verify-validate-gate.ts"
+    "verify:validategate": "tsx scripts/verify-validate-gate.ts",
+    "verify:queue": "tsx scripts/verify-queue.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

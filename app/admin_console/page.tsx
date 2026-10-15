@@ -17,10 +17,11 @@
 //   - Phase 4: error-rate tile (audit_logs) + honest "TBD" elsewhere
 
 import { useState, useEffect } from 'react'
+import ImportQueue from './ImportQueue'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '../supabase'
 
-type Tab = 'console' | 'properties' | 'onboarding' | 'system'
+type Tab = 'console' | 'properties' | 'onboarding' | 'imports' | 'system'
 
 // 2026-08-21 — Super-admin console Commit 2. Per-property activity row
 // returned by public.get_console_per_property_activity() (migration
@@ -859,11 +860,12 @@ export default function AdminConsolePage() {
             keeps the Console-first ordering the previous 3-tab layout
             established.) */}
         <div style={{ display: 'flex', gap: 3, background: '#1e2535', borderRadius: 8, padding: 3, marginBottom: 16 }}>
-          {(['console', 'properties', 'onboarding', 'system'] as Tab[]).map(t => {
+          {(['console', 'properties', 'onboarding', 'imports', 'system'] as Tab[]).map(t => {
             const active = tab === t
             const label = t === 'console' ? 'Console'
                         : t === 'properties' ? 'Properties'
                         : t === 'onboarding' ? 'Onboarding'
+                        : t === 'imports' ? 'Imports'
                         : 'System'
             return (
               <button key={t} onClick={() => setTab(t)}
@@ -1651,6 +1653,14 @@ export default function AdminConsolePage() {
         )}
 
         {/* ── SYSTEM TAB ──────────────────────────────────────── */}
+        {/* ── IMPORTS TAB — the bulk-onboarding approval queue ──
+            Its own component file rather than another 400 lines in
+            here. The whole surface is server-authorized: every one of
+            its four routes runs authorizeImportOperator(), which
+            requires an ACTIVE admin. 🔴 Not requireAdmin() — that
+            helper never reads is_active. */}
+        {tab === 'imports' && <ImportQueue />}
+
         {tab === 'system' && (
           <div>
             {/* System Health tiles */}
