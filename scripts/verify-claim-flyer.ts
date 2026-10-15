@@ -24,6 +24,7 @@
 // Usage: npm run verify:flyer
 
 import { spawn, type ChildProcess } from 'child_process'
+import { startDevServer, portBusy, type DevServer } from './lib/dev-server'
 import { say, warn } from './lib/safe-log'
 import net from 'net'
 import fs from 'fs'
@@ -37,18 +38,14 @@ const BASE = `http://127.0.0.1:${PORT}`
 let fails = 0
 const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(`${ok ? '✅' : '❌'} ${n}${d ? '\n       ' + d : ''}`) }
 
-let server: ChildProcess | null = null
-const stop = () => { if (server && !server.killed) { server.kill('SIGTERM'); say('   ↩ stopped the server this gate started') } }
+let srv: DevServer | null = null
+const stop = async () => { if (srv) { await srv.stop(); srv = null; say('   ↩ stopped the server this gate started (whole process group)') } }
 let dying = false
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGPIPE'] as const) {
-  process.on(sig, () => { if (dying) return; dying = true; stop(); process.exit(2) })
+  process.on(sig, () => { if (dying) return; dying = true
+    void stop().finally(() => process.exit(2)) })
 }
 
-const portBusy = () => new Promise<boolean>(res => {
-  const s = net.createServer()
-  s.once('error', () => res(true)); s.once('listening', () => s.close(() => res(false)))
-  s.listen(PORT, '127.0.0.1')
-})
 
 const main = async () => {
   // ── 🔴 the visibility truth table, executed ───────────────────────
@@ -124,20 +121,13 @@ const main = async () => {
     `the ruling keeps the normal flyer for everyone: a bulk-loaded property still gets residents who were never in the file`)
 
   // ── 🔴 the link actually works, end to end ───────────────────────
-  if (await portBusy()) {
+  if (await portBusy(PORT)) {
     console.error(`\n🔴 something is already listening on ${PORT}. Refusing: it may be a stale build.`)
     process.exit(2)
   }
   console.log(`\n── 🔴 the link the flyer prints, fetched for real (port ${PORT}) ──`)
-  server = spawn('npx', ['next', 'dev', '-p', String(PORT)], { stdio: ['ignore', 'ignore', 'pipe'] })
-  server.stderr?.on('data', d => { const s = String(d); if (/error/i.test(s)) process.stderr.write(`   [server] ${s}`) })
-  const until = Date.now() + 90_000
-  let up = false
-  while (Date.now() < until && !up) {
-    try { up = (await fetch(`${BASE}/claim`)).status === 200 } catch {}
-    if (!up) await new Promise(r => setTimeout(r, 700))
-  }
-  if (!up) { console.error('🔴 server did not come up'); stop(); process.exit(2) }
+  srv = await startDevServer(PORT)
+  if (!srv) { console.error('🔴 server did not come up'); process.exit(2) }
 
   // The SAME builder the flyer uses, against the awkward name.
   const live = claimFlyerUrl(BASE, nasty, 'A1 Wrecker llc')
@@ -150,7 +140,7 @@ const main = async () => {
   chk('   ...and asks for an email and nothing else',
     html.includes('claim-email') && !/Step 1 of 3/.test(html) && !/type="password"/.test(html))
 
-  stop()
+  await stop()
   console.log(`\n${fails === 0 ? '✅ all green' : `❌ ${fails} failed`}`)
   process.exit(fails === 0 ? 0 : 1)
 }

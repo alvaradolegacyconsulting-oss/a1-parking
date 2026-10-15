@@ -26,6 +26,7 @@
 // Usage: npm run seed:demobatch
 
 import { createClient } from '@supabase/supabase-js'
+import { startDevServer, portBusy, type DevServer } from './lib/dev-server'
 import { say, warn } from './lib/safe-log'
 import { spawn, type ChildProcess } from 'child_process'
 import net from 'net'
@@ -46,7 +47,7 @@ const BASE = `http://127.0.0.1:${PORT}`
 const FIXTURE = 'docs/bulk-onboarding/fixtures/alden_fixture_clean.csv'
 const CA_EMAIL = 'demo-ca@test.shieldmylot.com'
 
-let server: ChildProcess | null = null
+let srv: DevServer | null = null
 let flaggedCompany: number | null = null
 let uploadedPath: string | null = null
 let cleaned = false
@@ -71,7 +72,7 @@ async function cleanup(why: string) {
       say(`   ↩ removed the unconsumed upload ${uploadedPath}`)
     }
   }
-  if (server && !server.killed) { server.kill('SIGTERM'); say('   ↩ stopped the server this script started') }
+  if (srv) { await srv.stop(); srv = null; say('   ↩ stopped the server this script started (whole process group)') }
 }
 let dying = false
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGPIPE'] as const) {
@@ -83,16 +84,11 @@ process.on('uncaughtException', e => {
   cleanup('uncaughtException').then(() => process.exit(2)).catch(() => process.exit(2))
 })
 
-const portBusy = () => new Promise<boolean>(res => {
-  const s = net.createServer()
-  s.once('error', () => res(true)); s.once('listening', () => s.close(() => res(false)))
-  s.listen(PORT, '127.0.0.1')
-})
 
 const die = (m: string): never => { console.error(`🔴 ${m}`); throw new Error(m) }
 
 const main = async () => {
-  if (await portBusy()) die(`something is already listening on ${PORT}. Refusing: it may be a stale build.`)
+  if (await portBusy(PORT)) die(`something is already listening on ${PORT}. Refusing: it may be a stale build.`)
 
   // ── the subject, demo-only, refused if absent ───────────────────
   const { data: demos, error: coErr } = await db.from('companies')
@@ -145,15 +141,8 @@ const main = async () => {
     if (flip.error || flip.data?.[0]?.bulk_onboarding_enabled !== true) die('could not enable the flag')
     flaggedCompany = demo!.id as number
 
-    server = spawn('npx', ['next', 'dev', '-p', String(PORT)], { stdio: ['ignore', 'ignore', 'pipe'] })
-    server.stderr?.on('data', d => { const s = String(d); if (/error/i.test(s)) process.stderr.write(`   [server] ${s}`) })
-    const until = Date.now() + 120_000
-    let up = false
-    while (Date.now() < until && !up) {
-      try { up = (await fetch(`${BASE}/login`)).status === 200 } catch {}
-      if (!up) await new Promise(r => setTimeout(r, 700))
-    }
-    if (!up) die('server did not come up')
+    srv = await startDevServer(PORT)
+    if (!srv) { console.error('🔴 server did not come up'); process.exit(2) }
 
     // The CA's own upload, through their own storage policy.
     const bytes = fs.readFileSync(FIXTURE)

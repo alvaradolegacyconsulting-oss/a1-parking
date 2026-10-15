@@ -1,0 +1,30 @@
+{
+  "//": "🔴 scripts/ is EXCLUDED from tsconfig.json, so `tsc --noEmit` had never type-checked a gate. Found 2026-10-16 when a non-async arrow containing `await` passed a clean tsc run — gates decide whether a change ships, so they need checking at least as much as what they check. `npm run typecheck` runs both configs.",
+  "//scope": "GATES AND THE HELPERS THEY SHARE, not all of scripts/. The probe-* and *-ONE-TIME files are historical one-shots carrying ~40 pre-existing errors (BigInt literals, regex flags, third-party generics). Including them would make this permanently red, and a check that is always red is not a check — it is a line in a config nobody runs. If a probe is promoted to something load-bearing, add it here.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "target": "ES2020",
+    "lib": ["ES2020", "dom"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "incremental": false
+  },
+  "include": [
+    "scripts/lib/**/*.ts",
+    "scripts/verify-*.ts",
+    "scripts/rehearse-*.ts",
+    "scripts/submit-*.ts"
+  ],
+  "//excluded": "🔴 FIVE FILES, NAMED, NOT A PATTERN. These carry 64 errors of ONE pre-existing class: SupabaseClient generic variance between the app's client type and a local helper signature (`\"public\"` vs `never`). All five RUN green — verify:bulkbucket is 32 checks green — so this is type-level noise in working gates, not a defect. Excluded by name rather than by a wildcard so a NEW gate cannot inherit the exemption, and filed as its own item. If one of these is edited, fix its types rather than widening this list.",
+  "exclude": [
+    "node_modules",
+    "scripts/verify-visitor-pass-dedup.ts",
+    "scripts/verify-bulk-bucket.ts",
+    "scripts/verify-resident-vehicle-removal.ts",
+    "scripts/verify-storage-policies.ts",
+    "scripts/verify-plan-names.ts"
+  ]
+}

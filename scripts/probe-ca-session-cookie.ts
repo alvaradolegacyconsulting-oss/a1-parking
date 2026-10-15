@@ -2,6 +2,7 @@
 // CA against /api/bulk-onboarding/context? Answers the one unknown the
 // CA HTTP gate rests on. Throwaway-but-kept, like the other probe-*.
 import { createClient } from '@supabase/supabase-js'
+import { startDevServer, portBusy, type DevServer } from './lib/dev-server'
 import { spawn } from 'child_process'
 import fs from 'fs'
 import { cookieHeaderFor } from './lib/ssr-session'
@@ -23,21 +24,13 @@ const main = async () => {
   const { cookie } = await cookieHeaderFor(db, URL_, ANON, email)
   console.log('cookie built, length', cookie.length)
 
-  const server = spawn('npx', ['next', 'dev', '-p', String(PORT)], { stdio: ['ignore', 'ignore', 'pipe'] })
-  const until = Date.now() + 90_000
-  let up = false
-  while (Date.now() < until && !up) {
-    try { up = (await fetch(`${BASE}/login`)).status === 200 } catch {}
-    if (!up) await new Promise(r => setTimeout(r, 700))
+  const srv = await startDevServer(PORT)
+  if (!srv) { console.error('🔴 server did not come up'); process.exit(2) }
+  for (const hdr of [{ Cookie: cookie }, {}]) {
+    const r = await fetch(`${BASE}/api/bulk-onboarding/context`, { headers: hdr as Record<string, string> })
+    console.log(`  ${Object.keys(hdr).length ? 'WITH cookie' : 'anonymous  '} → HTTP ${r.status} ${(await r.text()).slice(0, 180)}`)
   }
-  console.log('server up:', up)
-  if (up) {
-    for (const hdr of [{ Cookie: cookie }, {}]) {
-      const r = await fetch(`${BASE}/api/bulk-onboarding/context`, { headers: hdr as Record<string, string> })
-      console.log(`  ${Object.keys(hdr).length ? 'WITH cookie' : 'anonymous  '} → HTTP ${r.status} ${(await r.text()).slice(0, 180)}`)
-    }
-  }
-  server.kill('SIGTERM')
+  await srv.stop()
   await db.from('user_roles').delete().ilike('email', email)
   await db.auth.admin.deleteUser(u.data.user!.id)
   console.log('cleaned')

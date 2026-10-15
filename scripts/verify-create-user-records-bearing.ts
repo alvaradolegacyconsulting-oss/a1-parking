@@ -37,6 +37,7 @@
 // Usage: npm run verify:createuserguard
 
 import { createClient } from '@supabase/supabase-js'
+import { startDevServer, portBusy, type DevServer } from './lib/dev-server'
 import { spawn, type ChildProcess } from 'child_process'
 import net from 'net'
 import fs from 'fs'
@@ -65,7 +66,7 @@ const CANARY_MGR = `zz-canary-mgr-${S}@test.invalid`
 let fails = 0
 const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(`${ok ? '✅' : '❌'} ${n}${d ? '  — ' + d : ''}`) }
 
-let server: ChildProcess | null = null
+let srv: DevServer | null = null
 let residentId: number | null = null
 let vehicleId: number | null = null
 let mintedUid: string | null = null
@@ -108,7 +109,7 @@ async function cleanup(why: string) {
   // Belt: anything carrying this probe's marker.
   const stray = await db.from('residents').delete().ilike('email', 'zz-canary-rb-%').select('id')
   if ((stray.data ?? []).length) console.error(`   ⚠ swept ${(stray.data ?? []).length} stray canary row(s)`)
-  if (server && !server.killed) { server.kill('SIGTERM'); console.log('   ↩ stopped the server this gate started') }
+  if (srv) { await srv.stop(); srv = null; console.log('   ↩ stopped the server this gate started (whole process group)') }
 }
 
 // 🔴 `finally` does not run on a signal. Armed before anything is created.
@@ -122,12 +123,6 @@ process.on('uncaughtException', e => {
   cleanup('uncaughtException').then(() => process.exit(2)).catch(() => process.exit(2))
 })
 
-const portBusy = () => new Promise<boolean>(res => {
-  const s = net.createServer()
-  s.once('error', () => res(true))
-  s.once('listening', () => s.close(() => res(false)))
-  s.listen(PORT, '127.0.0.1')
-})
 
 async function waitFor(ms: number) {
   const until = Date.now() + ms
@@ -144,7 +139,7 @@ async function waitFor(ms: number) {
 }
 
 const main = async () => {
-  if (await portBusy()) {
+  if (await portBusy(PORT)) {
     console.error(`🔴 something is already listening on ${PORT}.`)
     console.error(`   Refusing to run: a server this gate did not start may be a stale build, and a stale build reports green.`)
     process.exit(2)
@@ -182,12 +177,8 @@ const main = async () => {
   try {
     // ── the server this gate starts, with the TEST captcha secret ──
     console.log(`starting next dev on ${PORT} with Cloudflare's always-pass testing secret…`)
-    server = spawn('npx', ['next', 'dev', '-p', String(PORT)], {
-      env: { ...process.env, TURNSTILE_SECRET_KEY: TEST_SECRET, NODE_ENV: 'development' },
-      stdio: ['ignore', 'ignore', 'pipe'],
-    })
-    server.stderr?.on('data', d => { const s = String(d); if (/error|Error/.test(s)) process.stderr.write(`   [server] ${s}`) })
-    if (!(await waitFor(90_000))) { console.error('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
+    srv = await startDevServer(PORT, { env: { TURNSTILE_SECRET_KEY: TEST_SECRET, NODE_ENV: 'development' } })
+    if (!srv) { console.error('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
     console.log('server up\n')
 
     // ── the probe ──────────────────────────────────────────────────

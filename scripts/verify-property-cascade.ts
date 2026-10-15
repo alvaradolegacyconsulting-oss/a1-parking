@@ -40,6 +40,7 @@
 // Usage: npm run verify:cascade
 
 import { createClient } from '@supabase/supabase-js'
+import { startDevServer, portBusy, type DevServer } from './lib/dev-server'
 import { createServerClient } from '@supabase/ssr'
 import { spawn, type ChildProcess } from 'child_process'
 import net from 'net'
@@ -67,7 +68,7 @@ const residentIds: number[] = []
 const vehicleIds: number[] = []
 const prohibitionIds: number[] = []
 const users: string[] = []
-let server: ChildProcess | null = null
+let srv: DevServer | null = null
 let cleaned = false
 
 async function cleanup(why: string) {
@@ -97,7 +98,7 @@ async function cleanup(why: string) {
   const left = (back.data?.users ?? []).filter(u => /zzpc/.test(u.email ?? ''))
   if (left.length) { console.error(`   🔴 ${left.length} auth user(s) STILL PRESENT`); fails++ }
   else if (users.length) console.log(`   ↩ ${users.length} auth users`)
-  if (server && !server.killed) { server.kill('SIGTERM'); console.log('   ↩ stopped the server this gate started') }
+  if (srv) { await srv.stop(); srv = null; console.log('   ↩ stopped the server this gate started (whole process group)') }
 }
 let dying = false
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGPIPE'] as const) {
@@ -109,11 +110,6 @@ process.on('uncaughtException', e => {
   cleanup('uncaughtException').then(() => process.exit(2)).catch(() => process.exit(2))
 })
 
-const portBusy = () => new Promise<boolean>(res => {
-  const s = net.createServer()
-  s.once('error', () => res(true)); s.once('listening', () => s.close(() => res(false)))
-  s.listen(PORT, '127.0.0.1')
-})
 
 async function mkProperty(label: string, isActive: boolean, company = CO) {
   const r = await db.from('properties').insert({ name: `ZZ PC ${label} ${S}`, company, is_active: isActive }).select('id,name').single()
@@ -211,7 +207,7 @@ const banned = async (email: string) => {
 }
 
 const main = async () => {
-  if (await portBusy()) {
+  if (await portBusy(PORT)) {
     console.error(`🔴 something is already listening on ${PORT}. Refusing: it may be a stale build.`)
     process.exit(2)
   }
@@ -240,15 +236,8 @@ const main = async () => {
 
     // ── server ────────────────────────────────────────────────────
     console.log(`starting next dev on ${PORT}…`)
-    server = spawn('npx', ['next', 'dev', '-p', String(PORT)], { env: { ...process.env, NODE_ENV: 'development' }, stdio: ['ignore', 'ignore', 'pipe'] })
-    server.stderr?.on('data', d => { const s = String(d); if (/error/i.test(s)) process.stderr.write(`   [server] ${s}`) })
-    const until = Date.now() + 90_000
-    let up = false
-    while (Date.now() < until && !up) {
-      try { const r = await fetch(`${BASE}/api/admin/property-active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', redirect: 'manual' }); up = r.status > 0 } catch {}
-      if (!up) await new Promise(r => setTimeout(r, 700))
-    }
-    if (!up) { console.error('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
+    srv = await startDevServer(PORT)
+    if (!srv) { console.error('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
     console.log('server up\n')
 
     const admCookie = await cookieFor(adm.session)

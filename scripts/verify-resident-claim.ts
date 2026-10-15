@@ -37,6 +37,7 @@
 // Usage: npm run verify:claim
 
 import { createClient } from '@supabase/supabase-js'
+import { startDevServer, portBusy, type DevServer } from './lib/dev-server'
 import { spawn, type ChildProcess } from 'child_process'
 import net from 'net'
 import fs from 'fs'
@@ -59,7 +60,7 @@ const S = Date.now()
 let fails = 0
 const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(`${ok ? '✅' : '❌'} ${n}${d ? '\n       ' + d : ''}`) }
 
-let server: ChildProcess | null = null
+let srv: DevServer | null = null
 const mintedUids: string[] = []
 const mintedRoleIds: number[] = []
 const canaryResidentIds: number[] = []
@@ -98,7 +99,7 @@ async function cleanup(why: string) {
   const au = await db.from('audit_logs').delete().eq('action', 'RESIDENT_CLAIM_INVITE')
     .gte('created_at', new Date(S - 60_000).toISOString()).select('id')
   if ((au.data ?? []).length) console.log(`   ↩ removed ${(au.data ?? []).length} claim audit row(s) from this run`)
-  if (server && !server.killed) { server.kill('SIGTERM'); console.log('   ↩ stopped the server this gate started') }
+  if (srv) { await srv.stop(); srv = null; console.log('   ↩ stopped the server this gate started (whole process group)') }
 }
 let dying = false
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGPIPE'] as const) {
@@ -110,11 +111,6 @@ process.on('uncaughtException', e => {
   cleanup('uncaughtException').then(() => process.exit(2)).catch(() => process.exit(2))
 })
 
-const portBusy = () => new Promise<boolean>(res => {
-  const s = net.createServer()
-  s.once('error', () => res(true)); s.once('listening', () => s.close(() => res(false)))
-  s.listen(PORT, '127.0.0.1')
-})
 
 const claim = async (body: object) => {
   const r = await fetch(`${BASE}/api/register/claim`, {
@@ -129,7 +125,7 @@ const authUser = async (email: string) => {
 }
 
 const main = async () => {
-  if (await portBusy()) {
+  if (await portBusy(PORT)) {
     console.error(`🔴 something is already listening on ${PORT}. Refusing: it may be a stale build.`)
     process.exit(2)
   }
@@ -178,18 +174,8 @@ const main = async () => {
 
     // ── server ────────────────────────────────────────────────────
     console.log(`starting next dev on ${PORT} with the always-pass captcha secret…`)
-    server = spawn('npx', ['next', 'dev', '-p', String(PORT)], {
-      env: { ...process.env, TURNSTILE_SECRET_KEY: TEST_SECRET, NODE_ENV: 'development' },
-      stdio: ['ignore', 'ignore', 'pipe'],
-    })
-    server.stderr?.on('data', d => { const s = String(d); if (/error/i.test(s)) process.stderr.write(`   [server] ${s}`) })
-    const until = Date.now() + 90_000
-    let up = false
-    while (Date.now() < until && !up) {
-      try { const r = await fetch(`${BASE}/api/register/claim`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); up = r.status === 400 } catch {}
-      if (!up) await new Promise(r => setTimeout(r, 700))
-    }
-    if (!up) { console.error('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
+    srv = await startDevServer(PORT, { env: { TURNSTILE_SECRET_KEY: TEST_SECRET, NODE_ENV: 'development' } })
+    if (!srv) { console.error('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
     console.log('server up\n')
 
     // ── shape errors are NOT the identical answer ─────────────────

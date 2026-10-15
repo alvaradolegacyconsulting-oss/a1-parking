@@ -28,6 +28,7 @@
 // Usage: npm run verify:useractive
 
 import { createClient } from '@supabase/supabase-js'
+import { startDevServer, portBusy, type DevServer } from './lib/dev-server'
 import { createServerClient } from '@supabase/ssr'
 import { spawn, type ChildProcess } from 'child_process'
 import net from 'net'
@@ -49,7 +50,7 @@ const S = Date.now()
 let fails = 0
 const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(`${ok ? '✅' : '❌'} ${n}${d ? '  — ' + d : ''}`) }
 
-let server: ChildProcess | null = null
+let srv: DevServer | null = null
 const made: { email: string; uid: string | null; roleId: number }[] = []
 const driverIds: number[] = []
 let cleaned = false
@@ -76,7 +77,7 @@ async function cleanup(why: string) {
   if ((stray.data ?? []).length) console.error(`   ⚠ swept ${(stray.data ?? []).length} stray role row(s)`)
   await db.from('audit_logs').delete().ilike('record_id', 'zz-ua-%').select('id')
   console.log(`   ↩ removed ${made.length} canaries`)
-  if (server && !server.killed) { server.kill('SIGTERM'); console.log('   ↩ stopped the server this gate started') }
+  if (srv) { await srv.stop(); srv = null; console.log('   ↩ stopped the server this gate started (whole process group)') }
 }
 let dying = false
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGPIPE'] as const) {
@@ -88,12 +89,6 @@ process.on('uncaughtException', e => {
   cleanup('uncaughtException').then(() => process.exit(2)).catch(() => process.exit(2))
 })
 
-const portBusy = () => new Promise<boolean>(res => {
-  const s = net.createServer()
-  s.once('error', () => res(true))
-  s.once('listening', () => s.close(() => res(false)))
-  s.listen(PORT, '127.0.0.1')
-})
 
 async function actor(tag: string, role: string, company = CO, withAuth = true) {
   const email = `zz-ua-${tag}-${S}@test.invalid`
@@ -157,7 +152,7 @@ const refreshWorks = async (refresh_token: string) => {
 }
 
 const main = async () => {
-  if (await portBusy()) {
+  if (await portBusy(PORT)) {
     console.error(`🔴 something is already listening on ${PORT}. Refusing: it may be a stale build.`)
     process.exit(2)
   }
@@ -179,21 +174,8 @@ const main = async () => {
     driverIds.push(dIns.data.id as number)
 
     console.log(`starting next dev on ${PORT}…`)
-    server = spawn('npx', ['next', 'dev', '-p', String(PORT)], {
-      env: { ...process.env, NODE_ENV: 'development' }, stdio: ['ignore', 'ignore', 'pipe'],
-    })
-    server.stderr?.on('data', d => { const s = String(d); if (/error|Error/.test(s)) process.stderr.write(`   [server] ${s}`) })
-    const until = Date.now() + 90_000
-    let up = false
-    while (Date.now() < until && !up) {
-      // Any HTTP answer means the server is serving. Middleware
-      // intercepts /api/admin/* for an unauthenticated caller and
-      // redirects, so this must not insist on 400/401 — the first
-      // version did, and read a working server as "did not come up".
-      try { const r = await fetch(`${BASE}/api/admin/user-active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', redirect: 'manual' }); up = r.status > 0 } catch {}
-      if (!up) await new Promise(r => setTimeout(r, 700))
-    }
-    if (!up) { console.error('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
+    srv = await startDevServer(PORT)
+    if (!srv) { console.error('🔴 server did not come up'); await cleanup('end'); process.exit(2) }
     console.log('server up\n')
 
     const caCookie  = await cookieFor(ca.session!)
