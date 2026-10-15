@@ -183,3 +183,42 @@ column) and for `bulk-onboarding.ts` / `bulk-validator.ts` (zero
 occurrences of the string "role"), but the loader does not exist yet,
 so for the loader this is *asserted by construction* and nothing more
 until there is code to gate.
+
+---
+
+## 🔴 REQUIRED LEG — slice-2 checkout gate: the first metered subscription
+
+Filed 2026-10-16, binding rather than suggested.
+
+When slice 2 ships checkout creating subscriptions that carry a
+`per_permit` line item, **its gate must include a real end-to-end leg
+for the bulk-load billing guard**: a company with a genuinely metered
+subscription, and an approve and a load against it that are both
+refused, with Return still available.
+
+**Why it cannot be done now, and why the current coverage is not a
+substitute.** As of today:
+
+- A1 Wrecker llc is the only company in the system with a
+  `stripe_subscription_id`.
+- No subscription anywhere carries a `per_permit` item.
+  `syncOnAdd`'s own comment says why: *"Until slice 2 ships checkout
+  creating subscriptions with per_permit items, this returns
+  action='skipped_no_line_item'"* — and the nightly `BILLING_SYNC_CRON`
+  confirms it, A1 → `skipped_no_line_item` on every consecutive run on
+  record.
+
+So `verify:billingguard` covers the metered branch as **decision
+logic**: the production functions `meteredLoadReasons` and
+`blockRefusesAction` are handed a metered check result and the whole
+truth table is asserted. That proves the decision is right. It does
+**not** prove Stripe would ever hand the guard that result, which is
+the only thing the end-to-end leg can prove.
+
+🔴 Checkout is the first place a metered subscription will exist, which
+makes its gate the first place this can be exercised — and the moment
+it exists is also the moment the guard stops being inert. A guard that
+has never once been seen to fire on real data is a guard nobody should
+rely on at the point it starts mattering.
+
+See `docs/phaseB-billing-guard-gate-gap.md`.

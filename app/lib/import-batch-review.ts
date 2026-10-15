@@ -10,6 +10,13 @@ import {
   type BulkRowInput, type BulkDbFlags, type BulkError,
 } from './bulk-validator'
 import { companyPerPermitLineItems } from './stripe-mutations'
+// The two pure decisions and the BatchBlock shape live in their own
+// module, which carries no `server-only`, so a gate can import them and
+// exercise the decisions by execution rather than by regex over route
+// source. Re-exported here so existing callers keep one import site.
+import { meteredLoadReasons, blockRefusesAction, type BatchBlock } from './import-batch-block'
+export { meteredLoadReasons, blockRefusesAction }
+export type { BatchBlock }
 
 // ════════════════════════════════════════════════════════════════════
 // import-batch-review — one re-validation, used at all three points
@@ -110,32 +117,6 @@ export async function authorizeImportOperator(): Promise<ImportOperator> {
   return { ok: true, email: user.email, userId: user.id, db, asCaller: sb }
 }
 
-/** Why a batch cannot be loaded right now, regardless of its contents. */
-export interface BatchBlock {
-  /**
-   * Nothing can be done with this batch at all. An inactive property,
-   * an inactive or suspended company, bulk onboarding switched off.
-   * These stop Return and Reject too, because the company could not
-   * act on a returned batch either.
-   */
-  blocked: boolean
-  reasons: string[]
-  /**
-   * 🔴 A DIFFERENT KIND OF BLOCK, AND THE DISTINCTION IS THE POINT.
-   * Approve and Load are refused; Return and Reject are NOT.
-   *
-   * The metered-plan case is the whole reason this field exists. A
-   * company whose subscription meters permits cannot have 358 vehicles
-   * written into it without billing consequences — so the load is
-   * refused. But returning the batch to them is exactly the right
-   * action: "we cannot bulk-load you, your plan bills per permit."
-   * Folding it into `blocked` would leave the batch stuck with no move
-   * the operator could make.
-   */
-  loadBlocked: boolean
-  loadReasons: string[]
-}
-
 export type BatchValidation =
   | { ran: true; clean: boolean; error_count: number; errors: BulkError[] }
   | { ran: false; why: string }
@@ -221,13 +202,8 @@ export async function reviewImportBatch(
   //
   // Fails CLOSED: if Stripe cannot be reached the load is refused,
   // because an unreachable Stripe is not permission to bill someone.
-  const loadReasons: string[] = []
   const metered = await companyPerPermitLineItems(Number(company.id))
-  if (!metered.ok) {
-    loadReasons.push(`${company.name}'s billing could not be checked (${metered.reason}). Loading is held until it can be — an unreachable billing system is not a reason to risk a charge nobody agreed to.`)
-  } else if (metered.metered) {
-    loadReasons.push(`Blocked: metered tenant. ${company.name}'s plan bills per permit (currently ${metered.quantity}), and this batch would add ${batch.vehicle_count} at once. Loading it would either bill them for all of them with a proration they did not agree to, or under-bill by that many until renewal. Return the batch and agree the billing first.`)
-  }
+  const loadReasons = meteredLoadReasons(metered, String(company.name), Number(batch.vehicle_count))
   const block: BatchBlock = {
     blocked: reasons.length > 0, reasons,
     loadBlocked: loadReasons.length > 0, loadReasons,

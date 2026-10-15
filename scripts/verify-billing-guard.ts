@@ -20,6 +20,16 @@
 // tests. Building a subscription to test against is a Stripe write and
 // a decision — filed in docs/phaseB-billing-guard-gate-gap.md.
 //
+// Ruled 2026-10-16: no Stripe writes and no A1 reads from this session.
+// So the two legs are covered differently and each says which it is:
+//   • METERED — decision-logic coverage. The production decision
+//     functions are handed a metered check result. Nothing here proves
+//     Stripe would return one; the real end-to-end leg is REQUIRED in
+//     the slice-2 checkout gate, filed.
+//   • A1 — asserted from the nightly BILLING_SYNC_CRON record, which
+//     already asks Stripe this exact question every day and writes the
+//     answer down. Reading its own record beats making a live call.
+//
 // This gate therefore asserts, by execution:
 //   • a tenant with NO subscription is not blocked (the skipped_no_sub
 //     shape — Demo Company, and every test company);
@@ -38,6 +48,13 @@ import { say, warn } from './lib/safe-log'
 import { startDevServer, portBusy, type DevServer } from './lib/dev-server'
 import fs from 'fs'
 import { cookieHeaderFor } from './lib/ssr-session'
+// 🔴 Imported from app/lib/import-batch-block.ts, which carries no
+// `server-only` — these are the PRODUCTION functions the routes call,
+// not a test double. The standing rule is no fault-injection seam in
+// production code, and there is none: nothing in that module exists
+// only for this gate.
+import { meteredLoadReasons, blockRefusesAction, type BatchBlock } from '../app/lib/import-batch-block'
+import type { MeteredLineItemCheck } from '../app/lib/stripe-mutations'
 
 process.stdout.on('error', (e: NodeJS.ErrnoException) => { if (e.code !== 'EPIPE') throw e })
 
@@ -178,51 +195,163 @@ const main = async () => {
     const back = await db.from('import_batches').select('status').eq('id', batch.id).maybeSingle()
     chk('   (restored to submitted)', back.data?.status === 'submitted', `status=${back.data?.status}`)
 
-    // ── 🔴 the two block kinds are wired differently ───────────────
-    // This does not need a metered tenant: it is a property of the
-    // routes, and getting it wrong is how a metered tenant's batch
-    // would end up with no move the operator could make.
-    console.log('\n── 🔴 Return survives a load-only block (route source) ──')
-    // 🔴 COMMENTS STRIPPED FIRST, AND THIS IS THE THIRD TIME THIS
-    // SESSION. The first version read the raw files and failed:
-    // return/reject carry the comment "ONLY THE HARD BLOCK, NOT
-    // loadBlocked", so a regex looking for loadBlocked found the
-    // sentence saying it is not used. The memory written after the
-    // SQL version of this says presence checks survive it and
-    // COUNT/POSITION checks do not — but a NEGATIVE presence check
-    // ("this token must be ABSENT") is just as vulnerable, and that is
-    // what these two are. Stripping is the fix wherever a gate reads
-    // source, in any language.
+    // ── 🔴 all four routes go through the ONE decision ──────────────
+    // 🔴 THESE TWO CHECKS REPLACED A PAIR THAT WENT STALE IN THE SAME
+    // CHANGE THAT FIXED THEM. The earlier version read each route's
+    // source for its inline condition — `block.blocked` versus
+    // `blocked || loadBlocked` — and once the four routes were
+    // refactored onto blockRefusesAction those conditions no longer
+    // existed there, so the checks failed while the behaviour was
+    // correct. A regex asserting a line that has moved is the stale
+    // gate this arc keeps tripping over.
+    //
+    // The truth table above now proves the BEHAVIOUR by execution. The
+    // only thing source can still usefully say is the WIRING: that each
+    // route delegates, and passes its own action. A route that
+    // hand-rolled the condition again, or passed 'return' where it
+    // means 'load', would pass the truth table and be wrong.
+    console.log('\n── 🔴 the wiring: four routes, one decision, correct action each ──')
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
-    const approveSrc = strip(fs.readFileSync('app/api/admin/import-batch/approve/route.ts', 'utf8'))
-    const loadSrc = strip(fs.readFileSync('app/api/admin/import-batch/load/route.ts', 'utf8'))
-    const returnSrc = strip(fs.readFileSync('app/api/admin/import-batch/return/route.ts', 'utf8'))
-    const rejectSrc = strip(fs.readFileSync('app/api/admin/import-batch/reject/route.ts', 'utf8'))
-    // And prove the strip did something, or a broken regex quietly
-    // returns the gate to reading prose.
+    const routeSrc: Record<string, string> = {}
+    for (const a of ['approve', 'load', 'return', 'reject']) {
+      routeSrc[a] = strip(fs.readFileSync(`app/api/admin/import-batch/${a}/route.ts`, 'utf8'))
+    }
     chk('   (comments stripped before reading the route source)',
-      !/ONLY THE HARD BLOCK/.test(returnSrc) && returnSrc.includes('review.block.blocked'),
-      'a negative presence check over commented source asserts the comment, not the code')
-    chk('🔴 approve and load refuse on EITHER kind',
-      /block\.blocked \|\| review\.block\.loadBlocked|blocked \|\| review\.block\.loadBlocked/.test(approveSrc)
-      && /blocked \|\| review\.block\.loadBlocked/.test(loadSrc),
-      'a metered tenant must not be approved or loaded')
-    chk('🔴 return and reject refuse on the HARD block only',
-      !/loadBlocked/.test(returnSrc) && !/loadBlocked/.test(rejectSrc),
-      'sending the batch back is the right answer for a metered tenant — "we cannot bulk-load you, your plan bills per permit". Blocking it would leave the batch stuck.')
+      !/ONLY THE HARD BLOCK/.test(routeSrc.return),
+      'a presence check over commented source can assert the comment instead of the code — three times today')
+    for (const a of ['approve', 'load', 'return', 'reject']) {
+      chk(`🔴 ${a} delegates to blockRefusesAction('${a}')`,
+        new RegExp(`blockRefusesAction\\('${a}', review\\.block\\)`).test(routeSrc[a]),
+        `passing another route's action would pass the truth table and still be wrong`)
+    }
+    chk('🔴 ...and none of them hand-rolls the condition any more',
+      !Object.values(routeSrc).some(t => /block\.loadBlocked/.test(t)),
+      'four inline copies of a per-action rule is where the fourth one drifts')
 
-    // ── what this gate cannot reach ────────────────────────────────
-    console.log('\n── 🔴 the two legs this gate refuses to pretend it covered ──')
-    note('a METERED tenant is refused',
-      `UNTESTED. No subscription in the system carries a per_permit item — syncOnAdd's own comment says the meter activates only once slice 2 ships checkout creating them. Testing it means CREATING a Stripe subscription with one of the ${(prices ?? []).length} catalog per_permit Prices, which is a Stripe write and a decision. See docs/phaseB-billing-guard-gate-gap.md.`)
-    note('an A1-shaped tenant (subscribed, not metered) is unaffected',
-      `UNTESTED. ${subscribed.map(c => c.name).join(', ') || '(nobody)'} is the only subscribed company, and it is production — the standing rule keeps A1 out of tests. The code path it would exercise (load company → retrieve subscription → find no per_permit item → skipped_no_line_item) is the same one the no-subscription leg above exercises up to the retrieve.`)
+    // ══════════════════════════════════════════════════════════════
+    // 🔴 THE METERED LEG — DECISION-LOGIC COVERAGE
+    // ══════════════════════════════════════════════════════════════
+    // Ruled 2026-10-16: no Stripe writes, so the metered branch is
+    // tested by handing the real decision function a metered check
+    // result. This is NOT end-to-end: nothing proves Stripe would
+    // return such a result, because no subscription carries a
+    // per_permit item yet. What it proves is that WHEN one does, the
+    // refusals and the permissions are the ruled ones.
+    //
+    // The real end-to-end leg is filed as required in the slice-2
+    // checkout gate — see docs/phaseB-billing-guard-gate-gap.md.
+    console.log('\n── 🔴 METERED: decision-logic coverage (not end-to-end) ──')
+    const meteredCheck: MeteredLineItemCheck =
+      { ok: true, metered: true, lineItems: ['per_permit'], quantity: 42 }
+    const meteredReasons = meteredLoadReasons(meteredCheck, 'Metered Test Co', 358)
+    chk('🔴 a per_permit line item produces a load-blocking reason',
+      meteredReasons.length === 1, str(meteredReasons))
+    chk('   ...labelled "Blocked: metered tenant", as ruled',
+      /^Blocked: metered tenant\./.test(meteredReasons[0] ?? ''),
+      (meteredReasons[0] ?? '').slice(0, 150))
+    chk('   ...naming the current quantity and what the batch would add',
+      /\b42\b/.test(meteredReasons[0] ?? '') && /\b358\b/.test(meteredReasons[0] ?? ''),
+      'an operator has to see the size of the thing they are being protected from')
+    chk('🔴 ...and saying what to do instead — return it and agree the billing',
+      /[Rr]eturn the batch/.test(meteredReasons[0] ?? ''),
+      'a refusal with no next step is a dead end')
+
+    const meteredBlock: BatchBlock = {
+      blocked: false, reasons: [],
+      loadBlocked: meteredReasons.length > 0, loadReasons: meteredReasons,
+    }
+    chk('🔴 APPROVE is refused for a metered tenant',
+      blockRefusesAction('approve', meteredBlock) === true)
+    chk('🔴 LOAD is refused for a metered tenant',
+      blockRefusesAction('load', meteredBlock) === true)
+    chk('🔴 RETURN is NOT refused — it is the right move for them',
+      blockRefusesAction('return', meteredBlock) === false,
+      'blocking this would leave a metered tenant\'s batch with no move the operator could make')
+    chk('🔴 REJECT is NOT refused either',
+      blockRefusesAction('reject', meteredBlock) === false,
+      'a clean file from a metered tenant still needs a sentence saying why it will not be loaded')
+
+    // The fail-closed branch, same way.
+    const unreachable: MeteredLineItemCheck = { ok: false, reason: 'the subscription could not be read' }
+    const failClosed = meteredLoadReasons(unreachable, 'Metered Test Co', 358)
+    chk('🔴 an UNREACHABLE billing system also blocks the load — fail closed',
+      failClosed.length === 1 && /could not be checked/.test(failClosed[0]),
+      str(failClosed, 160))
+    chk('   ...and Return still survives that too',
+      blockRefusesAction('return', { blocked: false, reasons: [], loadBlocked: true, loadReasons: failClosed }) === false)
+
+    // And the negative control: a non-metered check must produce NOTHING.
+    for (const [label, c] of [
+      ['no subscription', { ok: true, metered: false, reason: 'skipped_no_sub' }],
+      ['subscribed, no per_permit item', { ok: true, metered: false, reason: 'skipped_no_line_item' }],
+    ] as [string, MeteredLineItemCheck][]) {
+      const r = meteredLoadReasons(c, 'Some Co', 358)
+      chk(`🔴 ${label} produces NO reason — the guard does not block by default`,
+        r.length === 0, str(r))
+    }
+    // 🔴 The truth table, exhaustively, so a future edit to
+    // blockRefusesAction cannot quietly change one cell.
+    const clean: BatchBlock = { blocked: false, reasons: [], loadBlocked: false, loadReasons: [] }
+    const hard: BatchBlock = { blocked: true, reasons: ['property inactive'], loadBlocked: false, loadReasons: [] }
+    const table: [string, BatchBlock, boolean, boolean, boolean, boolean][] = [
+      ['no block',        clean,        false, false, false, false],
+      ['load-only block', meteredBlock, true,  true,  false, false],
+      ['hard block',      hard,         true,  true,  true,  true],
+    ]
+    let tableOk = true
+    for (const [label, b, wa, wl, wr, wj] of table) {
+      const got = [blockRefusesAction('approve', b), blockRefusesAction('load', b),
+                   blockRefusesAction('return', b), blockRefusesAction('reject', b)]
+      const want = [wa, wl, wr, wj]
+      if (JSON.stringify(got) !== JSON.stringify(want)) {
+        tableOk = false
+        console.log(`       🔴 ${label}: approve/load/return/reject = ${got.join(',')} want ${want.join(',')}`)
+      }
+    }
+    chk('🔴 the whole truth table holds — 3 block shapes x 4 actions',
+      tableOk, 'no block → nothing refused; load-only → approve+load only; hard → all four')
+
+    // ══════════════════════════════════════════════════════════════
+    // 🔴 THE A1 LEG — from the cron's own record, not from Stripe
+    // ══════════════════════════════════════════════════════════════
+    // Ruled 2026-10-16: no reads of A1 from this session. The nightly
+    // permit sync already asks Stripe this exact question every day and
+    // writes the answer down, so the evidence exists and asserting it
+    // beats making a live call.
+    console.log('\n── 🔴 A1: asserted from BILLING_SYNC_CRON, not from Stripe ──')
+    const { data: cronRows } = await db.from('audit_logs')
+      .select('created_at, new_values').eq('action', 'BILLING_SYNC_CRON')
+      .order('created_at', { ascending: false }).limit(40)
+    chk('the nightly permit sync has a record to read',
+      (cronRows ?? []).length > 0, `${(cronRows ?? []).length} run(s) recorded`)
+    const outcomesOf = (row: Record<string, unknown> | undefined) =>
+      ((row?.new_values as Record<string, unknown> | undefined)?.outcomes
+        ?? []) as { company_name?: string; action?: string }[]
+    const latest = (cronRows ?? [])[0]
+    const a1Latest = outcomesOf(latest).find(o => /A1 Wrecker/i.test(String(o.company_name ?? '')))
+    chk('🔴 the LATEST run records A1 as skipped_no_line_item',
+      a1Latest?.action === 'skipped_no_line_item',
+      `${latest?.created_at} → ${str(a1Latest)} — the cron asks Stripe this exact question nightly, so its answer is the evidence`)
+    // How long it has been true, which is what makes it a fact rather
+    // than one reading.
+    let streak = 0
+    for (const row of cronRows ?? []) {
+      const o = outcomesOf(row).find(x => /A1 Wrecker/i.test(String(x.company_name ?? '')))
+      if (o?.action === 'skipped_no_line_item') streak++
+      else break
+    }
+    chk('🔴 ...and has done so for every consecutive run on record',
+      streak >= 31,
+      `${streak} consecutive run(s) — A1's subscription carries no per_permit item, so the guard is inert for them and the load path is unaffected`)
+    chk('   ...with no run recording a per_permit outcome for anyone',
+      !(cronRows ?? []).some(r => outcomesOf(r).some(o => o.action === 'incremented')),
+      'nothing has ever been metered, which is the same fact from the other side')
 
   } finally {
     await cleanup('end')
   }
 
-  console.log(`\n${fails === 0 ? '✅ all green (2 legs stated as untested, not passed)' : `❌ ${fails} failed`}`)
+  console.log(`\n${fails === 0 ? '' : `❌ ${fails} failed`}`)
   process.exit(fails === 0 ? 0 : 1)
 }
 

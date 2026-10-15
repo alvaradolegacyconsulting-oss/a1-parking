@@ -44,49 +44,62 @@ So:
 | a tenant with no subscription is not blocked | ✅ tested | Demo Company, and every test company |
 | the guard is on the load path at all | ✅ tested | the response carries both block kinds |
 | Return survives a load-only block | ✅ tested | a property of the routes, no metered tenant needed |
-| **a metered tenant is refused** | ➖ untested | nothing carries a `per_permit` item to match |
-| **an A1-shaped tenant (subscribed, not metered) is unaffected** | ➖ untested | A1 is the only subscribed company, and it is production |
+| **a metered tenant is refused** | ✅ decision logic | the production decision functions, handed a metered check result. Real end-to-end required in the slice-2 checkout gate. |
+| **an A1-shaped tenant (subscribed, not metered) is unaffected** | ✅ from the cron record | latest `BILLING_SYNC_CRON` run, ≥31 consecutive, A1 → `skipped_no_line_item` |
 
-## The decision I need
+## How the two legs were covered — ruled 2026-10-16
 
-Testing the metered leg means **creating a Stripe subscription** with
-one of the 8 catalog `per_permit` Prices. That is a Stripe write, and
-two standing rules point at it:
+**No Stripe writes, and no reads of A1 from this session.** Live keys
+stay with Jose. So:
 
-- `seed-demo-data-ONE-TIME.ts` **refuses** if a demo company carries
-  Stripe artifacts — *"demo tenants must be Stripe-invisible"*.
-- A1 is production and stays out of tests.
+### Metered — decision-logic coverage
 
-Three ways forward, and my recommendation:
+The two decisions are pure functions in
+`app/lib/import-batch-block.ts`, which carries no `server-only`:
 
-**(a) A throwaway company, test mode, cancelled and deleted in the same
-run.** The gate creates a company, a Stripe test-mode customer and a
-subscription carrying a `pm_starter` `per_permit` Price, asserts the
-refusal, then cancels the subscription and deletes the company. The
-Stripe objects are test-mode and cancelled within a minute.
-**This is what I would do** — it exercises the real branch against a
-real subscription, and the Stripe-invisible rule is about the
-*persistent* demo tenant rather than an ephemeral fixture. But it is a
-Stripe write and I have made none this session, so it is yours to
-approve.
+- `meteredLoadReasons(check, companyName, vehicleCount)` — a
+  `MeteredLineItemCheck` in, the load-blocking sentences out.
+- `blockRefusesAction(action, block)` — the per-action truth table.
 
-**(b) Leave it until slice 2.** Checkout will create subscriptions with
-`per_permit` items, and at that point a metered tenant exists naturally
-and the leg becomes testable with no fabrication. The guard is correct
-and inert until then — which is also exactly the state `syncOnAdd` is
-in, and has been since it shipped.
+The gate hands the first one a metered result and reads the answer, then
+drives the second over **three block shapes × four actions** and
+asserts all twelve cells.
 
-**(c) A read-only leg on A1.** `subscriptions.retrieve` on A1's real
-subscription, no writes, no batch, proving `skipped_no_line_item`
-against the one real subscription that exists. It covers the second
-untested leg only, not the metered one. Low risk, but it reads
-production billing from a gate, so I am not doing it unasked.
+🔴 **Neither is a fault-injection seam.** The standing rule is no such
+seam in production code, and there is none: these are the functions the
+real path calls, with the inputs it gives them. Extracting them also
+removed four inline copies of a per-action condition from the four
+routes — which is where the fourth copy drifts.
 
-**(a) plus (c) covers both legs. (b) covers neither and costs nothing.**
+🔴 **And it is labelled as what it is.** This proves that *when* a
+subscription carries a `per_permit` item the refusals and the
+permissions are the ruled ones. It does **not** prove Stripe would
+return such a result, because nothing carries one yet.
 
-Until you pick, the gate says ➖ on both rather than ✅, because a gate
-that reports green on a branch it never ran is worse than one that
-admits the hole.
+### A1 — from the cron's own record
+
+The nightly permit sync already asks Stripe this exact question every
+day and writes the answer down, so the evidence exists:
+
+```
+BILLING_SYNC_CRON, latest run
+outcomes: [{ ok: true, action: "skipped_no_line_item",
+             company_id: 91, company_name: "A1 Wrecker llc" }]
+```
+
+Asserted: the latest run records A1 as `skipped_no_line_item`, it has
+done so for **every consecutive run on record** (≥31), and no run has
+ever recorded an `incremented` outcome for anyone — the same fact from
+the other side. No live call, no production read.
+
+### Required in the slice-2 checkout gate
+
+🔴 **The real metered end-to-end is a required leg in the slice-2
+checkout gate**, to be added when per_permit subscriptions first exist.
+Recorded in the Sweep #2 backlog as a binding note, not a suggestion:
+checkout is the thing that will create the first metered subscription,
+so its gate is the first place the full path can be exercised, and the
+decision-logic coverage above is explicitly not a substitute.
 
 ## 🔴 One thing I got wrong three times today
 

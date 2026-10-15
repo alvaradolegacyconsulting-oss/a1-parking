@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { authorizeImportOperator, reviewImportBatch } from '../../../../lib/import-batch-review'
+import { authorizeImportOperator, reviewImportBatch, blockRefusesAction } from '../../../../lib/import-batch-review'
 
 // ════════════════════════════════════════════════════════════════════
 // Approve — re-validation point 2 of 3
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   // nothing can be done with the batch at all; loadBlocked means this
   // action specifically cannot proceed — today that is the metered-plan
   // guard, where Return IS still the right move and so is not blocked.
-  if (review.block.blocked || review.block.loadBlocked) {
+  if (blockRefusesAction('approve', review.block)) {
     return NextResponse.json({
       error: 'blocked', message: 'This batch cannot be loaded right now, so approving it would not help.',
       reasons: [...review.block.reasons, ...review.block.loadReasons],

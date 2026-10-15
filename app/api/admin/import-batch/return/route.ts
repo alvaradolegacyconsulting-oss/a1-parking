@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import {
-  authorizeImportOperator, reviewImportBatch, buildReturnReason,
+  authorizeImportOperator, reviewImportBatch, buildReturnReason, blockRefusesAction,
   MAX_STORED_REJECT_ERRORS,
 } from '../../../../lib/import-batch-review'
 
@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   // answer for them — "we cannot bulk-load you, your plan bills per
   // permit". Blocking this too would leave the batch stuck with no
   // move anyone could make.
-  if (review.block.blocked) {
+  if (blockRefusesAction('return', review.block)) {
     return NextResponse.json({
       error: 'blocked',
       message: 'This batch cannot be returned right now — the company would not be able to resubmit. Resolve the reasons below first.',

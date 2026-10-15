@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { authorizeImportOperator, reviewImportBatch } from '../../../../lib/import-batch-review'
+import { authorizeImportOperator, reviewImportBatch, blockRefusesAction } from '../../../../lib/import-batch-review'
 
 // ════════════════════════════════════════════════════════════════════
 // Reject — for a file that validates fine but should not be loaded
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
   // answer for them — "we cannot bulk-load you, your plan bills per
   // permit". Blocking this too would leave the batch stuck with no
   // move anyone could make.
-  if (review.block.blocked) {
+  if (blockRefusesAction('reject', review.block)) {
     return NextResponse.json({
       error: 'blocked',
       message: 'This batch cannot be rejected right now — the company would not be able to send a replacement. Resolve the reasons below first.',
