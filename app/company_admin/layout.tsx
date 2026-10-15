@@ -82,6 +82,47 @@ export default async function CompanyAdminLayout({
   }
   const role = roleRow.role as Role
 
+  // ══════════════════════════════════════════════════════════════════
+  // 2b. 🔴 DEACTIVATION — ruled 2026-10-16
+  // ══════════════════════════════════════════════════════════════════
+  // The lookup above reads `role` and nothing else, and a deactivated
+  // CA can still READ their own role row — measured:
+  //   select role, is_active  →  [{"role":"company_admin","is_active":false}]
+  // So the gate above passed them, and what actually stopped them was
+  // RLS returning nothing for every subsequent query: they reached the
+  // portal and saw a blank one. That is the worst of the three possible
+  // outcomes, because it looks like the product is broken rather than
+  // like their access was removed.
+  //
+  // 🔴 get_my_effective_active(), NOT user_roles.is_active, because that
+  // is what the other three portals use (evaluatePortalGate) and it
+  // covers the whole chain rather than one link: user_roles.is_active,
+  // residents.is_active, properties.is_active and per-property PM
+  // assignment. A CA locked out by a link further down the chain must
+  // land in the same place as one locked out at the top.
+  //
+  // Measured before wiring it, because an over-redirect here locks out
+  // every CA:
+  //   active CA, properties assigned   → true
+  //   active CA, property: [] (demo-ca) → true
+  //   deactivated CA                    → false
+  //
+  // 🔴 AND IT RUNS BEFORE THE CONSENT CHECK. Until today a deactivated
+  // CA was sent to /consent — asked to sign a SaaS agreement for an
+  // account they no longer have access to. Deactivation is the earlier
+  // fact and has to be answered first.
+  //
+  // Fail closed on an RPC error, the same posture as evaluatePortalGate:
+  // a transient failure sends them to the escalation screen rather than
+  // through to a portal whose state is unknown.
+  const { data: effectiveActive, error: effErr } = await supabase.rpc('get_my_effective_active')
+  if (effErr) {
+    redirect(`/deactivated?role=${encodeURIComponent(role)}&reason=rpc_error`)
+  }
+  if (effectiveActive !== true) {
+    redirect(`/deactivated?role=${encodeURIComponent(role)}`)
+  }
+
   // 3. Consent check — SAME helper /consent uses (single source of
   //    truth). Fail-closed on read error (helper returns
   //    consented=false + missing=required set) so a transient DB
