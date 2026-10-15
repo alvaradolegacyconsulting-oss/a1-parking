@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { inviteOrigin } from '../../../lib/invite-origin'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { guardEmail } from '../../../lib/email-guard'
@@ -155,7 +156,7 @@ export async function POST(req: NextRequest) {
 
   // ── 6. Resend the invite (service-role required for Auth admin API) ─
   const service = createSupabaseServiceClient()
-  const origin = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
+  const origin = inviteOrigin()
   const { error: inviteErr } = await service.auth.admin.inviteUserByEmail(targetEmail, {
     redirectTo: `${origin}/reset-password-required`,
   })

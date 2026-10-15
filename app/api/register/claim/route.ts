@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { inviteOrigin } from '../../../lib/invite-origin'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
 import { verifyTurnstile } from '../../../lib/turnstile-verify'
 import { guardEmail } from '../../../lib/email-guard'
@@ -219,7 +220,11 @@ export async function POST(req: NextRequest) {
     .from('vehicles').select('*', { count: 'exact', head: true })
     .ilike('resident_email', match.email as string).eq('is_active', true)
 
-  const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
+  // 🔴 Never new URL(req.url).origin — see app/lib/invite-origin.ts.
+  // This route was the one of four invite senders that fell back to the
+  // request, which on a preview deployment puts a preview URL in a
+  // resident's inbox.
+  const origin = inviteOrigin()
   const { error: invErr } = await db.auth.admin.inviteUserByEmail(email, {
     redirectTo: `${origin}/reset-password-required`,
     // 🔴 PROPERTY AND UNIT, NEVER A PLATE. If the customer typo'd the

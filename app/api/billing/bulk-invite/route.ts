@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { inviteOrigin } from '../../../lib/invite-origin'
 import { isPlateProhibitedError, plateProhibitedCopy } from '../../../lib/plate-prohibition-copy'
 import { createSupabaseServerClient } from '../../../lib/server-auth'
 import { createSupabaseServiceClient } from '../../../lib/supabase-admin'
@@ -234,7 +235,7 @@ export async function POST(req: NextRequest) {
 
   // ── 8. Per-row processing ─────────────────────────────────────────
   const service = createSupabaseServiceClient()
-  const origin = process.env.NEXT_PUBLIC_APP_URL || 'https://shieldmylot.com'
+  const origin = inviteOrigin()
   const inviteRedirect = `${origin}/reset-password-required`
 
   const results: Array<{ email: string; status: 'success' | 'error'; error?: string }> = []
