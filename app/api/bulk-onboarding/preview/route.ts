@@ -48,14 +48,28 @@ export async function POST(req: NextRequest) {
     (r[BULK_CSV_COLUMNS.indexOf(name)] ?? '').trim()
 
   // ── the database half, one set-based call for the whole file ──────
-  const rpc = await auth.db.rpc('bulk_validate_rows', {
+  // 🔴 asCaller, NOT auth.db. bulk_validate_rows gates on
+  // may_bulk_upload_at(), which resolves the caller from the JWT's
+  // email claim — a service_role JWT has none, so the gate returns
+  // FALSE and the RPC raises property_not_in_scope for EVERY caller.
+  // This route called it as service_role from the day it shipped, so
+  // preview answered 403 "that property is not one you can upload for"
+  // to every CA, for every file, including their own property. Found
+  // 2026-10-15 by the first gate to drive these routes over HTTP; the
+  // rehearsal never caught it because it calls the RPC with a real CA
+  // JWT, which is what this now does too.
+  const rpc = await auth.asCaller.rpc('bulk_validate_rows', {
     p_property_id: auth.property.id,
     p_rows: parsed.dataRows.map((r, i) => ({ i, email: col(r, 'email'), plate: col(r, 'plate') })),
   })
   if (rpc.error) {
-    // The RPC's own authority gate. It should be unreachable here —
-    // authorizeBulkUpload already passed the same checks — so if it
-    // fires, the two have drifted and that is a bug, not a user error.
+    // The RPC's own authority gate. With the call made as the caller it
+    // checks the same things authorizeBulkUpload already checked, so if
+    // it fires the two have drifted and that is a bug, not a user
+    // error. 🔴 It used to fire for EVERYONE, because the call was made
+    // as service_role — see the comment on the rpc call above. Keeping
+    // the branch: a drift between the TS gate and the SQL one is still
+    // possible, and this is the only place it would surface.
     if (rpc.error.message?.includes('property_not_in_scope')) {
       console.error(`[bulk-onboarding/preview] 🔴 authorizeBulkUpload passed but bulk_validate_rows refused property ${auth.property.id} for ${auth.email} — the two gates have drifted`)
       return NextResponse.json({ error: 'property_not_in_scope', message: 'That property is not one you can upload for.' }, { status: 403 })

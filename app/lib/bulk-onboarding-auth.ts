@@ -36,7 +36,30 @@ export interface BulkCompanyOk {
   email: string
   userId: string
   company: { id: number; name: string }
+  /** service_role — storage, and reads that must see every tenant. */
   db: SupabaseClient
+  /**
+   * 🔴 THE CALLER'S OWN SESSION, FOR RPCs THAT REFUSE service_role.
+   *
+   * bulk_validate_rows gates on may_bulk_upload_at(), which resolves
+   * the caller from `auth.jwt() ->> 'email'`. A service_role JWT has no
+   * email claim, so the gate returns FALSE and the RPC raises
+   * `property_not_in_scope` — for every caller, always.
+   *
+   * Measured 2026-10-15, directly:
+   *   service_role  may_bulk_upload_at(139) = false
+   *   the CA        may_bulk_upload_at(139) = true
+   *
+   * That is not a bug in the RPC. Its gate is the SAME function the
+   * storage INSERT policy uses, and that function has to resolve a
+   * person — a service_role call is not a person. So the RPC must be
+   * called AS THE CALLER, and this is that client.
+   *
+   * Same shape as the property cascade, which captures the caller's
+   * token because admin_reactivate_property_vehicles refuses
+   * service_role for the same reason.
+   */
+  asCaller: SupabaseClient
 }
 export interface BulkAuthOk extends BulkCompanyOk {
   property: { id: number; name: string }
@@ -101,7 +124,7 @@ export async function authorizeBulkCompany(): Promise<BulkCompany> {
   }
 
   return { ok: true, email: user.email, userId: user.id,
-           company: { id: company.id as number, name: company.name as string }, db }
+           company: { id: company.id as number, name: company.name as string }, db, asCaller: sb }
 }
 
 /**

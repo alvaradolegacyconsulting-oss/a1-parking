@@ -71,7 +71,12 @@ export async function POST(req: NextRequest) {
   // ── the same validation the preview ran ───────────────────────────
   const col = (r: string[], name: typeof BULK_CSV_COLUMNS[number]) =>
     (r[BULK_CSV_COLUMNS.indexOf(name)] ?? '').trim()
-  const rpc = await db.rpc('bulk_validate_rows', {
+  // 🔴 asCaller, NOT db. See the identical note in preview/route.ts:
+  // bulk_validate_rows resolves the caller from the JWT email claim, so
+  // a service_role call is refused by its own authority gate. Submitted
+  // this way from the day it shipped, which meant every submission —
+  // clean or dirty — came back as a 500 submit_failed.
+  const rpc = await auth.asCaller.rpc('bulk_validate_rows', {
     p_property_id: property.id,
     p_rows: parsed.dataRows.map((r, i) => ({ i, email: col(r, 'email'), plate: col(r, 'plate') })),
   })

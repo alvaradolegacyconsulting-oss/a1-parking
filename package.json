@@ -41,7 +41,8 @@
     "verify:remountkeys": "tsx scripts/verify-crm-remount-keys.ts",
     "verify:cascade": "tsx scripts/verify-property-cascade.ts",
     "verify:claim": "tsx scripts/verify-resident-claim.ts",
-    "verify:flyer": "tsx scripts/verify-claim-flyer.ts"
+    "verify:flyer": "tsx scripts/verify-claim-flyer.ts",
+    "verify:bulkhttp": "tsx scripts/verify-bulk-http.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",
