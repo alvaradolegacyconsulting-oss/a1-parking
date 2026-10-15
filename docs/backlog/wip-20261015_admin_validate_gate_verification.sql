@@ -21,6 +21,16 @@
 -- while a changed predicate still can. The md5 of the live definition
 -- is printed in the PASS row as the baseline to record for next time.
 --
+-- 🔴 RECORDED 2026-10-15, FIRST CLEAN RUN:
+--   md5(pg_get_functiondef(may_bulk_upload_at(bigint)))
+--     = 8dbee58536f340eafc661ef3f8199c28
+-- G2b now asserts that hash directly, so from here on this file DOES
+-- compare a before and an after — the before being the definition at
+-- the moment the split was proven correct. A reformat that does not
+-- change behaviour will trip it; that is the intended cost, because the
+-- function is called by a storage INSERT policy and "it only looked
+-- different" is not a thing anyone should conclude without reading it.
+--
 -- 🔴 AND A DO BLOCK IS ALL-OR-NOTHING AT COMPILE TIME. One malformed
 -- RAISE format string anywhere voids every assertion in the block —
 -- learned on this file's sibling, which died with
@@ -107,7 +117,19 @@ $expected$;
   IF v_live ~ '\mmay_bulk_validate_at\M' THEN
     RAISE EXCEPTION 'G2 FAIL: may_bulk_upload_at references the new helper — the delegation is meant to run the other way';
   END IF;
+  -- ── 🔴 G2b. the recorded baseline hash, exactly ─────────────────
+  -- Stronger than G2: that compares normalised tokens, this compares
+  -- the whole definition byte for byte against the hash taken when the
+  -- two-function split was proven correct by npm run verify:validategate
+  -- (14 checks, including that an admin still cannot upload into a
+  -- property prefix). If this trips, read the function before deciding
+  -- the hash is stale.
+  SELECT md5(pg_get_functiondef(to_regprocedure('public.may_bulk_upload_at(bigint)'))) INTO v_s;
+  IF v_s IS DISTINCT FROM '8dbee58536f340eafc661ef3f8199c28' THEN
+    RAISE EXCEPTION 'G2b FAIL: may_bulk_upload_at hashes to % but the recorded baseline is 8dbee58536f340eafc661ef3f8199c28. The definition has changed since the split was proven. Read it — the storage INSERT policy bulk_csv_ca_insert calls this function, so a change here is a change to who may upload.', v_s;
+  END IF;
   RAISE NOTICE 'G2 ok: may_bulk_upload_at matches the applied text, no OR, no admin branch';
+  RAISE NOTICE 'G2b ok: and hashes to the recorded baseline 8dbee58536f340eafc661ef3f8199c28';
 
   -- ── G3. the validator gates on the new helper and only that ──────
   SELECT p.prosrc INTO v_live
@@ -190,7 +212,7 @@ $do$;
 -- ── the PASS row, with the new function's body printed as ruled ─────
 SELECT
   'admin validate gate' AS verification,
-  'PASS — G1..G5' AS result,
+  'PASS — G1, G2, G2b, G3..G5' AS result,
   (SELECT md5(pg_get_functiondef(to_regprocedure('public.may_bulk_upload_at(bigint)'))))
     AS may_bulk_upload_at_md5_baseline,
   (SELECT pg_get_functiondef(to_regprocedure('public.may_bulk_validate_at(bigint)')))
