@@ -296,6 +296,12 @@ export default function AdminConsolePage() {
   // company_id → bulk_onboarding_enabled, for the row badge. Separate
   // from the aggregate rows so an aggregates refresh cannot drop it.
   const [bulkFlags, setBulkFlags] = useState<Map<number, boolean>>(new Map())
+  // 🔴 Batches awaiting a decision, for the tab badge. Jose could not
+  // find the queue at all — a tab labelled "Imports" among four others
+  // says nothing about whether anything is waiting in it, and an
+  // operator does not open a tab on the off-chance. The badge is the
+  // difference between a queue and a page you have to remember exists.
+  const [awaitingReview, setAwaitingReview] = useState(0)
   // Sort state. Default 'last_activity_at' ASC = "top of list is the
   // property nobody's touched" — the call-sheet ordering Mateo asked for.
   // Sort keys are hardcoded to PerPropertyActivity keys the header
@@ -340,7 +346,7 @@ export default function AdminConsolePage() {
       // and the error-rate 24h count. All super-admin-gated; role check
       // above already passed.
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-      const [aggRes, flagsRes, settingsRes, errorRateRes, envRes, redWarningsRes] = await Promise.all([
+      const [aggRes, flagsRes, settingsRes, errorRateRes, envRes, redWarningsRes, queueRes] = await Promise.all([
         supabase.rpc('get_console_aggregates'),
         supabase.rpc('get_console_spike_flags'),
         supabase.from('platform_settings').select('*').eq('id', 1).maybeSingle(),
@@ -371,6 +377,19 @@ export default function AdminConsolePage() {
         // display. RPC's server-side default is 'production' but pass
         // NULL so a toggle to All doesn't require re-fetching.
         supabase.rpc('get_console_red_warnings', { p_company_env: null }),
+        // 🔴 LAST IN THE ARRAY, BECAUSE queueRes IS LAST IN THE
+        // DESTRUCTURE. The first version put this after the companies
+        // select and only appended the NAME at the end — so every
+        // result from there on was handed to the wrong variable, and
+        // the red-warnings cast was the only thing that complained.
+        // A positional destructure is a contract between two lists that
+        // nothing checks but the types.
+        //
+        // Submitted AND approved both count: one is waiting on a
+        // decision, the other on a load, and a badge that counted only
+        // the first would read zero while a batch sat approved and
+        // unloaded.
+        supabase.from('import_batches').select('id, status').in('status', ['submitted', 'approved']),
       ])
       if (cancelled) return
       if (aggRes.error) {
@@ -395,6 +414,7 @@ export default function AdminConsolePage() {
         bulkMap.set(r.id, r.bulk_onboarding_enabled === true)
       }
       setBulkFlags(bulkMap)
+      setAwaitingReview(((queueRes.data ?? []) as Array<{ id: number }>).length)
       const aggWithEnv = ((aggRes.data ?? []) as CompanyAggregate[]).map(a => ({
         ...a,
         company_env: envMap.get(a.company_id),
@@ -924,7 +944,7 @@ export default function AdminConsolePage() {
             const label = t === 'console' ? 'Console'
                         : t === 'properties' ? 'Properties'
                         : t === 'onboarding' ? 'Onboarding'
-                        : t === 'imports' ? 'Imports'
+                        : t === 'imports' ? 'Bulk imports'
                         : 'System'
             return (
               <button key={t} onClick={() => setTab(t)}
@@ -937,6 +957,20 @@ export default function AdminConsolePage() {
                   cursor: 'pointer', fontFamily: 'Arial',
                 }}>
                 {label}
+                {/* 🔴 The count, not a dot. "Bulk imports ②" tells an
+                    operator there is work and how much; a dot tells
+                    them only that something changed, which is the
+                    thing they will learn to ignore. Hidden at zero,
+                    because a badge that is always there stops being a
+                    signal. */}
+                {t === 'imports' && awaitingReview > 0 && (
+                  <span style={{
+                    marginLeft: 6, background: active ? '#0f1117' : GOLD,
+                    color: active ? GOLD : '#0f1117',
+                    borderRadius: 9, padding: '1px 6px',
+                    fontSize: 10, fontWeight: 'bold',
+                  }}>{awaitingReview}</span>
+                )}
               </button>
             )
           })}

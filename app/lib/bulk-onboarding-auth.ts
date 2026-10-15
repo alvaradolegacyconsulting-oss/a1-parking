@@ -72,6 +72,27 @@ export type BulkCompany = BulkCompanyOk | BulkAuthErr
 const no = (status: number, code: string, message: string): BulkAuthErr => ({ ok: false, status, code, message })
 
 /**
+ * 🔴 ONE STRING, BECAUSE THE FLAG IS CHECKED IN TWO PLACES.
+ * Ruled 2026-10-16 after the CA upload page blamed the property for a
+ * refusal the flag caused.
+ *
+ * authorizeBulkCompany checks companies.bulk_onboarding_enabled, and so
+ * does may_bulk_upload_at() inside bulk_validate_rows. The second one
+ * raises `property_not_in_scope` — a single string for every reason it
+ * refuses — so a route that maps it straight to "that property is not
+ * one you can upload for" tells the customer to fix the one thing that
+ * is not wrong. Toggling the flag with the page open is enough to reach
+ * it, and a CA reading that message would go hunting through a property
+ * list.
+ *
+ * Exported so the routes that re-derive the cause say the same sentence
+ * as the gate that catches it first.
+ */
+export const BULK_NOT_ENABLED_MESSAGE =
+  "Bulk upload isn't turned on for your company yet. Contact ShieldMyLot."
+
+
+/**
  * Everything up to and including the flag — no object path involved.
  *
  * Split out so the page's context endpoint runs the IDENTICAL gate
@@ -79,6 +100,48 @@ const no = (status: number, code: string, message: string): BulkAuthErr => ({ ok
  * the upload would refuse is how a customer ends up staring at a form
  * that cannot submit.
  */
+/**
+ * Why did bulk_validate_rows refuse?
+ *
+ * 🔴 THE RPC RAISES ONE STRING FOR EVERY REASON. may_bulk_upload_at()
+ * tests the caller's role, the property's company, the property being
+ * active, the company being active and not suspended, AND
+ * companies.bulk_onboarding_enabled — and `property_not_in_scope` is
+ * all of them. A route that maps it straight to "that property is not
+ * one you can upload for" tells the customer to fix the one thing that
+ * may not be wrong, and sends a CA hunting through a property list for
+ * a switch that lives in our console.
+ *
+ * So the cause is re-derived rather than assumed. The flag is re-read
+ * rather than reused from authorizeBulkCompany: if it changed between
+ * the two — which toggling it with the page open does — the newer
+ * value is the reason the RPC refused.
+ *
+ * Returns the flag refusal when that is the cause, and otherwise falls
+ * back to the property message, which is then the honest answer.
+ */
+export async function describeBulkRefusal(
+  db: SupabaseClient, companyId: number,
+): Promise<{ code: string; message: string }> {
+  const { data, error } = await db
+    .from('companies').select('bulk_onboarding_enabled, is_active, account_state')
+    .eq('id', companyId).maybeSingle()
+  if (error || !data) {
+    // Could not tell. Say the generic thing rather than guess a cause.
+    return { code: 'preview_failed',
+             message: 'We could not check this file. Please try again.' }
+  }
+  if (data.bulk_onboarding_enabled !== true) {
+    return { code: 'bulk_onboarding_not_enabled', message: BULK_NOT_ENABLED_MESSAGE }
+  }
+  if (data.is_active !== true || ['suspended', 'cancelled'].includes(data.account_state ?? '')) {
+    return { code: 'account_not_active',
+             message: 'Your account is not active. Please contact support.' }
+  }
+  return { code: 'property_not_in_scope',
+           message: 'That property is not one you can upload for. Please choose a property from the list and try again.' }
+}
+
 export async function authorizeBulkCompany(): Promise<BulkCompany> {
   const sb = await createSupabaseServerClient()
   const { data: { user }, error: authErr } = await sb.auth.getUser()
@@ -120,7 +183,7 @@ export async function authorizeBulkCompany(): Promise<BulkCompany> {
   }
   if (company.bulk_onboarding_enabled !== true) {
     // A fact about the account, not a permission the platform is granting.
-    return no(403, 'bulk_onboarding_not_enabled', 'Bulk resident upload is not switched on for your account. Contact support to have it enabled.')
+    return no(403, 'bulk_onboarding_not_enabled', BULK_NOT_ENABLED_MESSAGE)
   }
 
   return { ok: true, email: user.email, userId: user.id,

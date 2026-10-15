@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { authorizeBulkUpload, readBulkObject } from '../../../lib/bulk-onboarding-auth'
+import { authorizeBulkUpload, readBulkObject, describeBulkRefusal } from '../../../lib/bulk-onboarding-auth'
 import { BULK_CSV_COLUMNS, parseBulkCsv } from '../../../lib/bulk-onboarding'
 import {
   validateBulkRows, dbFlagErrors,
@@ -71,8 +71,19 @@ export async function POST(req: NextRequest) {
     // the branch: a drift between the TS gate and the SQL one is still
     // possible, and this is the only place it would surface.
     if (rpc.error.message?.includes('property_not_in_scope')) {
-      console.error(`[bulk-onboarding/preview] 🔴 authorizeBulkUpload passed but bulk_validate_rows refused property ${auth.property.id} for ${auth.email} — the two gates have drifted`)
-      return NextResponse.json({ error: 'property_not_in_scope', message: 'That property is not one you can upload for.' }, { status: 403 })
+      // 🔴 THE RPC RAISES ONE STRING FOR EVERY REASON IT REFUSES, and
+      // the flag is one of them: may_bulk_upload_at() tests
+      // companies.bulk_onboarding_enabled alongside the property's
+      // company. So this branch cannot blame the property without
+      // asking which it actually was — and blaming the property sends
+      // a CA hunting through a list for something that is not wrong.
+      //
+      // Re-read the flag rather than trusting the one
+      // authorizeBulkCompany saw a moment ago: if it changed in
+      // between, the newer value is the reason the RPC refused.
+      const cause = await describeBulkRefusal(auth.db, auth.company.id)
+      console.error(`[bulk-onboarding/preview] bulk_validate_rows refused property ${auth.property.id} for ${auth.email} — cause: ${cause.code}`)
+      return NextResponse.json({ error: cause.code, message: cause.message }, { status: 403 })
     }
     console.error('[bulk-onboarding/preview] bulk_validate_rows:', rpc.error)
     return NextResponse.json({ error: 'preview_failed', message: 'We could not check this file against your existing records. Please try again.' }, { status: 500 })

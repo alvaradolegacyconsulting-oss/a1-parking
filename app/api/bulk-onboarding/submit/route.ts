@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
-import { authorizeBulkUpload, readBulkObject } from '../../../lib/bulk-onboarding-auth'
+import { authorizeBulkUpload, readBulkObject, describeBulkRefusal } from '../../../lib/bulk-onboarding-auth'
 import { BULK_BUCKET, BULK_CSV_COLUMNS, bulkBatchPath, parseBulkCsv } from '../../../lib/bulk-onboarding'
 import {
   validateBulkRows, dbFlagErrors,
@@ -80,7 +80,17 @@ export async function POST(req: NextRequest) {
     p_property_id: property.id,
     p_rows: parsed.dataRows.map((r, i) => ({ i, email: col(r, 'email'), plate: col(r, 'plate') })),
   })
-  if (rpc.error) return oops('bulk_validate_rows', rpc.error)
+  if (rpc.error) {
+    // Same ambiguity as preview: property_not_in_scope covers the flag
+    // too, and submit must not report a server error for a refusal it
+    // can name.
+    if (rpc.error.message?.includes('property_not_in_scope')) {
+      const cause = await describeBulkRefusal(db, company.id)
+      console.error(`[bulk-onboarding/submit] bulk_validate_rows refused property ${property.id} — cause: ${cause.code}`)
+      return BAD(403, cause.code, cause.message)
+    }
+    return oops('bulk_validate_rows', rpc.error)
+  }
   const flags = (rpc.data ?? []) as BulkDbFlags[]
   const normByIndex = new Map(flags.map(f => [f.row_index, f.plate_norm]))
   const rows: BulkRowInput[] = parsed.dataRows.map((r, i) => ({
