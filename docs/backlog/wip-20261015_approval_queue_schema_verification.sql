@@ -18,6 +18,21 @@
 -- A structural gate cannot see whether a CHECK actually fires. That is
 -- the whole point of the pairing: this proves the definitions are the
 -- ones intended, the execution gate proves they bite.
+--
+-- 🔴 AND A DO BLOCK IS ALL-OR-NOTHING AT COMPILE TIME.
+-- The first version of this file died on
+--   ERROR: 42601: too many parameters specified for RAISE
+-- because one format string wrote %% — which is an ESCAPED LITERAL
+-- PERCENT, not a placeholder — and then passed two arguments for the
+-- one placeholder that was left. PL/pgSQL checks RAISE argument counts
+-- when it COMPILES the block, so nothing in it ran: not G1, not G6,
+-- none of it. The migration had already applied and printed its own
+-- PASS row, so the only thing distinguishing "verified" from "the
+-- verification never executed" was that one error line.
+--
+-- The lesson for every file like this one: a typo in any format string
+-- anywhere in the block voids every assertion in the block. There is no
+-- partial run.
 
 DO $do$
 DECLARE
@@ -38,7 +53,7 @@ BEGIN
   -- and a status nobody ruled on is a state nothing handles.
   FOR s IN SELECT unnest(ARRAY['submitted','approved','rejected','loaded','rolled_back']) LOOP
     IF v !~ ('''' || s || '''') THEN
-      RAISE EXCEPTION 'G1 FAIL: the allowlist lost %% — %', s, v;
+      RAISE EXCEPTION 'G1 FAIL: the allowlist lost % — %', s, v;
     END IF;
   END LOOP;
   SELECT count(*) INTO n FROM regexp_matches(v, '''[a-z_]+''', 'g');
