@@ -560,9 +560,25 @@ const main = async () => {
     chk('🔴 every transition this gate made is audited',
       actions.includes('IMPORT_BATCH_APPROVED') && actions.includes('IMPORT_BATCH_REJECTED'),
       `${actions.length} row(s): ${actions.join(', ')}`)
-    chk('   ...each naming the operator who did it',
-      (audit ?? []).every(a => String(a.user_email) === admin.email),
-      `${[...new Set((audit ?? []).map(a => a.user_email))].join(', ')} vs ${admin.email}`)
+    // 🔴 THIS ASSERTION WAS WRONG BEFORE THE CODE WAS. It read "every
+    // audit row names the operator" and failed on a row with no email —
+    // which turned out to be the gate's OWN service_role reset of
+    // batch 8 back to 'submitted' mid-run. A service_role write has no
+    // jwt email, so the trigger recorded no operator, which is correct
+    // and is the behaviour its comment exists for: it covers writes
+    // made outside the RPCs, and those are the ones most worth a
+    // record. Inventing an email for them would be the defect.
+    //
+    // So the two groups are asserted separately.
+    const byRpc = (audit ?? []).filter(a =>
+      ['approved', 'rejected'].includes(String((a.new_values as Record<string, unknown>)?.status)))
+    chk('🔴 every transition an RPC made names the operator who made it',
+      byRpc.length >= 3 && byRpc.every(a => String(a.user_email) === admin.email),
+      `${byRpc.length} RPC transition(s), emails: ${[...new Set(byRpc.map(a => a.user_email))].join(', ')}`)
+    const byService = (audit ?? []).filter(a => !a.user_email)
+    chk('   ...and a service_role write is recorded as having NO operator, not a guessed one',
+      byService.every(a => String((a.new_values as Record<string, unknown>)?.status) === 'submitted'),
+      `${byService.length} row(s) with no email — this gate's own reset of batch 8. A write with no identity must read as no identity; the trigger covering writes made outside the RPCs is the point of it being a trigger.`)
     chk('   ...and recording what it moved FROM as well as to',
       (audit ?? []).some(a => (a.old_values as Record<string, unknown> | null)?.status === 'approved'),
       JSON.stringify((audit ?? []).map(a => ({ from: (a.old_values as Record<string, unknown> | null)?.status, to: (a.new_values as Record<string, unknown>)?.status }))))

@@ -48,7 +48,8 @@
     "verify:validategate": "tsx scripts/verify-validate-gate.ts",
     "verify:queue": "tsx scripts/verify-queue.ts",
     "verify:requireadmin": "tsx scripts/verify-require-admin.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
+    "verify:cadeactivated": "tsx scripts/verify-ca-deactivated.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",
