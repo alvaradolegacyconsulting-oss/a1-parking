@@ -141,13 +141,37 @@ const main = async () => {
       if (u.length < 1000) break
       page++
     }
-    const { data: res } = await db.from('residents').select('id,email,property,company,unit,is_active,status')
+    // 🔴 BULK-LOADED RESIDENTS ARE NOT THIS GATE'S POPULATION.
+    // Added 2026-10-16 after a live rehearsal batch broke two
+    // assertions here — and the gate was right both times:
+    //
+    //   "none of them has a user_roles row"  → 227 did. The loader
+    //   creates one per resident by construction, so a stamped
+    //   resident falsifies the premise this gate is built on.
+    //
+    //   "none is a deliverable address"      → two were, Jose's own
+    //   +bulkload2 and +bulkload3 Gmail aliases. This gate claims one
+    //   member of the population END TO END, so without that guard it
+    //   would have mailed a real person an invite nobody asked for.
+    //   That check existed precisely for this and it fired.
+    //
+    // So the population is scoped to UNSTAMPED residents: the ones with
+    // a record, no login and no role row, which is the category the
+    // claim step was built for. Stamped residents have their own path
+    // and their own gates (verify:loader, verify:rollback), and
+    // excluding them here means this gate stays valid while a rehearsal
+    // batch is live — which it is, and which is the point.
+    const { data: res } = await db.from('residents')
+      .select('id,email,property,company,unit,is_active,status,import_batch_id')
     const { data: ur } = await db.from('user_roles').select('email')
     const roleEmails = new Set((ur ?? []).map(r => String(r.email).trim().toLowerCase()))
     const pop = (res ?? []).filter(r =>
       r.is_active === true && r.status === 'active'
+      && r.import_batch_id === null
       && !emails.has(String(r.email).trim().toLowerCase()))
       .sort((a, b) => Number(a.id) - Number(b.id))
+    const stamped = (res ?? []).filter(r => r.import_batch_id !== null).length
+    if (stamped > 0) console.log(`   (${stamped} bulk-loaded resident(s) excluded — they have role rows by construction)`)
 
     console.log('── the claim population, checked read-only ──')
     chk(`all ${pop.length} are live residents with no auth user`, pop.length > 0, `${pop.length} found`)
@@ -156,7 +180,10 @@ const main = async () => {
       `${pop.filter(r => roleEmails.has(String(r.email).trim().toLowerCase())).length} already have one`)
     const risky = pop.filter(r => !/test\.|example\.|\.invalid$/.test(String(r.email).toLowerCase()))
     chk('🔴 none is a deliverable address — no real mailbox is written to',
-      risky.length === 0, risky.length ? `🔴 ${risky.map(r => r.email).join(', ')}` : 'all non-delivering test domains')
+      risky.length === 0,
+      risky.length
+        ? `🔴 ${risky.map(r => r.email).join(', ')} — this gate claims one of the population END TO END, so a deliverable address here means mailing a real person an invite nobody asked for. It caught exactly that on 2026-10-16.`
+        : 'all non-delivering test domains')
 
     const subject = pop[0]
     if (!subject) { console.error('🔴 no claimable resident to exercise against'); await cleanup('end'); process.exit(2) }
