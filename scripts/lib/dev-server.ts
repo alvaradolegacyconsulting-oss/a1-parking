@@ -59,19 +59,45 @@ export async function startDevServer(
     if (/error/i.test(s) && !/EADDRINUSE/.test(s)) process.stderr.write(`   [server] ${s}`)
   })
 
+  // Resolves when the child process actually exits.
+  const exited = new Promise<void>(resolve => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve()
+    child.once('exit', () => resolve())
+  })
+
   const stop = async () => {
-    if (child.pid) {
-      // Negative pid = the group. ESRCH just means it is already gone.
-      try { process.kill(-child.pid, 'SIGTERM') } catch { /* already down */ }
+    // 🔴 WAIT ON THE PROCESS, NOT ON THE PORT, AND ALWAYS ESCALATE.
+    // The first version polled portBusy(port) and returned as soon as
+    // 127.0.0.1:<port> was bindable — before the SIGKILL. But `next dev`
+    // binds `::` (its own EADDRINUSE says `address already in use
+    // :::3995`), so the port can read FREE while the process is still
+    // alive, and stop() then returned having reported success and
+    // killed nothing. A `next dev -p 3990` was found six minutes later,
+    // and a second dev server contending for .next is why the next
+    // gate's server would not start at all.
+    //
+    // Process liveness is the thing being waited on, so that is what is
+    // waited on; the port is a final sanity check, not the signal.
+    if (!child.pid) return
+    try { process.kill(-child.pid, 'SIGTERM') } catch { /* already down */ }
+    await Promise.race([exited, new Promise(r => setTimeout(r, 8_000))])
+
+    if (child.exitCode === null && child.signalCode === null) {
+      // SIGTERM did not take. Escalate unconditionally rather than
+      // trusting a heuristic to tell us whether it did.
+      try { process.kill(-child.pid, 'SIGKILL') } catch { /* gone */ }
+      await Promise.race([exited, new Promise(r => setTimeout(r, 3_000))])
     }
-    // 🔴 Confirm, do not assume. A SIGTERM that did not land leaves the
-    // next run racing a stale build.
-    const until = Date.now() + 10_000
-    while (Date.now() < until) {
+
+    // Now the port, as the last word. If it is still held, something is
+    // left behind and the next run would race a stale build — say so
+    // loudly rather than let it be discovered as "server did not come
+    // up" three gates later.
+    for (let i = 0; i < 12; i++) {
       if (!(await portBusy(port))) return
       await new Promise(r => setTimeout(r, 250))
     }
-    if (child.pid) { try { process.kill(-child.pid, 'SIGKILL') } catch { /* gone */ } }
+    process.stderr.write(`   🔴 port ${port} is STILL HELD after SIGKILL — a stale dev server is running. Find it with: ps -eo pid,command | grep 'next dev'\n`)
   }
 
   const until = Date.now() + (opts.timeoutMs ?? 120_000)
