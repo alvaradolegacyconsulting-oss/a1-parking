@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import { residentDisplayName, residentOptionLabel } from '../lib/display-name'
 import { supabase } from '../supabase'
 import ParkingTagField from '../components/ParkingTagField'
 import PlateStateSelect from '../components/PlateStateSelect'
@@ -1290,7 +1291,7 @@ export default function ResidentPortal() {
         {/* Welcome bar */}
         <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px 16px', marginBottom:'16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div>
-            <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0' }}>{resident.name}</p>
+            <p style={{ color:'white', fontWeight:'bold', fontSize:'14px', margin:'0' }}>{residentDisplayName(resident.name)}</p>
             <p style={{ color:'#aaa', fontSize:'12px', margin:'4px 0 0' }}>{resident.unit} · {resident.property}</p>
           </div>
           <div style={{ textAlign:'right' }}>

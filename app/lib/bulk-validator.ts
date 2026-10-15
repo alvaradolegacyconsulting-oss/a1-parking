@@ -72,8 +72,12 @@ const MAX_DESC = 60
 const MAX_TAG = 40
 const MIN_PLATE = 5
 
-/** The four columns a row cannot be missing beyond the obvious ones. */
-const REQUIRED: (keyof BulkRowInput)[] = ['unit', 'first_name', 'last_name', 'email', 'plate', 'plate_state']
+/** The columns a row cannot be missing beyond the obvious ones. */
+// 🔴 NAMES ARE NOT HERE ANY MORE. Ruled 2026-10-16: email stays
+// required, and at least ONE of first_name / last_name — the other may
+// be blank. See the paired check below, which the loop cannot express
+// because it is a rule ABOUT A PAIR rather than about a field.
+const REQUIRED: (keyof BulkRowInput)[] = ['unit', 'email', 'plate', 'plate_state']
 
 export function validateBulkRows(rows: BulkRowInput[]): BulkError[] {
   const errors: BulkError[] = []
@@ -86,6 +90,33 @@ export function validateBulkRows(rows: BulkRowInput[]): BulkError[] {
       if (String(r[f] ?? '').trim() === '') {
         add(r, f, 'required', `${label(f)} is required.`)
       }
+    }
+
+    // ── 🔴 ONE NAME IS ENOUGH, NEITHER IS NOT ────────────────────────
+    // Ruled 2026-10-16. Requiring both rejected a shape the architect's
+    // own Alden file contains and that real tenancies produce: a
+    // mononym, a business name on the lease, a resident whose given
+    // name nobody recorded.
+    //
+    // 🔴 AND THE DATABASE WAS ALWAYS FINE WITH IT. residents has a
+    // SINGLE `name` column, not first_name/last_name — the loader
+    // concatenates and trims, so ('Alex','') becomes 'Alex' and
+    // ('','Draper') becomes 'Draper', with no double space. Measured
+    // across the 228 batch-loaded rows: 0 with a stray leading or
+    // trailing space. The pair only ever existed in the template.
+    //
+    // Blank is stored as blank. Nothing writes 'TBD' and nothing should
+    // — measured: 0 of 654 residents contain it. A placeholder in a
+    // name column is a value somebody later has to recognise as not a
+    // name, and the empty string already means exactly what it means.
+    const hasFirst = String(r.first_name ?? '').trim() !== ''
+    const hasLast = String(r.last_name ?? '').trim() !== ''
+    if (!hasFirst && !hasLast) {
+      // Pointed at last_name, because that is where the instructions
+      // say to put a single name — so the error names the column the
+      // customer should fill rather than the first one alphabetically.
+      add(r, 'last_name', 'name_required',
+        'Give a name. One is enough — if the resident goes by a single name, put it in Last name and leave First name blank.')
     }
 
     const email = r.email.trim()

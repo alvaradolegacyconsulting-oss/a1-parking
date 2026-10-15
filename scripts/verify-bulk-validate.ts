@@ -292,20 +292,81 @@ const main = async () => {
   }
 
   console.log(`\n${fails === 0 ? '✅ all green' : `❌ ${fails} failed`}`)
+  console.log('\n── 🔴 the name rule ──')
+  nameRuleChecks(chk)
+
+  console.log(`\n${fails === 0 ? '✅ all green' : `❌ ${fails} failed`}`)
   process.exit(fails === 0 ? 0 : 1)
 }
 
 const NOISE = /^\s*(apts?|apt\.|appt\.?|apartments?|apartamentos?|units?|ste\.?|suites?|no\.?|num\.?)\s*[\s.#-]*\s*(?=[A-Za-z0-9])/i
 const stripNoise = (u: string) => u.trim().replace(/^'/, '').replace(NOISE, '')
 
-/** Run the real validator on one unit value and keep only unit errors. */
-function flagsFor(unit: string) {
-  const row: BulkRowInput = {
-    index: 0, unit, first_name: 'A', last_name: 'B', email: 'a@b.invalid', phone: '',
+/** A row that passes everything, so one field can be varied at a time. */
+function baseRow(over: Partial<BulkRowInput> = {}): BulkRowInput {
+  return {
+    index: 0, unit: '101', first_name: 'A', last_name: 'B', email: 'a@b.invalid', phone: '',
     plate: 'ABC1234', plate_state: 'TX', make: '', model: '', color: '', tag_number: '',
     plateNorm: 'ABC1234',
+    ...over,
   }
-  return validateBulkRows([row]).filter(e => e.column === 'unit')
+}
+
+/** Run the real validator on one unit value and keep only unit errors. */
+function flagsFor(unit: string) {
+  return validateBulkRows([baseRow({ unit })]).filter(e => e.column === 'unit')
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 🔴 THE NAME RULE — one is enough, neither is not
+// ════════════════════════════════════════════════════════════════════
+// Ruled 2026-10-16. Requiring both rejected a shape the architect's own
+// Alden file contains and that real tenancies produce: a mononym, a
+// business name on the lease, a resident whose given name nobody wrote
+// down.
+//
+// 🔴 AND THE DATABASE NEVER HAD THE PAIR. residents has a SINGLE `name`
+// column; the loader concatenates and trims, so ('Alex','') stores as
+// 'Alex' and ('','Draper') as 'Draper'. Measured across the 228
+// batch-loaded rows: 0 with a stray leading or trailing space. The
+// first/last split exists only in the template, which is why this is a
+// rule about a PAIR and cannot live in the per-field REQUIRED loop.
+export function nameRuleChecks(
+  chk: (n: string, ok: boolean, d?: string) => void,
+) {
+  const nameErrs = (first: string, last: string) =>
+    validateBulkRows([baseRow({ first_name: first, last_name: last })])
+      .filter(e => e.code === 'name_required' || e.column === 'first_name' || e.column === 'last_name')
+
+  chk('🔴 both names given → accepted', nameErrs('Alex', 'Draper').length === 0,
+    JSON.stringify(nameErrs('Alex', 'Draper')))
+  chk('🔴 LAST name only → accepted (the shape the instructions ask for)',
+    nameErrs('', 'Draper').length === 0,
+    `${JSON.stringify(nameErrs('', 'Draper'))} — "If you only have one name, put it in last name"`)
+  chk('🔴 FIRST name only → accepted too',
+    nameErrs('Alex', '').length === 0,
+    `${JSON.stringify(nameErrs('Alex', ''))} — the ruling says either may be blank, not that one is privileged`)
+  chk('🔴 NEITHER name → refused',
+    nameErrs('', '').length === 1 && nameErrs('', '')[0].code === 'name_required',
+    JSON.stringify(nameErrs('', '')))
+  chk('   ...and the error points at last_name, where the customer is told to put one name',
+    nameErrs('', '')[0]?.column === 'last_name',
+    `column=${nameErrs('', '')[0]?.column} — naming the column alphabetically first would send them to the wrong box`)
+  chk('   ...and whitespace is not a name',
+    nameErrs('   ', '\t').length === 1,
+    JSON.stringify(nameErrs('   ', '\t')))
+  // 🔴 The negative control: email is STILL required. Relaxing the name
+  // rule must not have relaxed its neighbour in the same REQUIRED list.
+  const noEmail = validateBulkRows([baseRow({ email: '' })]).filter(e => e.column === 'email')
+  chk('🔴 email is still required — the relaxation was narrow',
+    noEmail.length >= 1 && noEmail.some(e => e.code === 'required'),
+    JSON.stringify(noEmail))
+  const noUnit = validateBulkRows([baseRow({ unit: '' })]).filter(e => e.column === 'unit')
+  chk('   ...and so are unit, plate and plate_state',
+    noUnit.length >= 1
+    && validateBulkRows([baseRow({ plate: '' })]).some(e => e.column === 'plate')
+    && validateBulkRows([baseRow({ plate_state: '' })]).some(e => e.column === 'plate_state'),
+    'the REQUIRED list lost exactly two entries and kept four')
 }
 
 main().catch(async e => { console.error('🔴', (e as Error).message); await cleanup('throw'); process.exit(2) })

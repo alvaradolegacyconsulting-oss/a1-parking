@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef, useMemo, Suspense } from 'react'
+import { residentDisplayName, residentOptionLabel } from '../lib/display-name'
 import { QRCodeCanvas } from 'qrcode.react'
 import { QRLinkAffordance } from '../components/QRLinkAffordance'
 import { printQRSign } from '../lib/qr-print'
@@ -4179,7 +4180,7 @@ export default function ManagerPortal() {
                               <p style={{ color:'#C9A227', fontWeight:'bold', fontSize:'13px', margin:'0' }}>
                                 Unit {unit} — {unitVehicles.length} vehicle{unitVehicles.length !== 1 ? 's' : ''} pending
                               </p>
-                              {resident && <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{resident.name}</p>}
+                              {resident && <p style={{ color:'#888', fontSize:'11px', margin:'2px 0 0' }}>{residentDisplayName(resident.name)}</p>}
                             </div>
                             {!isReadOnly && (
                               <div style={{ display:'flex', gap:'6px' }}>
@@ -4404,7 +4405,7 @@ export default function ManagerPortal() {
                             style={inputStyle}>
                       <option value="">Unit-level / shared (no owner)</option>
                       {residentsAtUnit.map(r => (
-                        <option key={r.email} value={r.email}>{r.name} ({r.email})</option>
+                        <option key={r.email} value={r.email}>{residentOptionLabel(r.name, r.email)}</option>
                       ))}
                     </select>
                     {newVehicle.unit && residentsAtUnit.length === 0 && (
@@ -5194,7 +5195,7 @@ export default function ManagerPortal() {
                   <div key={r.id} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'8px', padding:'12px', marginBottom:'10px' }}>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
                       <div>
-                        <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{r.name}</p>
+                        <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{residentDisplayName(r.name)}</p>
                         <p style={{ color:'#aaa', fontSize:'11px', margin:'3px 0 0' }}>{r.unit} · {r.email}</p>
                         {r.phone && <p style={{ color:'#555', fontSize:'11px', margin:'2px 0 0' }}>{r.phone}</p>}
                       </div>
@@ -5357,7 +5358,7 @@ export default function ManagerPortal() {
                           <select value={vehicleOwnerEmail} onChange={e => setVehicleOwnerEmail(e.target.value)} style={inputStyle}>
                             <option value="">Unit-level / shared (no owner)</option>
                             {residentsAtUnit.map(r => (
-                              <option key={r.email} value={r.email}>{r.name} ({r.email})</option>
+                              <option key={r.email} value={r.email}>{residentOptionLabel(r.name, r.email)}</option>
                             ))}
                           </select>
                           {residentsAtUnit.length >= 2 && !vehicleOwnerEmail && (
@@ -5420,7 +5421,7 @@ export default function ManagerPortal() {
               <div key={i} style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'14px', marginBottom:'8px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
                   <div>
-                    <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{r.name}</p>
+                    <p style={{ color:'white', fontSize:'14px', fontWeight:'bold', margin:'0' }}>{residentDisplayName(r.name)}</p>
                     <p style={{ color:'#aaa', fontSize:'12px', margin:'3px 0 0' }}>{r.unit} · {r.email}</p>
                   </div>
                   <span style={{ background: r.is_active ? '#1a3a1a' : '#3a1a1a', color: r.is_active ? '#4caf50' : '#f44336', padding:'3px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' }}>{r.is_active ? 'Active' : 'Inactive'}</span>

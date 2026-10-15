@@ -16,9 +16,9 @@ upload, you'll be asked to confirm that. ShieldMyLot checks the file's
 format and releases the load. We do not verify the accuracy of your data.
 
 **One row per vehicle.** A resident with three cars gets three rows with
-the same unit and the same email. First and last name are the resident
-the vehicle is registered under (the leaseholder whose email is on the
-row), not the person who drives it. Rows with the same email and unit are
+the same unit and the same email. The name is the resident the vehicle
+is registered under (the leaseholder whose email is on the row), not the
+person who drives it. Rows with the same email and unit are
 grouped as one resident, so they must carry the same name. If two
 leaseholders in one unit each want their own login, give each their own
 email and their own rows.
@@ -26,8 +26,15 @@ email and their own rows.
 **Residents without a vehicle are not included in this file.** They can
 sign up themselves using the property's QR code.
 
-**Every row needs:** unit, first name, last name, email, plate, plate
-state. **Phone is optional.**
+**Every row needs:** unit, a name, email, plate, plate state.
+**Phone is optional.**
+
+**One name is enough.** You need either first name or last name — not
+both. **If you only have one name, put it in last name** and leave
+first name blank. We store what you give us and show a dash where
+there's nothing, and the resident can fill in the rest themselves once
+they have a login. A row with neither name is the only one we send
+back.
 
 **Email is required on every row.** It is how the resident later sets up
 their own login. A row without an email cannot be loaded. If you don't

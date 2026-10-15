@@ -48,7 +48,9 @@ as designations, not prefixes.
 
 | check | rule | why |
 |---|---|---|
-| required fields | unit, first_name, last_name, email, plate, plate_state | phone, make, model, color, tag_number optional |
+| required fields | unit, email, plate, plate_state, **and at least one of first_name / last_name** | phone, make, model, color, tag_number optional |
+| name pair | 🔴 `first_name` and `last_name` are a PAIR rule, not two field rules: either alone is fine, neither is `name_required` on `last_name`. Requiring both rejected a shape the Alden file contains and that real tenancies produce — a mononym, a business name on the lease, a resident whose given name nobody recorded. The error points at `last_name` because that is where the instructions tell the customer to put a single name. | ruled 2026-10-16 |
+| what is stored | 🔴 `residents` has a SINGLE `name` column — there is no first/last in the database. The loader concatenates and trims, so `('Alex','')` → `'Alex'` and `('','Draper')` → `'Draper'`, with no double space (measured: 0 stray spaces across 228 loaded rows). Blank stores as blank; **nothing writes `TBD`** and nothing should — measured 0 of 654 residents contain it, and a placeholder in a name column is a value somebody later has to recognise as not a name. | |
 | email format | `findBlockedEmailChar` (`app/lib/email-guard.ts`) | the same guard the bulk-invite path already uses |
 | email present | **required on every row** | without one the resident can never claim a login |
 | unit shape | reject only a leading **noise word** (`Apt`, `Apartment`, `Unit`, `Ste`, `Suite`, `No.`, `Num.`, and the Spanish `Apartamento`) — see below | the strict rule was measured and withdrawn |
