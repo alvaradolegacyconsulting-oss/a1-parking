@@ -16,7 +16,7 @@
 //   - Phase 3: deactivate-subscriber DEFINER RPC + type-to-confirm UI
 //   - Phase 4: error-rate tile (audit_logs) + honest "TBD" elsewhere
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import ImportQueue from './ImportQueue'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '../supabase'
@@ -289,6 +289,13 @@ export default function AdminConsolePage() {
   const [perPropertyLoading, setPerPropertyLoading] = useState(false)
   const [perPropertyError,   setPerPropertyError]   = useState<string | null>(null)
   const [perPropertyLoaded,  setPerPropertyLoaded]  = useState(false)
+  // 🔴 A REF, NOT STATE. This is in-flight bookkeeping and nothing
+  // renders from it; as state it ended up in the effect's dep array and
+  // made the effect cancel its own request. See the effect below.
+  const perPropertyInFlight = useRef(false)
+  // company_id → bulk_onboarding_enabled, for the row badge. Separate
+  // from the aggregate rows so an aggregates refresh cannot drop it.
+  const [bulkFlags, setBulkFlags] = useState<Map<number, boolean>>(new Map())
   // Sort state. Default 'last_activity_at' ASC = "top of list is the
   // property nobody's touched" — the call-sheet ordering Mateo asked for.
   // Sort keys are hardcoded to PerPropertyActivity keys the header
@@ -351,7 +358,14 @@ export default function AdminConsolePage() {
         // migration surface for a UI feature), fetch a lightweight id →
         // env map and join in JS below. Indexed on company_env
         // (companies_company_env_idx from 20260708 layer1), tiny payload.
-        supabase.from('companies').select('id, company_env'),
+        // 🔴 bulk_onboarding_enabled rides along on this existing query.
+        // It is the switch Jose could not find: it lives in the company
+        // DRAWER (correctly — a switch inside a clickable row is a
+        // misclick that opens a tenant's bulk-write path), but nothing
+        // on the row said which companies had it on, so finding it
+        // meant opening every drawer in turn. One more column on a
+        // query that was already being made.
+        supabase.from('companies').select('id, company_env, bulk_onboarding_enabled'),
         // 2026-08-21 — red-warnings rollup. Call with NULL to receive
         // all envs; client-side filter on the shared envFilter drives
         // display. RPC's server-side default is 'production' but pass
@@ -369,9 +383,18 @@ export default function AdminConsolePage() {
       // aggregates render with company_env=undefined (Env pill shows '—',
       // filter shows all rows regardless of envFilter — never hides A1).
       const envMap = new Map<number, 'production' | 'test' | 'demo'>()
-      for (const r of (envRes.data ?? []) as Array<{ id: number; company_env: 'production' | 'test' | 'demo' }>) {
+      // 🔴 Its OWN map, not a field spread onto the aggregate rows.
+      // refreshAggregates (the Refresh button) replaces aggregates with
+      // the raw RPC result and does NOT redo this join — so company_env
+      // is lost on refresh and the Env pill falls back to '—'. That is
+      // pre-existing and reported, not fixed here; keeping the bulk flag
+      // in a separate map means the badge does not inherit it.
+      const bulkMap = new Map<number, boolean>()
+      for (const r of (envRes.data ?? []) as Array<{ id: number; company_env: 'production' | 'test' | 'demo'; bulk_onboarding_enabled: boolean | null }>) {
         envMap.set(r.id, r.company_env)
+        bulkMap.set(r.id, r.bulk_onboarding_enabled === true)
       }
+      setBulkFlags(bulkMap)
       const aggWithEnv = ((aggRes.data ?? []) as CompanyAggregate[]).map(a => ({
         ...a,
         company_env: envMap.get(a.company_id),
@@ -412,24 +435,56 @@ export default function AdminConsolePage() {
   // aggregate. On subsequent switches, cached data (perPropertyLoaded)
   // is used — a manual refresh button in the tab body reruns the RPC
   // when Jose wants a fresh count.
+  // ══════════════════════════════════════════════════════════════════
+  // 🔴 THIS EFFECT USED TO CANCEL ITS OWN REQUEST, EVERY TIME.
+  // ══════════════════════════════════════════════════════════════════
+  // The dep array included perPropertyLoading, which the effect SETS on
+  // its first line. So: run → setLoading(true) → a dep changed → React
+  // runs the cleanup, which sets cancelled = true for the invocation
+  // whose request is still in flight → the effect re-runs and bails on
+  // the guard → the original .then fires, sees cancelled, and returns
+  // without clearing anything.
+  //
+  // The result was deterministic, not a race: perPropertyLoading stuck
+  // true and perPropertyLoaded stuck false, forever.
+  //
+  // 🔴 And there was no way out of it on the screen. The body renders
+  // the spinner while `perPropertyLoading && !perPropertyLoaded`, and
+  // the Refresh button is `disabled={perPropertyLoading}` — so the
+  // stuck flag both showed "Loading per-property activity…" and greyed
+  // out the only manual retry. refreshPerProperty itself is a plain
+  // async function and was always correct; it just could not be
+  // reached.
+  //
+  // The in-flight guard is a ref now, because that is what it always
+  // was: a piece of bookkeeping that must NOT participate in
+  // rendering. Putting it in state is what dragged it into the deps.
+  //
+  // Measured before changing it: the RPC answers in 562ms with 21 rows
+  // and no error, as an active admin. The data layer was never the
+  // problem.
   useEffect(() => {
-    if (tab !== 'properties' || perPropertyLoaded || perPropertyLoading) return
+    if (tab !== 'properties' || perPropertyLoaded || perPropertyInFlight.current) return
+    perPropertyInFlight.current = true
     let cancelled = false
     setPerPropertyLoading(true)
     setPerPropertyError(null)
     supabase.rpc('get_console_per_property_activity').then(({ data, error }) => {
+      perPropertyInFlight.current = false
+      // 🔴 Cleared whether or not this invocation was cancelled. A
+      // cancelled run that leaves the flag set is the bug above wearing
+      // a different hat — the spinner stays and Refresh stays disabled.
+      setPerPropertyLoading(false)
       if (cancelled) return
       if (error) {
         setPerPropertyError(error.message)
-        setPerPropertyLoading(false)
         return
       }
       setPerProperty((data ?? []) as PerPropertyActivity[])
       setPerPropertyLoaded(true)
-      setPerPropertyLoading(false)
     })
     return () => { cancelled = true }
-  }, [tab, perPropertyLoaded, perPropertyLoading])
+  }, [tab, perPropertyLoaded])
 
   // 2026-08-21 Defect 2 fix — red-warnings retry handler. Called by the
   // Retry button that appears inside the error box (Mateo: "If a retry
@@ -572,6 +627,10 @@ export default function AdminConsolePage() {
       .from('companies').select('bulk_onboarding_enabled').eq('id', drawerCompany.id).maybeSingle()
     const now = (back as { bulk_onboarding_enabled?: boolean } | null)?.bulk_onboarding_enabled === true
     setDrawerCompany({ ...drawerCompany, bulk_onboarding_enabled: now })
+    // And the row badge, so the list agrees with the drawer without a
+    // reload. Read back from the RPC's own verification above, not from
+    // what was requested.
+    setBulkFlags(prev => { const next = new Map(prev); next.set(drawerCompany.id, now); return next })
     if (now !== enabled) {
       alert(`The switch reads back as ${now ? 'ON' : 'OFF'}, not ${enabled ? 'ON' : 'OFF'}. Check the company before relying on it.`)
     }
@@ -1259,6 +1318,21 @@ export default function AdminConsolePage() {
                         style={{ background: '#0f1117', borderTop: '1px solid #1e2535', cursor: 'pointer' }}>
                         <Td>
                           <span style={{ color: 'white', fontWeight: 'bold' }}>{a.company_name}</span>
+                          {/* 🔴 The badge exists so the switch is findable.
+                              It is deliberately NOT a control — clicking
+                              the row opens the drawer, where the switch
+                              lives with its confirm and its explanation. */}
+                          {bulkFlags.get(a.company_id) && (
+                            <span style={{
+                              marginLeft: 8, background: '#0d1f0d', color: '#4caf50',
+                              border: '1px solid #2e7d32', borderRadius: 9,
+                              padding: '1px 7px', fontSize: 9.5, fontWeight: 'bold',
+                              textTransform: 'uppercase', letterSpacing: '0.05em',
+                              whiteSpace: 'nowrap',
+                            }} title="Bulk resident onboarding is ON — open the row to change it">
+                              bulk
+                            </span>
+                          )}
                         </Td>
                         {/* 2026-07-20 — Env pill. Green production / orange test /
                             purple demo / '—' when unknown (env-map miss, defensive). */}
