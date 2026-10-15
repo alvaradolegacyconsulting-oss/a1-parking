@@ -53,6 +53,10 @@ const claimRoleEmails: string[] = []
 // the LEAST of the problems — but it would also make the next run's
 // happy path fail for a reason that is this gate's fault.
 const depRows: { table: string; id: unknown }[] = []
+// Probe rows in the VALUE-referenced tables. They have no FK to the
+// batch, so nothing in the database would stop them outliving this run
+// — only this list does.
+const valueRows: { table: string; id: number }[] = []
 let flaggedCompany: number | null = null
 let batchSnapshot: Record<string, unknown> | null = null
 let batchId = 0
@@ -68,6 +72,11 @@ async function cleanup(why: string) {
     const r = await db.from(d.table as 'vehicle_plate_changes').delete().eq('id', d.id as number).select('id')
     if (r.error) { warn(`   🔴 could not remove the probe dependent in ${d.table}: ${r.error.message}`); fails++ }
     else say(`   ↩ removed ${(r.data ?? []).length} probe row(s) from ${d.table}`)
+  }
+  for (const v of valueRows) {
+    const r = await db.from(v.table as 'violations').delete().eq('id', v.id).select('id')
+    if (r.error) { warn(`   🔴 could not remove the probe row in ${v.table}: ${r.error.message}`); fails++ }
+    else say(`   ↩ removed ${(r.data ?? []).length} probe row(s) from ${v.table}`)
   }
   // Records next — they sit at a property a demo CA can open.
   if (batchId) {
@@ -183,6 +192,21 @@ const main = async () => {
     warn('   Apply docs/backlog/wip-20261016_rollback.sql first.')
     process.exit(2)
   }
+  // 🔴 And the value-dependent half. Without it the FK-only rollback
+  // happily removes a batch that has a post-load violation or a guest
+  // authorization against it — measured 2026-10-16, when this gate ran
+  // against the applied FK-only version and watched it roll back
+  // through both. Refusing beats reporting seven reds that all have
+  // one cause.
+  const ping2 = await db.rpc('import_batch_value_dependents')
+  if (ping2.error) {
+    warn(`🔴 import_batch_value_dependents() is not callable: ${ping2.error.message}`)
+    warn('   Apply docs/backlog/wip-20261016_rollback_value_dependents.sql first.')
+    warn('   Until it is applied, rollback checks only the 3 foreign keys and will')
+    warn('   remove a batch while leaving a violation, a guest authorization, a space')
+    warn('   assignment or a dispute pointing at rows that no longer exist.')
+    process.exit(2)
+  }
 
   const count = async (t: 'residents' | 'vehicles' | 'user_roles') => {
     const { count: c } = await db.from(t).select('*', { count: 'exact', head: true }).eq('import_batch_id', batchId)
@@ -295,6 +319,156 @@ const main = async () => {
     } else {
       chk('a dependent row could be created to test the refusal', false,
         `🔴 could not insert into vehicle_plate_changes: ${tryDep.error?.message}. The dependent refusal is UNTESTED by this gate — the function discovers referencing tables from pg_constraint, so it is not wrong, but this assertion did not exercise it.`)
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // 🔴 THE EIGHT VALUE REFERENCES — the ones an FK walk is blind to
+    // ══════════════════════════════════════════════════════════════
+    console.log('\n── 🔴 the value-dependent list is counted, not assumed ──')
+    const listed = await db.rpc('import_batch_value_dependents')
+    const listRows = (listed.data as { tbl: string; key_kind: string; scope_kind: string }[] | null) ?? []
+    chk('🔴 the list holds exactly 8 entries',
+      !listed.error && listRows.length === 8,
+      listed.error ? listed.error.message : listRows.map(d => d.tbl).join(', '))
+    chk('   ...six by resident address, two by plate since the load',
+      listRows.filter(d => d.key_kind === 'resident_email').length === 6
+      && listRows.filter(d => d.scope_kind === 'property_since_load').length === 2,
+      `${listRows.filter(d => d.key_kind === 'resident_email').length} by address, ${listRows.filter(d => d.scope_kind === 'property_since_load').length} since-load`)
+    // 🔴 THIS PASSED FOR THE WRONG REASON on the first run. With the
+    // list empty — the migration unapplied — "none of these are on it"
+    // is trivially true. An exclusion assertion has to require the list
+    // to be populated first, or absence proves itself.
+    chk('🔴 ...and visitor_passes and authorized_plates are NOT on it',
+      listRows.length === 8
+      && !listRows.some(d => ['visitor_passes', 'authorized_plates', 'audit_logs'].includes(d.tbl)),
+      listRows.length !== 8
+        ? `🔴 cannot conclude: the list holds ${listRows.length} entries, so "not present" proves nothing`
+        : 'ruled independent: a pass belongs to a visitor and a plate list is configuration, so neither came to exist because a vehicle row did')
+
+    const loadedAt = String((await db.from('import_batches').select('loaded_at').eq('id', batchId).maybeSingle()).data?.loaded_at)
+    const anImportedPlate = String((await db.from('vehicles').select('plate')
+      .eq('import_batch_id', batchId).limit(1).maybeSingle()).data?.plate)
+    const anImportedEmail = String((await db.from('residents').select('email')
+      .eq('import_batch_id', batchId).limit(1).maybeSingle()).data?.email)
+
+    // ── 🔴 (1) a violation written AFTER the load blocks ────────────
+    console.log('\n── 🔴 a violation on an imported plate, written since the load ──')
+    const vPost = await db.from('violations').insert({
+      plate: anImportedPlate, property: propName, violation_type: 'zz probe post-load',
+      created_at: new Date(new Date(loadedAt).getTime() + 60_000).toISOString(),
+    }).select('id').maybeSingle()
+    if (vPost.error) throw new Error(`post-load violation probe: ${vPost.error.message}`)
+    valueRows.push({ table: 'violations', id: vPost.data!.id as number })
+    const blockedByViolation = await js(await post('/api/admin/import-batch/rollback', { batch_id: batchId }, admin))
+    chk('🔴 the rollback is refused — an FK walk would never have seen this',
+      blockedByViolation.error === 'has_dependents', str(blockedByViolation, 200))
+    chk('   ...and names violations with its key and row count',
+      (blockedByViolation.blockers ?? []).some((b: Record<string, unknown>) =>
+        String(b.table).includes('violations') && Number(b.rows) === 1),
+      str(blockedByViolation.blockers))
+    chk('   ...and nothing was removed', (await count('residents')) === 228, `${await count('residents')} stamped`)
+    const rmPost = await db.from('violations').delete().eq('id', vPost.data!.id).select('id')
+    valueRows.length = 0
+    chk('   (control) with it removed, the rollback is unblocked again',
+      (rmPost.data ?? []).length === 1, `${(rmPost.data ?? []).length} removed`)
+
+    // ── 🔴 (2) a violation written BEFORE the load does NOT block ───
+    // A plate was in the lot before it was loaded. A ticket from last
+    // week never referred to the vehicle row, so it is not a dependent
+    // of the batch — and without the time scope it would block the undo
+    // of a load it predates.
+    console.log('\n── 🔴 a violation on the SAME plate, written before the load ──')
+    const vPre = await db.from('violations').insert({
+      plate: anImportedPlate, property: propName, violation_type: 'zz probe pre-load',
+      created_at: new Date(new Date(loadedAt).getTime() - 7 * 24 * 3600_000).toISOString(),
+    }).select('id,created_at').maybeSingle()
+    if (vPre.error) throw new Error(`pre-load violation probe: ${vPre.error.message}`)
+    valueRows.push({ table: 'violations', id: vPre.data!.id as number })
+    const preCheck = await js(await post('/api/admin/import-batch/rollback', { batch_id: batchId }, admin))
+    chk('🔴 it does NOT block — same plate, same property, but it predates the load',
+      preCheck.error !== 'has_dependents',
+      `${str(preCheck, 180)} — created ${vPre.data?.created_at} vs loaded ${loadedAt}`)
+    // That call may have ROLLED THE BATCH BACK. Put it back if so.
+    const afterPre = (await db.from('import_batches').select('status').eq('id', batchId).maybeSingle()).data?.status
+    chk('   ...it went through, which is the assertion', afterPre === 'rolled_back' || preCheck.ok === true,
+      `status=${afterPre}`)
+    const rmPre = await db.from('violations').delete().eq('id', vPre.data!.id).select('id')
+    valueRows.length = 0
+    chk('   (the pre-load probe is removed)', (rmPre.data ?? []).length === 1)
+
+    // 🔴 The rollback just succeeded, so re-load to carry on testing
+    // the remaining refusals against a loaded batch.
+    if (afterPre === 'rolled_back') {
+      chk('🔴 and the clean rollback removed everything it wrote',
+        (await count('residents')) === 0 && (await count('vehicles')) === 0 && (await count('user_roles')) === 0,
+        `residents ${await count('residents')}, vehicles ${await count('vehicles')}, roles ${await count('user_roles')}`)
+      chk('   ...restoring the property to its baseline',
+        (await propCount('residents')) === resBase && (await propCount('vehicles')) === vehBase,
+        `residents ${await propCount('residents')} (was ${resBase}), vehicles ${await propCount('vehicles')} (was ${vehBase})`)
+      say('\n   re-loading to test the remaining refusals against a loaded batch…')
+      await db.from('import_batches').update({
+        status: 'approved', loaded_at: null, loaded_by: null,
+        loaded_resident_count: null, loaded_vehicle_count: null,
+      }).eq('id', batchId)
+      const reload = await js(await post('/api/admin/import-batch/load', { batch_id: batchId }, admin))
+      chk('   re-loaded', reload.ok === true, `${reload.residents}/${reload.vehicles}`)
+    }
+
+    // ── 🔴 (3) a guest authorization by an imported resident blocks ──
+    console.log('\n── 🔴 a guest authorization issued by an imported resident ──')
+    const freshEmail = String((await db.from('residents').select('email')
+      .eq('import_batch_id', batchId).limit(1).maybeSingle()).data?.email)
+    const ga = await db.from('guest_authorizations').insert({
+      company: demo.name, property: propName, plate: 'ZZGUEST1', state: 'TX',
+      guest_name: 'ZZ Probe Guest', visiting_unit: '1309', resident_email: freshEmail,
+      start_date: new Date().toISOString().slice(0, 10),
+      end_date: new Date(Date.now() + 7 * 24 * 3600_000).toISOString().slice(0, 10),
+      status: 'active', is_active: true, created_by_email: freshEmail,
+    }).select('id').maybeSingle()
+    if (ga.error) throw new Error(`guest auth probe: ${ga.error.message}`)
+    valueRows.push({ table: 'guest_authorizations', id: ga.data!.id as number })
+    const blockedByGa = await js(await post('/api/admin/import-batch/rollback', { batch_id: batchId }, admin))
+    chk('🔴 the rollback is refused — a guest is still admitted by a resident who would be gone',
+      blockedByGa.error === 'has_dependents', str(blockedByGa, 200))
+    chk('   ...naming guest_authorizations',
+      (blockedByGa.blockers ?? []).some((b: Record<string, unknown>) =>
+        String(b.table).includes('guest_authorizations')),
+      str(blockedByGa.blockers))
+    const rmGa = await db.from('guest_authorizations').delete().eq('id', ga.data!.id).select('id')
+    valueRows.length = 0
+    chk('   (control) removed', (rmGa.data ?? []).length === 1)
+
+    // ── 🔴 (4) the same address at ANOTHER property does not block ──
+    console.log('\n── 🔴 the same address, at a different property ──')
+    const { data: otherProp } = await db.from('properties').select('name')
+      .eq('company', demo.name).neq('name', propName).eq('is_active', true).limit(1).maybeSingle()
+    if (otherProp) {
+      const sr = await db.from('space_requests').insert({
+        resident_email: freshEmail, property: String(otherProp.name),
+        note: 'zz probe at another property', status: 'pending',
+      }).select('id').maybeSingle()
+      if (sr.error) throw new Error(`space_requests probe: ${sr.error.message}`)
+      valueRows.push({ table: 'space_requests', id: sr.data!.id as number })
+      const other = await js(await post('/api/admin/import-batch/rollback', { batch_id: batchId }, admin))
+      chk(`🔴 a space request for the same address at ${otherProp.name} does NOT block`,
+        other.error !== 'has_dependents',
+        `${str(other, 180)} — matching resident_email alone would have refused here, which is why the check is scoped by property`)
+      const rmSr = await db.from('space_requests').delete().eq('id', sr.data!.id).select('id')
+      valueRows.length = 0
+      chk('   (the probe is removed)', (rmSr.data ?? []).length === 1)
+      // It rolled back; put it back for the remaining legs.
+      const st = (await db.from('import_batches').select('status').eq('id', batchId).maybeSingle()).data?.status
+      if (st === 'rolled_back') {
+        await db.from('import_batches').update({
+          status: 'approved', loaded_at: null, loaded_by: null,
+          loaded_resident_count: null, loaded_vehicle_count: null,
+        }).eq('id', batchId)
+        const rl = await js(await post('/api/admin/import-batch/load', { batch_id: batchId }, admin))
+        chk('   (re-loaded for the remaining legs)', rl.ok === true, `${rl.residents}/${rl.vehicles}`)
+      }
+    } else {
+      chk('a second property exists to test the scoping', false,
+        '🔴 the demo company has only one active property, so the property-scoping assertion could not be exercised')
     }
 
     // ── 🔴 A CLAIMED RESIDENT REFUSES THE WHOLE ROLLBACK ───────────
