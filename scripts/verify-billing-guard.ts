@@ -351,7 +351,9 @@ const main = async () => {
     await cleanup('end')
   }
 
-  console.log(`\n${fails === 0 ? '' : `❌ ${fails} failed`}`)
+  console.log(`\n${fails === 0
+    ? '✅ all green — metered covered as DECISION LOGIC (production functions, injected check result); A1 from the BILLING_SYNC_CRON record. The real metered end-to-end is a required leg in the slice-2 checkout gate.'
+    : `❌ ${fails} failed`}`)
   process.exit(fails === 0 ? 0 : 1)
 }
 
