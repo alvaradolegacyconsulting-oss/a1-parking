@@ -47,7 +47,7 @@ const TEST_SECRET = '1x0000000000000000000000000000000AA'
 const FIXTURE = 'docs/bulk-onboarding/fixtures/alden_fixture_rehearsal.csv'
 const CA_EMAIL = 'demo-ca@test.shieldmylot.com'
 const PROPERTY = 'Willowbrook Court'
-const CLAIMANT = 'jose+bulkload1@shieldmylot.com'
+const CLAIMANT = 'alvaradolegacyconsulting+bulkload1@gmail.com'
 const S = Date.now()
 
 let srv: DevServer | null = null
@@ -123,11 +123,16 @@ const main = async () => {
   // continuing would stack a second load onto the same plates.
   const { data: existing } = await db.from('import_batches')
     .select('id,status,loaded_resident_count').eq('property_id', prop.id)
-  const prior = (existing ?? [])[0]
-  if (prior && !['submitted', 'approved'].includes(String(prior.status))) {
+  // 🔴 Only a LOADED batch blocks. A rolled_back or rejected one is
+  // finished business and its plates are gone, so a fresh rehearsal is
+  // exactly what should happen next — which is the state this property
+  // was left in after the first rehearsal was undone.
+  const prior = (existing ?? []).find(b => ['submitted', 'approved'].includes(String(b.status)))
+  const loaded = (existing ?? []).find(b => String(b.status) === 'loaded')
+  if (loaded) {
     say(`\nThere is already a batch on ${PROPERTY}:`)
-    for (const b of existing ?? []) say(`   batch ${b.id} · ${b.status} · ${b.loaded_resident_count ?? '—'} loaded`)
-    say('\nNothing done. Roll it back from the queue (same day) or delete the row, then run again.')
+    say(`   batch ${loaded.id} is LOADED with ${loaded.loaded_resident_count ?? '—'} residents`)
+    say('\nNothing done. Roll it back first — npm run rollback:demobatch -- "' + PROPERTY + '"')
     return
   }
   if (prior) {
@@ -305,7 +310,7 @@ const main = async () => {
     say(`     invite still works and simply does not name them.`)
     say(``)
     say(`  Then: the link sets a password and lands on /reset-password-required.`)
-    say(`  jose+bulkload2@ and jose+bulkload3@ are also in this batch and can`)
+    say(`  +bulkload2 and +bulkload3 are also in this batch and can`)
     say(`  be claimed from /claim?property=${encodeURIComponent(PROPERTY)}&company=${encodeURIComponent(demo!.name)}`)
     say(``)
     say(`  TO UNDO: the queue's "Roll back (same day only)" button on batch`)

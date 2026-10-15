@@ -48,10 +48,23 @@ const OUT = path.join(DIR, 'alden_fixture_rehearsal.csv')
 
 // The deliverable ones. Jose reads this mailbox; the plus-tag makes
 // each a distinct identity to every uniqueness rule in the system.
+//
+// 🔴 GMAIL, NOT shieldmylot.com. The first rehearsal sent its invite to
+// jose+bulkload1@shieldmylot.com and it went nowhere — that mailbox does
+// not exist. The claim screen says the same thing either way by design,
+// so nothing on the way through showed it; the only evidence was that
+// no email arrived.
+//
+// The lesson is narrower than "use a real address": a send that lands
+// nowhere is INDISTINGUISHABLE from one that lands, both to the person
+// claiming and to the gate, because the identical-answer rule is doing
+// exactly what it was built to do. A rehearsal whose whole purpose is
+// "an email arrives" has to use a mailbox someone actually reads, and
+// the only way to know is for them to look.
 const DELIVERABLE = [
-  'jose+bulkload1@shieldmylot.com',
-  'jose+bulkload2@shieldmylot.com',
-  'jose+bulkload3@shieldmylot.com',
+  'alvaradolegacyconsulting+bulkload1@gmail.com',
+  'alvaradolegacyconsulting+bulkload2@gmail.com',
+  'alvaradolegacyconsulting+bulkload3@gmail.com',
 ]
 
 const text = fs.readFileSync(SRC, 'utf8')
