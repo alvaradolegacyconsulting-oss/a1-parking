@@ -25,11 +25,14 @@ import { useCallback, useEffect, useState } from 'react'
 
 const GOLD = '#C9A227'
 
-type Action = 'approve' | 'return' | 'reject' | 'load'
+type Action = 'approve' | 'return' | 'reject' | 'load' | 'rollback'
 interface ActionMsg {
   kind: 'ok' | 'err'
   text: string
   reasons?: string[]
+  /** Rollback refusals, passed through whole: who claimed, what depends. */
+  claimed?: { email: string; unit: string | null }[]
+  blockers?: { table: string; column: string; rows: number }[]
   /** Server-stated. A blocked load would succeed on retry and must not offer one. */
   retryable?: boolean
   offerReturn?: boolean
@@ -142,6 +145,8 @@ export default function ImportQueue() {
         setActionMsg({
           kind: 'err', text: j.message || 'That action was refused.', reasons: j.reasons,
           retryable: j.retryable === true, offerReturn: j.offer_return === true,
+          claimed: Array.isArray(j.claimed) ? j.claimed : undefined,
+          blockers: Array.isArray(j.blockers) ? j.blockers : undefined,
         })
       } else if (kind === 'approve') {
         setActionMsg({ kind: 'ok', text: `Batch ${id} approved. Loading it is a separate step.` })
@@ -149,8 +154,10 @@ export default function ImportQueue() {
         setActionMsg({ kind: 'ok', text: `Batch ${id} returned to the company with ${j.error_count} row${j.error_count === 1 ? '' : 's'} to fix.` })
       } else if (kind === 'reject') {
         setActionMsg({ kind: 'ok', text: `Batch ${id} rejected. The company has been given your reason.` })
-      } else {
+      } else if (kind === 'load') {
         setActionMsg({ kind: 'ok', text: `Batch ${id} loaded into ${j.property}: ${j.residents} residents and ${j.vehicles} vehicles. They can set up their logins from the property's setup link.` })
+      } else {
+        setActionMsg({ kind: 'ok', text: `Batch ${id} rolled back: ${j.residents} residents, ${j.vehicles} vehicles and ${j.roles} logins-in-waiting removed. The company can fix the file and submit it again.` })
       }
       // 🔴 Re-read both the list and the verdict after any action, so
       // the screen shows what the server now holds rather than what the
@@ -381,6 +388,26 @@ function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
           {actionMsg.reasons?.map((why, i) => (
             <p key={i} style={{ color: '#d99', fontSize: 11.5, lineHeight: 1.6, margin: '4px 0 0' }}>· {why}</p>
           ))}
+          {/* 🔴 Named, not counted. "3 residents have logins" is not
+              something an operator can act on; these addresses are. */}
+          {actionMsg.claimed && actionMsg.claimed.length > 0 && (
+            <div style={{ marginTop: 8, maxHeight: 160, overflowY: 'auto' }}>
+              {actionMsg.claimed.map((c, i) => (
+                <p key={i} style={{ color: '#ccc', fontSize: 11.5, lineHeight: 1.5, margin: '0 0 2px' }}>
+                  <span style={{ color: GOLD }}>unit {c.unit || '—'}</span> · {c.email}
+                </p>
+              ))}
+            </div>
+          )}
+          {actionMsg.blockers && actionMsg.blockers.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {actionMsg.blockers.map((b, i) => (
+                <p key={i} style={{ color: '#ccc', fontSize: 11.5, lineHeight: 1.5, margin: '0 0 2px' }}>
+                  <span style={{ color: GOLD }}>{b.rows}</span> row(s) in {b.table} point at this batch ({b.column})
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -473,6 +500,18 @@ function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
           <button onClick={() => onAct('load', id)} disabled={acting !== null}
             style={{ background: 'none', color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 'bold', cursor: acting ? 'wait' : 'pointer', fontFamily: 'Arial' }}>
             {acting === 'load' ? 'Retrying…' : 'Retry load'}
+          </button>
+        )}
+        {/* 🔴 ROLL BACK IS SAME-DAY AND ALL-OR-NOTHING. Shown on a
+            loaded batch; the RPC decides whether today still counts and
+            whether anyone has claimed, because both have to be decided
+            in the same transaction as the deletes. The button does not
+            pre-judge it — a UI that hid itself after midnight would be
+            hiding the explanation too. */}
+        {status === 'loaded' && (
+          <button onClick={() => onAct('rollback', id)} disabled={acting !== null}
+            style={{ background: 'none', color: '#ff9800', border: '1px solid #ff9800', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 'bold', cursor: acting ? 'wait' : 'pointer', opacity: acting ? 0.6 : 1, fontFamily: 'Arial' }}>
+            {acting === 'rollback' ? 'Rolling back…' : 'Roll back (same day only)'}
           </button>
         )}
         {status === 'approved' && !v.can_load && !canReturn && !canReject && (
