@@ -192,6 +192,7 @@ export const ROUTE_EXPOSURE: Record<string, Expectation> = {
   '/api/admin/import-batch/approve': { kind: 'login' },
   '/api/admin/import-batch/return':  { kind: 'login' },
   '/api/admin/import-batch/reject':  { kind: 'login' },
+  '/api/admin/import-batch/load':    { kind: 'login' },
   '/company_admin/resident-upload': { kind: 'login' },
 
   // 🔴 NOT MINE, and undeclared since it shipped — found by this gate

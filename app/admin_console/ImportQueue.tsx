@@ -25,7 +25,15 @@ import { useCallback, useEffect, useState } from 'react'
 
 const GOLD = '#C9A227'
 
-type Action = 'approve' | 'return' | 'reject'
+type Action = 'approve' | 'return' | 'reject' | 'load'
+interface ActionMsg {
+  kind: 'ok' | 'err'
+  text: string
+  reasons?: string[]
+  /** Server-stated. A blocked load would succeed on retry and must not offer one. */
+  retryable?: boolean
+  offerReturn?: boolean
+}
 
 interface QueueRow {
   id: number
@@ -43,6 +51,9 @@ interface QueueRow {
   approved_at: string | null
   reject_reason: string | null
   reject_error_count: number | null
+  loaded_at: string | null
+  loaded_resident_count: number | null
+  loaded_vehicle_count: number | null
   block_hint: string | null
 }
 
@@ -82,7 +93,7 @@ export default function ImportQueue() {
   const [reviewing, setReviewing] = useState(false)
   const [reviewErr, setReviewErr] = useState('')
   const [acting, setActing] = useState<Action | null>(null)
-  const [actionMsg, setActionMsg] = useState<{ kind: 'ok' | 'err'; text: string; reasons?: string[] } | null>(null)
+  const [actionMsg, setActionMsg] = useState<ActionMsg | null>(null)
 
   const loadList = useCallback(async () => {
     setListErr('')
@@ -124,13 +135,22 @@ export default function ImportQueue() {
       })
       const j = await r.json()
       if (!r.ok) {
-        setActionMsg({ kind: 'err', text: j.message || 'That action was refused.', reasons: j.reasons })
+        // 🔴 The server says which outcome this was and whether a retry
+        // can help. The UI does not infer it: a blocked load would
+        // succeed on retry and loading into an inactive property is the
+        // thing the block exists to prevent.
+        setActionMsg({
+          kind: 'err', text: j.message || 'That action was refused.', reasons: j.reasons,
+          retryable: j.retryable === true, offerReturn: j.offer_return === true,
+        })
       } else if (kind === 'approve') {
         setActionMsg({ kind: 'ok', text: `Batch ${id} approved. Loading it is a separate step.` })
       } else if (kind === 'return') {
         setActionMsg({ kind: 'ok', text: `Batch ${id} returned to the company with ${j.error_count} row${j.error_count === 1 ? '' : 's'} to fix.` })
-      } else {
+      } else if (kind === 'reject') {
         setActionMsg({ kind: 'ok', text: `Batch ${id} rejected. The company has been given your reason.` })
+      } else {
+        setActionMsg({ kind: 'ok', text: `Batch ${id} loaded into ${j.property}: ${j.residents} residents and ${j.vehicles} vehicles. They can set up their logins from the property's setup link.` })
       }
       // 🔴 Re-read both the list and the verdict after any action, so
       // the screen shows what the server now holds rather than what the
@@ -218,6 +238,18 @@ export default function ImportQueue() {
               </div>
             </div>
 
+            {r.status === 'loaded' && (
+              <div style={{ background: '#0d1a2a', border: '1px solid #1e4976', borderRadius: 8, padding: '9px 12px', marginTop: 10 }}>
+                <p style={{ color: '#64b5f6', fontSize: 12, margin: 0, lineHeight: 1.6 }}>
+                  Loaded{r.loaded_at ? ` ${when(r.loaded_at)}` : ''} —{' '}
+                  {r.loaded_resident_count ?? '?'} residents and {r.loaded_vehicle_count ?? '?'} vehicles written.
+                </p>
+                <p style={{ color: '#789', fontSize: 11, margin: '4px 0 0', lineHeight: 1.6 }}>
+                  They have records and no logins yet. Each one sets up a login from the
+                  property&apos;s setup link.
+                </p>
+              </div>
+            )}
             {r.status === 'rejected' && r.reject_reason && (
               <div style={{ background: '#1a1012', border: '1px solid #4a2020', borderRadius: 8, padding: '9px 12px', marginTop: 10 }}>
                 <p style={{ color: '#888', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px' }}>
@@ -245,7 +277,7 @@ function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
   v: Verdict
   id: number
   acting: Action | null
-  actionMsg: { kind: 'ok' | 'err'; text: string; reasons?: string[] } | null
+  actionMsg: ActionMsg | null
   onAct: (k: Action, id: number, reason?: string) => void
 }) {
   const [rejecting, setRejecting] = useState(false)
@@ -421,11 +453,32 @@ function ReviewPanel({ v, id, acting, actionMsg, onAct }: {
             Reject anyway
           </button>
         )}
-        {status === 'approved' && (
+        {/* 🔴 LOAD IS ITS OWN DECISION AND ITS OWN BUTTON. Approving 358
+            rows and writing 586 records are different acts, and only
+            this one creates anything — so it is never chained to
+            Approve, and it is the only button here whose label says
+            what it will write. */}
+        {v.can_load && (
+          <button onClick={() => onAct('load', id)} disabled={acting !== null}
+            style={{ background: '#2e7d32', color: 'white', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 'bold', cursor: acting ? 'wait' : 'pointer', opacity: acting ? 0.6 : 1, fontFamily: 'Arial' }}>
+            {acting === 'load'
+              ? 'Loading…'
+              : `Load ${v.parsed?.resident_count ?? '?'} residents and ${v.parsed?.vehicle_count ?? '?'} vehicles`}
+          </button>
+        )}
+        {/* Retry appears ONLY when the server said the failure was
+            transient. A blocked load would succeed on retry, which is
+            why that case gets no button at all. */}
+        {status === 'approved' && actionMsg?.kind === 'err' && actionMsg.retryable && (
+          <button onClick={() => onAct('load', id)} disabled={acting !== null}
+            style={{ background: 'none', color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 'bold', cursor: acting ? 'wait' : 'pointer', fontFamily: 'Arial' }}>
+            {acting === 'load' ? 'Retrying…' : 'Retry load'}
+          </button>
+        )}
+        {status === 'approved' && !v.can_load && !canReturn && !canReject && (
           <span style={{ color: '#666', fontSize: 11.5, alignSelf: 'center', lineHeight: 1.5 }}>
-            {v.can_load
-              ? 'Ready to load. Loading is the next step and is not built yet.'
-              : 'Approved. It cannot be loaded until the problems above are resolved.'}
+            Approved, and it cannot be loaded until the problems above are resolved. Nothing to
+            retry and nothing to send back — neither would help.
           </span>
         )}
         {status === 'submitted' && !v.can_approve && !canReturn && (

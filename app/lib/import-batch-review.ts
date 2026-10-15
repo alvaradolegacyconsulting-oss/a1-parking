@@ -278,6 +278,73 @@ export async function reviewImportBatch(
     plateNorm: normByIndex.get(i) ?? '',
   }))
   const errors = [...validateBulkRows(rows), ...dbFlagErrors(rows, flags)]
+
+  // ══════════════════════════════════════════════════════════════════
+  // 🔴 TWO CHECKS THE LOADER NEEDS AND bulk_validate_rows DOES NOT DO
+  // ══════════════════════════════════════════════════════════════════
+  // Both are here rather than in the load path so review and load give
+  // the same answer. A preview that clears a file the load would refuse
+  // is the failure the preview/submit split was built to avoid, and the
+  // load is now a third surface that has to agree with the other two.
+
+  // (1) One email, one role — enforced by user_roles_lower_email_uidx
+  // since 2026-07-04. The loader creates a resident role row per
+  // distinct address, in ONE transaction, so a single address that
+  // already holds a role anywhere in the system aborts the whole load
+  // of 358 rows and surfaces as a constraint name rather than a row
+  // number. bulk_validate_rows checks residents at the property; it
+  // does not look at user_roles at all.
+  //
+  // Measured 2026-10-16: 0 of batch 8's 228 addresses hold a role row,
+  // so this is inert for the batch in hand — which is the point of
+  // adding it before the first load rather than after the first abort.
+  const roleHit = await db.from('user_roles').select('email, role')
+  if (roleHit.error) {
+    return {
+      ...base, parsed,
+      validation: { ran: false, why: `The existing-login check could not be run (${roleHit.error.message}). Nothing can be concluded about whether this file would load.` },
+      canApprove: false, canLoad: false,
+    }
+  }
+  const roleByEmail = new Map(
+    (roleHit.data ?? []).map(r => [String(r.email).trim().toLowerCase(), String(r.role)]))
+  for (const r of rows) {
+    const held = roleByEmail.get(r.email.trim().toLowerCase())
+    if (held) {
+      errors.push({
+        row: r.index + 2, column: 'email', code: 'email_has_login',
+        message: held === 'resident'
+          ? 'This address already has a resident login. Remove the row — this upload adds residents, it does not update them.'
+          : `This address already has a ${held.replace('_', ' ')} login. One address can hold one role, so it cannot also be loaded as a resident. Use a different address for the resident.`,
+      })
+    }
+  }
+
+  // (2) 🔴 PARKING TAGS ARE NOT THE LOADER'S TO WRITE, SO A FILE THAT
+  // CARRIES THEM IS REFUSED RATHER THAN QUIETLY STRIPPED.
+  // vehicle_parking_tags has no write policy and authenticated holds no
+  // write grant; every write goes through set_vehicle_tag, which owns
+  // the property switch (properties.parking_tags_enabled), the
+  // one-live-tag-per-property invariant and the audit. The loader
+  // cannot call it 358 times inside one transaction without inheriting
+  // all of that, and it must not insert around it.
+  //
+  // The template collects tag_number, so without this a customer could
+  // type 358 tag numbers, see "clean", and have every one discarded
+  // with nothing said. Discarding data someone typed is worse than
+  // refusing it.
+  //
+  // Inert for batch 8: 0 of 358 rows carry a tag number, and Sunset
+  // Ridge has parking_tags_enabled = false.
+  for (const r of rows) {
+    if (r.tag_number && r.tag_number.trim() !== '') {
+      errors.push({
+        row: r.index + 2, column: 'tag_number', code: 'tag_not_loadable',
+        message: 'Leave the parking tag number blank. Tags are assigned by the property manager after the residents are loaded, so a number here would be discarded — and the upload will not discard something you typed.',
+      })
+    }
+  }
+
   const validation: BatchValidation = {
     ran: true, clean: errors.length === 0, error_count: errors.length, errors,
   }
