@@ -64,8 +64,27 @@ export interface BulkError {
  * 'Trlr', 'Traila' and 'Unidad' are deliberately NOT noise: A1 serves
  * mobile-home parks and those read as real designations, not prefixes.
  */
-const UNIT_NOISE =
-  /^\s*(apts?|apt\.|appt\.?|apartments?|apartamentos?|units?|ste\.?|suites?|no\.?|num\.?)\s*[\s.#-]*\s*(?=[A-Za-z0-9])/i
+// 🔴 THE NOISE WORD NEEDS A BOUNDARY — fixed 2026-10-16, ruled the same
+// day. Written as a bare alternation this matched SUBSTRINGS, so 'no',
+// 'ste' and 'num' fired on real unit and building names and the error
+// told the customer to rewrite them as nonsense:
+//
+//   'North Tower 3' → "write it plainly: rth Tower 3"
+//   'Nogales 5'     → "write it plainly: gales 5"
+//   'Stevens 4'     → "write it plainly: vens 4"
+//
+// A noise word is a PREFIX, and a prefix is followed by a separator or
+// by the unit itself: 'Apt 1150', 'Apt1150', 'No. 12', 'Ste 200'. More
+// letters mean it was never a prefix, it was the start of a word. The
+// lookahead is the whole fix.
+//
+// 'numbers?' is listed because 'Number 5' must still be caught, and
+// under the boundary rule 'num' alone no longer reaches it.
+//
+// 'Trlr', 'Traila' and 'Unidad' are deliberately NOT noise: A1 serves
+// mobile-home parks and those read as real designations, not prefixes.
+export const UNIT_NOISE =
+  /^\s*(apartments?|apartamentos?|appt\.?|apts?|apt\.|units?|suites?|ste\.?|numbers?|num\.?|no\.?)(?=[\s.#-]|\d)\s*[\s.#-]*\s*(?=[A-Za-z0-9])/i
 
 const MAX_NAME = 80
 const MAX_DESC = 60

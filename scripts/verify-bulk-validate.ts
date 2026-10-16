@@ -22,7 +22,7 @@
 import { createClient } from '@supabase/supabase-js'
 import fs from 'fs'
 import { normalizeUnit } from '../app/lib/plate'
-import { validateBulkRows, type BulkRowInput } from '../app/lib/bulk-validator'
+import { UNIT_NOISE, validateBulkRows, type BulkRowInput } from '../app/lib/bulk-validator'
 
 process.stdout.on('error', (e: NodeJS.ErrnoException) => { if (e.code !== 'EPIPE') throw e })
 
@@ -280,6 +280,24 @@ const main = async () => {
     const wrongly = rejected.filter(u => normalizeUnit(u) === normalizeUnit(stripNoise(u)))
     chk(`every unit the rule rejects really does break the key (${rejected.length} of ${units.length} rejected)`,
       wrongly.length === 0, wrongly.length ? `🔴 rejected without cause: ${wrongly.slice(0, 5).join(' | ')}` : 'ok')
+
+    // 🔴 THE CHECK THAT DOES NOT COME FROM THE REGEX. The one above
+    // strips with the same expression the validator matched with, so it
+    // can only prove the validator agrees with itself — it passed
+    // throughout the boundary bug. This one asks a question the regex
+    // cannot answer in its own favour: did the rejection SEVER A WORD?
+    // 'North Tower 3' was rejected with the advice "write it plainly:
+    // rth Tower 3". A prefix that was really a prefix leaves a unit
+    // behind; cutting 'No' off 'North' leaves lowercase debris.
+    const severed = rejected.filter(u => {
+      const rest = stripNoise(u)
+      return /^[A-Z]/.test(u.trim()) && /^[a-z]/.test(rest)
+    })
+    chk('   ...and no rejection severs a word (the advice is a real unit, not debris)',
+      severed.length === 0,
+      severed.length === 0
+        ? `${rejected.length} rejection(s), every suggestion still a unit`
+        : `🔴 ${severed.length}: ${severed.slice(0, 5).map(u => `"${u}" → "${stripNoise(u)}"`).join(' | ')}`)
     for (const keep of ['#197', 'B-1', 'Trlr 129', 'Traila 80', '1150', "'1150"]) {
       chk(`   "${keep}" is accepted`, flagsFor(keep).length === 0, flagsFor(keep)[0]?.message?.slice(0, 40) ?? 'ok')
     }
@@ -295,12 +313,20 @@ const main = async () => {
   console.log('\n── 🔴 the name rule ──')
   nameRuleChecks(chk)
 
+  console.log('\n── 🔴 the unit noise word needs a boundary ──')
+  unitPrefixChecks(chk)
+
   console.log(`\n${fails === 0 ? '✅ all green' : `❌ ${fails} failed`}`)
   process.exit(fails === 0 ? 0 : 1)
 }
 
-const NOISE = /^\s*(apts?|apt\.|appt\.?|apartments?|apartamentos?|units?|ste\.?|suites?|no\.?|num\.?)\s*[\s.#-]*\s*(?=[A-Za-z0-9])/i
-const stripNoise = (u: string) => u.trim().replace(/^'/, '').replace(NOISE, '')
+// 🔴 IMPORTED, NOT RETYPED. This gate kept its own copy of the noise
+// regex, and that copy is why the boundary bug survived a passing gate:
+// the validator matched 'no' inside 'North Tower 3', the gate's twin
+// matched it too, both agreed the rejection "changed the key", and the
+// check reported ok. A gate that reimplements the rule it is checking
+// can only catch a typo in one of the two copies.
+const stripNoise = (u: string) => u.trim().replace(/^'/, '').replace(UNIT_NOISE, '')
 
 /** A row that passes everything, so one field can be varied at a time. */
 function baseRow(over: Partial<BulkRowInput> = {}): BulkRowInput {
@@ -370,3 +396,51 @@ export function nameRuleChecks(
 }
 
 main().catch(async e => { console.error('🔴', (e as Error).message); await cleanup('throw'); process.exit(2) })
+
+// ════════════════════════════════════════════════════════════════════
+// 🔴 THE UNIT PREFIX RULE — a noise word is a prefix, not a substring
+// ════════════════════════════════════════════════════════════════════
+// Ruled 2026-10-16, after measurement: 'no', 'ste' and 'num' matched
+// inside real unit and building names, and the error told the customer
+// to rewrite them as debris —
+//
+//   'North Tower 3' → "write it plainly: rth Tower 3"
+//   'Stevens 4'     → "write it plainly: vens 4"
+//
+// Both lists below are the architect's, verbatim, and they are the
+// point of this gate: the rule is pinned by the cases it must get
+// right in both directions, not by the shape of the expression.
+export function unitPrefixChecks(
+  chk: (n: string, ok: boolean, d?: string) => void,
+) {
+  // Real unit and building names that merely BEGIN with those letters.
+  const MUST_PASS = ['North Tower 3', 'Nogales 5', 'Stevens 4', 'Normandy 1', 'Steele 9', 'Nova 12']
+  // Genuine prefixes, including the no-separator form.
+  const MUST_FLAG = ['Apt 1150', 'Apt1150', 'No. 12', 'Ste 200', 'Number 5']
+
+  const wrong = MUST_PASS.filter(u => flagsFor(u).length > 0)
+  chk('🔴 a name that merely starts with a noise word is accepted',
+    wrong.length === 0,
+    wrong.length === 0
+      ? MUST_PASS.join(' · ')
+      : `🔴 still rejected: ${wrong.map(u => `"${u}" → "${flagsFor(u)[0].message.match(/plainly: "([^"]*)"/)?.[1] ?? '?'}"`).join(' | ')}`)
+
+  const missed = MUST_FLAG.filter(u => flagsFor(u).length === 0)
+  chk('🔴 a real prefix is still flagged — the fix did not loosen the rule',
+    missed.length === 0,
+    missed.length === 0 ? MUST_FLAG.join(' · ') : `🔴 now accepted: ${missed.join(' | ')}`)
+
+  // 🔴 AND THE ADVICE MUST BE RIGHT, NOT JUST PRESENT. A flag whose
+  // message names the wrong plain unit is the bug this replaced,
+  // reported as a pass by any check that only counts errors.
+  const want: Record<string, string> = {
+    'Apt 1150': '1150', 'Apt1150': '1150', 'No. 12': '12', 'Ste 200': '200', 'Number 5': '5',
+  }
+  const badAdvice = Object.entries(want).filter(([u, plain]) =>
+    flagsFor(u)[0]?.message.match(/plainly: "([^"]*)"/)?.[1] !== plain)
+  chk('   ...and each one names the right plain unit',
+    badAdvice.length === 0,
+    badAdvice.length === 0
+      ? Object.entries(want).map(([u, p]) => `"${u}"→${p}`).join(' · ')
+      : `🔴 ${badAdvice.map(([u, p]) => `"${u}" should say ${p}, says "${flagsFor(u)[0]?.message.match(/plainly: "([^"]*)"/)?.[1]}"`).join(' | ')}`)
+}
