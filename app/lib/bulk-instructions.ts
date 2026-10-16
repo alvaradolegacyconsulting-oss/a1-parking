@@ -11,6 +11,14 @@
 // an earlier draft implying ShieldMyLot vouched for the data was
 // rejected for exactly that reason.
 //
+// 🔴 NO VENDOR NAMES IN HERE — ruled 2026-10-16. An earlier bullet read
+// "your ParkingSnap export does not include it". Naming a competitor in
+// our own onboarding copy dates the sentence, is wrong for every
+// customer who came from something else or from a spreadsheet, and
+// reads as though we integrate with them. The wording says what the
+// data must contain, not where it came from. verify:novendornames
+// holds this file, the page and the template to it.
+//
 // 🔴 AND IT HAD NEVER SHIPPED. It lived in docs/bulk-onboarding/
 // INSTRUCTIONS.md, which nothing in app/ read, linked or rendered — a
 // customer could not reach a word of it. That is why the source now
@@ -36,7 +44,7 @@ export const BEFORE_YOU_UPLOAD: readonly string[] = [
   'Approved residents only — leave out anyone still pending in your current system.',
   'Residents without a vehicle are not in this file. They sign themselves up with the property QR code.',
   'One row per vehicle. A resident with three cars gets three rows carrying the same unit, name and email.',
-  'Plate state is the two-letter code (TX, not Texas), and it is required — your ParkingSnap export does not include it.',
+  "Plate state is required, written as the two-letter code (TX, not Texas). If your data doesn't include it, add it — most plates will be TX. Check out-of-state cars.",
   'One error rejects the whole file. The row numbers we return match the row numbers in your spreadsheet.',
   'You confirm the data is accurate and that you are authorized to submit it. We check the format, not the facts.',
   'Nobody is emailed when the file loads. Residents set up their own login afterwards, from the flyer or QR code.',
@@ -70,8 +78,8 @@ export const INSTRUCTIONS: readonly InstructionPara[] = [
     text: 'is optional, and only used if your property has parking tags switched on.' },
   { lead: 'Save the file as CSV (UTF-8).',
     text: 'One property per file, up to 1,000 rows. The first row must be the header exactly as in the template.' },
-  { lead: 'Coming from another system?',
-    text: 'Export from it and map your columns onto ours. ShieldMyLot does not map, convert or prepare files — accuracy stays with you.' },
+  { lead: 'Coming from another system or a spreadsheet?',
+    text: 'Export your approved residents and their vehicles, then arrange them into the template columns. Entering by hand? Type straight into the template, one row per vehicle. ShieldMyLot does not map, convert or prepare files — accuracy stays with you.' },
   { lead: 'Corporate / furnished-rental units.',
     text: 'Where the email on file belongs to the leasing company rather than the occupant (for example a hellolanding.com address), the login-setup email goes to that company, not the person in the unit. That is expected; just be aware of it.' },
   { lead: 'What happens next.',
