@@ -137,6 +137,8 @@ export type SendCompanyScopedArgs = {
   to:            string
   subject:       string
   from?:         string
+  /** Passed straight through to the provider. See SendEmailArgs. */
+  replyTo?:      string
   html?:         string
   text?:         string
   companyAnchor: CompanyAnchor
@@ -178,6 +180,12 @@ export async function sendCompanyScopedEmail(args: SendCompanyScopedArgs): Promi
     to:      actualTo,
     subject,
     from:    args.from,
+    // 🔴 NOT redirected with `to`. The override exists so a test or
+    // demo tenant's mail reaches the operator instead of the customer;
+    // the reply address is where a real reply should land either way,
+    // and rewriting it would make the redirected copy misrepresent the
+    // message the customer would have received.
+    ...(args.replyTo !== undefined ? { replyTo: args.replyTo } : {}),
     ...(args.html !== undefined ? { html: args.html } : {}),
     ...(args.text !== undefined ? { text: args.text } : {}),
   } as Parameters<typeof sendEmail>[0])

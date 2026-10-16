@@ -33,6 +33,23 @@ import { sendCompanyScopedEmail } from './company-scoped-email'
 
 export type NotifyOutcome = 'sent' | 'overridden' | 'failed' | 'skipped'
 
+/**
+ * Where a reply to a CA-facing batch email goes.
+ *
+ * 🔴 THE COPY PROMISES A REPLY AND THE FROM CANNOT TAKE ONE. These
+ * emails are sent from noreply@mail.shieldmylot.com — a Resend sending
+ * subdomain with no inbox — while the reject copy says "reply to this
+ * message and we will take another look". Without this header that
+ * reply bounces or vanishes, which is worse than not inviting one.
+ *
+ * support@, not hello@: the recipient is a company administrator, so
+ * this is B2B correspondence. hello@ is the public/marketing address.
+ *
+ * Set on the CA's mail only. The operator copy goes to us; a reply
+ * address on it would point Jose at his own support queue.
+ */
+const CA_REPLY_TO = 'support@shieldmylot.com'
+
 /** Central time, because "same day" in this product means the property's day. */
 function central(iso: string | null | undefined): string {
   if (!iso) return 'an unrecorded time'
@@ -118,6 +135,8 @@ async function trySend(args: {
   html: string
   companyId: number
   label: string
+  /** Omitted for the operator copy; see CA_REPLY_TO. */
+  replyTo?: string
 }): Promise<{ outcome: NotifyOutcome; error: string | null }> {
   if (!args.to) return { outcome: 'skipped', error: null }
   try {
@@ -125,6 +144,7 @@ async function trySend(args: {
       to: args.to,
       subject: args.subject,
       html: args.html,
+      ...(args.replyTo !== undefined ? { replyTo: args.replyTo } : {}),
       // 🔴 The BATCH'S company, never the recipient's. The operator copy
       // goes to an address that belongs to no company, so anchoring on
       // the reader would resolve to company-not-found and the demo
@@ -167,6 +187,7 @@ export async function notifyBatchLoaded(
     to: caTo,
     companyId: batch.company_id,
     label: `batch ${batch.id} CA`,
+    replyTo: CA_REPLY_TO,
     subject: `Your resident file for ${batch.property_name} is loaded`,
     html: shell(`Your file for ${batch.property_name} is loaded`, [
       `We loaded <strong>${counts.residents} resident${counts.residents === 1 ? '' : 's'}</strong> and <strong>${counts.vehicles} vehicle${counts.vehicles === 1 ? '' : 's'}</strong> from ${esc(batch.source_filename ?? 'your file')}.`,
@@ -242,6 +263,7 @@ export async function notifyBatchDecision(
     to: caTo,
     companyId: batch.company_id,
     label: `batch ${batch.id} CA ${decision.kind}`,
+    replyTo: CA_REPLY_TO,
     subject: returned
       ? `Your resident file for ${batch.property_name} needs changes`
       : `Your resident file for ${batch.property_name} was not loaded`,

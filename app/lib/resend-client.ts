@@ -49,6 +49,13 @@ export type SendEmailArgs = {
   to: string
   subject: string
   from?: string
+  /**
+   * Where a reply goes. The From is a no-reply sending subdomain with
+   * no inbox, so any mail whose copy invites a reply MUST set this or
+   * the reply is lost. Resend's field is `replyTo` (string | string[]);
+   * we take one address.
+   */
+  replyTo?: string
 } & (
   | { html: string; text?: string }
   | { html?: string; text: string }
@@ -74,6 +81,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
       subject: args.subject,
       ...(args.html !== undefined && { html: args.html }),
       ...(args.text !== undefined && { text: args.text }),
+      ...(args.replyTo !== undefined && { replyTo: args.replyTo }),
     }
     const { data, error } = await resend.emails.send(
       payload as Parameters<typeof resend.emails.send>[0]

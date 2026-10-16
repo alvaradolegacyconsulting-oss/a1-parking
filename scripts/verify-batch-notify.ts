@@ -67,8 +67,24 @@ let srv: DevServer | null = null
 let operatorEmail = ''
 let operatorUid = ''
 const seeded: number[] = []
+// 🔴 THE GATE SETS THE FLAG IT NEEDS, AND RESTORES WHAT IT FOUND.
+// It first ran while bulk_onboarding_enabled happened to be ON for the
+// demo company, and went red the moment that flag was turned off after
+// the demo send: the reject route refuses with `blocked` —
+// "the company would not be able to send a replacement" — which is the
+// route behaving correctly and the gate depending on state it never
+// established. Same correction the six flag-flipping gates took.
+let flaggedCompany: number | null = null
+let flagWas: boolean | null = null
 
 async function teardown(why: string) {
+  if (flaggedCompany !== null) {
+    const want = flagWas === true
+    const r = await db.from('companies').update({ bulk_onboarding_enabled: want })
+      .eq('id', flaggedCompany).select('bulk_onboarding_enabled')
+    const back = r.data?.[0]?.bulk_onboarding_enabled
+    say(`   ↩ bulk_onboarding_enabled back to ${back} on company ${flaggedCompany} (as found)`)
+  }
   for (const id of seeded) {
     const b = await db.from('import_batches').select('storage_path').eq('id', id).maybeSingle()
     if (b.data?.storage_path) await db.storage.from('bulk-onboarding').remove([String(b.data.storage_path)])
@@ -183,6 +199,20 @@ const main = async () => {
   say(`IMPORT_BATCH_ALERT_EMAIL: ${process.env.IMPORT_BATCH_ALERT_EMAIL ?? '(unset)'}\n`)
 
   try {
+    // Establish the flag BEFORE anything else, and register the restore
+    // before the write so a crash still puts it back.
+    const { data: demoCo } = await db.from('companies')
+      .select('id,name,bulk_onboarding_enabled').eq('company_env', 'demo').limit(1).maybeSingle()
+    if (!demoCo) throw new Error('no demo company')
+    flaggedCompany = demoCo.id as number
+    flagWas = demoCo.bulk_onboarding_enabled === true
+    const on = await db.from('companies').update({ bulk_onboarding_enabled: true })
+      .eq('id', flaggedCompany).select('bulk_onboarding_enabled')
+    if (on.error || on.data?.[0]?.bulk_onboarding_enabled !== true) {
+      throw new Error('could not enable bulk onboarding for the demo company')
+    }
+    say(`bulk_onboarding_enabled set true on ${demoCo.name} (was ${flagWas}; restored on exit)\n`)
+
     const { data: ca } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 })
     const demoCa = (ca?.users ?? []).find(u => (u.email ?? '').toLowerCase() === 'demo-ca@test.shieldmylot.com')
     if (!demoCa) throw new Error('demo-ca@test.shieldmylot.com has no auth user')
