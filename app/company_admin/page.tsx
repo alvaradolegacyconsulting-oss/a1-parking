@@ -7,7 +7,7 @@ import { assignPropertyToDrivers } from '../lib/driver-property-assign'
 import CaPlateActivityTab from '../components/CaPlateActivityTab'
 import SupportContact from '../components/SupportContact'
 import { QRLinkAffordance } from '../components/QRLinkAffordance'
-import { printQRSign } from '../lib/qr-print'
+import { printQRSign, buildQRCardHtml } from '../lib/qr-print'
 import { showClaimFlyer, claimFlyerUrl } from '../lib/claim-flyer'
 import { promptDeactivatePropertyConfirm } from '../lib/deactivate-property-guard'
 import { PLATE_STATUS_META, type PlateStatus } from '../lib/plate-status'
@@ -4458,21 +4458,19 @@ export default function CompanyAdminPortal() {
       // Reconstruct the URL so the fallback text matches what's encoded
       // in the QR. Mirrors the single-sign path (visitor QR URL shape).
       const url = `${BASE_URL}/visitor?property=${encodeURIComponent(prop.name)}`
-      cards.push(`
-        <div class="card">
-          <div class="hdr">
-            <p style="color:#C9A227;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:.1em">${role?.company || 'Visitor Parking'}</p>
-          </div>
-          <p style="font-size:22px;font-weight:bold;color:#111;margin-bottom:4px">Visitor Parking</p>
-          <p style="font-size:14px;color:#333;margin-bottom:20px">Scan to get your parking pass</p>
-          <img src="${dataUrl}" style="width:200px;height:200px;display:block;margin:0 auto 16px" />
-          <p style="font-size:15px;font-weight:bold;color:#111;margin-bottom:4px">${prop.name}</p>
-          <p style="font-size:11px;color:#555;margin-bottom:0">${prop.address || ''}</p>
-          <div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">Required before parking</p><p style="color:#856404;font-size:11px">Valid up to 24 hours · No app download needed</p></div>
-          <div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner's expense</p></div>
-          <p style="font-size:10px;color:#666;margin-top:14px;word-break:break-all;font-family:'Courier New',monospace">${url}</p>
-        </div>
-      `)
+      // 🔴 The card comes from buildQRCardHtml now, not a second copy of
+      // the markup. This template had the visitor strings written out
+      // ("Visitor Parking", "Required before parking", the tow warning)
+      // while printQRSign read the same strings from qrSignCopy — two
+      // sources for one sign, which is how the June cluster happened.
+      cards.push(buildQRCardHtml({
+        kind: 'visitor',
+        company: role?.company || undefined,
+        dataUrl,
+        title: prop.name,
+        subtitle: prop.address || '',
+        url,
+      }))
     }
     if (cards.length === 0) return
     const tw = window.open('', '_blank')

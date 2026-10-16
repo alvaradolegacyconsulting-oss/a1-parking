@@ -97,6 +97,71 @@ export function qrSignCopy(kind: QRSignKind): QRSignCopy {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// buildQRCardHtml — the card itself, so there is one of it
+// ════════════════════════════════════════════════════════════════════
+// Extracted 2026-10-16, on the third consumer rather than the second.
+// printQRSign had this markup inline, and the CA's bulk print
+// (printAllPropertyQRSigns) had its own copy with the visitor strings
+// hardcoded instead of read from qrSignCopy. Piece 2's printable
+// visitor pass would have been the third. The module header already
+// recorded the first consolidation — four copies down to two — and
+// named this extraction as the remaining followup.
+//
+// 🔴 The two copies had not drifted, which is the only reason this is a
+// pure move: qrSignCopy('visitor') returns exactly the strings the bulk
+// template had hardcoded, and `company || heading` is `company ||
+// 'Visitor Parking'` when kind is visitor. Verified string-by-string
+// before extracting rather than assumed from their looking alike.
+//
+// Returns the <div class="card"> only. The surrounding document — its
+// <style>, its page-break rules, its print trigger — stays with each
+// caller, because that is where they genuinely differ: one card
+// centred on a page, or N cards with a break after each.
+export interface QRCardOptions {
+  /** Picks the heading, subhead, note and whether the tow warning shows. */
+  kind?: QRSignKind
+  /** Tenant name for the header strip. Falls back to the kind's heading. */
+  company?: string
+  /** The QR image, already rendered to a data URL by the caller. */
+  dataUrl: string
+  /** Property name, or whatever names this card's subject. */
+  title: string
+  /** Address line under the title. */
+  subtitle: string
+  /** Printed as fallback text under the code, so a failed scan is typable. */
+  url?: string
+}
+
+export function buildQRCardHtml(opts: QRCardOptions): string {
+  const { kind = 'visitor', company, dataUrl, title, subtitle, url } = opts
+  const copy = qrSignCopy(kind)
+  const noteHtml = `<div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">${copy.noteTitle}</p><p style="color:#856404;font-size:11px">${copy.noteBody}</p></div>`
+  // Tow warning is visitor-only. Residents are being onboarded — a "your
+  // car will be towed" banner on their signup sign is jarring and
+  // semantically wrong (they haven't registered yet).
+  const warnHtml = copy.warn
+    ? '<div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner\'s expense</p></div>'
+    : ''
+  const urlFallback = url
+    ? `<p style="font-size:10px;color:#666;margin-top:14px;word-break:break-all;font-family:'Courier New',monospace">${url}</p>`
+    : ''
+
+  return `<div class="card">
+      <div class="hdr">
+        <p style="color:#C9A227;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:.1em">${company || copy.heading}</p>
+      </div>
+      <p style="font-size:22px;font-weight:bold;color:#111;margin-bottom:4px">${copy.heading}</p>
+      <p style="font-size:14px;color:#333;margin-bottom:20px">${copy.subhead}</p>
+      <img src="${dataUrl}" style="width:200px;height:200px;display:block;margin:0 auto 16px" />
+      <p style="font-size:15px;font-weight:bold;color:#111;margin-bottom:4px">${title}</p>
+      <p style="font-size:11px;color:#555;margin-bottom:0">${subtitle}</p>
+      ${noteHtml}
+      ${warnHtml}
+      ${urlFallback}
+    </div>`
+}
+
 export interface PrintQRSignOptions {
   /** DOM id of the container holding the on-screen <canvas> (from QRCodeCanvas). */
   canvasId: string
@@ -151,21 +216,10 @@ export function printQRSign(opts: PrintQRSignOptions): void {
   const tw = window.open('', '_blank')
   if (!tw) return
 
-  // One copy table for all three kinds — see qrSignCopy above. The old
-  // shape here was `const isResident = kind === 'resident'` and a pair
-  // of ternaries, which a third kind would have turned into a nest.
-  const copy = qrSignCopy(kind)
-  const { pageTitle, heading, subhead } = copy
-  const noteHtml = `<div class="note"><p style="color:#856404;font-size:12px;font-weight:bold;margin-bottom:2px">${copy.noteTitle}</p><p style="color:#856404;font-size:11px">${copy.noteBody}</p></div>`
-  // Tow warning is visitor-only. Residents are being onboarded — a "your
-  // car will be towed" banner on their signup sign is jarring and
-  // semantically wrong (they haven't registered yet).
-  const warnHtml = copy.warn
-    ? '<div class="warn"><p style="color:#721c24;font-size:12px;font-weight:bold;margin-bottom:2px">⚠ Unregistered vehicles will be towed</p><p style="color:#721c24;font-size:11px">without notice at owner\'s expense</p></div>'
-    : ''
-  const urlFallback = url
-    ? `<p style="font-size:10px;color:#666;margin-top:14px;word-break:break-all;font-family:'Courier New',monospace">${url}</p>`
-    : ''
+  // The copy table still answers pageTitle here; the card itself comes
+  // from buildQRCardHtml, which the CA's bulk print also uses.
+  const { pageTitle } = qrSignCopy(kind)
+  const cardHtml = buildQRCardHtml({ kind, company, dataUrl, title, subtitle, url })
 
   tw.document.write(`<!DOCTYPE html><html><head><title>${pageTitle}</title><style>
     *{box-sizing:border-box;margin:0;padding:0}
@@ -176,19 +230,7 @@ export function printQRSign(opts: PrintQRSignOptions): void {
     .warn{background:#f8d7da;border:1px solid #f5c6cb;border-radius:6px;padding:10px;margin-top:10px}
     @media print{body{min-height:auto}}
   </style></head><body>
-    <div class="card">
-      <div class="hdr">
-        <p style="color:#C9A227;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:.1em">${company || heading}</p>
-      </div>
-      <p style="font-size:22px;font-weight:bold;color:#111;margin-bottom:4px">${heading}</p>
-      <p style="font-size:14px;color:#333;margin-bottom:20px">${subhead}</p>
-      <img src="${dataUrl}" style="width:200px;height:200px;display:block;margin:0 auto 16px" />
-      <p style="font-size:15px;font-weight:bold;color:#111;margin-bottom:4px">${title}</p>
-      <p style="font-size:11px;color:#555;margin-bottom:0">${subtitle}</p>
-      ${noteHtml}
-      ${warnHtml}
-      ${urlFallback}
-    </div>
+    ${cardHtml}
     <script>window.onload=function(){window.print()}</script>
   </body></html>`)
   tw.document.close()
