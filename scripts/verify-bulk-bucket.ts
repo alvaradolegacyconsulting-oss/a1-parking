@@ -175,9 +175,25 @@ const main = async () => {
   chk('the policy and the route anchor on the same path shape',
     polSql.includes(`^[0-9]+/${core}`) && BULK_OBJECT_PATH.source.includes(core),
     polSql.includes(`^[0-9]+/${core}`) ? 'ok' : '🔴 the SQL policy regex no longer matches BULK_OBJECT_PATH')
-  chk('the instructions state the same row cap as the code',
-    fs.readFileSync('docs/bulk-onboarding/INSTRUCTIONS.md', 'utf8').includes(`${MAX_BULK_ROWS.toLocaleString('en-US')} rows`),
-    `code says ${MAX_BULK_ROWS}`)
+  // 🔴 REPOINTED 2026-10-16. This read docs/bulk-onboarding/
+  // INSTRUCTIONS.md, which is no longer the customer-facing copy — it
+  // was approved and never shipped, and is now a pointer. The number a
+  // customer actually reads lives in app/lib/bulk-instructions.ts, so
+  // that is the file this has to hold to the code. The assertion itself
+  // is unchanged in intent: a stated cap that disagrees with
+  // MAX_BULK_ROWS is a file refused for a reason the page denied.
+  const copy = fs.readFileSync('app/lib/bulk-instructions.ts', 'utf8')
+  const stated = `${MAX_BULK_ROWS.toLocaleString('en-US')} rows`
+  chk('the shipped copy states the same row cap as the code',
+    copy.includes(stated),
+    copy.includes(stated) ? `both say ${stated}` : `🔴 code says ${MAX_BULK_ROWS}, copy does not say "${stated}"`)
+  // 🔴 AND IT MUST NOT STATE A SECOND, DIFFERENT CAP. The check above
+  // passes while a stale "up to 500 rows" sits in another paragraph.
+  const otherCaps = [...copy.matchAll(/up to ([\d,]+) rows/g)]
+    .map(m => m[1]).filter(n => n !== MAX_BULK_ROWS.toLocaleString('en-US'))
+  chk('   ...and states no other row cap anywhere in the copy',
+    otherCaps.length === 0,
+    otherCaps.length === 0 ? `${[...copy.matchAll(/up to ([\d,]+) rows/g)].length} mention(s), all ${stated}` : `🔴 also says: ${otherCaps.join(', ')}`)
 
   // ── 0b. 🔴 refuse to report on a bucket that does not exist ──────
   // Every refusal check below would pass against a missing bucket —

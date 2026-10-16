@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../../supabase'
 import { BULK_CSV_HEADER } from '../../lib/bulk-onboarding'
+import { BEFORE_YOU_UPLOAD } from '../../lib/bulk-instructions'
 
 const GOLD = '#C9A227'
 const BG = '#0f1117'
@@ -293,7 +294,25 @@ export default function ResidentUploadPage() {
           One row per vehicle. A resident with three cars gets three rows with the same
           unit and the same email. Save as CSV (UTF-8).
         </p>
+        {/* 🔴 BEFORE, NOT AFTER. Every bullet here is a rule the
+            validator enforces, and each one used to be discoverable
+            only by having a file refused for breaking it. The eight
+            that made the list are the ones that cost a whole upload:
+            they decide whether the file can load at all. Anything
+            needing a paragraph is in the full instructions. */}
+        <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 6px' }}>Before you upload</p>
+        <ul style={{ color: MUTED, fontSize: 13, lineHeight: 1.6, margin: '0 0 14px', paddingLeft: 18 }}>
+          {BEFORE_YOU_UPLOAD.map(b => <li key={b} style={{ marginBottom: 4 }}>{b}</li>)}
+        </ul>
+
         <button onClick={downloadTemplate} style={btn()}>Download the template</button>
+        <a href="/company_admin/resident-upload/instructions"
+           style={{ color: GOLD, fontSize: 13, textDecoration: 'underline', marginLeft: 14 }}>
+          Full instructions
+        </a>
+        <p style={{ color: MUTED, fontSize: 12, margin: '10px 0 0' }}>
+          The template is the header row only — add your residents underneath it.
+        </p>
       </Card>
 
       {/* ── 3. file ───────────────────────────────────────────────── */}

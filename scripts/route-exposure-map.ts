@@ -195,6 +195,7 @@ export const ROUTE_EXPOSURE: Record<string, Expectation> = {
   '/api/admin/import-batch/load':    { kind: 'login' },
   '/api/admin/import-batch/rollback': { kind: 'login' },
   '/company_admin/resident-upload': { kind: 'login' },
+  '/company_admin/resident-upload/instructions': { kind: 'login' },
 
   // 🔴 NOT MINE, and undeclared since it shipped — found by this gate
   // on 2026-10-15 while declaring the routes above. /api/signup is in
