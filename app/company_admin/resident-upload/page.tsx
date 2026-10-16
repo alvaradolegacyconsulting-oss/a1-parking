@@ -135,7 +135,14 @@ export default function ResidentUploadPage() {
   function downloadTemplate() {
     // Built from the shared constant, so the file a customer fills in
     // cannot have a different header from the one the route demands.
-    const csv = `${BULK_CSV_HEADER}\n101,Jane,Doe,jane.doe@example.com,,ABC1234,TX,Toyota,Camry,Silver,\n`
+    // 🔴 HEADER ONLY. This used to ship a sample row
+    // (101,Jane,Doe,jane.doe@example.com,…,ABC1234,TX,…) under the
+    // header. That row is VALID: a customer who fills their residents in
+    // beneath it and forgets to delete it loads Jane Doe into unit 101
+    // with plate ABC1234, and nothing in the validator can object —
+    // there is no way to tell a sample row from a resident. An example
+    // belongs where it cannot be submitted, which is the instructions.
+    const csv = `${BULK_CSV_HEADER}\n`
     download(csv, 'resident_upload_template.csv')
   }
 

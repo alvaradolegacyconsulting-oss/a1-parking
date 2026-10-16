@@ -150,10 +150,23 @@ const main = async () => {
   // validates in their spreadsheet and is refused on submission, with
   // nothing on either side admitting why.
   console.log('── 0. the file contract does not drift ──')
-  const tmpl = fs.readFileSync('docs/bulk-onboarding/template.csv', 'utf8')
-    .replace(/^\uFEFF/, '').split(/\r?\n/)[0].trim()
+  const tmplRaw = fs.readFileSync('docs/bulk-onboarding/template.csv', 'utf8').replace(/^\uFEFF/, '')
+  const tmplLines = tmplRaw.split(/\r?\n/).map(l => l.trim())
+  const tmpl = tmplLines[0]
   chk('template.csv header === BULK_CSV_HEADER', tmpl === BULK_CSV_HEADER,
     tmpl === BULK_CSV_HEADER ? 'ok' : `🔴 template has "${tmpl}"`)
+
+  // 🔴 HEADER ONLY — ruled 2026-10-16. The template shipped a sample row
+  // under the header: 101,Jane,Doe,jane.doe@example.com,,ABC1234,TX,…
+  // That row PASSES validation. A customer who types their residents in
+  // beneath it and does not delete it loads a resident named Jane Doe
+  // into unit 101 with plate ABC1234, and no validator can object,
+  // because nothing distinguishes a sample row from a real one. The same
+  // argument rules out an instruction row: it would load as data too.
+  const dataRows = tmplLines.slice(1).filter(l => l !== '')
+  chk('🔴 template.csv carries NO data rows — an example row would load as a resident',
+    dataRows.length === 0,
+    dataRows.length === 0 ? 'header only' : `🔴 ${dataRows.length} data row(s): ${dataRows.join(' | ')}`)
 
   const polSql = fs.readFileSync('migrations/20261015_bulk_onboarding_bucket.sql', 'utf8')
   // The policy writes the regex as a SQL literal; the module writes it
