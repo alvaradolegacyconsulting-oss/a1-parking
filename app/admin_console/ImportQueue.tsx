@@ -57,7 +57,41 @@ interface QueueRow {
   loaded_at: string | null
   loaded_resident_count: number | null
   loaded_vehicle_count: number | null
+  notify_ca_outcome: string | null
+  notify_admin_outcome: string | null
+  notify_error: string | null
+  notified_at: string | null
   block_hint: string | null
+}
+
+/**
+ * What to say about the notification, or nothing at all.
+ *
+ * 🔴 THE FOUR OUTCOMES ARE NOT TWO. 'overridden' means the mail was
+ * redirected to EMAIL_OVERRIDE_TO because this is a test or demo
+ * tenant — the send worked and the customer was deliberately NOT
+ * written to. Showing that as "emailed" would have an operator believe
+ * a demo CA received something. 'skipped' means there was no recipient
+ * at all, which is not a failure of the send but is still nobody
+ * notified.
+ */
+function notifyLine(r: QueueRow): string | null {
+  const ca = r.notify_ca_outcome
+  const admin = r.notify_admin_outcome
+  if (!ca && !admin) return null  // predates notifications; not a failure
+  const part = (who: string, o: string | null): string | null => {
+    if (!o) return null
+    if (o === 'sent') return `${who} emailed`
+    if (o === 'overridden') return `${who} mail REDIRECTED (test/demo tenant — the customer was not written to)`
+    if (o === 'skipped') return `${who} NOT emailed — no recipient`
+    return `${who} notification FAILED`
+  }
+  return [part('Company admin', ca), part('Operator', admin)].filter(Boolean).join(' · ')
+}
+
+function notifyFailed(r: QueueRow): boolean {
+  return r.notify_ca_outcome === 'failed' || r.notify_admin_outcome === 'failed'
+    || r.notify_ca_outcome === 'skipped' || r.notify_admin_outcome === 'skipped'
 }
 
 interface RowError { row: number; column?: string; code?: string; message: string }
@@ -255,6 +289,30 @@ export default function ImportQueue() {
                   They have records and no logins yet. Each one sets up a login from the
                   property&apos;s setup link.
                 </p>
+              </div>
+            )}
+
+            {/* 🔴 A NOTIFICATION THAT DID NOT HAPPEN HAS TO BE VISIBLE.
+                A mail failure deliberately does not fail the load, which
+                means the only thing standing between "the CA was told"
+                and "nobody told the CA" is this cell. Rendered for any
+                row that attempted a send — NULL means a batch from
+                before notifications existed and shows nothing, because
+                a historical batch is not a failure. */}
+            {notifyLine(r) && (
+              <div style={{
+                background: notifyFailed(r) ? '#1a1012' : '#101a14',
+                border: `1px solid ${notifyFailed(r) ? '#4a2020' : '#1e4a2a'}`,
+                borderRadius: 8, padding: '9px 12px', marginTop: 10,
+              }}>
+                <p style={{ color: notifyFailed(r) ? '#e06c6c' : '#6cc08a', fontSize: 12, margin: 0, lineHeight: 1.6 }}>
+                  {notifyLine(r)}
+                </p>
+                {notifyFailed(r) && r.notify_error && (
+                  <p style={{ color: '#888', fontSize: 11, margin: '4px 0 0', lineHeight: 1.6 }}>
+                    {r.notify_error}
+                  </p>
+                )}
               </div>
             )}
             {r.status === 'rejected' && r.reject_reason && (

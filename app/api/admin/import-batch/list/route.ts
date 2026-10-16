@@ -24,7 +24,7 @@ export async function GET() {
 
   const { data: batches, error } = await db
     .from('import_batches')
-    .select('id, company_id, property_id, source_filename, file_sha256, status, resident_count, vehicle_count, attested_name, attested_title, attested_at, created_at, approved_by, approved_at, reject_reason, reject_error_count, loaded_at, loaded_by, loaded_resident_count, loaded_vehicle_count')
+    .select('id, company_id, property_id, source_filename, file_sha256, status, resident_count, vehicle_count, attested_name, attested_title, attested_at, created_at, approved_by, approved_at, reject_reason, reject_error_count, loaded_at, loaded_by, loaded_resident_count, loaded_vehicle_count, notify_ca_outcome, notify_admin_outcome, notify_error, notified_at')
     // 🔴 submitted and approved first, both oldest-first inside their
     // group: the queue is a work list, and the batch that has waited
     // longest is the one someone is waiting on.

@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { authorizeImportOperator, reviewImportBatch, blockRefusesAction } from '../../../../lib/import-batch-review'
+import { notifyBatchDecision } from '../../../../lib/import-batch-notify'
+import { batchForNotify } from '../../../../lib/import-batch-notify-read'
 
 // ════════════════════════════════════════════════════════════════════
 // Reject — for a file that validates fine but should not be loaded
@@ -116,6 +118,11 @@ export async function POST(req: NextRequest) {
       message: String(out.detail ?? 'That rejection was refused.'),
     }, { status: 409 })
   }
+
+  // The CA currently learns nothing when their file is rejected. Sent
+  // after the status moved, and its outcome recorded on the batch.
+  const forMail = await batchForNotify(auth.db, batchId)
+  if (forMail) await notifyBatchDecision(forMail, { kind: 'rejected', reason })
 
   return NextResponse.json({
     ok: true, batch_id: batchId, status: 'rejected',

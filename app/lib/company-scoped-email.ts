@@ -111,6 +111,15 @@ export type CompanyAnchor =
   | { kind: 'resident_id';    residentId: string }
   | { kind: 'resident_email'; email: string; property: string }
   | { kind: 'user_email';     email: string }
+  // 🔴 ADDED 2026-10-16 for operator mail about a company's data, where
+  // the RECIPIENT is not in that company. A batch-loaded notification
+  // goes to super-admin, whose address resolves to no company at all —
+  // anchoring on them lands in 'company-not-found' and the demo
+  // redirect never fires, so a demo load would mail the operator as
+  // though it were production traffic. The subject of the mail is the
+  // right anchor, not its reader. A primary key, so unlike every other
+  // anchor here it cannot miss on a text join.
+  | { kind: 'company_id';     companyId: number }
 
 export type SendCompanyScopedResult = {
   ok:         boolean
@@ -272,7 +281,27 @@ async function resolveCompanyEnv(
     case 'resident_id':    return resolveByResidentId(admin, anchor.residentId)
     case 'resident_email': return resolveByResidentEmail(admin, anchor.email, anchor.property)
     case 'user_email':     return resolveByUserEmail(admin, anchor.email)
+    case 'company_id':     return resolveByCompanyId(admin, anchor.companyId)
   }
+}
+
+async function resolveByCompanyId(admin: SupabaseServiceClient, companyId: number): Promise<ResolveResult> {
+  const { data, error } = await admin
+    .from('companies')
+    .select('company_env')
+    .eq('id', companyId)
+    .maybeSingle()
+  if (error) {
+    console.warn('[company-scoped-email:resolver-error-detail]', { anchor: 'company_id', companyId, error: error.message })
+    return { env: null, miss: 'resolver-error' }
+  }
+  // 🔴 No row for a primary key means the company is gone, which is
+  // 'company-not-found' and not 'anchor-missed' — there was an anchor
+  // and it was unambiguous; what is missing is the company.
+  if (!data) return { env: null, miss: 'company-not-found' }
+  const env = (data as { company_env?: string | null }).company_env
+  if (!env) return { env: null, miss: 'company-not-found' }
+  return { env, miss: null }
 }
 
 async function resolveByResidentId(admin: SupabaseServiceClient, residentId: string): Promise<ResolveResult> {

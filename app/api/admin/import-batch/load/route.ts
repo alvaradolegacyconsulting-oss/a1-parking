@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { authorizeImportOperator, reviewImportBatch, blockRefusesAction } from '../../../../lib/import-batch-review'
 import { parseBulkCsv, BULK_CSV_COLUMNS } from '../../../../lib/bulk-onboarding'
 import { readBulkObject } from '../../../../lib/bulk-onboarding-auth'
+import { notifyBatchLoaded } from '../../../../lib/import-batch-notify'
+import { batchForNotify } from '../../../../lib/import-batch-notify-read'
 
 // ════════════════════════════════════════════════════════════════════
 // Load — re-validation point 3 of 3, and the only one that writes
@@ -166,6 +168,21 @@ export async function POST(req: NextRequest) {
       retryable: transient,
       offer_return: code === 'conflict',
     }, { status: 409 })
+  }
+
+  // ── notify, AFTER the load committed ──────────────────────────────
+  // 🔴 AFTER, AND NOT AWAITED INTO THE RESPONSE'S FATE. The load is
+  // done and irreversible by this point; a mail provider outage must
+  // not turn a loaded batch into a 500 that invites the operator to
+  // press Load again. notifyBatchLoaded never throws and records its
+  // own outcome on the batch, which is what the queue reads.
+  const forMail = await batchForNotify(auth.db, batchId)
+  if (forMail) {
+    await notifyBatchLoaded(forMail, {
+      residents: Number(out.residents ?? 0), vehicles: Number(out.vehicles ?? 0),
+    })
+  } else {
+    console.error(`[import-batch/load] batch ${batchId} loaded but could not be re-read for notification`)
   }
 
   return NextResponse.json({

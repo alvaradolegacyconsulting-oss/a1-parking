@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { notifyBatchDecision } from '../../../../lib/import-batch-notify'
+import { batchForNotify } from '../../../../lib/import-batch-notify-read'
 import {
   authorizeImportOperator, reviewImportBatch, buildReturnReason, blockRefusesAction,
   MAX_STORED_REJECT_ERRORS,
@@ -122,6 +124,14 @@ export async function POST(req: NextRequest) {
       message: String(out.detail ?? 'That return was refused.'),
     }, { status: 409 })
   }
+
+  // The row numbers are on the batch now; the CA needs to be told they
+  // are there. Sent after the status moved, outcome recorded on the
+  // batch. 🔴 all.length, not stored.length: the stored list is capped,
+  // and telling a company they have 50 rows to fix when they have 312
+  // sends them back for a second refusal.
+  const forMail = await batchForNotify(auth.db, batchId)
+  if (forMail) await notifyBatchDecision(forMail, { kind: 'returned', reason, errorCount: all.length })
 
   return NextResponse.json({
     ok: true, batch_id: batchId, status: 'rejected',
