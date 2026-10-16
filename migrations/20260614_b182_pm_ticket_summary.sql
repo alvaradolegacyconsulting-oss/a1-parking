@@ -89,6 +89,19 @@
 --                                            went. NOT money.
 --   photos                                 — PM may need to verify
 --   video_url                              — PM may need to verify
+--   vehicle_vin                            — PM needs the VIN to
+--                                            identify the vehicle
+--
+-- 🔴 CORRECTION 2026-10-16 (comment only, no DDL change; this file is
+-- APPLIED and must never be re-run). vehicle_vin was in the live
+-- payload but missing from the INCLUDED list above, found by
+-- enumerating the keys get_pm_ticket_summary actually returns rather
+-- than by reading this comment. It is intentional and stays: PMs need
+-- the VIN to identify the vehicle. The audit was the stale half, not
+-- the function. Live payload as of that date: 22 of the table's 42
+-- columns, with tow_fee, tow_mileage_fee, view_token and the void
+-- fields all absent from the payload itself — the price omission is
+-- SERVER-SIDE, not a client that declines to render.
 --
 -- EXPLICITLY OMITTED (each field's reason):
 --   tow_fee                                — MONEY (Jose lock; the
