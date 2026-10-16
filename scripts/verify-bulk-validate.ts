@@ -414,9 +414,15 @@ export function unitPrefixChecks(
   chk: (n: string, ok: boolean, d?: string) => void,
 ) {
   // Real unit and building names that merely BEGIN with those letters.
-  const MUST_PASS = ['North Tower 3', 'Nogales 5', 'Stevens 4', 'Normandy 1', 'Steele 9', 'Nova 12']
-  // Genuine prefixes, including the no-separator form.
-  const MUST_FLAG = ['Apt 1150', 'Apt1150', 'No. 12', 'Ste 200', 'Number 5']
+  // 'Aptos Village 3' is the Spanish form's version of the same trap:
+  // 'Aptos' is a place name, and what distinguishes it from 'Apto 1116'
+  // is that a WORD follows it, not a unit number.
+  const MUST_PASS = ['North Tower 3', 'Nogales 5', 'Stevens 4', 'Normandy 1', 'Steele 9', 'Nova 12',
+                     'Aptos Village 3']
+  // Genuine prefixes, including the no-separator form and the Spanish
+  // forms ruled in on 2026-10-16.
+  const MUST_FLAG = ['Apt 1150', 'Apt1150', 'No. 12', 'Ste 200', 'Number 5',
+                     'Apto 1116', 'Depto 4', 'Dpto. 12', 'Unit B']
 
   const wrong = MUST_PASS.filter(u => flagsFor(u).length > 0)
   chk('🔴 a name that merely starts with a noise word is accepted',
@@ -435,6 +441,10 @@ export function unitPrefixChecks(
   // reported as a pass by any check that only counts errors.
   const want: Record<string, string> = {
     'Apt 1150': '1150', 'Apt1150': '1150', 'No. 12': '12', 'Ste 200': '200', 'Number 5': '5',
+    'Apto 1116': '1116', 'Depto 4': '4', 'Dpto. 12': '12', 'Unit B': 'B',
+    // Production's own value. 'Unidad' is deliberately not a noise
+    // word, so the advice keeps it: the prefix goes, the unit stays.
+    'Apto 1003 unidad 1': '1003 unidad 1',
   }
   const badAdvice = Object.entries(want).filter(([u, plain]) =>
     flagsFor(u)[0]?.message.match(/plainly: "([^"]*)"/)?.[1] !== plain)

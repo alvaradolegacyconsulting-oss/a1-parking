@@ -83,8 +83,20 @@ export interface BulkError {
 //
 // 'Trlr', 'Traila' and 'Unidad' are deliberately NOT noise: A1 serves
 // mobile-home parks and those read as real designations, not prefixes.
+// 🔴 TWO BOUNDARY RULES, NOT ONE — 2026-10-16. The Spanish forms were
+// ruled in with the same prefix rule, and the fixtures that came with
+// them do not fit it. 'Apto 1116' must flag; 'Aptos Village 3' must
+// pass. Both are a noise word followed by a separator, so a separator
+// is not enough to tell them apart — what tells them apart is that a
+// unit designator follows the prefix, and after 'Aptos' comes a WORD.
+//
+// So group 1 (the English forms) keeps "separator or digit", which is
+// what 'Unit B' needs, and group 2 (the Spanish forms) requires a
+// DIGIT after any separators. 'Aptos' as a place name survives;
+// 'Apto 1116' does not. Narrowing group 2 alone is deliberate: the
+// looser rule stays where it was already correct.
 export const UNIT_NOISE =
-  /^\s*(apartments?|apartamentos?|appt\.?|apts?|apt\.|units?|suites?|ste\.?|numbers?|num\.?|no\.?)(?=[\s.#-]|\d)\s*[\s.#-]*\s*(?=[A-Za-z0-9])/i
+  /^\s*(?:(apartments?|apartamentos?|appt\.?|apts?|apt\.|units?|suites?|ste\.?|numbers?|num\.?|no\.?)(?=[\s.#-]|\d)|(aptos?|deptos?|dptos?)(?=[\s.#-]*\d))\s*[\s.#-]*\s*(?=[A-Za-z0-9])/i
 
 const MAX_NAME = 80
 const MAX_DESC = 60
@@ -158,7 +170,10 @@ export function validateBulkRows(rows: BulkRowInput[]): BulkError[] {
         // Name the word actually found, not a representative one. Told
         // that a unit beginning "Suite" is wrong because of "Apt", a
         // customer reasonably concludes the rule does not apply to them.
-        const found = (UNIT_NOISE.exec(unitRaw)?.[1] ?? '').trim().replace(/[.\s]+$/, '')
+        // Either group can be the one that matched, so coalesce rather
+        // than reading [1] and naming "" when the Spanish form fired.
+        const m = UNIT_NOISE.exec(unitRaw)
+        const found = ((m?.[1] ?? m?.[2]) ?? '').trim().replace(/[.\s]+$/, '')
         add(r, 'unit', 'unit_prefix', `Write the unit plainly: "${plain}", not "${unitRaw}". A unit with "${found}" written in front of it will not match what your managers search for.`)
       }
     }
