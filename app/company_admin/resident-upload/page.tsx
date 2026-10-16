@@ -67,6 +67,32 @@ type Stage =
   | { kind: 'submitted'; batchId: number; residents: number; vehicles: number; property: string; sha: string }
   | { kind: 'failed'; message: string }
 
+// ── shells ──────────────────────────────────────────────────────────
+// 🔴 MODULE SCOPE, NOT INSIDE THE COMPONENT. These were declared in
+// ResidentUploadPage's body. A component declared inside a component is a
+// NEW function on every render, so React sees a different element type at
+// that position and unmounts the whole subtree instead of updating it.
+// Every keystroke in "Your name" re-rendered the page, remounted the
+// input, and the caret jumped out of the field. Nothing about the JSX
+// looked wrong — the defect was the declaration site. They close over
+// module constants only, so this is a plain move.
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'Arial, sans-serif', padding: '40px 24px' }}>
+      <div style={{ maxWidth: 820, margin: '0 auto' }}>
+        <a href="/company_admin" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>← Back to dashboard</a>
+        <h1 style={{ color: GOLD, fontSize: 24, fontWeight: 800, margin: '8px 0 4px' }}>Resident onboarding upload</h1>
+        {children}
+      </div>
+    </main>
+  )
+}
+function Card({ children }: { children: React.ReactNode }) {
+  return (
+    <section style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 20, marginTop: 16 }}>{children}</section>
+  )
+}
+
 export default function ResidentUploadPage() {
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [propertyId, setPropertyId] = useState<number | null>(null)
@@ -187,20 +213,6 @@ export default function ResidentUploadPage() {
       setStage({ kind: 'failed', message: 'We could not reach the server. Check your connection and try again.' })
     }
   }
-
-  // ── shells ────────────────────────────────────────────────────────
-  const Shell = ({ children }: { children: React.ReactNode }) => (
-    <main style={{ minHeight: '100vh', background: BG, color: TEXT, fontFamily: 'Arial, sans-serif', padding: '40px 24px' }}>
-      <div style={{ maxWidth: 820, margin: '0 auto' }}>
-        <a href="/company_admin" style={{ color: GOLD, fontSize: 12, textDecoration: 'none' }}>← Back to dashboard</a>
-        <h1 style={{ color: GOLD, fontSize: 24, fontWeight: 800, margin: '8px 0 4px' }}>Resident onboarding upload</h1>
-        {children}
-      </div>
-    </main>
-  )
-  const Card = ({ children }: { children: React.ReactNode }) => (
-    <section style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 20, marginTop: 16 }}>{children}</section>
-  )
 
   if (load.kind === 'loading') return <Shell><Card><p style={{ color: MUTED, margin: 0 }}>Loading…</p></Card></Shell>
   if (load.kind === 'not_enabled') return (
