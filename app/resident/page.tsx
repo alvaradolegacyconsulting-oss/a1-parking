@@ -1504,7 +1504,6 @@ export default function ResidentPortal() {
             {(() => {
               const inp: React.CSSProperties = { display:'block', width:'100%', marginTop:'6px', marginBottom:'10px', padding:'9px 10px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'6px', color:'white', fontSize:'12px', boxSizing:'border-box', outline:'none' }
               const lbl: React.CSSProperties = { color:'#aaa', fontSize:'10px', textTransform:'uppercase' as const, letterSpacing:'0.08em' }
-              const states = ['TX','AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','UT','VT','VA','WA','WV','WI','WY']
 
               function statusBadge(v: any) {
                 if (v.status === 'pending') return { bg:'#2a1e00', color:'#C9A227', border:'#C9A227', text:'Pending Approval' }
@@ -1793,9 +1792,14 @@ export default function ResidentPortal() {
                                 </div>
                                 <div>
                                   <label style={lbl}>State</label>
-                                  <select value={editingVehicle.state || 'TX'} onChange={e => setEditingVehicle({...editingVehicle, state: e.target.value})} style={inp}>
-                                    {states.map(s => <option key={s}>{s}</option>)}
-                                  </select>
+                                  {/* 🔴 The ADD form three hundred lines up already used
+                                      PlateStateSelect; this one kept a 50-code array of its own,
+                                      missing DC. A stored value absent from that array renders as
+                                      an empty State box on a vehicle that has one. */}
+                                  <PlateStateSelect
+                                    value={editingVehicle.state}
+                                    onChange={v => setEditingVehicle({ ...editingVehicle, state: v })}
+                                    style={inp} />
                                 </div>
                                 <div><label style={lbl}>Color</label><input value={editingVehicle.color || ''} onChange={e => setEditingVehicle({...editingVehicle, color: e.target.value})} style={inp} /></div>
                                 <div><label style={lbl}>Make</label><input value={editingVehicle.make || ''} onChange={e => setEditingVehicle({...editingVehicle, make: e.target.value})} style={inp} /></div>

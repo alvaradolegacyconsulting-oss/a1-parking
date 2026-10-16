@@ -192,7 +192,11 @@ export function validateBulkRows(rows: BulkRowInput[]): BulkError[] {
           // code for it rather than giving a generic example that
           // repeats the word back at them.
           ? `Write the two-letter code, not the state name: ${codeFor(st) ?? 'for example TX'}, not "${st}".`
-          : `"${st}" is not a state code we recognize. Use one of the ${PLATE_STATES.length} US state or DC codes.`)
+          // 🔴 NOT A COUNT. This read "one of the ${PLATE_STATES.length}
+          // US state or DC codes", which was true until MX joined the
+          // list and then said "one of the 52 US state or DC codes" —
+          // a number that is right and a description that is wrong.
+          : `"${st}" is not a code we recognize. Use a two-letter US state or DC code, or MX for a Mexican plate.`)
     }
 
     for (const [f, cap] of [['first_name', MAX_NAME], ['last_name', MAX_NAME],
@@ -306,6 +310,9 @@ export function dbFlagErrors(rows: BulkRowInput[], flags: BulkDbFlags[]): BulkEr
 
 /** Spelled-out state name → its code, so the error can name the fix. */
 const STATE_NAMES: Record<string, string> = {
+  // Not a state, but a customer who writes it out deserves the same
+  // "use the code" advice the states get rather than a bare refusal.
+  mexico: 'MX',
   alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
   colorado: 'CO', connecticut: 'CT', delaware: 'DE', 'district of columbia': 'DC',
   florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID', illinois: 'IL',

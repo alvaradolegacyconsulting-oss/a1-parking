@@ -29,14 +29,38 @@
 // touching the field keeps it byte-identical. That property is what the
 // gate asserts, and it holds for values nobody has thought of.
 
-/** 50 states + DC. Ruled 2026-10-14: no territories, Canada or MX yet. */
+/**
+ * 50 states + DC, then MX.
+ *
+ * 🔴 MX ADDED 2026-10-16, AND IT HAD A PREREQUISITE. A1 is in Texas and
+ * Mexican plates park in these lots; before this the product could not
+ * record one anywhere, so the upload copy could not honestly tell a
+ * customer what to do with the car. Adding the code alone was not safe:
+ * resident/page.tsx kept its own 50-code array for the EDIT form, so a
+ * vehicle stored as MX (or DC, which that array also lacked) rendered
+ * with no matching option — an empty State box on a vehicle that has
+ * one. That array is gone in the same commit. Nothing in the product
+ * branches on the value: every `state === …` in the codebase is
+ * account_state, and enforcement matches on plate alone.
+ *
+ * No territories and no Canadian provinces yet — one code, deliberately.
+ */
 export const PLATE_STATES: readonly string[] = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI',
   'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN',
   'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH',
   'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA',
   'WV', 'WI', 'WY',
+  // Not a US state, so it sits after the block rather than sorted into
+  // it, and it carries a spelled-out label below.
+  'MX',
 ]
+
+/**
+ * Labels that are not just the code. A bare "MX" in a list of states
+ * reads as a typo; the label says what it is.
+ */
+const PLATE_STATE_LABELS: Record<string, string> = { MX: 'Mexico (MX)' }
 
 export const DEFAULT_PLATE_STATE = 'TX'
 
@@ -56,7 +80,7 @@ export function isKnownPlateState(v: string | null | undefined): boolean {
  */
 export function plateStateOptions(current: string | null | undefined): { value: string; label: string }[] {
   const cur = (current ?? '').trim()
-  const known = PLATE_STATES.map(s => ({ value: s, label: s }))
+  const known = PLATE_STATES.map(s => ({ value: s, label: PLATE_STATE_LABELS[s] ?? s }))
   if (!cur || isKnownPlateState(cur)) return known
   return [{ value: cur, label: `${cur} (as recorded)` }, ...known]
 }

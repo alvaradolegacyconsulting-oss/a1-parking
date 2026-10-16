@@ -65,7 +65,7 @@ export const INSTRUCTIONS: readonly InstructionPara[] = [
   { lead: 'Email is required on every row.',
     text: "It is how the resident later sets up their own login. A row without an email cannot be loaded. If you don't hold an email for a unit, get one before including it." },
   { lead: 'Plate state is required and we do not guess it.',
-    text: 'Write the two-letter state code (TX, not Texas). US states and DC are accepted.' },
+    text: 'Write the two-letter state code (TX, not Texas). US states and DC are accepted. Mexican plates: use MX.' },
   { lead: 'Write the plate exactly as it appears. Spaces and dashes are ignored.',
     text: 'ABC-1234 and ABC 1234 are both read as ABC1234. At least five letters or numbers. Temporary paper tags are fine. Specialty, motorcycle and out-of-state plates are fine.' },
   { lead: 'Units must be written plainly.',
