@@ -27,14 +27,12 @@ export const dynamic = 'force-dynamic'
 interface ViolationRow {
   id: number
   plate: string
-  state: string | null
   vehicle_year: number | null
   vehicle_make: string | null
   vehicle_model: string | null
   vehicle_color: string | null
   violation_type: string | null
   location: string | null
-  notes: string | null
   property: string | null
   driver_name: string | null
   // B120 — operator license is snapshotted onto violations.driver_license
@@ -45,6 +43,15 @@ interface ViolationRow {
   tow_storage_address: string | null
   tow_storage_phone: string | null
   tow_fee: number | string | null
+  // 🔴 Shown as its OWN line and included in the total. The page used
+  // to label tow_fee "Total Due" while a mileage charge sat in the
+  // payload unrendered, so the motorist-facing total understated the
+  // recorded charges. Chapter 2308 makes the charges disclosure the
+  // point of this document.
+  tow_mileage_fee: number | string | null
+  // When the vehicle was TOWED, as distinct from created_at, which is
+  // when the violation was written.
+  tow_ticket_generated_at: string | null
   created_at: string
   // B120 — server-side resolved licensing values folded into the
   // violation payload by get_violation_by_view_token. Both null if
@@ -136,7 +143,14 @@ export default async function TicketViewPage({
 // ────────────────────────────────────────────────────────────────────
 
 function TicketView({ violation: v, photos }: { violation: ViolationRow; photos: PhotoRow[] }) {
-  const total = (typeof v.tow_fee === 'string' ? parseFloat(v.tow_fee) : v.tow_fee) || 0
+  // 🔴 tow_fee arrives as a STRING on real rows ("250") and
+  // tow_mileage_fee as a number, so both are coerced the same way
+  // rather than one being trusted to be numeric.
+  const money = (x: number | string | null): number =>
+    (typeof x === 'string' ? parseFloat(x) : x) || 0
+  const towFee = money(v.tow_fee)
+  const mileageFee = money(v.tow_mileage_fee)
+  const total = towFee + mileageFee
   // 2026-08-03 — unpadded to match /ticket/pm and the driver's paper.
   // See app/lib/format-ticket-number.ts.
   const ticketNum = formatTicketNumber(v.id)
@@ -172,7 +186,6 @@ function TicketView({ violation: v, photos }: { violation: ViolationRow; photos:
         {/* Vehicle */}
         <Section title="Vehicle Information">
           <Field label="License Plate" value={v.plate} mono />
-          <Field label="State" value={v.state || '—'} />
           {v.vehicle_year ? <Field label="Year" value={String(v.vehicle_year)} /> : null}
           {vehicleParts.length ? (
             <Field
@@ -187,12 +200,16 @@ function TicketView({ violation: v, photos }: { violation: ViolationRow; photos:
         <Section title="Violation">
           <Field label="Type" value={displayTowReason(v.violation_type)} />
           <Field label="Location / Space" value={v.location || '—'} />
-          <Field label="Notes" value={v.notes || 'No additional notes.'} span2 />
         </Section>
 
         {/* Property */}
         <Section title="Property">
           <Field label="Authorized By" value={v.property || '—'} span2 />
+          {/* The tow time, which is not the violation time. Show-if-
+              present: a ticket that was never stamped has no tow. */}
+          {v.tow_ticket_generated_at
+            ? <Field label="Ticket issued" value={formatTimestamp(v.tow_ticket_generated_at)} span2 />
+            : null}
         </Section>
 
         {/* Tow Operator */}
@@ -218,7 +235,11 @@ function TicketView({ violation: v, photos }: { violation: ViolationRow; photos:
         {/* Fees */}
         {total > 0 ? (
           <Section title="Fees">
-            <Field label="Tow Fee" value={`$${total.toFixed(2)}`} />
+            <Field label="Tow Fee" value={`$${towFee.toFixed(2)}`} />
+            {/* Show-if-present: most tickets carry no mileage charge,
+                and a "$0.00" line reads as a charge of zero rather
+                than as no such charge. */}
+            {mileageFee > 0 ? <Field label="Mileage" value={`$${mileageFee.toFixed(2)}`} /> : null}
             <Field
               label="Total Due"
               value={`$${total.toFixed(2)}`}

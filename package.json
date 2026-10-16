@@ -42,6 +42,7 @@
     "verify:innercomponents": "tsx scripts/verify-inner-components.ts",
     "verify:novendornames": "tsx scripts/verify-no-vendor-names.ts",
     "verify:platestatepicker": "tsx scripts/verify-plate-state-picker.ts",
+    "verify:ticketprojection": "tsx --env-file=.env.local scripts/verify-ticket-projection.ts",
     "verify:batchnotify": "tsx --env-file=.env.local scripts/verify-batch-notify.ts",
     "verify:cascade": "tsx scripts/verify-property-cascade.ts",
     "verify:claim": "tsx scripts/verify-resident-claim.ts",
