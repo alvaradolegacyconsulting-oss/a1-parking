@@ -137,6 +137,9 @@ export async function POST(req: NextRequest) {
     to:            r.email,
     subject,
     html,
+    // A reply from a resident has to reach a person; the From has no
+    // inbox. support@ per the B2B/public address split.
+    replyTo:       'support@shieldmylot.com',
     companyAnchor: { kind: 'resident_id', residentId: body.residentId },
   })
 

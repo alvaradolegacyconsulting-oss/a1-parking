@@ -175,6 +175,13 @@ async function sendToCA(args: SendToCAArgs): Promise<SendToCAResult> {
     to: args.recipient_email,
     subject: args.subject,
     html: args.html,
+    // 🔴 DunningDay0 says "Questions? Reply to this email or contact
+    // support@shieldmylot.com." The From is noreply@mail.shieldmylot.com
+    // — a sending subdomain with no inbox — so that reply bounced or
+    // vanished. Naming support@ in the sentence softened it; it did not
+    // make the reply arrive. support@, not hello@: the recipient is a
+    // company administrator, so this is B2B correspondence.
+    replyTo: 'support@shieldmylot.com',
   })
 
   if (!sendResult.ok) {
