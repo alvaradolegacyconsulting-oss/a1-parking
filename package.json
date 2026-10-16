@@ -57,7 +57,8 @@
     "verify:billingguard": "tsx scripts/verify-billing-guard.ts",
     "rehearse:full": "tsx scripts/rehearse-full.ts",
     "rollback:demobatch": "tsx scripts/rollback-demo-batch.ts",
-    "verify:openredirect": "tsx scripts/verify-open-redirect.ts"
+    "verify:openredirect": "tsx scripts/verify-open-redirect.ts",
+    "queue:act": "tsx scripts/rollback-demo-batch.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

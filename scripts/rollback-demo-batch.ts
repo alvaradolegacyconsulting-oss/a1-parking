@@ -5,8 +5,15 @@
 // was undone by hand would not have exercised the thing an operator
 // will actually press, and the refusals are the interesting part.
 //
-// Takes the property name as an argument so it is not wired to one
-// rehearsal:  npm run rollback:demobatch -- "Willowbrook Court"
+// Takes the property and the action, so it is not wired to one
+// rehearsal or one verb:
+//   npm run queue:act -- "Willowbrook Court" rollback
+//   npm run queue:act -- "Sunset Ridge Apartments" reject "rehearsal fixture"
+//
+// 🔴 Generalised on the third use rather than the second. rollback,
+// reject and return are the same shape — an operator session, one POST,
+// and the refusal is the interesting part — and a third copy would have
+// been three places for the operator-account cleanup to drift.
 //
 // 🔴 It does not delete auth users. Rollback refuses while any batch
 // resident has an auth account, and that refusal is the ruling — not
@@ -29,6 +36,12 @@ const db = createClient(URL_, g('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistS
 const PORT = 4003
 const BASE = `http://127.0.0.1:${PORT}`
 const PROPERTY = process.argv[2] || 'Willowbrook Court'
+const ACTION = (process.argv[3] || 'rollback') as 'rollback' | 'reject' | 'return'
+const REASON = process.argv[4] || ''
+if (!['rollback', 'reject', 'return'].includes(ACTION)) {
+  warn(`🔴 unknown action ${JSON.stringify(ACTION)} — use rollback, reject or return`)
+  process.exit(2)
+}
 const S = Date.now()
 
 let srv: DevServer | null = null
@@ -82,7 +95,7 @@ const main = async () => {
     const { count: c } = await db.from(t).select('*', { count: 'exact', head: true }).eq('property', PROPERTY)
     return c ?? 0
   }
-  say(`batch ${batch.id} on ${PROPERTY} · ${batch.status}`)
+  say(`batch ${batch.id} on ${PROPERTY} · ${batch.status} · action: ${ACTION}`)
   say(`  stamped now: ${await count('residents')} residents, ${await count('vehicles')} vehicles, ${await count('user_roles')} role rows`)
   say(`  ${PROPERTY} totals: ${await propCount('residents')} residents, ${await propCount('vehicles')} vehicles\n`)
 
@@ -100,22 +113,41 @@ const main = async () => {
     srv = await startDevServer(PORT)
     if (!srv) throw new Error('server did not come up')
 
-    const r = await fetch(`${BASE}/api/admin/import-batch/rollback`, {
+    // 🔴 reject REQUIRES a typed reason and the RPC refuses one under
+    // ten characters, because that sentence is the only thing the
+    // company is told. Caught here so the operator is not told by a
+    // 409 after a round trip.
+    if (ACTION === 'reject' && REASON.trim().length < 10) {
+      warn(`🔴 reject needs a reason of at least 10 characters — it is the only thing the company is told about their file.`)
+      warn(`   npm run queue:act -- ${JSON.stringify(PROPERTY)} reject "why this file will not be loaded"`)
+      await teardown('end'); process.exit(2)
+    }
+    const r = await fetch(`${BASE}/api/admin/import-batch/${ACTION}`, {
       method: 'POST', redirect: 'manual',
       headers: { 'Content-Type': 'application/json', Cookie: op.cookie },
-      body: JSON.stringify({ batch_id: batch.id }),
+      body: JSON.stringify({ batch_id: batch.id, reason: REASON, trigger: 'review' }),
     })
     const out = await r.json().catch(() => ({})) as Record<string, any>
-    say(`POST /api/admin/import-batch/rollback → HTTP ${r.status}`)
+    say(`POST /api/admin/import-batch/${ACTION} → HTTP ${r.status}`)
 
     if (out.ok === true) {
-      say(`\n✅ rolled back: ${out.residents} residents, ${out.vehicles} vehicles, ${out.roles} role rows removed`)
+      say(ACTION === 'rollback'
+        ? `\n✅ rolled back: ${out.residents} residents, ${out.vehicles} vehicles, ${out.roles} role rows removed`
+        : `\n✅ ${ACTION}: batch ${out.batch_id} is now ${out.status}${out.error_count !== undefined ? ` (${out.error_count} error(s) attached)` : ''}`)
     } else {
       warn(`\n🔴 REFUSED: ${out.error}`)
       say(`   ${out.message}`)
       if (Array.isArray(out.claimed)) {
         say(`\n   ${out.claimed_count} resident(s) with an auth account:`)
         for (const c of out.claimed) say(`     unit ${c.unit || '—'} · ${c.email}`)
+      }
+      // 🔴 The block reasons, which the first version did not print —
+      // so a `blocked` refusal said only that it was blocked. A refusal
+      // an operator cannot act on is the thing this whole arc keeps
+      // being about.
+      if (Array.isArray(out.reasons)) {
+        say(`\n   reasons:`)
+        for (const why of out.reasons) say(`     · ${why}`)
       }
       if (Array.isArray(out.blockers)) {
         say(`\n   dependents:`)

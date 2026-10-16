@@ -66,7 +66,11 @@ const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(
 let srv: DevServer | null = null
 const mintedUids: string[] = []
 const mintedEmails: string[] = []
-const flaggedCompanies: number[] = []
+// 🔴 RESTORE WHAT WAS THERE, NOT `false`. See the note in the other
+// gates: refusing to run when the flag was already on made these
+// unrunnable exactly during a UAT window where the ruling is that it
+// STAYS ON. The pair is (company id, the value found).
+const flaggedCompanies: { id: number; was: boolean }[] = []
 const batchIds: number[] = []
 const storagePaths: string[] = []
 let cleaned = false
@@ -79,12 +83,12 @@ async function cleanup(why: string) {
   // 🔴 The flag goes back FIRST and is read back. Leaving bulk upload
   // switched on for a company because a gate died is the one piece of
   // state here that changes what a real operator can do.
-  for (const id of flaggedCompanies) {
-    const r = await db.from('companies').update({ bulk_onboarding_enabled: false })
+  for (const { id, was } of flaggedCompanies) {
+    const r = await db.from('companies').update({ bulk_onboarding_enabled: was })
       .eq('id', id).select('bulk_onboarding_enabled')
     const back = r.data?.[0]?.bulk_onboarding_enabled
-    if (r.error || back !== false) { warn(`   🔴 FLAG NOT RESTORED on company ${id} (reads ${back})`); fails++ }
-    else say(`   ↩ bulk_onboarding_enabled back to false on company ${id}`)
+    if (r.error || back !== was) { warn(`   🔴 FLAG NOT RESTORED on company ${id} (reads ${back}, wanted ${was})`); fails++ }
+    else say(`   ↩ bulk_onboarding_enabled back to ${was} on company ${id} (as found)`)
   }
   if (batchIds.length) {
     const r = await db.from('import_batches').delete().in('id', batchIds).select('id')
@@ -177,10 +181,6 @@ const main = async () => {
     .eq('company', demo.name).eq('is_active', true).order('id')
   const target = (dProps ?? [])[0]
   if (!target) { console.error(`🔴 ${demo.name} has no active property`); process.exit(2) }
-  if (demo.bulk_onboarding_enabled === true) {
-    console.error(`🔴 ${demo.name} already has bulk_onboarding_enabled=true. Refusing: this gate flips it on and restores it to FALSE, which would be the wrong value to leave if it was already on. Clear it or run the gate against a company that does not have it set.`)
-    process.exit(2)
-  }
   console.log(`subject: ${demo.name} (id ${demo.id}, env=demo) · ${target.name} (id ${target.id})\n`)
 
   // Another company's property, for the cross-tenant path claim.
@@ -231,6 +231,18 @@ const main = async () => {
     // The shared authorizeBulkCompany is supposed to make that
     // impossible; this is the assertion that it does.
     console.log('\n── 🔴 flag off: context, preview and submit must give the SAME answer ──')
+    // 🔴 SET the flag off; do not inherit it. This leg used to rely on the
+    // gate refusing to run when the flag was already on. That refusal is
+    // gone (the flag now stays on between UAT runs), and the first thing
+    // that broke was this leg: it measured three endpoints with the flag
+    // ON and reported that they did not refuse. Register the restore
+    // BEFORE the write, so a crash here still puts the flag back.
+    flaggedCompanies.push({ id: demo.id as number, was: demo.bulk_onboarding_enabled === true })
+    const off = await db.from('companies').update({ bulk_onboarding_enabled: false })
+      .eq('id', demo.id).select('bulk_onboarding_enabled')
+    if (off.error || off.data?.[0]?.bulk_onboarding_enabled !== false) {
+      console.error('🔴 could not turn the flag off for the flag-off leg'); await cleanup('end'); process.exit(2)
+    }
     const offCtx = await GET('/api/bulk-onboarding/context', ca)
     const offPrev = await POST('/api/bulk-onboarding/preview', { object_path: `${target.id}/x.csv` }, ca)
     const offSub = await POST('/api/bulk-onboarding/submit', { object_path: `${target.id}/x.csv`, attested_name: 'x', attested_title: 'y' }, ca)
@@ -252,7 +264,7 @@ const main = async () => {
     if (flip.error || flip.data?.[0]?.bulk_onboarding_enabled !== true) {
       console.error('🔴 could not enable the flag'); await cleanup('end'); process.exit(2)
     }
-    flaggedCompanies.push(demo.id as number)
+    // already registered above, before the flag-off write
     console.log(`\nflag on for ${demo.name} (restored in cleanup)\n`)
 
     // ── 🔴 WHO IS STILL REFUSED WITH THE FLAG ON ─────────────────
@@ -316,6 +328,8 @@ const main = async () => {
 
     // ── 🔴 A DIRTY FILE IS NOT SUBMITTABLE ───────────────────────
     console.log('\n── 🔴 submit re-runs the validation; preview is a courtesy ──')
+    const { data: beforeD } = await db.from('import_batches').select('id').eq('property_id', target.id)
+    const batchIdsBefore = new Set((beforeD ?? []).map(r => r.id as number))
     const subD = await POST('/api/bulk-onboarding/submit',
       { object_path: dirtyPath, source_filename: 'alden_fixture_dirty.csv', attested_name: 'Gate Runner', attested_title: 'Automated' }, ca)
     const subDj = await js(subD)
@@ -327,9 +341,17 @@ const main = async () => {
     chk('🔴 submitting the dirty file is refused as a VALIDATION failure, naming the count',
       subD.status === 422 && subDj.error === 'file_has_errors' && Number(subDj.error_count) > 0,
       `HTTP ${subD.status} ${JSON.stringify(subDj).slice(0, 200)}`)
-    const { data: noBatch } = await db.from('import_batches').select('id').eq('property_id', target.id)
+    // 🔴 NEW rows, not all rows. Written as `length === 0` this assertion
+    // was coupled to the property's whole history: it went red the day a
+    // real rejected batch was left on this property on purpose. An
+    // absolute count cannot tell "the refusal wrote a row" from "someone
+    // else's row is still here".
+    const { data: afterD } = await db.from('import_batches').select('id').eq('property_id', target.id)
+    const newIds = (afterD ?? []).map(r => r.id as number).filter(id => !batchIdsBefore.has(id))
     chk('   ...and no batch row was created by the refusal',
-      (noBatch ?? []).length === 0, `${(noBatch ?? []).length} batch row(s)`)
+      newIds.length === 0, newIds.length === 0
+        ? `${(afterD ?? []).length} pre-existing row(s) on this property, none of them new`
+        : `created ${newIds.join(', ')}`)
 
     // ── attestation ──────────────────────────────────────────────
     console.log('\n── attestation ──')

@@ -75,7 +75,18 @@ const str = (v: unknown, n = 220) => (JSON.stringify(v) ?? 'undefined').slice(0,
 let srv: DevServer | null = null
 const mintedUids: string[] = []
 const mintedEmails: string[] = []
+// 🔴 RESTORE WHAT WAS THERE, NOT `false`.
+// These gates used to refuse outright if the flag was already on,
+// because they restored it to false and that would be the wrong value
+// to leave. That made them unrunnable exactly when they were most
+// wanted: during a UAT window where the ruling is that the flag STAYS
+// ON. The refusal was protecting a wrong assumption rather than the
+// tenant.
+// Snapshotting the original and putting it back makes the gate
+// transparent to whatever state it found — which is what "restore"
+// always meant.
 let flaggedCompany: number | null = null
+let flagWas: boolean | null = null
 let cleaned = false
 
 async function cleanup(why: string) {
@@ -92,10 +103,11 @@ async function cleanup(why: string) {
   }
   if (mintedUids.length) say(`   ↩ deleted ${mintedUids.length} auth user(s)`)
   if (flaggedCompany !== null) {
-    const r = await db.from('companies').update({ bulk_onboarding_enabled: false })
+    const want = flagWas === true
+    const r = await db.from('companies').update({ bulk_onboarding_enabled: want })
       .eq('id', flaggedCompany).select('bulk_onboarding_enabled')
-    if (r.error || r.data?.[0]?.bulk_onboarding_enabled !== false) { warn('   🔴 FLAG NOT RESTORED'); fails++ }
-    else say(`   ↩ bulk_onboarding_enabled back to false on company ${flaggedCompany}`)
+    if (r.error || r.data?.[0]?.bulk_onboarding_enabled !== want) { warn('   🔴 FLAG NOT RESTORED'); fails++ }
+    else say(`   ↩ bulk_onboarding_enabled back to ${want} on company ${flaggedCompany} (as found)`)
   }
   if (srv) { await srv.stop(); srv = null; say('   ↩ stopped the server this gate started (whole process group)') }
 }
@@ -148,10 +160,6 @@ const main = async () => {
 
   const demo = (cos ?? []).find(c => c.company_env === 'demo')
   if (!demo) { warn("🔴 no demo company. Refusing."); process.exit(2) }
-  if (demo.bulk_onboarding_enabled === true) {
-    warn(`🔴 ${demo.name} already has the flag on; this gate restores it to false. Clear it first.`)
-    process.exit(2)
-  }
   const { data: batch } = await db.from('import_batches').select('id,status,company_id')
     .eq('company_id', demo.id).order('id').limit(1).maybeSingle()
   if (!batch) { warn('🔴 no batch at the demo company. Run npm run seed:demobatch first.'); process.exit(2) }
@@ -163,6 +171,7 @@ const main = async () => {
   try {
     const admin = await actor('adm', 'admin')
     await db.from('companies').update({ bulk_onboarding_enabled: true }).eq('id', demo.id)
+    flagWas = demo.bulk_onboarding_enabled === true
     flaggedCompany = demo.id as number
 
     srv = await startDevServer(PORT)

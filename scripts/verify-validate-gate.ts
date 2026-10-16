@@ -42,7 +42,18 @@ const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(
 const mintedUids: string[] = []
 const mintedEmails: string[] = []
 const storagePaths: string[] = []
+// 🔴 RESTORE WHAT WAS THERE, NOT `false`.
+// These gates used to refuse outright if the flag was already on,
+// because they restored it to false and that would be the wrong value
+// to leave. That made them unrunnable exactly when they were most
+// wanted: during a UAT window where the ruling is that the flag STAYS
+// ON. The refusal was protecting a wrong assumption rather than the
+// tenant.
+// Snapshotting the original and putting it back makes the gate
+// transparent to whatever state it found — which is what "restore"
+// always meant.
 let flaggedCompany: number | null = null
+let flagWas: boolean | null = null
 let cleaned = false
 
 async function cleanup(why: string) {
@@ -68,11 +79,12 @@ async function cleanup(why: string) {
   }
   if (mintedUids.length) say(`   ↩ deleted ${mintedUids.length} auth user(s)`)
   if (flaggedCompany !== null) {
-    const r = await db.from('companies').update({ bulk_onboarding_enabled: false })
+    const want = flagWas === true
+    const r = await db.from('companies').update({ bulk_onboarding_enabled: want })
       .eq('id', flaggedCompany).select('bulk_onboarding_enabled')
     const back = r.data?.[0]?.bulk_onboarding_enabled
     if (r.error || back !== false) { warn(`   🔴 FLAG NOT RESTORED on company ${flaggedCompany} (reads ${back})`); fails++ }
-    else say(`   ↩ bulk_onboarding_enabled back to false on company ${flaggedCompany}`)
+    else say(`   ↩ bulk_onboarding_enabled back to ${want} on company ${flaggedCompany} (as found)`)
   }
 
   // 🔴 An admin role row surviving a crashed gate is the worst thing
@@ -120,10 +132,6 @@ const main = async () => {
     .eq('company_env', 'demo')
   const demo = (cos ?? [])[0]
   if (!demo) { console.error("🔴 no company with company_env='demo'. Refusing."); process.exit(2) }
-  if (demo.bulk_onboarding_enabled === true) {
-    console.error(`🔴 ${demo.name} already has bulk_onboarding_enabled=true. This gate restores it to FALSE, which would be the wrong value to leave. Clear it first.`)
-    process.exit(2)
-  }
   // Batch 8's property, so the gate exercises the real subject.
   const { data: b8 } = await db.from('import_batches').select('id,property_id').order('id').limit(1).maybeSingle()
   const propertyId = b8 ? Number(b8.property_id) : null
@@ -208,6 +216,7 @@ const main = async () => {
     const flip = await db.from('companies').update({ bulk_onboarding_enabled: true })
       .eq('id', demo.id).select('bulk_onboarding_enabled')
     if (flip.error || flip.data?.[0]?.bulk_onboarding_enabled !== true) throw new Error('could not enable the flag')
+    flagWas = demo.bulk_onboarding_enabled === true
     flaggedCompany = demo.id as number
     const vCaOn = await validate(ca.client, propertyId)
     chk('   ...and passes with the flag ON', !vCaOn.refused && vCaOn.rows === 1,
