@@ -167,11 +167,34 @@ export async function POST(req: NextRequest) {
   // Tell the caller WHICH happened. 'existing' is a success, not an
   // error — the visitor has a valid pass either way, and the page says
   // so rather than implying a second one was created.
-  const result = rpcData as { action?: string; pass_id?: number; expires_at?: string } | null
+  // 🔴 2026-10-17 — created_at and the limit fields pass through, because
+  // the confirmation must render the ROW's times and never compute its
+  // own. A guest was shown a browser-computed "valid until" twenty hours
+  // past their real expiry and was cited for it.
+  const result = rpcData as {
+    ok?: boolean; action?: string; pass_id?: number
+    created_at?: string; expires_at?: string
+    has_active_pass?: boolean; message?: string
+  } | null
+
+  // limit_reached is a REFUSAL, not a success. It still carries the
+  // pass the guest holds, if any, so the page can say what is true.
+  if (result?.action === 'limit_reached') {
+    return NextResponse.json({
+      ok: false,
+      action: 'limit_reached',
+      pass_id: result?.pass_id ?? null,
+      created_at: result?.created_at ?? null,
+      expires_at: result?.expires_at ?? null,
+      has_active_pass: result?.has_active_pass === true,
+    }, { status: 409 })
+  }
+
   return NextResponse.json({
     ok: true,
-    action: result?.action ?? 'created',
+    action: result?.action ?? 'issued',
     pass_id: result?.pass_id ?? null,
+    created_at: result?.created_at ?? null,
     expires_at: result?.expires_at ?? null,
   })
 }

@@ -24,6 +24,19 @@ function VisitorForm() {
   const hasPropertyParam = !!(rawProperty && rawProperty.trim() !== '')
   const propertyName = rawProperty || 'Managed Property'
   const [step, setStep] = useState<'form' | 'success'>('form')
+  // 🔴 THE SERVER'S ANSWER, AND ONLY THE SERVER'S ANSWER. The success
+  // screen used to compute `new Date()` and `now + duration` in the
+  // browser. On a dedup hit that displayed a validity the row did not
+  // carry — a guest was told "valid until 8:30 PM tomorrow" while their
+  // pass expired at 11:01 PM that night, and was cited for it. Nothing
+  // on the confirmation may be computed here again.
+  const [issued, setIssued] = useState<{
+    action: 'issued' | 'double_tap' | 'limit_reached'
+    pass_id: number | null
+    created_at: string | null
+    expires_at: string | null
+    has_active_pass?: boolean
+  } | null>(null)
   const [supportPhone, setSupportPhone] = useState('')
   const [supportEmail, setSupportEmail] = useState('')
   const [supportWebsite, setSupportWebsite] = useState('')
@@ -462,7 +475,34 @@ function VisitorForm() {
           duration_hours: parseInt(form.duration),
         }),
       })
-      const body = await res.json().catch(() => ({} as { error?: string; error_class?: string }))
+      const body = await res.json().catch(() => ({} as {
+        error?: string; error_class?: string; action?: string
+        pass_id?: number | null; created_at?: string | null
+        expires_at?: string | null; has_active_pass?: boolean
+      }))
+      // At the limit the route answers 409 with the real current pass.
+      // It is a refusal the guest must see, not a generic error — and
+      // never a success screen.
+      if (res.status === 409 && body?.action === 'limit_reached') {
+        setIssued({
+          action: 'limit_reached',
+          pass_id: body.pass_id ?? null,
+          created_at: body.created_at ?? null,
+          expires_at: body.expires_at ?? null,
+          has_active_pass: body.has_active_pass === true,
+        })
+        setLoading(false)
+        setStep('success')
+        return
+      }
+      if (res.ok) {
+        setIssued({
+          action: (body?.action === 'double_tap' ? 'double_tap' : 'issued'),
+          pass_id: body?.pass_id ?? null,
+          created_at: body?.created_at ?? null,
+          expires_at: body?.expires_at ?? null,
+        })
+      }
       if (!res.ok) {
         // CAPTCHA failure → reset widget so user can re-challenge.
         // Token is single-use; cannot replay. network_error included because
@@ -504,13 +544,11 @@ function VisitorForm() {
       hour: 'numeric', minute: '2-digit', hour12: true
     }).format(d)
   }
-  function formatExpiry(hours: string) {
-    const d = new Date()
-    d.setHours(d.getHours() + parseInt(hours))
-    // TODO: custom format — visitor pass expiry short display (HH:MM · Aug 5); needs formatTime + formatDate variants with month:short opt
-    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) +
-           ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  }
+  // 🔴 formatExpiry(hours) REMOVED 2026-10-17. It computed "now +
+  // duration" in the browser and was already unused — the dead
+  // leftover of the client-side times that caused the XGJ5870
+  // incident. Left in place it is the function the next person reaches
+  // for. An expiry on this page comes from the row or not at all.
 
   // 2026-07-27 — phantom-pass guard render. If the ?property= URL param
   // was present but didn't resolve in the DB, refuse to render the form.
@@ -616,6 +654,63 @@ function VisitorForm() {
     )
   }
 
+  // 🔴 A REFUSAL IS NOT A SUCCESS SCREEN. At the limit no pass was
+  // created, so the "✓ Active" card below would be a lie in the one
+  // place a guest looks to find out whether they are covered. The
+  // expiry shown here is the row's, never computed.
+  if (step === 'success' && issued?.action === 'limit_reached') {
+    const current = issued.expires_at ? new Date(issued.expires_at) : null
+    return (
+      <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
+        <div style={{ maxWidth:'420px', width:'100%' }}>
+          <div style={{ marginBottom:'24px', textAlign:'center' }}>
+            <h1 style={{ color:'#C9A227', fontSize:'22px', fontWeight:'bold', margin:'0' }}>ShieldMyLot&trade;</h1>
+          </div>
+          <div style={{ background:'#161b26', border:'1px solid #b71c1c', borderRadius:'12px', padding:'24px', textAlign:'center' }}>
+            <div style={{ width:'56px', height:'56px', borderRadius:'50%', background:'#1e1a0a', border:'2px solid #f44336', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px' }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" role="img" aria-label="Warning" focusable="false">
+                <path d="M12 3.2 1.8 20.4h20.4L12 3.2Z" fill="none" stroke="#f44336" strokeWidth="2" strokeLinejoin="round" />
+                <rect x="11" y="9" width="2" height="6" rx="1" fill="#f44336" />
+                <rect x="11" y="16.6" width="2" height="2" rx="1" fill="#f44336" />
+              </svg>
+            </div>
+            <h2 style={{ color:'#f44336', fontSize:'17px', fontWeight:'bold', margin:'0 0 12px' }}>
+              This plate has reached the visitor pass limit for this property
+            </h2>
+            <p style={{ color:'#fff', fontSize:'14px', lineHeight:'1.6', margin:'0 0 10px', fontWeight:'bold' }}>
+              Contact the property office.
+            </p>
+            {/* What they actually hold, from the row. "You have no
+                active pass" and "we could not tell" are different
+                answers and must not look the same. */}
+            {current
+              ? (
+                <p style={{ color:'#ccc', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
+                  Your current pass is valid until{' '}
+                  <strong style={{ color:'#C9A227' }}>{formatTimestamp(current)}</strong>.
+                </p>
+              )
+              : (
+                <p style={{ color:'#ccc', fontSize:'13px', lineHeight:'1.6', margin:'0 0 8px' }}>
+                  <strong style={{ color:'#C9A227' }}>You do not have an active pass.</strong> Your vehicle is not covered.
+                </p>
+              )}
+            <p style={{ color:'#aaa', fontSize:'13px', lineHeight:'1.6', margin:'8px 0 0' }}>
+              No new pass was created.
+            </p>
+          </div>
+          <p style={{ textAlign:'center', marginTop:'18px' }}>
+            <button
+              onClick={() => { setStep('form'); setIssued(null); setTosChecked(false) }}
+              style={{ background:'none', border:'none', color:'#C9A227', fontSize:'13px', textDecoration:'underline', cursor:'pointer', fontFamily:'inherit' }}>
+              Back
+            </button>
+          </p>
+        </div>
+      </main>
+    )
+  }
+
   if (step === 'success') {
     return (
       <main style={{ minHeight:'100vh', background:'#0f1117', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Arial, sans-serif', padding:'20px' }}>
@@ -642,8 +737,9 @@ function VisitorForm() {
             {!form.vehicle_desc && <div style={{ marginBottom:'16px' }} />}
 
             {(() => {
-              const issuedAt = new Date()
-              const expiresAt = new Date(issuedAt.getTime() + parseInt(form.duration) * 3600000)
+              // 🔴 No new Date() here. Both values come from the row.
+              const issuedAt = issued?.created_at ? new Date(issued.created_at) : null
+              const expiresAt = issued?.expires_at ? new Date(issued.expires_at) : null
               const tile = (label: string, value: React.ReactNode, span?: boolean) => (
                 <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:'8px', padding:'10px', ...(span ? { gridColumn:'span 2' } : {}) }}>
                   <p style={{ color:'rgba(201,162,39,0.6)', fontSize:'10px', textTransform:'uppercase' as const, letterSpacing:'0.08em', margin:'0 0 3px' }}>{label}</p>
@@ -655,8 +751,8 @@ function VisitorForm() {
                   {tile('Property', resolvedPropertyName)}
                   {tile('Visiting Unit', form.unit)}
                   {tile('Duration', `${form.duration} hours`)}
-                  {tile('Issued', formatTimestamp(issuedAt))}
-                  {tile('Valid Until', formatTimestamp(expiresAt), true)}
+                  {tile('Issued', issuedAt ? formatTimestamp(issuedAt) : '—')}
+                  {tile('Valid Until', expiresAt ? formatTimestamp(expiresAt) : '—', true)}
                 </div>
               )
             })()}
@@ -693,7 +789,7 @@ function VisitorForm() {
           </div>
 
           <button
-            onClick={() => { setStep('form'); setForm({ plate:'', name:'', unit:'', duration:'4', vehicle_desc:'' }); setTosChecked(false) }}
+            onClick={() => { setStep('form'); setIssued(null); setForm({ plate:'', name:'', unit:'', duration:'4', vehicle_desc:'' }); setTosChecked(false) }}
             style={{ width:'100%', padding:'12px', background:'#161b26', color:'#aaa', fontSize:'13px', border:'1px solid #2a2f3d', borderRadius:'8px', cursor:'pointer' }}
           >
             Register Another Vehicle

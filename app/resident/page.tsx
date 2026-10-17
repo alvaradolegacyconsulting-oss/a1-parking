@@ -1098,17 +1098,33 @@ export default function ResidentPortal() {
       }
       return
     }
-    const result = data as { action?: string; expires_at?: string; plate?: string } | null
-    await logAudit({ action: 'ISSUE_VISITOR_PASS', table_name: 'visitor_passes', new_values: { plate, visiting_unit: resident.unit, duration_hours: parseInt(visitorForm.duration), action: result?.action ?? 'created' } })
+    const result = data as {
+      ok?: boolean; action?: string; expires_at?: string; plate?: string
+      has_active_pass?: boolean
+    } | null
+    await logAudit({ action: 'ISSUE_VISITOR_PASS', table_name: 'visitor_passes', new_values: { plate, visiting_unit: resident.unit, duration_hours: parseInt(visitorForm.duration), action: result?.action ?? 'issued' } })
     // 🔴 'existing' is a SUCCESS. The visitor has a valid pass; saying
     // "issued!" a second time is what taught people to tap again.
     const expiryText = result?.expires_at
       ? new Date(result.expires_at).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })
       : null
-    if (result?.action === 'existing') {
-      alert(`${plate} already has an active visitor pass${expiryText ? `, good until ${expiryText}` : ''}. Nothing else to do — we didn't create a second one.`)
+    // 🔴 2026-10-17 — three outcomes now, and each says something
+    // different. 'existing' is gone: a renewal creates a row, and only
+    // a double tap returns the previous one. Every expiry printed here
+    // is the row's own, as it already was on this surface — the
+    // /visitor page was the one computing its own times.
+    if (result?.action === 'limit_reached') {
+      alert(
+        `${plate} has reached the visitor pass limit for this property. Contact the property office.`
+        + (expiryText
+          ? `\n\nThe current pass is valid until ${expiryText}.`
+          : `\n\nThere is no active pass for this plate right now.`)
+        + `\n\nNo new pass was created.`,
+      )
+    } else if (result?.action === 'double_tap') {
+      alert(`${plate} was just issued a pass${expiryText ? `, valid until ${expiryText}` : ''}. Nothing else to do — we didn't create a second one.`)
     } else {
-      alert(`Visitor pass issued${expiryText ? ` — good until ${expiryText}` : ''}.`)
+      alert(`Renewed${expiryText ? ` — valid until ${expiryText}` : ''}.`)
     }
     setShowVisitorForm(false)
     setVisitorForm({ plate: '', name: '', vehicle_desc: '', duration: '4' })
