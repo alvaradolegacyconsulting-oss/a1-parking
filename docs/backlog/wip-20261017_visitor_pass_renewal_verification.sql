@@ -7,6 +7,10 @@
 -- a TEST tenant, with a limit of 2 set on it so limit_reached is
 -- reachable without touching anyone's configuration. Everything is
 -- removed and read back.
+--
+-- 🔴 It sets the service_role JWT claim first. Without it the function
+-- raises 'unauthenticated' from a DO block — correctly, because the
+-- SQL editor presents no JWT. See the note at the top of the block.
 DO $do$
 DECLARE
   v_fail    TEXT[] := '{}';
@@ -22,6 +26,24 @@ DECLARE
   v_audits  INT;
   v_prop_id BIGINT;
 BEGIN
+  -- 🔴 THE SQL EDITOR HAS NO JWT, AND THE FUNCTION IS RIGHT TO REFUSE.
+  -- issue_visitor_pass reads auth.jwt() ->> 'role'. Run from a DO block
+  -- that claim is NULL, so it takes the resident branch and raises
+  -- 'unauthenticated' — which is the caller-scoping working, not a
+  -- fault. The first version of this file called the function with no
+  -- claim set and failed on exactly that.
+  --
+  -- So the claim the SERVER ROUTE presents is set here, transaction-
+  -- local, using the same idiom as the other RPC verifications in
+  -- migrations/. 🔴 This does not weaken anything: what keeps an
+  -- anonymous caller out of this function is the GRANT (anon is
+  -- deliberately not granted EXECUTE), not the claim — and a DO block
+  -- in the SQL editor is already privileged. The behavioural half is
+  -- also exercised genuinely, as a real service_role client, by
+  -- npm run verify:visitorrenewal.
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  PERFORM set_config('request.jwt.claim',  '{"role":"service_role"}', true);
+
   -- A throwaway property at a test tenant, limit 2.
   SELECT name INTO v_co FROM public.companies WHERE company_env = 'test' ORDER BY id LIMIT 1;
   IF v_co IS NULL THEN RAISE EXCEPTION 'VERIFICATION INCONCLUSIVE: no test-env company'; END IF;
