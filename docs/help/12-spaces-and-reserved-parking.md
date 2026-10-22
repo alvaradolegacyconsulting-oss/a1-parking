@@ -2,7 +2,7 @@
 title: "Spaces and Reserved Parking"
 category: "Property Management Track"
 audience: ["company_admin", "manager", "resident"]
-tier_required: "pm_only_or_legacy"
+tier_required: "any"
 last_updated: "2026-07-02"
 related: ["property-management-overview", "resident-management", "understanding-your-tier"]
 ---
