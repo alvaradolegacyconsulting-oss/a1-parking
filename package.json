@@ -68,7 +68,8 @@
     "rehearse:full": "tsx scripts/rehearse-full.ts",
     "rollback:demobatch": "tsx scripts/rollback-demo-batch.ts",
     "verify:openredirect": "tsx scripts/verify-open-redirect.ts",
-    "queue:act": "tsx scripts/rollback-demo-batch.ts"
+    "queue:act": "tsx scripts/rollback-demo-batch.ts",
+    "verify:tdlrcaller": "tsx scripts/verify-tdlr-single-caller.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

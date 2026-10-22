@@ -27,6 +27,8 @@
 // rather than assumed.
 // ════════════════════════════════════════════════════════════════════
 import { execFileSync } from 'child_process'
+// 🔴 Shared with verify-tdlr-single-caller.ts — one copy, deliberately.
+import { deadRanges } from './lib/dead-branch'
 
 // 🔴 TWO files, two flags. The manager portal has the SAME pattern and
 // was NOT covered: PM_CRM_ENABLED is true, so everything behind
@@ -43,21 +45,6 @@ const sha = process.argv[2]
 
 const git = (...args: string[]) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-
-/** Line ranges (1-indexed, inclusive) inside a !<flag> block. */
-function deadRanges(lines: string[], flag: string): [number, number][] {
-  const out: [number, number][] = []
-  lines.forEach((l, i) => {
-    if (!l.includes(`!${flag} &&`)) return
-    let depth = 0, started = false
-    for (let j = i; j < lines.length; j++) {
-      depth += (lines[j].match(/\(/g) ?? []).length - (lines[j].match(/\)/g) ?? []).length
-      if (!started && depth > 0) started = true
-      if (started && depth <= 0) { out.push([i + 1, j + 1]); return }
-    }
-  })
-  return out
-}
 
 /** New-file line numbers of added lines, with their text. */
 function addedLines(diff: string): { n: number; text: string }[] {

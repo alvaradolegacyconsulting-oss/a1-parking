@@ -311,7 +311,7 @@ export default function CompanyAdminPortal() {
   const [passes, setPasses] = useState<any[]>([])
 
   // Manage tab
-  const [manageSection, setManageSection] = useState<'properties' | 'users' | 'drivers' | 'storage' | 'company' | 'auditlog'>('properties')
+  const [manageSection, setManageSection] = useState<'properties' | 'users' | 'drivers' | 'storage' | 'auditlog'>('properties')
   // B120 Part 2 — CA-side TDLR capture state. Loaded on demand when
   // the Company sub-tab is opened; saved via update_my_company_tdlr RPC.
   const [companyTdlrInput, setCompanyTdlrInput] = useState<string>('')
@@ -6649,42 +6649,6 @@ export default function CompanyAdminPortal() {
         {/* ── MANAGE ── */}
         {activeTab === 'manage' && (
           <div>
-            {/* Sub-tab bar — HIDDEN when CA_CRM_REDESIGN is on. The v4 IA
-                surfaces Properties/People/Partners as top-level sections;
-                Manage internal state machine still routes content behind
-                the scenes (via manageSection), but the 6-button sub-nav
-                chrome disappears so the composed portal matches v4. */}
-            {/* ☠☠☠ DEAD BRANCH — CA_CRM_REDESIGN is true (page.tsx:73), so NOTHING BELOW THIS LINE UNTIL THE BLOCK CLOSES WILL EVER RENDER. It is a near-duplicate of a live block: grep hits land in both and nothing in the toolchain objects — tsc passes, build passes, deploy succeeds, feature absent. Two were lost here in two days (09-16 assign-drivers panel, 09-17 Plate Activity tab). New work goes in the CA_CRM_REDESIGN branch, or better, in a render function called from BOTH. Run `npx tsx scripts/check-dead-branch-additions.ts` before committing. docs/backlog/ca-crm-redesign-dead-branch-2026-09-17.md ☠☠☠ */}
-            {!CA_CRM_REDESIGN && (
-            <div style={{ display:'flex', gap:'3px', background:'#1e2535', borderRadius:'8px', padding:'3px', marginBottom:'14px' }}>
-              {(['properties', 'users', 'drivers', 'storage', 'company', 'auditlog'] as const).map(s => (
-                <button key={s}
-                  onClick={async () => {
-                    setManageSection(s)
-                    if (s === 'auditlog') fetchCompanyAuditLogs()
-                    // B120 Part 2 — load current TDLR on Company sub-tab open.
-                    if (s === 'company' && !companyTdlrLoaded && role?.company) {
-                      const { data: c } = await supabase
-                        .from('companies')
-                        .select('tdlr_license_number')
-                        .ilike('name', role.company)
-                        .maybeSingle()
-                      setCompanyTdlrInput((c?.tdlr_license_number as string | null) || '')
-                      setCompanyTdlrLoaded(true)
-                    }
-                  }}
-                  style={{
-                    flex:1, padding:'7px 4px', border:'none', borderRadius:'6px', cursor:'pointer',
-                    fontWeight:'bold', fontSize:'10px', fontFamily:'Arial, sans-serif',
-                    background: manageSection === s ? '#C9A227' : 'transparent',
-                    color: manageSection === s ? '#0f1117' : '#888',
-                  }}>
-                  {s === 'properties' ? 'Properties' : s === 'users' ? 'Users' : s === 'drivers' ? 'Drivers' : s === 'storage' ? 'Storage' : s === 'company' ? 'Company' : 'Audit Log'}
-                </button>
-              ))}
-            </div>
-            )}
-
             {/* SECTION 1 — Properties (CA CRM Slice 2) — two-panel list+detail
                 behind CA_CRM_REDESIGN. Reuses existing state + handlers:
                   · properties (already fetched at reloadProperties)
@@ -8747,58 +8711,6 @@ export default function CompanyAdminPortal() {
                   )
                 })}
                 {allFacilities.length === 0 && <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'40px', textAlign:'center' }}><p style={{ color:'#555', fontSize:'13px', margin:'0' }}>No storage facilities found</p></div>}
-              </div>
-            )}
-
-            {/* SECTION 5 — Company (B120 Part 2: CA-side TDLR capture) */}
-            {/* Surgical single-field write surface: TDLR is the only column
-                this surface mutates. Backed by update_my_company_tdlr DEFINER
-                RPC (role gate = company_admin; scope gate = own company by
-                get_my_company; empty-string → NULL coerced server-side).
-                Optional / nullable / no validation, mirroring the sibling
-                VSF + operator_license patterns. */}
-            {manageSection === 'company' && (
-              <div style={{ background:'#161b26', border:'1px solid #2a2f3d', borderRadius:'10px', padding:'18px' }}>
-                <p style={{ color:'#888', fontSize:'11px', margin:'0 0 14px', lineHeight:1.5 }}>
-                  Your company&apos;s TDLR license number, when set, appears on tow tickets your team issues. Leave blank if not applicable.
-                </p>
-                {companyTdlrMsg && msgBox(companyTdlrMsg)}
-                <label style={lbl}>TDLR License Number (optional)</label>
-                <input
-                  value={companyTdlrInput}
-                  onChange={e => setCompanyTdlrInput(e.target.value)}
-                  placeholder="Texas tow-company license #"
-                  style={inp}
-                />
-                <button
-                  onClick={async () => {
-                    setCompanyTdlrSaving(true)
-                    setCompanyTdlrMsg('')
-                    const { data, error } = await supabase.rpc('update_my_company_tdlr', { p_tdlr: companyTdlrInput })
-                    setCompanyTdlrSaving(false)
-                    if (error) {
-                      setCompanyTdlrMsg('Error: ' + error.message)
-                      return
-                    }
-                    const result = data as { ok?: boolean; tdlr_license_number?: string | null; error?: string }
-                    if (!result?.ok) {
-                      setCompanyTdlrMsg('Error: ' + (result?.error || 'unknown'))
-                      return
-                    }
-                    // Reflect canonical normalized value (e.g. trimmed / NULL'd)
-                    // back into the field so what's shown matches what's stored.
-                    setCompanyTdlrInput(result.tdlr_license_number || '')
-                    setCompanyTdlrMsg('Saved.')
-                  }}
-                  disabled={companyTdlrSaving}
-                  style={{
-                    marginTop: 12, padding:'10px 16px', background: companyTdlrSaving ? '#2a2f3d' : '#C9A227',
-                    color: companyTdlrSaving ? '#555' : '#0f1117', fontWeight:'bold', fontSize:'12px',
-                    border:'none', borderRadius:'8px', cursor: companyTdlrSaving ? 'not-allowed' : 'pointer',
-                    fontFamily:'Arial, sans-serif',
-                  }}>
-                  {companyTdlrSaving ? 'Saving…' : 'Save'}
-                </button>
               </div>
             )}
 
