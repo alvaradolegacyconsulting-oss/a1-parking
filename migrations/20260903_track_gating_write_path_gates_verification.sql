@@ -164,6 +164,11 @@ DECLARE
   v_fn         TEXT;
   v_msg        TEXT;
   v_offenders  TEXT := '';
+  -- Probe-restore bookkeeping; see the update_my_company_tdlr branch.
+  v_tdlr_co      TEXT;
+  v_tdlr_before  TEXT;
+  v_tdlr_after   TEXT;
+  v_tdlr_touched BOOLEAN := FALSE;
 BEGIN
   SELECT ur.email, c.tier, c.name
     INTO v_email, v_tier, v_company
@@ -212,6 +217,18 @@ BEGIN
       ELSIF v_fn = 'set_driver_regenerate_permission' THEN
         PERFORM public.set_driver_regenerate_permission('probe@example.com', false);
       ELSIF v_fn = 'update_my_company_tdlr' THEN
+        -- 🔴 SNAPSHOT HERE, RESTORE AFTER THE LOOP. The restore and its
+        -- assertion must NOT live in this branch: this BEGIN block ends
+        -- in `EXCEPTION WHEN OTHERS` which swallows everything into
+        -- v_msg, so a RAISE here would be recorded as just another
+        -- per-function message and the probe data would stay. A gate
+        -- that cannot fail is not a gate.
+        SELECT c.name, c.tdlr_license_number INTO v_tdlr_co, v_tdlr_before
+          FROM public.companies c
+          JOIN public.user_roles ur ON lower(trim(c.name)) = lower(trim(ur.company))
+         WHERE lower(trim(ur.email)) = lower(trim(auth.jwt() ->> 'email'))
+         LIMIT 1;
+        v_tdlr_touched := TRUE;
         PERFORM public.update_my_company_tdlr('probe');
       END IF;
     EXCEPTION WHEN OTHERS THEN
@@ -227,6 +244,27 @@ BEGIN
       );
     END IF;
   END LOOP;
+
+  -- ── 🔴 THE PROBE RESTORES WHAT IT TOUCHED ───────────────────────
+  -- Outside the per-function BEGIN/EXCEPTION above, so this RAISE can
+  -- actually stop the file. Inside it, `EXCEPTION WHEN OTHERS` would
+  -- swallow the failure into v_msg and the probe value would stay —
+  -- which is exactly how A1's tdlr_license_number read "probe" for
+  -- seven weeks, printing as the Chapter 2308 operator licence on
+  -- every A1 tow ticket.
+  IF v_tdlr_touched AND v_tdlr_co IS NOT NULL THEN
+    UPDATE public.companies SET tdlr_license_number = v_tdlr_before
+     WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    -- Read it back. An unverified restore is the same bug one step later.
+    SELECT tdlr_license_number INTO v_tdlr_after
+      FROM public.companies WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    IF v_tdlr_after IS DISTINCT FROM v_tdlr_before THEN
+      RAISE EXCEPTION
+        'PROBE DID NOT RESTORE: %.tdlr_license_number is now %, was %. Refusing to leave probe data on a tenant.',
+        v_tdlr_co, v_tdlr_after, v_tdlr_before;
+    END IF;
+    RAISE NOTICE 'probe restored %.tdlr_license_number to % (verified)', v_tdlr_co, v_tdlr_before;
+  END IF;
 
   IF v_offenders <> '' THEN
     RAISE EXCEPTION 'VS5 FAIL — pm_only/pm_starter tenant (email=% company=% tier=%): %', v_email, v_company, v_tier, v_offenders;
@@ -250,13 +288,32 @@ DECLARE
   v_msg        TEXT;
   v_offenders  TEXT := '';
   v_seen       TEXT := '';
+  -- Probe-restore bookkeeping; see the update_my_company_tdlr branch.
+  v_tdlr_co      TEXT;
+  v_tdlr_before  TEXT;
+  v_tdlr_after   TEXT;
+  v_tdlr_touched BOOLEAN := FALSE;
 BEGIN
+  -- 🔴 CORRECTED 2026-10-22. This selected A1 BY NAME —
+  -- `tier = 'legacy' AND lower(name) LIKE '%a1%'` — impersonated an A1
+  -- company_admin and called update_my_company_tdlr('probe') below,
+  -- with no restore. A1's tdlr_license_number read "probe" for seven
+  -- weeks and printed as the Chapter 2308 operator licence on every A1
+  -- tow ticket. No audit row exists, because that RPC writes none, so
+  -- nothing flagged it.
+  --
+  -- The section only needs A LEGACY-TIER tenant, and legacy is not
+  -- unique to A1: Test-LEGACY and the demo tenant are legacy too.
+  -- Non-production is preferred explicitly, and production is used only
+  -- if no other legacy tenant exists — in which case the snapshot and
+  -- restore below is what keeps it safe.
   SELECT name INTO v_a1_name
     FROM public.companies
-   WHERE tier = 'legacy' AND lower(name) LIKE '%a1%'
-   ORDER BY id LIMIT 1;
+   WHERE tier = 'legacy'
+   ORDER BY (company_env = 'production'), id      -- FALSE sorts first
+   LIMIT 1;
   IF v_a1_name IS NULL THEN
-    RAISE EXCEPTION 'VS6 FIXTURE FAIL: no legacy-tier company matching A1 found.';
+    RAISE EXCEPTION 'VS6 FIXTURE FAIL: no legacy-tier company found.';
   END IF;
 
   SELECT email INTO v_a1_email
@@ -266,7 +323,7 @@ BEGIN
      AND is_active = TRUE
    ORDER BY id LIMIT 1;
   IF v_a1_email IS NULL THEN
-    RAISE EXCEPTION 'VS6 FIXTURE FAIL: A1 (company=%) has no active company_admin. Cannot impersonate to exercise all 8 role gates.', v_a1_name;
+    RAISE EXCEPTION 'VS6 FIXTURE FAIL: legacy tenant % has no active company_admin. Cannot impersonate to exercise all 8 role gates.', v_a1_name;
   END IF;
 
   FOREACH v_fn IN ARRAY ARRAY[
@@ -299,6 +356,18 @@ BEGIN
       ELSIF v_fn = 'set_driver_regenerate_permission' THEN
         PERFORM public.set_driver_regenerate_permission('probe@example.com', false);
       ELSIF v_fn = 'update_my_company_tdlr' THEN
+        -- 🔴 SNAPSHOT HERE, RESTORE AFTER THE LOOP. The restore and its
+        -- assertion must NOT live in this branch: this BEGIN block ends
+        -- in `EXCEPTION WHEN OTHERS` which swallows everything into
+        -- v_msg, so a RAISE here would be recorded as just another
+        -- per-function message and the probe data would stay. A gate
+        -- that cannot fail is not a gate.
+        SELECT c.name, c.tdlr_license_number INTO v_tdlr_co, v_tdlr_before
+          FROM public.companies c
+          JOIN public.user_roles ur ON lower(trim(c.name)) = lower(trim(ur.company))
+         WHERE lower(trim(ur.email)) = lower(trim(auth.jwt() ->> 'email'))
+         LIMIT 1;
+        v_tdlr_touched := TRUE;
         PERFORM public.update_my_company_tdlr('probe');
       END IF;
     EXCEPTION WHEN OTHERS THEN
@@ -312,13 +381,37 @@ BEGIN
 
     IF v_msg LIKE '%tier_not_permitted%' THEN
       v_offenders := v_offenders || format(
-        '%s: A1 hit tier_not_permitted (LEGACY BRANCH BROKEN — msg=%L); ',
-        v_fn, v_msg
+        '%s: legacy tenant %s hit tier_not_permitted (LEGACY BRANCH BROKEN — msg=%L); ',
+        v_fn, v_a1_name, v_msg
       );
     END IF;
   END LOOP;
 
-  RAISE NOTICE 'VS6 A1 legacy per-fn results (email=%): %', v_a1_email, v_seen;
+  -- ── 🔴 THE PROBE RESTORES WHAT IT TOUCHED ───────────────────────
+  -- Outside the per-function BEGIN/EXCEPTION above, so this RAISE can
+  -- actually stop the file. Inside it, `EXCEPTION WHEN OTHERS` would
+  -- swallow the failure into v_msg and the probe value would stay —
+  -- which is exactly how A1's tdlr_license_number read "probe" for
+  -- seven weeks, printing as the Chapter 2308 operator licence on
+  -- every A1 tow ticket.
+  IF v_tdlr_touched AND v_tdlr_co IS NOT NULL THEN
+    UPDATE public.companies SET tdlr_license_number = v_tdlr_before
+     WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    -- Read it back. An unverified restore is the same bug one step later.
+    SELECT tdlr_license_number INTO v_tdlr_after
+      FROM public.companies WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    IF v_tdlr_after IS DISTINCT FROM v_tdlr_before THEN
+      RAISE EXCEPTION
+        'PROBE DID NOT RESTORE: %.tdlr_license_number is now %, was %. Refusing to leave probe data on a tenant.',
+        v_tdlr_co, v_tdlr_after, v_tdlr_before;
+    END IF;
+    RAISE NOTICE 'probe restored %.tdlr_license_number to % (verified)', v_tdlr_co, v_tdlr_before;
+  END IF;
+
+  -- Name the tenant actually used: this section no longer hard-selects
+  -- A1, and an output that says "A1" when it ran against Test-LEGACY
+  -- would be a report nobody could check.
+  RAISE NOTICE 'VS6 legacy per-fn results (tenant=%, email=%): %', v_a1_name, v_a1_email, v_seen;
 
   IF v_offenders <> '' THEN
     RAISE EXCEPTION 'VS6 FAIL — A1 (legacy) hit tier_not_permitted: %', v_offenders;
@@ -336,6 +429,11 @@ DECLARE
   v_fn         TEXT;
   v_msg        TEXT;
   v_offenders  TEXT := '';
+  -- Probe-restore bookkeeping; see the update_my_company_tdlr branch.
+  v_tdlr_co      TEXT;
+  v_tdlr_before  TEXT;
+  v_tdlr_after   TEXT;
+  v_tdlr_touched BOOLEAN := FALSE;
 BEGIN
   SELECT ur.email, c.name
     INTO v_email, v_company
@@ -383,6 +481,18 @@ BEGIN
       ELSIF v_fn = 'set_driver_regenerate_permission' THEN
         PERFORM public.set_driver_regenerate_permission('probe@example.com', false);
       ELSIF v_fn = 'update_my_company_tdlr' THEN
+        -- 🔴 SNAPSHOT HERE, RESTORE AFTER THE LOOP. The restore and its
+        -- assertion must NOT live in this branch: this BEGIN block ends
+        -- in `EXCEPTION WHEN OTHERS` which swallows everything into
+        -- v_msg, so a RAISE here would be recorded as just another
+        -- per-function message and the probe data would stay. A gate
+        -- that cannot fail is not a gate.
+        SELECT c.name, c.tdlr_license_number INTO v_tdlr_co, v_tdlr_before
+          FROM public.companies c
+          JOIN public.user_roles ur ON lower(trim(c.name)) = lower(trim(ur.company))
+         WHERE lower(trim(ur.email)) = lower(trim(auth.jwt() ->> 'email'))
+         LIMIT 1;
+        v_tdlr_touched := TRUE;
         PERFORM public.update_my_company_tdlr('probe');
       END IF;
     EXCEPTION WHEN OTHERS THEN
@@ -398,6 +508,27 @@ BEGIN
       );
     END IF;
   END LOOP;
+
+  -- ── 🔴 THE PROBE RESTORES WHAT IT TOUCHED ───────────────────────
+  -- Outside the per-function BEGIN/EXCEPTION above, so this RAISE can
+  -- actually stop the file. Inside it, `EXCEPTION WHEN OTHERS` would
+  -- swallow the failure into v_msg and the probe value would stay —
+  -- which is exactly how A1's tdlr_license_number read "probe" for
+  -- seven weeks, printing as the Chapter 2308 operator licence on
+  -- every A1 tow ticket.
+  IF v_tdlr_touched AND v_tdlr_co IS NOT NULL THEN
+    UPDATE public.companies SET tdlr_license_number = v_tdlr_before
+     WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    -- Read it back. An unverified restore is the same bug one step later.
+    SELECT tdlr_license_number INTO v_tdlr_after
+      FROM public.companies WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    IF v_tdlr_after IS DISTINCT FROM v_tdlr_before THEN
+      RAISE EXCEPTION
+        'PROBE DID NOT RESTORE: %.tdlr_license_number is now %, was %. Refusing to leave probe data on a tenant.',
+        v_tdlr_co, v_tdlr_after, v_tdlr_before;
+    END IF;
+    RAISE NOTICE 'probe restored %.tdlr_license_number to % (verified)', v_tdlr_co, v_tdlr_before;
+  END IF;
 
   IF v_offenders <> '' THEN
     RAISE EXCEPTION 'VS7 FAIL — enforcement_only tenant (email=% company=%) hit tier_not_permitted: %', v_email, v_company, v_offenders;
@@ -415,6 +546,11 @@ DECLARE
   v_fn         TEXT;
   v_msg        TEXT;
   v_offenders  TEXT := '';
+  -- Probe-restore bookkeeping; see the update_my_company_tdlr branch.
+  v_tdlr_co      TEXT;
+  v_tdlr_before  TEXT;
+  v_tdlr_after   TEXT;
+  v_tdlr_touched BOOLEAN := FALSE;
 BEGIN
   SELECT ur.email, c.name
     INTO v_email, v_company
@@ -462,6 +598,18 @@ BEGIN
       ELSIF v_fn = 'set_driver_regenerate_permission' THEN
         PERFORM public.set_driver_regenerate_permission('probe@example.com', false);
       ELSIF v_fn = 'update_my_company_tdlr' THEN
+        -- 🔴 SNAPSHOT HERE, RESTORE AFTER THE LOOP. The restore and its
+        -- assertion must NOT live in this branch: this BEGIN block ends
+        -- in `EXCEPTION WHEN OTHERS` which swallows everything into
+        -- v_msg, so a RAISE here would be recorded as just another
+        -- per-function message and the probe data would stay. A gate
+        -- that cannot fail is not a gate.
+        SELECT c.name, c.tdlr_license_number INTO v_tdlr_co, v_tdlr_before
+          FROM public.companies c
+          JOIN public.user_roles ur ON lower(trim(c.name)) = lower(trim(ur.company))
+         WHERE lower(trim(ur.email)) = lower(trim(auth.jwt() ->> 'email'))
+         LIMIT 1;
+        v_tdlr_touched := TRUE;
         PERFORM public.update_my_company_tdlr('probe');
       END IF;
     EXCEPTION WHEN OTHERS THEN
@@ -477,6 +625,27 @@ BEGIN
       );
     END IF;
   END LOOP;
+
+  -- ── 🔴 THE PROBE RESTORES WHAT IT TOUCHED ───────────────────────
+  -- Outside the per-function BEGIN/EXCEPTION above, so this RAISE can
+  -- actually stop the file. Inside it, `EXCEPTION WHEN OTHERS` would
+  -- swallow the failure into v_msg and the probe value would stay —
+  -- which is exactly how A1's tdlr_license_number read "probe" for
+  -- seven weeks, printing as the Chapter 2308 operator licence on
+  -- every A1 tow ticket.
+  IF v_tdlr_touched AND v_tdlr_co IS NOT NULL THEN
+    UPDATE public.companies SET tdlr_license_number = v_tdlr_before
+     WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    -- Read it back. An unverified restore is the same bug one step later.
+    SELECT tdlr_license_number INTO v_tdlr_after
+      FROM public.companies WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    IF v_tdlr_after IS DISTINCT FROM v_tdlr_before THEN
+      RAISE EXCEPTION
+        'PROBE DID NOT RESTORE: %.tdlr_license_number is now %, was %. Refusing to leave probe data on a tenant.',
+        v_tdlr_co, v_tdlr_after, v_tdlr_before;
+    END IF;
+    RAISE NOTICE 'probe restored %.tdlr_license_number to % (verified)', v_tdlr_co, v_tdlr_before;
+  END IF;
 
   IF v_offenders <> '' THEN
     RAISE EXCEPTION 'VS8 FAIL — pm_only tenant (email=% company=%): %', v_email, v_company, v_offenders;
@@ -509,6 +678,11 @@ DECLARE
   v_msg         TEXT;
   v_offenders   TEXT := '';
   v_seen        TEXT := '';
+  -- Probe-restore bookkeeping; see the update_my_company_tdlr branch.
+  v_tdlr_co      TEXT;
+  v_tdlr_before  TEXT;
+  v_tdlr_after   TEXT;
+  v_tdlr_touched BOOLEAN := FALSE;
 BEGIN
   SELECT email INTO v_admin_email
     FROM public.user_roles
@@ -548,6 +722,18 @@ BEGIN
       ELSIF v_fn = 'set_driver_regenerate_permission' THEN
         PERFORM public.set_driver_regenerate_permission('probe@example.com', false);
       ELSIF v_fn = 'update_my_company_tdlr' THEN
+        -- 🔴 SNAPSHOT HERE, RESTORE AFTER THE LOOP. The restore and its
+        -- assertion must NOT live in this branch: this BEGIN block ends
+        -- in `EXCEPTION WHEN OTHERS` which swallows everything into
+        -- v_msg, so a RAISE here would be recorded as just another
+        -- per-function message and the probe data would stay. A gate
+        -- that cannot fail is not a gate.
+        SELECT c.name, c.tdlr_license_number INTO v_tdlr_co, v_tdlr_before
+          FROM public.companies c
+          JOIN public.user_roles ur ON lower(trim(c.name)) = lower(trim(ur.company))
+         WHERE lower(trim(ur.email)) = lower(trim(auth.jwt() ->> 'email'))
+         LIMIT 1;
+        v_tdlr_touched := TRUE;
         PERFORM public.update_my_company_tdlr('probe');
       END IF;
     EXCEPTION WHEN OTHERS THEN
@@ -571,6 +757,27 @@ BEGIN
       );
     END IF;
   END LOOP;
+
+  -- ── 🔴 THE PROBE RESTORES WHAT IT TOUCHED ───────────────────────
+  -- Outside the per-function BEGIN/EXCEPTION above, so this RAISE can
+  -- actually stop the file. Inside it, `EXCEPTION WHEN OTHERS` would
+  -- swallow the failure into v_msg and the probe value would stay —
+  -- which is exactly how A1's tdlr_license_number read "probe" for
+  -- seven weeks, printing as the Chapter 2308 operator licence on
+  -- every A1 tow ticket.
+  IF v_tdlr_touched AND v_tdlr_co IS NOT NULL THEN
+    UPDATE public.companies SET tdlr_license_number = v_tdlr_before
+     WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    -- Read it back. An unverified restore is the same bug one step later.
+    SELECT tdlr_license_number INTO v_tdlr_after
+      FROM public.companies WHERE lower(trim(name)) = lower(trim(v_tdlr_co));
+    IF v_tdlr_after IS DISTINCT FROM v_tdlr_before THEN
+      RAISE EXCEPTION
+        'PROBE DID NOT RESTORE: %.tdlr_license_number is now %, was %. Refusing to leave probe data on a tenant.',
+        v_tdlr_co, v_tdlr_after, v_tdlr_before;
+    END IF;
+    RAISE NOTICE 'probe restored %.tdlr_license_number to % (verified)', v_tdlr_co, v_tdlr_before;
+  END IF;
 
   RAISE NOTICE 'VS_ADMIN super-admin per-fn results (email=%): %', v_admin_email, v_seen;
 
