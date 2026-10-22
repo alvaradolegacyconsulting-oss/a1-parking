@@ -59,9 +59,9 @@ See [Billing and Plan Changes](13-billing-and-tier-changes.md) for the full pric
 
 PM Starter includes exactly one property. If you attempt to add a second, ShieldMyLot will refuse the create and show:
 
-> PM Starter includes one property. To add another, contact us about upgrading — hello@shieldmylot.com.
+> PM Starter covers one property. To run more, move to PM Pro — email support@shieldmylot.com and we'll set it up.
 
-If your operation has grown past one property, **PM Pro** is the plan for you. Email support@shieldmylot.com and we'll move you over.
+That's the message the portal shows. **PM Pro** covers up to 50 properties; email support@shieldmylot.com and we'll move you over.
 
 PM Pro, Operator Starter and Operator Pro support up to **50 active properties**. If you try to add a 51st, the portal won't create it; contact us about **Elite**.
 

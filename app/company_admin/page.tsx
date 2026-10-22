@@ -22,6 +22,7 @@ import { scrollAndFocusEditPanel } from '../lib/scroll-focus-edit'
 import { useResolvedLogo, getCachedLogoUrl, getPlatformLogoUrl } from '../lib/logo'
 import { getCompanyContext, getLimit, isUnderLimit, getUpgradePrompt, hasFeature, getCachedCompanyId, getEffectivePropertyLimit, limitIsUnlimited } from '../lib/tier'
 import { formatTimestamp, formatDate, formatDateLong, formatTime } from '../lib/format-time'
+import { propertyCapMessage } from '../lib/property-cap-message'
 
 // 2026-08-08 — three-state severity palette for the explicit-severity
 // banners (driverActionResult / userActionResult). Amber ('partial') is
@@ -1659,10 +1660,12 @@ export default function CompanyAdminPortal() {
       // from the trigger would reach the user otherwise — the thing the
       // server-side check exists to prevent them seeing.
       setPropMsgKind('error')
-      setPropMsg(
-        `You're at your ${effLimit}-property limit. More than ${effLimit} properties is an Elite plan — ` +
-        `tell us about your portfolio at /property-managers and we'll size it with you.`,
-      )
+      // 🔴 Shared with the trigger-translation below and with
+      // togglePropertyActive. This layer fires FIRST, so when it said
+      // "Elite" to a PM Starter subscriber that was the only message
+      // they ever saw — the correct upgrade copy sat in a branch
+      // downstream of it. See app/lib/property-cap-message.ts.
+      setPropMsg(propertyCapMessage(ctx.tier, effLimit as number, 'add'))
       return
     }
     // 2026-07-02 (per-screen polish #3) — billing-impact notice
@@ -1735,11 +1738,7 @@ export default function CompanyAdminPortal() {
         // Preserve raw message in console for diagnosis — the surfaced
         // copy is the only thing that changes.
         console.warn('[property-cap] enforce_property_limit rejected INSERT — raw:', rawMsg)
-        const friendly =
-          ctx.tier === 'pm_starter'
-            ? 'PM Starter includes one property. To add another, contact us about upgrading — hello@shieldmylot.com.'
-            : `Your plan's property limit was reached. Contact us about expanding — hello@shieldmylot.com.`
-        setPropMsg(friendly)
+        setPropMsg(propertyCapMessage(ctx.tier, effLimit as number | null, 'add'))
         return
       }
       setPropMsg('Error: ' + insErr.message)
@@ -2253,10 +2252,7 @@ export default function CompanyAdminPortal() {
       const effLimit = await getEffectivePropertyLimit(role?.company || '')
       if (!limitIsUnlimited(effLimit) && currentActiveCount >= (effLimit as number)) {
         setPropMsgKind('error')
-        setPropMsg(
-          `You're at your ${effLimit}-property limit, so this one can't be reactivated. ` +
-          `More than ${effLimit} properties is an Elite plan — tell us about your portfolio at /property-managers.`,
-        )
+        setPropMsg(propertyCapMessage(ctx.tier, effLimit as number, 'reactivate'))
         return
       }
     }
