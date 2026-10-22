@@ -52,6 +52,8 @@ Deactivating a permit mid-cycle doesn't reduce that month's charge.
 - **Monthly billing:** a property you add is prorated onto your next invoice.
 - **Annual billing:** a property you add is invoiced **immediately**, prorated for the rest of your annual term.
 
+Adding a property within the count you've already paid for, or beyond your 20th, adds nothing.
+
 Before a property is created, the portal shows what it will cost.
 
 **Deactivating a property** lowers your bill **at your next renewal**, not mid-term. Until then, you keep paying for the property count you reached during the term.
@@ -130,14 +132,13 @@ Email **support@shieldmylot.com**. Elite is set up by proposal; there's no self-
 
 ### When changes take effect
 
-- **Upgrades** apply immediately, prorated.
-- **Downgrades** apply at your next billing cycle, so nothing changes mid-cycle. Before you downgrade, deactivate anything that exceeds the new plan's limits (for example, properties beyond one when moving to PM Starter).
+Upgrade and downgrade timing is **as set out in your subscription agreement**. In general an upgrade takes effect sooner than a downgrade, so that nothing you rely on disappears mid-cycle. Before you downgrade, deactivate anything that exceeds the new plan's limits (for example, properties beyond one when moving to PM Starter).
 
 ---
 
 ## Changes to pricing
 
-If ShieldMyLot changes the price of your plan, you'll get at least **30 days' notice**.
+If ShieldMyLot changes the price of your plan, you'll be given notice **as set out in your subscription agreement**.
 
 - **Monthly:** the new price applies from your first billing cycle after the notice period.
 - **Annual:** your price is locked for the term. The new price applies only at renewal.
@@ -152,8 +153,8 @@ If ShieldMyLot changes the price of your plan, you'll get at least **30 days' no
 
 ### Data after cancellation
 
-- Your data is kept for **30 days** after cancellation, in case you want to reactivate. You can request a data export during that time.
-- After 30 days, it's removed from active systems. Records needed for Texas Chapter 2308 retention are kept in archive.
+- Your data is kept for a period after cancellation, **as set out in your subscription agreement**, in case you want to reactivate. You can request a data export during that time.
+- After that, it's removed from active systems. Records needed for Texas Chapter 2308 retention are kept in archive.
 
 ---
 
@@ -161,10 +162,10 @@ If ShieldMyLot changes the price of your plan, you'll get at least **30 days' no
 
 If a payment fails (an expired card, insufficient funds, and so on):
 
-1. **Day 0:** Stripe attempts the charge, and you get an email.
-2. **Days 3, 5 and 7:** Stripe retries, with an email reminder each time.
-3. **Grace period:** your account stays active while retries are in progress.
-4. **Suspension:** if every retry fails, your account is suspended. To reactivate, update your payment method in the Stripe portal and pay the outstanding balance.
+1. Stripe attempts the charge, and you get an email.
+2. Stripe retries over the following days, with an email reminder each time. **The retry schedule and the grace period are those set out in your subscription agreement.**
+3. Your account stays active while retries are in progress.
+4. If every retry fails, your account is suspended. To reactivate, update your payment method in the Stripe portal and pay the outstanding balance.
 
 Keep your payment method current in the Stripe portal to avoid this.
 
