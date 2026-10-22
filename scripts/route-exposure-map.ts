@@ -196,6 +196,11 @@ export const ROUTE_EXPOSURE: Record<string, Expectation> = {
   '/api/admin/import-batch/rollback': { kind: 'login' },
   '/company_admin/resident-upload': { kind: 'login' },
   '/company_admin/resident-upload/instructions': { kind: 'login' },
+  '/pass/[token]': {
+    kind: 'page',
+    sample: '/pass/gate-probe-not-a-real-pass-token-0000000000',
+    note: 'Capability URL for the printable visitor pass: the token IS the authorization, so the route must be publicly reachable, and an invalid token must render the route rather than redirect to /login — a login redirect would break every printed card. The page returns four fields (plate, property, valid until, status) and no resident name or unit, and unknown / expired / revoked / malformed all render ONE identical refusal so the page cannot be used to probe whether a token existed.',
+  },
 
   // 🔴 NOT MINE, and undeclared since it shipped — found by this gate
   // on 2026-10-15 while declaring the routes above. /api/signup is in
