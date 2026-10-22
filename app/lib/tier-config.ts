@@ -176,7 +176,8 @@ const ENF_LEGACY: TierConfigShape = {
   [F.API_ACCESS_READ_ONLY]: true,
   [F.VIDEO_UPLOADS_LIMITED]: false, // matrix: legacy = full only, limited off
   [F.VIDEO_UPLOADS_FULL]: true,
-  [F.PRIORITY_SUPPORT]: true,
+  // 🔴 2026-10-22 — flipped true→false. Priority support is Elite only.
+  [F.PRIORITY_SUPPORT]: false,
   [F.DEDICATED_ACCOUNT_MANAGER]: true,
 
   // ── ENF_LEGACY all-on additions (2026-07-05) — 6 PM booleans + 2 visitor caps ──
@@ -436,6 +437,16 @@ const PM_PM_ONLY: TierConfigShape = { ...PM_ENTERPRISE }
 // changes, update BOTH sides and re-run Cap A/B/C/A₀ verifications.
 const PM_PM_STARTER: TierConfigShape = {
   ...PM_PM_ONLY,
+  // 🔴 2026-10-22 — PRIORITY SUPPORT IS ELITE ONLY (Jose's ruling).
+  // No self-serve plan advertises or shows it. The CA Plan tab renders
+  // its row straight off this flag, so leaving it true here was telling
+  // a $149 PM Starter subscriber they had priority support while the
+  // help docs said they did not — and it was true on PM Starter while
+  // false on the pricier Operator Starter, which is the inversion
+  // recorded at tier-display.ts:227 as a flag audit to run. This is
+  // that audit. Elite gets priority support through its proposal code's
+  // feature_overrides, which hasFeature() consults BEFORE this map.
+  [F.PRIORITY_SUPPORT]: false,
   [F.MAX_PROPERTIES]: 1,
   // 🔴 2026-10-02 — was inherited FALSE from PM_PM_ONLY, which is a
   // slip rather than a tier decision: PM Starter already has
@@ -451,6 +462,16 @@ const PM_PM_STARTER: TierConfigShape = {
 // Post-flip ENF_LEGACY ≡ PM_LEGACY.
 const PM_LEGACY: TierConfigShape = {
   ...PM_ENTERPRISE,
+  // 🔴 2026-10-22 — PRIORITY SUPPORT IS ELITE ONLY (Jose's ruling).
+  // No self-serve plan advertises or shows it. The CA Plan tab renders
+  // its row straight off this flag, so leaving it true here was telling
+  // a $149 PM Starter subscriber they had priority support while the
+  // help docs said they did not — and it was true on PM Starter while
+  // false on the pricier Operator Starter, which is the inversion
+  // recorded at tier-display.ts:227 as a flag audit to run. This is
+  // that audit. Elite gets priority support through its proposal code's
+  // feature_overrides, which hasFeature() consults BEFORE this map.
+  [F.PRIORITY_SUPPORT]: false,
   // ── Enforcement-track core ──
   [F.AI_PLATE_SCANNING]: true,
   [F.VIOLATION_DOCUMENTATION]: true,
