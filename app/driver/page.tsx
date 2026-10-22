@@ -488,10 +488,20 @@ export default function DriverPortal() {
     // company so all three consumers stay aligned with RLS. Closes the
     // B27 "fragile name-string matcher" memory's predicted recurrence —
     // "revisit when A1 hires a 7th driver or onboards next customer."
+    // 🔴 THE ['All'] FALLBACK IS GONE. When the drivers row was missing
+    // this substituted assigned_properties: ['All'], and fetchViolations
+    // then SKIPPED its property filter entirely (`if
+    // (!properties.includes('All'))`). Measured 2026-10-16: RLS kept it
+    // inside the driver's own company, so it was never cross-tenant —
+    // but within that company it showed and accepted every property,
+    // and the client's fallback INSERT was accepted at any of them
+    // while the RPC refused the same thing. An empty list is the honest
+    // value: no drivers row means no assignment, which is what the
+    // server already says (driver_no_properties_assigned).
     const d = {
       ...(driverData ?? {
         name: user.email, email: user.email,
-        assigned_properties: ['All'], operator_license: 'N/A',
+        assigned_properties: [] as string[], operator_license: 'N/A',
       }),
       company: roleData.company || '',
       // Tow Ticket Regenerate Layer 2 — surface the per-driver
@@ -535,7 +545,7 @@ export default function DriverPortal() {
     const assignableProps = (d.assigned_properties || []).filter((p: string) => p !== 'All')
     if (assignableProps.length === 1) setSelectedProperty(assignableProps[0])
     setLoading(false)
-    fetchViolations(d.assigned_properties || ['All'])
+    fetchViolations(d.assigned_properties || [])
     fetchStorageFacilities()
     // B18 Commit B: surface unfinished drafts from prior tab-closes
     if (d.name) {
@@ -619,9 +629,12 @@ export default function DriverPortal() {
       .eq('is_confirmed', true)
       .gte('created_at', sixmo.toISOString())
       .order('created_at', { ascending: false })
-    if (!properties.includes('All')) {
-      query = query.in('property', properties)
-    }
+    // 🔴 ALWAYS FILTERED. This used to skip the filter when the list
+    // contained 'All', which is how a driver with no drivers row saw
+    // every property in their company. An empty list now yields an
+    // empty result, which is the correct answer for someone with no
+    // assignment — not a reason to show them everything.
+    query = query.in('property', properties.length ? properties : ['\u0000none'])
     const { data } = await query
     const flattened = (data || []).map(v => {
       const activeVideos = ((v.video_rows as { id: number; video_url: string; removed_at: string | null }[] | null) || [])
@@ -1644,7 +1657,7 @@ export default function DriverPortal() {
     setViolationVideo(null)
     setVideoDuration(null)
     await loadUnconfirmedDrafts()
-    fetchViolations(driver?.assigned_properties || ['All'])
+    fetchViolations(driver?.assigned_properties || [])
     // Existing flow: open the tow-ticket modal after confirm.
     setTicketTarget(confirmed); setSelectedStorage(''); setTowFee(''); setMileage('')
   }
@@ -2295,7 +2308,7 @@ export default function DriverPortal() {
               {driver?.company || 'A1 Wrecker, LLC'} · Lic: {driver?.operator_license || '—'}
             </p>
             <p style={{ color: '#555', fontSize: '11px', margin: '2px 0 0' }}>
-              {(driver?.assigned_properties || ['All']).join(' · ')}
+              {(driver?.assigned_properties || []).join(' · ') || 'No properties assigned — contact your company administrator'}
             </p>
           </div>
           <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}

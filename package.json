@@ -46,6 +46,7 @@
     "verify:importbadge": "tsx scripts/verify-import-badge-count.ts",
     "verify:visitorrenewal": "tsx --env-file=.env.local scripts/verify-visitor-renewal.ts",
     "verify:lookuplatest": "tsx --env-file=.env.local scripts/verify-lookup-latest-pass.ts",
+    "verify:driverpropertyguard": "tsx --env-file=.env.local scripts/verify-driver-property-guard.ts",
     "verify:registerattempt": "tsx --env-file=.env.local scripts/verify-register-attempt-audit.ts",
     "verify:batchnotify": "tsx --env-file=.env.local scripts/verify-batch-notify.ts",
     "verify:cascade": "tsx scripts/verify-property-cascade.ts",
