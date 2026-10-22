@@ -1,0 +1,248 @@
+---
+title: "Tow Tickets and Evidence"
+category: "Enforcement Track"
+audience: ["driver", "manager", "company_admin"]
+tier_required: "any"
+last_updated: "2026-10-22"
+related: ["submitting-violations", "understanding-your-tier", "support-and-contact"]
+---
+
+# Tow Tickets and Evidence
+
+After a violation is confirmed, the workflow shifts from evidence capture to documentation, retention, and (when applicable) fleet integration. This guide covers what happens after the Confirm & Submit button gets pressed.
+
+## When this guide applies
+
+This guide assumes a violation has been confirmed. If you haven't reached the confirmation step yet, read [Submitting Violations](06-submitting-violations.md) first — it covers the workflow up through review and confirmation.
+
+After confirmation, several things become available:
+- Tow ticket generation
+- Evidence retention and review
+- Post-confirmation media management (with audit trail)
+- Tow records CSV export (Operator plans; see your Plan tab)
+
+---
+
+## The tow ticket workflow
+
+When a driver confirms a violation, the platform immediately offers a **tow ticket modal**. This is a printable document that:
+
+- Identifies the vehicle being towed
+- Identifies the property the vehicle was on
+- States the violation type
+- Records the timestamp
+- Includes contact information for the vehicle owner to retrieve their vehicle
+- Shows your company's **TDLR license number** and the storage facility's **VSF license number**
+
+The tow ticket is the paperwork that goes with the tow. Texas Chapter 2308 has specific requirements for its content. **The license numbers come from your account:** set your TDLR number under **Company Admin → Billing → Company info**, and each storage facility's VSF number under **Storage (Partners)** → edit the facility. If they're missing, those lines print blank, and keeping them accurate is your responsibility.
+
+### Who sees what
+
+Each tow ticket has two views:
+- **The storage facility / vehicle owner link** shows the full ticket, including fees (tow fee, mileage, and the total).
+- **The property manager view** shows the ticket without fees.
+
+Neither view shows internal notes, void or decline reasons, or staff details.
+
+### Generating a tow ticket
+
+In the tow ticket modal:
+
+1. Confirm the vehicle and property details are correct
+2. Select the storage facility (if you have multiple)
+3. Enter the tow operator's name (often the driver themselves)
+4. Click **Generate Ticket**
+
+The platform produces a printable ticket. Print it from the modal or save as PDF if you have a wireless printer in your truck.
+
+### Reprinting a ticket
+
+If you lose the printed ticket or need a duplicate:
+
+1. Navigate to the violation in your driver portal (or have the company admin/manager access it from their portals)
+2. Click **View Ticket** or **Reprint Ticket**
+3. Print or save again
+
+The reprint matches the original — same content, same timestamp.
+
+### What if no tow happens?
+
+Not every violation results in a tow. Some scenarios:
+- The vehicle owner returned and moved the vehicle before tow operation completed
+- The driver decided the violation didn't warrant towing (e.g., expired permit on a vehicle that's otherwise authorized)
+- The property requested no tow on this specific incident
+
+For these cases, the violation record stays in the system as documentation, but no tow ticket is generated. The violation appears in manager and resident portals normally; if the vehicle owner later challenges the violation off-system, the record + audit trail are your evidence package.
+
+---
+
+## Evidence retention
+
+Photos, videos, and violation records are retained for at least **seven years** from the violation date, in line with Texas record retention norms for parking enforcement.
+
+After seven years:
+- Violations with disputes or legal activity are retained indefinitely
+- Standard violations may be archived but not deleted (audit trail preservation)
+
+Specific retention policy details are subject to your service agreement and applicable law.
+
+### Where evidence lives
+
+- **Photos and videos** — Encrypted at rest in cloud storage, accessible only through the platform
+- **Violation records (DB rows)** — Encrypted at rest with audit logs
+- **Tow tickets** — Generated on demand; reproducible from the violation record
+
+### Access to evidence
+
+| Who | Can view | Can manage media (soft-delete) |
+|---|---|---|
+| Driver (submitter) | Their own violations | Yes, with audit trail |
+| Property Manager | Violations at their property | Yes, with audit trail |
+| Company Admin | All violations at company | Yes, with audit trail |
+| Resident (plate-matched) | Their own violations only | No |
+| Super Admin (ShieldMyLot) | All violations | For platform-level moderation only |
+
+---
+
+## Managing media after confirmation
+
+Sometimes a confirmed violation needs media adjustments:
+- A photo was attached by mistake (wrong angle, blurry, irrelevant)
+- A photo accidentally captured a third party (privacy concern)
+- A video has audio that's inappropriate
+- A driver wants to add a photo that was missed at submission time
+
+The **Manage Media** feature handles these cases with full audit trails.
+
+### Who can manage media
+
+By default:
+- The driver who submitted the violation
+- Property managers at the violation's property
+- Company admins
+
+Each action (soft-delete, restore) is logged with: who, when, why (reason field), and what specifically changed.
+
+### How to soft-delete a photo or video
+
+1. Open the violation
+2. Find the **Manage Media** button or menu
+3. Click the photo or video to remove
+4. Provide a reason in the dialog (required — examples: "wrong photo attached", "captured bystander in background")
+5. Confirm
+
+The photo or video disappears from the visible violation card but is not actually deleted — it remains in the database with an audit record. This is important for:
+
+- Defending against accusations of evidence tampering
+- Legal discovery if a dispute escalates
+- Restoring evidence if a soft-delete was a mistake
+
+### Restoring removed media
+
+If a photo or video was removed by mistake:
+
+1. Open the violation
+2. Find the **Manage Media** section
+3. Look for removed media (shown with an "Hidden" indicator)
+4. Click **Restore**
+5. Provide a reason
+6. Confirm
+
+The photo or video returns to the visible violation card.
+
+### What you can't do
+
+- **Permanently delete** a confirmed violation's media — only soft-delete with audit trail
+- **Modify** an existing photo or video (rotate, crop, edit) — only add new ones or soft-delete existing ones
+- **Hide** the audit trail — every action is permanent in the audit log
+
+These limits exist because evidence integrity is essential. Confirmed violations may be reviewed later, in legal proceedings, or in compliance audits — the chain of custody must be defensible.
+
+---
+
+## Tow records CSV export
+
+ShieldMyLot can download your tow records as a CSV file, so you can use them in your own back-office tools, spreadsheets, or accounting software.
+
+This export is available on the Operator plans. PM plans don't have tow tickets, so they don't have this export. Check your Plan tab for availability.
+
+### How to export
+
+1. Company Admin portal → Violations tab
+2. Filter by date range or other criteria
+3. Click **Export tow records (CSV)**
+4. Save the CSV file
+
+### What's included
+
+The CSV export includes:
+- Violation timestamp
+- Vehicle plate, state, year, color, make, model
+- Property name and address
+- Violation type and location notes
+- Storage facility name, address, phone
+- Tow fee
+- Driver name and license number
+- Free-text notes
+
+The CSV is plain text and opens in Excel, Numbers, Google Sheets, or any spreadsheet tool.
+
+### Limitations
+
+- Photos and videos are not exported in the CSV — only references. Download photos separately if you need them outside the platform.
+- Exports include only confirmed violations, not drafts
+- Soft-deleted media is not included in the reference list (only visible media)
+
+---
+
+## Compliance and record-keeping
+
+Texas Chapter 2308 (the Texas Towing and Booting Act) has specific requirements for how parking enforcement records must be maintained. ShieldMyLot helps you comply by:
+
+- Recording all required information at violation submission
+- Generating compliant tow tickets
+- Maintaining unalterable audit trails
+- Retaining records for the required retention period
+
+Operator compliance with Chapter 2308 remains your responsibility — ShieldMyLot is the operational support layer, not a compliance certifier. Consult a licensed Texas attorney for specific legal questions about Chapter 2308.
+
+**Your responsibilities (not handled by the platform):**
+- Maintaining proper signage at properties (Chapter 2308 has specific signage requirements)
+- Securing authorization documents from property owners
+- Communicating tow notifications to vehicle owners within statutory timelines
+- Operating storage facilities in compliance with Chapter 2308
+- Responding to disputes within required timelines
+
+ShieldMyLot is a documentation and workflow tool. It supports compliance but does not replace your operational responsibility for compliance.
+
+---
+
+## Common questions
+
+**A driver removed a photo that should have stayed. Can I un-do it?**
+Yes. Photos are soft-deleted, not permanently deleted. Use Manage Media to find the removed item and click Restore.
+
+**A resident is asking for copies of all photos in their violation. Are we required to provide them?**
+Texas Chapter 2308 includes specific transparency requirements. Residents (the vehicle owner) are entitled to see evidence supporting a tow. The resident portal automatically shows them their violation photos and videos. If they request additional documentation, consult your legal counsel for the appropriate response.
+
+**Can a driver edit a violation after confirming it?**
+No. Confirmed violations are locked from the driver. If a violation has wrong details, contact your manager or company admin immediately — they have tools to manage the situation. Do not submit a duplicate violation.
+
+**How long does the tow records CSV export take to generate?**
+For most companies, a CSV export with up to 1,000 violations generates in under 10 seconds. Larger exports may take longer. If an export times out, narrow the date range and try again.
+
+**Where are the photos and videos actually stored?**
+Encrypted cloud storage with strict access controls. The platform is the only way to access them — you can't get a "raw" file URL or share access externally. This is intentional for chain-of-custody protection.
+
+**Can I delete a violation entirely?**
+Not as a customer-side action. Confirmed violations are part of the permanent record. If a violation was created in error and you need it removed (e.g., a test that accidentally got marked real), email support@shieldmylot.com with the details, and we'll advise on the right path.
+
+---
+
+## Next steps
+
+- Train your team on the submission workflow: [Submitting Violations](06-submitting-violations.md)
+- Set up support contact channels for your customers: [Support and Contact](15-support-and-contact.md)
+
+Questions about tow tickets, evidence handling, or exports? Email support@shieldmylot.com.
+
