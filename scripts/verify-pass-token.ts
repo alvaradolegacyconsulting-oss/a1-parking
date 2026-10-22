@@ -71,6 +71,18 @@ async function main() {
       if (r.error) throw new Error(`probe property ${name}: ${r.error.message}`)
       propIds.push(r.data.id as number)
     }
+    // 🔴 ASSERT THE FIXTURE, DON'T ASSUME IT. The switch-ON leg means
+    // nothing if the switch did not actually land: a column default or a
+    // trigger could override it, and the gate would then blame the
+    // minter for a switch that was never on.
+    const fix = await db.from('properties')
+      .select('name,printable_visitor_passes_enabled').in('name', [ON, OFF])
+    const fOn = (fix.data ?? []).find(p => p.name === ON)
+    const fOff = (fix.data ?? []).find(p => p.name === OFF)
+    chk('the probe fixture is what the gate assumes',
+      fOn?.printable_visitor_passes_enabled === true && fOff?.printable_visitor_passes_enabled === false,
+      `ON=${fOn?.printable_visitor_passes_enabled} OFF=${fOff?.printable_visitor_passes_enabled}`)
+
     console.log(`probe properties at ${co.name}: switch ON and switch OFF\n`)
 
     // ── the mint ─────────────────────────────────────────────────────
@@ -78,6 +90,14 @@ async function main() {
       p_plate: 'ZZPASS01', p_visitor_name: 'Probe', p_visiting_unit: '9001',
       p_property: ON, p_vehicle_desc: 'probe', p_duration_hours: 4,
     })
+    // 🔴 THE CALL'S OWN ERROR. Without this line a function that raises
+    // at runtime reported here as "none minted": the gate named the
+    // wrong defect, and the real one — 42883, pgcrypto off the minter's
+    // pinned search_path — stayed invisible through a full red run. An
+    // RPC's .error is a returned value, not an exception; nothing throws
+    // if you never look at it.
+    chk('issue_visitor_pass returns without error (switch ON)', !issued.error,
+      issued.error ? `🔴 ${issued.error.code}: ${issued.error.message}` : 'ok')
     const passId = Number((issued.data as Record<string, unknown>)?.pass_id ?? 0)
     if (passId) ids.push(passId)
     const { data: row } = await db.from('visitor_passes').select('id,pass_token,expires_at').eq('id', passId).maybeSingle()
@@ -93,9 +113,20 @@ async function main() {
     })
     const offId = Number((offIssued.data as Record<string, unknown>)?.pass_id ?? 0)
     if (offId) ids.push(offId)
+    chk('issue_visitor_pass returns without error (switch OFF)', !offIssued.error,
+      offIssued.error ? `🔴 ${offIssued.error.code}: ${offIssued.error.message}` : 'ok')
     const { data: offRow } = await db.from('visitor_passes').select('pass_token').eq('id', offId).maybeSingle()
-    chk('🔴 the printable switch OFF mints NOTHING', offRow?.pass_token == null,
-      offRow?.pass_token == null ? 'no token — and therefore no page' : `🔴 minted ${offRow?.pass_token}`)
+    // 🔴 ABSENCE IS NOT A PASS — the third place in this one gate where a
+    // missing answer read as a clean one. `offRow?.pass_token == null` is
+    // true when offRow is null because the call failed, so "mints
+    // NOTHING" went green on a run where nothing was ever issued.
+    if (!offId || !offRow) {
+      chk('🔴 the printable switch OFF mints NOTHING', false,
+        '🔴 NOT EXERCISED: no pass was issued at the switch-OFF property, so nothing was checked')
+    } else {
+      chk('🔴 the printable switch OFF mints NOTHING', offRow.pass_token == null,
+        offRow.pass_token == null ? 'no token — and therefore no page' : `🔴 minted ${offRow.pass_token}`)
+    }
 
     // ── the anonymous answer ────────────────────────────────────────
     console.log('\n── what an anonymous viewer receives ──')
