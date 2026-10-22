@@ -56,7 +56,11 @@ Before a property is created, the portal shows what it will cost.
 
 **Deactivating a property** lowers your bill **at your next renewal**, not mid-term. Until then, you keep paying for the property count you reached during the term.
 
-<!-- REVIEW (Mateo): confirm this against the Stripe quantity ratchet before publishing. See REVIEW_NOTES.md #3. -->
+<!-- Verified 2026-10-22 against app/lib/stripe-mutations.ts: syncOnAdd increments only when
+activeCount > the current Stripe quantity, so a deactivation never decrements mid-term;
+reconcileAtRenewal (invoice.payment_succeeded, billing_reason='subscription_cycle') then sets
+quantity = activeCount bidirectionally with proration_behavior='none'. "Lowers at renewal" is
+exactly what the code does. -->
 
 ---
 

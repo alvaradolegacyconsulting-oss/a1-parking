@@ -10,7 +10,7 @@ If you've sold a car, or it's no longer parked at the property, remove it from y
 
 1. Log in to your **resident portal**.
 2. Find the vehicle in your list of vehicles.
-3. Tap **Remove** and confirm.
+3. Tap **Remove This Vehicle** and confirm.
 
 The vehicle is no longer authorized at the property. The record is kept for the property's history, but it no longer counts as yours.
 
@@ -20,6 +20,7 @@ The vehicle is no longer authorized at the property. The record is kept for the 
 - **Removed it by mistake?** Add it again and it goes back through approval. The office doesn't restore removed vehicles automatically.
 - **Got a new car?** Remove the old one and add the new one, so only the car you actually park is authorized.
 
-<!-- REVIEW (Mateo): confirm the button label, and whether resident withdrawal of a pending request
-(ruled yes on Oct 7) has shipped. If it has, replace the "waiting for approval" bullet with its
-steps. -->
+<!-- Verified 2026-10-22 against app/resident/page.tsx: the button reads "Remove This Vehicle"
+(line 1765) and renders only for an approved, active vehicle. Resident withdrawal of a pending
+request has NOT shipped — the code still routes that case to the property office (line 797) — so
+the "waiting for approval" bullet is accurate as written. -->

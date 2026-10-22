@@ -57,9 +57,11 @@ Each manager row shows an authority pill:
 - **✓ Can Approve** (green) — authority granted; the manager sees Approve buttons in their portal
 - **No Approve** (grey) — authority not granted; the manager sees no Approve buttons, only Decline
 
-Click the pill to flip the state. A confirmation dialog appears. On a metered plan it mentions the billing impact; on the others it's plain authorization copy.
+Click the pill to flip the state. A confirmation dialog appears, and on **PM Starter** it names the billing impact:
 
-<!-- REVIEW (Mateo): the dialog's metered copy was written for PM-Only ("graduated permit rate"). Confirm what PM Starter now shows, and that it's accurate for a 500-included / $1.25 meter. -->
+> Authorize *Name* for permit / vehicle authorization? The first 500 approved permits/month are included in your $149 base; permits beyond 500 bill at $1.25 each.
+
+On the plans with no permit meter the dialog is the first sentence only. Revoking reads: *Name will not be able to approve permits.*
 
 ### When you create a new manager
 

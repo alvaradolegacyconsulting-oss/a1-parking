@@ -73,7 +73,12 @@ Assign the driver to the properties they'll work. **A driver can look up plates 
 
 If you later deactivate a property, drivers assigned to it can no longer record violations or tows there.
 
-<!-- REVIEW (Mateo): name the exact UI path for assigning a driver's properties. -->
+You can set this when you create the driver, and change it any time afterwards:
+
+- **At creation:** the Add User form has an **Assigned Properties** list.
+- **Afterwards:** **Company Admin → People →** the driver's row **→ Edit → Assigned Properties**. Tick the properties they work, or use the select-all box at the top of the list.
+
+You'll also be offered the assignment right after you add a new property, so a new site can be given to the drivers who will work it without going back through People.
 
 ---
 
@@ -207,10 +212,15 @@ No. Each driver should have one account. Multiple accounts for the same person b
 **Can two companies share a driver?**
 A driver account is scoped to one company. If a driver works for two different towing companies, they need separate accounts at each. Each company's account is isolated by the platform's data security boundaries.
 
-**My driver hit a photo or video cap. How do I increase it?**
-Email support@shieldmylot.com and we'll look at your caps.
+**My driver hit a photo or video cap. What are the caps?**
+They differ by plan:
 
-<!-- REVIEW (Mateo): do photo/video caps still differ by plan? If yes, say which. -->
+| | Photos per violation | Video length |
+|---|---|---|
+| **Operator Starter** | 10 | up to 60 seconds |
+| **Operator Pro** | unlimited | up to 120 seconds |
+
+The caps come with the plan, so raising them means moving to Operator Pro. Email support@shieldmylot.com and we'll set it up.
 
 **A driver claims they submitted a violation but I don't see it. What's wrong?**
 The violation may be in a "draft" state — submitted but not yet confirmed. See [Submitting Violations](06-submitting-violations.md) for the two-step submission process and how to resume drafts.

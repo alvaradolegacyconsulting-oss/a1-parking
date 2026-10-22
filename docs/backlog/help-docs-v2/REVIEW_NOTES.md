@@ -19,40 +19,47 @@ resolved, before publishing.
 - **Priority support (doc 15): Elite only**, since it's custom. Every self-serve plan gets email
   support on the terms in its SaaS agreement.
 
-## For Mateo to verify before publishing
-1. **Feature split vs `TIER_CONFIG`.** Operator Pro adds resident self-registration, visitor
-   passes, Spaces and guest authorizations; PM Starter vs PM Pro differ only in scale. Also check
-   leasing agents, CSV export, house rules and tags by plan.
-2. **Property deactivation and billing:** confirm "lowers at renewal" against the Stripe quantity
-   ratchet (docs 13, 04).
-3. ~~TDLR license~~ **Resolved (rev 2):** company admins set it under **Billing → Company info**
-   (live). Docs 07 and 00a now point there. Separately, the **dead duplicate TDLR field** in
-   Manage → Company (`company_admin/page.tsx:8760`, unreachable under `CA_CRM_REDESIGN`) is
-   approved for deletion as its own commit.
-4. **Exempt plates:** doc 04 says they only bypass the visitor pass limit; the old doc 09 said
-   drivers see them as exempt in lookups. Confirm which is true (doc 09 marks the spot).
-5. **Driver property assignment (doc 05):** give the exact UI path. Confirm whether photo/video
-   caps still differ by plan.
-6. **Approval-authority dialog (doc 16):** its metered copy was written for PM-Only ("graduated
-   permit rate"). What does PM Starter show now, and is it accurate?
-7. **Visitor pass forms (doc 09):** list the current manager and resident form fields (start
-   time, duration choices, notes).
-8. **Portal message (doc 04):** the PM Starter second-property refusal still says "contact us
-   about upgrading — hello@". Change it to point to PM Pro and support@, and update the quote in
-   doc 04 to match.
-9. **Resident remove-a-vehicle section:** confirm the button label, and whether resident
-   withdrawal of a pending request has shipped.
-10. **Carried over unchanged, unverified:**
-    - the dunning schedule (Days 0/3/5/7);
-    - 30-day data retention;
-    - 30-day price-change notice;
-    - ACH support;
-    - upgrades immediate / downgrades next cycle;
-    - doc 15's "your company admin will be notified" when a driver emails us;
-    - doc 05's "ShieldMyLot doesn't email drivers" and "drivers see only their own violations";
-    - doc 02's profile fields (business hours, tax ID, insurance).
-11. **Frontmatter:** doc 12 has `tier_required: "pm_only_or_legacy"`. If code reads that key for
-    gating, update it to the current plan keys; otherwise leave it.
+## Verification status — 2026-10-22, measured against deployed code
+
+Every item below was resolved by reading the code, not the docs. Only **#1** and **#10** remain
+open, and #1 is the only one still carrying an `<!-- REVIEW -->` marker in a doc.
+
+### Closed — confirmed, no doc change needed
+- **#2 deactivation lowers the bill at renewal.** `syncOnAdd` increments only when
+  `activeCount > current Stripe quantity`, so nothing decrements mid-term; `reconcileAtRenewal`
+  sets quantity bidirectionally at the cycle invoice with `proration_behavior='none'`.
+- **#2b annual mid-term adds DO bill immediately** — `always_invoice` on annual,
+  `create_prorations` on monthly (`stripe-mutations.ts:453`). Doc 13 was right. Two caveats it does
+  not yet mention: an add within the quantity already paid for is free either way
+  (`noop_within_floor`), and above 20 properties the band is $0, so there is nothing to bill.
+- **#4 exempt plates only bypass the limit.** `exempt_plates` is read in three places, all
+  manager/admin, and never by the driver portal or any enforcement lookup.
+
+### Closed — corrected in the docs
+- **#5** caps by plan: Operator Starter 10 photos / 60s video; Operator Pro unlimited / 120s. Doc
+  05 also now names the real UI path for driver property assignment.
+- **#6** the PM Starter dialog is accurate and is quoted verbatim in doc 16. The "graduated permit
+  rate" wording the note flagged was PM-Only's, replaced 2026-09-04.
+- **#7** there are **two** ways to get a pass, not three. `issue_visitor_pass` has exactly two
+  callers — the anonymous QR route and the resident portal. No manager-portal issue path exists,
+  and no revoke action exists anywhere: the only revocation is the plate-prohibition trigger.
+- **#8** the portal refusal now points PM Starter at PM Pro with support@, and doc 04 quotes the
+  shipped string verbatim (pinned by `verify:propertycap`).
+- **#9** the button reads "Remove This Vehicle"; pending-withdrawal has not shipped, so that
+  bullet stands.
+- **#11** `tier_required` is **not** inert — it renders verbatim as a visible gold badge
+  (`app/help/[slug]/page.tsx:257`) for any value but `"any"`. Doc 12 set to `"any"`, and the live
+  `docs/help/12` hotfixed, because the published page was showing a `pm_only_or_legacy` badge.
+
+### 🔴 Open — with Jose
+- **#1 the plan feature split.** The effective product — tier flags × render track-gating × the
+  server's `my_tier_enforcement_capable()` — disagrees with the public home-page comparison table
+  in several cells. Measured in full in the Oct 22 report. Docs 03, 04, 08, 09 and 12 are rewritten
+  once in one pass after the ruling, which is why #1 keeps the only remaining marker.
+- **#10 carried over, unverified against the SaaS agreement:** the dunning schedule, 30-day
+  retention, 30-day price notice, ACH, upgrade/downgrade timing, and doc 15's driver-contact
+  claims. Until checked, the docs keep the agreement's wording or say "per your subscription
+  agreement" rather than a number.
 
 ## Rev 2 fixes (from Mateo's review)
 - **08**: removed the "concurrent / monthly cap / max duration" visitor-pass wording in both

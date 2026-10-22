@@ -26,7 +26,7 @@ Without a pass, a vehicle that isn't registered at the property can be cited or 
 
 ---
 
-## Three ways to get a pass
+## Two ways to get a pass
 
 ### 1. The guest scans the property's visitor QR code
 
@@ -38,11 +38,7 @@ The confirmation screen shows the pass's real **issued** and **valid until** tim
 
 Residents with an account can issue passes for their guests from the **Visitor Passes** section of their portal. The resident is responsible for the passes they issue.
 
-### 3. The office issues it from the manager portal
-
-Property managers (and leasing agents, where your plan includes them) can issue passes from the manager portal: walk-in requests, contractors scheduled by the property, or cases where the resident can't do it themselves.
-
-<!-- REVIEW (Mateo): confirm the current manager and resident form fields (start time / scheduling, duration choices, notes) and add them here. -->
+A guest who can't scan the code — no phone, or a dead battery — can be helped by the resident they're visiting, from the resident portal.
 
 ---
 
@@ -61,7 +57,7 @@ A pass lasts until its **valid until** time. To keep parking after that, the gue
 
 Each property can set a **visitor pass limit**: the number of passes the **same plate** can receive at that property in any **rolling 30 days**.
 
-- **Every pass counts**, including renewals and passes the office later revoked. (Counting revoked passes stops an issue-revoke-reissue loop.)
+- **Every pass counts**, including renewals, and including a pass that was later revoked because the plate was prohibited (see below). Counting revoked passes stops a prohibit-then-reissue loop from clearing the count.
 - **When a plate reaches the limit,** the request is refused. The guest sees a message to contact the property office, plus the real expiry of any pass they still hold.
 - **No limit is set by default.** A blank limit means unlimited.
 
@@ -73,13 +69,13 @@ Each property can set a **visitor pass limit**: the number of passes the **same 
 
 For legitimate frequent visitors (caregivers, a family member who visits weekly, a regular contractor), add the plate to the property's **exempt list** (manager portal → Settings → **Visitor Pass Quota Exemptions**). An exempt plate isn't counted against the limit.
 
-An exemption doesn't authorize the vehicle by itself. The vehicle still needs a pass, or to be a registered resident vehicle. See [Adding Properties](04-adding-properties.md).
-
-<!-- REVIEW (Mateo): the old doc said exempt plates are shown to drivers as exempt in plate lookups. Doc 04 says they only bypass the limit. Confirm which is true and keep only that. -->
+**An exemption does not protect the vehicle from being towed.** It only stops the plate being counted against the limit. The vehicle still needs a pass, or to be a registered resident vehicle, exactly as before. That is also how the setting is labelled in the manager portal, and the wording matters: the list used to be called "Exempt Plates", which led property owners to believe the vehicles on it were protected. See [Adding Properties](04-adding-properties.md).
 
 ### Plates not permitted at a property
 
-The property can mark a plate as **not permitted**. A plate on that list can't get a visitor pass there, and any passes it holds are revoked.
+The property can mark a plate as **not permitted**. A plate on that list can't get a visitor pass there, and any passes it already holds are revoked.
+
+**This is the only way a pass gets revoked.** There is no "revoke this pass" action — a pass otherwise runs to its valid-until time. If a plate shouldn't be here, prohibiting it is the action, and it clears the passes it holds.
 
 ---
 
