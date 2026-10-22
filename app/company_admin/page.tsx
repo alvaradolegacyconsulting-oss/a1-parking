@@ -3636,9 +3636,20 @@ export default function CompanyAdminPortal() {
       setSearching(false); setResult({ status: 'guest_authorized', data: guestAuth }); return
     }
 
+    // 🔴 .single() HERE RETURNED "NOT FOUND" FOR A COVERED GUEST. Two
+    // live passes for one plate made this error PGRST116 ("cannot
+    // coerce the result to a single JSON object"), the error was
+    // discarded, and the page rendered status 'notfound' — the Oct 17
+    // class of harm, a covered vehicle shown as uncovered. Two live
+    // passes became ROUTINE on 2026-10-17, when a renewal started
+    // creating a new row while the previous one was still unexpired.
+    //
+    // Ordered by expires_at DESC so the pass that expires LATEST is the
+    // one reported, matching the driver lookup and pm_plate_lookup.
     const { data: passData } = await supabase.from('visitor_passes').select('*')
       .ilike('plate', clean).eq('is_active', true).gte('expires_at', new Date().toISOString())
-      .in('property', propNames).single()
+      .in('property', propNames)
+      .order('expires_at', { ascending: false }).limit(1).maybeSingle()
 
     setSearching(false)
     if (passData) setResult({ status: 'visitor', data: passData })

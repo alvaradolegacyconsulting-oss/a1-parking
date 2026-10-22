@@ -1016,6 +1016,15 @@ export default function DriverPortal() {
         .from('vehicles').select(SAFE_VEHICLE_COLS)
         .ilike('plate', clean).ilike('property', escapedTargetProp)
         .eq('is_active', false).neq('status', 'deactivated')
+        // 🔴 NOT COVERED BY vehicles_plate_norm_uniq. That index is
+        // scoped to status IN (active, under_review), so inactive rows
+        // can and do repeat: measured 5 plates with multiple declined
+        // rows at A1 today, one with six. Without an order+limit this
+        // maybeSingle() errored for exactly those plates and the branch
+        // degraded to "couldn't check" instead of reporting the
+        // registration. Newest row wins — the latest attempt is the one
+        // that describes the vehicle's current standing.
+        .order('id', { ascending: false }).limit(1)
         .maybeSingle()
       if (error) return { found: false, data: null, error }
       return { found: !!data, data: data as Record<string, unknown> | null, error: null }
