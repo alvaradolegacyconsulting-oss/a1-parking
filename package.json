@@ -45,6 +45,7 @@
     "verify:ticketprojection": "tsx --env-file=.env.local scripts/verify-ticket-projection.ts",
     "verify:importbadge": "tsx scripts/verify-import-badge-count.ts",
     "verify:visitorrenewal": "tsx --env-file=.env.local scripts/verify-visitor-renewal.ts",
+    "verify:registerattempt": "tsx --env-file=.env.local scripts/verify-register-attempt-audit.ts",
     "verify:batchnotify": "tsx --env-file=.env.local scripts/verify-batch-notify.ts",
     "verify:cascade": "tsx scripts/verify-property-cascade.ts",
     "verify:claim": "tsx scripts/verify-resident-claim.ts",

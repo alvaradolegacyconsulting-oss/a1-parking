@@ -19,6 +19,7 @@ import {
   PRIVACY_DISPLAY_DATE,
 } from '../lib/legal-versions'
 import { guardEmail, suggestEmailCorrection } from '../lib/email-guard'
+import { fetchWithTimeout, isFetchTimeout } from '../lib/fetch-timeout'
 
 
 const inp: React.CSSProperties = { display:'block', width:'100%', marginTop:'5px', marginBottom:'12px', padding:'10px 12px', fontSize:'13px', background:'#1e2535', border:'1px solid #3a4055', borderRadius:'8px', color:'white', outline:'none', boxSizing:'border-box', fontFamily:'Arial' }
@@ -207,7 +208,11 @@ function RegisterForm() {
       // → swift-handler → signInWithPassword with a second captcha
       // token) chain. swift-handler stays in use for admin / company_admin
       // / manager call sites — only /register switches.
-      const res = await fetch('/api/register/create-user', {
+      // 🔴 A WALL CLOCK ON THE SUBMIT. fetch() has no default timeout,
+      // so a dropped mobile connection left this promise unsettled —
+      // the submitting flag stayed true and the resident watched a
+      // screen that would never change. That is the "froze" report.
+      const res = await fetchWithTimeout('/api/register/create-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -477,7 +482,12 @@ function RegisterForm() {
       await supabase.auth.signOut()
       setDone(true)
     } catch (e: any) {
-      setError(e.message || 'An unexpected error occurred. Please try again.')
+      // A timeout is not an unexpected error, and it must not claim
+      // that nothing happened — we stopped waiting, which is a
+      // different fact from the request having failed.
+      setError(isFetchTimeout(e)
+        ? "We couldn't reach the server. Check your connection and try again."
+        : (e.message || 'An unexpected error occurred. Please try again.'))
     }
     setSubmitting(false)
   }

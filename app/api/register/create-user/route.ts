@@ -76,18 +76,83 @@ import { escapeIlikeValue } from '../../../lib/supabase-query-escape'
 
 export const runtime = 'nodejs'
 
+/**
+ * One audit row per submit attempt, carrying its outcome.
+ *
+ * 🔴 WHY THIS EXISTS. A resident at Green Acres #9 tapped Submit on
+ * 2026-10-17 and the page froze. No auth user, no resident, no vehicle
+ * and no audit row existed afterwards, so there was nothing to tell us
+ * whether the request ever arrived — the registration path wrote its
+ * only audit row (REGISTRATION_TOS_ACCEPTED) late and on the SUCCESS
+ * path alone. Vercel's runtime logs serve a 30-minute window, so by
+ * the time it was reported they were gone. Same rule as the
+ * visitor-pass fix: an outcome that leaves no trace cannot be sized.
+ *
+ * Server-side with service_role, because the interesting outcomes
+ * happen BEFORE any session exists — an anonymous client cannot insert
+ * into audit_logs, which is why the client-side row could only ever
+ * cover success.
+ *
+ * It records the TRUE outcome even where the response is deliberately
+ * vague: the existing-account branches answer ok:true to prevent
+ * account enumeration, and that stays. The audit row is not visible to
+ * the caller, so recording what really happened leaks nothing.
+ *
+ * Never throws: a failure to log must not fail a registration.
+ */
+async function auditAttempt(outcome: string, email: string, detail?: string): Promise<void> {
+  try {
+    const admin = createSupabaseServiceClient()
+    await admin.from('audit_logs').insert({
+      user_email: email || null,
+      action: 'REGISTRATION_SUBMIT_ATTEMPT',
+      table_name: 'residents',
+      new_values: {
+        outcome,
+        email: email || null,
+        ...(detail ? { detail: detail.slice(0, 300) } : {}),
+      },
+    })
+  } catch (e) {
+    console.error('[register/create-user] attempt audit failed:', (e as Error).message)
+  }
+}
+
 export async function POST(req: NextRequest) {
+  // 🔴 PESSIMISTIC DEFAULT, AND ONE WRITE SITE. Every return funnels
+  // through the finally below, so a branch added later cannot be
+  // silently unlogged — it records 'server_error', which is loud in the
+  // data rather than absent from it.
+  let outcome = 'server_error'
+  let auditEmail = ''
+  let auditDetail: string | undefined
+  try {
+    return await handleRegisterSubmit(req, (o, e, d) => {
+      outcome = o
+      if (e !== undefined) auditEmail = e
+      if (d !== undefined) auditDetail = d
+    })
+  } finally {
+    await auditAttempt(outcome, auditEmail, auditDetail)
+  }
+}
+
+type MarkOutcome = (outcome: string, email?: string, detail?: string) => void
+
+async function handleRegisterSubmit(req: NextRequest, mark: MarkOutcome) {
   // ── 1. Parse body ───────────────────────────────────────────────
   let body: { captchaToken?: string; email?: string; password?: string } = {}
   try {
     body = await req.json()
   } catch {
+    mark('invalid_body')
     return NextResponse.json({ ok: false, error: 'Invalid request body.' }, { status: 400 })
   }
   const captchaToken = (body.captchaToken ?? '').trim()
   const email        = (body.email ?? '').trim().toLowerCase()
   const password     =  body.password ?? ''
   if (!email || !password) {
+    mark('missing_fields', email)
     return NextResponse.json({ ok: false, error: 'Email and password are required.' }, { status: 400 })
   }
 
@@ -100,6 +165,7 @@ export async function POST(req: NextRequest) {
   // Interim — the fix is the policy rewrite.
   const emailGuard = guardEmail(email)
   if (!emailGuard.ok) {
+    mark('email_rejected', email, emailGuard.message)
     return NextResponse.json({ ok: false, error: emailGuard.message }, { status: 400 })
   }
 
@@ -116,6 +182,7 @@ export async function POST(req: NextRequest) {
       verify.reason === 'missing_secret' ? 500 :
       verify.reason === 'network_error'  ? 503 :
                                             403
+    mark('captcha_failed', email, verify.reason)
     return NextResponse.json(
       { ok: false, error: 'CAPTCHA verification failed. Please try again.', reason: verify.reason },
       { status },
@@ -188,9 +255,14 @@ export async function POST(req: NextRequest) {
     // is not "there is nothing to find".
     console.error('[register/create-user] records-bearing pre-check failed — refusing, fail-closed:',
       residentHit.error ?? roleHit.error)
+    // 🔴 The response is deliberately vague (ok:true) so a caller
+    // cannot tell a refusal from a success. The audit row is not
+    // visible to them, so it records what actually happened.
+    mark('precheck_failed_fail_closed', email)
     return NextResponse.json({ ok: true })
   }
   if ((residentHit.data ?? []).length > 0 || (roleHit.data ?? []).length > 0) {
+    mark('existing_records_for_email', email)
     return NextResponse.json({ ok: true })
   }
 
@@ -214,6 +286,7 @@ export async function POST(req: NextRequest) {
       // the raw SDK message would let a caller who submits a bad-password body
       // distinguish "existing email (200 attach)" from "new email
       // (400 weak_password)". Generic message closes that enumeration axis.
+      mark('create_user_refused', email)
       return NextResponse.json(
         { ok: false, error: 'Registration failed. Please check your input and try again.' },
         { status: 400 },
@@ -259,6 +332,7 @@ export async function POST(req: NextRequest) {
     // today because signInWithPassword is captcha-gated on this project
     // and the caller's only Turnstile token was consumed above. See the
     // report; that is a follow-up, not a regression introduced here.
+    mark('existing_auth_user', email)
     return NextResponse.json({ ok: true })
   }
   // NOTE: the created user's id is deliberately NOT captured or
@@ -284,6 +358,9 @@ export async function POST(req: NextRequest) {
     // sign in via /login after manager approval. Email was already
     // confirmed via email_confirm:true so the password they entered
     // is the working credential.
+    // 🔴 The ACCOUNT EXISTS here. Recorded distinctly, because the
+    // recovery differs: the resident has credentials already.
+    mark('created_but_link_failed', email, linkErr?.message ?? 'no hashed_token')
     return NextResponse.json(
       { ok: false, error: 'Account created but session-link generation failed: ' + (linkErr?.message ?? 'no hashed_token returned') },
       { status: 500 },
@@ -294,6 +371,7 @@ export async function POST(req: NextRequest) {
   // email are no longer echoed — a public endpoint has no reason to
   // hand back an internal auth id, and on the (now removed) attach path
   // that id belonged to somebody else.
+  mark('created', email)
   return NextResponse.json({
     ok: true,
     token_hash: linkData.properties.hashed_token,
