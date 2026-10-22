@@ -28,6 +28,15 @@ import { BULK_CSV_HEADER } from '../app/lib/bulk-onboarding'
 import { validateBulkRows, type BulkRowInput } from '../app/lib/bulk-validator'
 
 const APPLY = process.argv.includes('--apply')
+// --only a | --only b seeds a single batch. The Reply-To verify needs one
+// rejectable batch, not a pair, and seeding a spare leaves a live row in
+// the queue that somebody then has to clean up.
+const ONLY = (() => {
+  const i = process.argv.indexOf('--only')
+  const v = i >= 0 ? process.argv[i + 1] : null
+  return v === 'a' || v === 'b' ? v : null
+})()
+const TAGS: ('a' | 'b')[] = ONLY ? [ONLY] : ['a', 'b']
 const PROPERTY = 'Northgate Commerce Center'
 const ROWS = 4
 const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -79,7 +88,7 @@ async function main() {
   const siblingNames = (sibs ?? []).map(s => String(s.name))
 
   const problems: string[] = []
-  for (const tag of ['a', 'b'] as const) {
+  for (const tag of TAGS) {
     for (const r of rowsFor(tag)) {
       const { data: norm } = await db.rpc('normalize_plate', { p: r.plate })
       const plateNorm = String(norm ?? '')
@@ -118,7 +127,7 @@ async function main() {
   console.log(`✅ both files are clean against live records (${ROWS} rows each, validator + 4 DB predicates)\n`)
 
   if (!APPLY) {
-    for (const tag of ['a', 'b'] as const) {
+    for (const tag of TAGS) {
       console.log(`── batch ${tag.toUpperCase()} would contain ──`)
       for (const r of rowsFor(tag)) console.log(`   unit ${r.unit}  ${r.plate}  ${r.email}`)
     }
@@ -130,7 +139,7 @@ async function main() {
   const demoCa = (ca?.users ?? []).find(u => (u.email ?? '').toLowerCase() === 'demo-ca@test.shieldmylot.com')
   if (!demoCa) throw new Error('demo-ca@test.shieldmylot.com has no auth user')
 
-  for (const tag of ['a', 'b'] as const) {
+  for (const tag of TAGS) {
     const bytes = csvOf(rowsFor(tag))
     const sha = crypto.createHash('sha256').update(bytes).digest('hex')
     const ins = await db.from('import_batches').insert({
