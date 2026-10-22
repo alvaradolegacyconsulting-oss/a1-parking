@@ -71,7 +71,8 @@
     "queue:act": "tsx scripts/rollback-demo-batch.ts",
     "verify:tdlrcaller": "tsx scripts/verify-tdlr-single-caller.ts",
     "verify:propertycap": "tsx scripts/verify-property-cap-message.ts",
-    "verify:prioritysupport": "tsx --env-file=.env.local scripts/verify-priority-support-elite-only.ts"
+    "verify:prioritysupport": "tsx --env-file=.env.local scripts/verify-priority-support-elite-only.ts",
+    "verify:homepageclaims": "tsx scripts/verify-homepage-claims.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

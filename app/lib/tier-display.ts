@@ -248,11 +248,20 @@ export const FEATURE_COMPARISON: ComparisonRow[] = [
     pmStarter: '✓',          pmPro: '✓',          operatorStarter: 'Office adds',      operatorPro: '✓' },
   // VISITOR_PASS_SELF_SERVICE is true everywhere, but resident-issued
   // passes need RESIDENT_PORTAL — which Operator Starter does not have.
-  // So the flag is right and the row says what the operator actually
-  // gets (Jose's ruling 2026-10-02).
+  //
+  // 🔴 2026-10-22 — "office-issued" REMOVED from all four columns. It
+  // does not exist. issue_visitor_pass has exactly two callers: the
+  // anonymous QR route (/api/visitor/create-pass) and the resident
+  // portal. There is no manager- or CA-side writer, so every column was
+  // claiming a capability no plan has. Operator Starter, with no
+  // resident portal either, is QR only.
+  //
+  // Filed as a feature: docs/backlog/office-issued-visitor-pass-2026-10-22.md.
+  // When it ships, these cells get "office" back — and
+  // verify:homepageclaims is what makes those two facts move together.
   { capability: 'Visitor passes',
-    pmStarter: 'QR, office and resident-issued', pmPro: 'QR, office and resident-issued',
-    operatorStarter: 'QR and office-issued',     operatorPro: 'QR, office and resident-issued' },
+    pmStarter: 'QR and resident-issued', pmPro: 'QR and resident-issued',
+    operatorStarter: 'QR only',          operatorPro: 'QR and resident-issued' },
   // ADVANCED_ANALYTICS (BASIC_DASHBOARDS is true everywhere)
   { capability: 'Detailed reporting / analytics',
     pmStarter: '✓',          pmPro: '✓',          operatorStarter: 'Basic only',       operatorPro: '✓' },
