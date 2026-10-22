@@ -4,7 +4,8 @@ import { useSearchParams } from 'next/navigation'
 import { supabase } from '../supabase'
 import { normalizePlate } from '../lib/plate'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
-import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
+import { getPlateLimitStatus, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
+import { decodeParamUntilStable } from '../lib/decode-param'
 import { TurnstileWidget, type TurnstileHandle } from '../components/TurnstileWidget'
 
 function VisitorForm() {
@@ -20,7 +21,7 @@ function VisitorForm() {
   // Absent is the case that most needs refusing. `hasPropertyParam` is the
   // one thing the guards below test, and it is a boolean, so no branch can
   // accidentally treat "missing" as a usable value.
-  const rawProperty = searchParams.get('property')
+  const rawProperty = decodeParamUntilStable(searchParams.get('property'))
   const hasPropertyParam = !!(rawProperty && rawProperty.trim() !== '')
   const propertyName = rawProperty || 'Managed Property'
   const [step, setStep] = useState<'form' | 'success'>('form')
@@ -845,7 +846,10 @@ function VisitorForm() {
               // to anon (visit-history leak). Copy no longer says "wait
               // for passes to expire" — waiting doesn't help under
               // rolling-30, the count is issue-based.
-              <p style={{ color:'#f44336', fontSize:'11px', margin:'6px 0 0', lineHeight:'1.5' }}>This vehicle has reached the visitor pass limit at this property. Contact the property manager if you need access.</p>
+              // Advance warning, not a verdict. It stays because knowing
+              // early is useful, but it no longer stops the submit —
+              // only the server can say what pass the guest holds.
+              <p style={{ color:'#f44336', fontSize:'11px', margin:'6px 0 0', lineHeight:'1.5' }}>This vehicle has reached the visitor pass limit at this property. Contact the property manager if you need access. You can still submit to see the pass you currently hold.</p>
             )}
           </div>
 
@@ -992,8 +996,15 @@ function VisitorForm() {
 
           <button
             onClick={() => submitPass()}
-            disabled={loading || !form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken}
-            style={{ width:'100%', padding:'14px', background: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken) ? '#555' : '#C9A227', color: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!form.plate || !form.unit || !tosChecked || isAtLimit(limitStatus) || !captchaToken) ? 'not-allowed' : 'pointer' }}
+            // 🔴 isAtLimit NO LONGER DISABLES THIS. The inline check is a
+            // separate client-side count and it was the only thing the
+            // guest saw: a red line under the plate field, a dead
+            // button, and no mention of the pass they already hold.
+            // The server refuses authoritatively and its refusal
+            // carries the real current expiry, so the submit has to be
+            // allowed to reach it.
+            disabled={loading || !form.plate || !form.unit || !tosChecked || !captchaToken}
+            style={{ width:'100%', padding:'14px', background: (!form.plate || !form.unit || !tosChecked || !captchaToken) ? '#555' : '#C9A227', color: (!form.plate || !form.unit || !tosChecked || !captchaToken) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'15px', border:'none', borderRadius:'8px', cursor: (!form.plate || !form.unit || !tosChecked || !captchaToken) ? 'not-allowed' : 'pointer' }}
           >
             {loading ? 'Activating Pass...' : 'Get Visitor Pass'}
           </button>

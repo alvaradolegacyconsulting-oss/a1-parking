@@ -16,7 +16,7 @@ import { normalizePlate } from '../lib/plate'
 import { isPlateProhibitedError, plateProhibitedCopy } from '../lib/plate-prohibition-copy'
 import { TOWED_CAR_LOOKUP_URL } from '../lib/towed-car-lookup'
 import { displayTowReason } from '../lib/tow-reasons'
-import { getPlateLimitStatus, isAtLimit, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
+import { getPlateLimitStatus, parseLimitTriggerError, PlateLimitStatus } from '../lib/visitor-pass-limit'
 import { eligibleAgainAt } from '../lib/visitor-pass-cap'
 import { guestAuthDisplayStatus } from '../lib/guest-auth'
 import { formatTimestamp, formatDate } from '../lib/format-time'
@@ -1997,8 +1997,16 @@ export default function ResidentPortal() {
                   </div>
                 )}
                 <div style={{ display:'flex', gap:'8px' }}>
-                  <button onClick={issueVisitorPass} disabled={isAtLimit(limitStatus) || passSubmitting}
-                    style={{ flex:1, padding:'11px', background: (isAtLimit(limitStatus) || passSubmitting) ? '#555' : '#C9A227', color: (isAtLimit(limitStatus) || passSubmitting) ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: isAtLimit(limitStatus) ? 'not-allowed' : (passSubmitting ? 'wait' : 'pointer') }}>
+                  {/* 🔴 isAtLimit no longer disables this, for the same
+                      reason as /visitor: the inline check is a separate
+                      client-side count, and while it blocked the button
+                      the resident never reached the server's refusal —
+                      which is the only answer carrying the real expiry
+                      of the pass the plate already holds. It also made
+                      the limit_reached branch in issueVisitorPass dead
+                      code. The warning above stays as advance notice. */}
+                  <button onClick={issueVisitorPass} disabled={passSubmitting}
+                    style={{ flex:1, padding:'11px', background: passSubmitting ? '#555' : '#C9A227', color: passSubmitting ? '#888' : '#0f1117', fontWeight:'bold', fontSize:'13px', border:'none', borderRadius:'8px', cursor: passSubmitting ? 'wait' : 'pointer' }}>
                     {passSubmitting ? 'Issuing…' : 'Issue Pass'}
                   </button>
                   <button onClick={() => { setShowVisitorForm(false); setPassError('') }}

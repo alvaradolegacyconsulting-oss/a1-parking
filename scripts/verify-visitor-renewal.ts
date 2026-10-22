@@ -168,7 +168,48 @@ async function main() {
     chk('   ...and the dead client-side expiry helper is gone',
       !/function formatExpiry/.test(vis),
       'formatExpiry(hours) computed now+duration and was the function to reach for next')
+    // ── §3: the limit must reach the SERVER, not die in the form ────
+    // 🔴 The inline check was the only thing the guest saw: a red line
+    // under the plate field, a dead Submit, and no mention of the pass
+    // they already held. The server's refusal is the one that carries
+    // the real expiry, so the submit has to be able to reach it.
+    chk('🔴 isAtLimit no longer disables the Submit button',
+      !/disabled=\{[^}]*isAtLimit/.test(vis),
+      !/disabled=\{[^}]*isAtLimit/.test(vis)
+        ? 'the submit reaches the route, which answers with the real current expiry'
+        : '🔴 the guest is blocked in the form and never learns what pass they hold')
+    chk('   ...and the limit_reached answer routes to the refusal screen',
+      /limit_reached/.test(vis) && /setStep\('success'\)/.test(vis),
+      'a 409 limit_reached sets the refusal screen, which prints the row\'s expiry')
+    chk('   ...while the inline warning is kept as advance notice',
+      /at_limit/.test(vis), 'knowing early is useful; it is no longer a verdict')
+
+    // ── §3 optional: a twice-encoded property param still resolves ──
+    const { decodeParamUntilStable } = await import('../app/lib/decode-param')
+    const cases: [string | null, string][] = [
+      ['Green Acres', 'Green Acres'],
+      ['Green%20Acres', 'Green Acres'],
+      ['Green%2520Acres', 'Green Acres'],
+      ['Esperanza%20%40%20Queenston', 'Esperanza @ Queenston'],
+      ['%ZZ', '%ZZ'],
+      [null, ''],
+    ]
+    const bad = cases.filter(([inp, want]) => decodeParamUntilStable(inp) !== want)
+    chk('a twice-encoded property param decodes until stable, and a malformed one is left alone',
+      bad.length === 0,
+      bad.length === 0
+        ? cases.map(([i]) => JSON.stringify(i)).join(' · ') + ' — capped at 3 passes'
+        : bad.map(([i, w]) => `${JSON.stringify(i)} → ${JSON.stringify(decodeParamUntilStable(i))}, wanted ${JSON.stringify(w)}`).join(' | '))
+    chk('   ...and /visitor reads the param through it',
+      /decodeParamUntilStable\(searchParams\.get\('property'\)\)/.test(vis),
+      'rawProperty = decodeParamUntilStable(searchParams.get(\'property\'))')
+
     const resi = strip(fs.readFileSync('app/resident/page.tsx', 'utf8'))
+    chk('🔴 the resident page\'s submit is not disabled at the limit either',
+      !/disabled=\{isAtLimit/.test(resi),
+      !/disabled=\{isAtLimit/.test(resi)
+        ? 'it reaches the server, so its limit_reached branch is reachable'
+        : '🔴 blocked in the form — the limit_reached copy is dead code')
     chk('the resident page prints the RPC expiry too',
       /result\?\.expires_at/.test(resi) && /limit_reached/.test(resi),
       'result?.expires_at, with a limit_reached branch')
