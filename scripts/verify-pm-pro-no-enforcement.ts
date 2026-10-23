@@ -28,6 +28,7 @@
 // Usage: npx tsx --env-file=.env.local scripts/verify-pm-pro-no-enforcement.ts
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
+import { randomUUID } from 'crypto'
 import { TIER_CONFIG } from '../app/lib/tier-config'
 import { FEATURE_FLAGS } from '../app/lib/feature-flags'
 
@@ -35,7 +36,11 @@ const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const db = createClient(URL, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
 
-const S = Date.now()
+// 🔴 Date.now() alone is not unique across concurrent runs — two
+// instances in the same millisecond collide on
+// companies_name_ci_unique. Same defect found in verify:passtoken on
+// 2026-10-23 by running two at once.
+const S = `${Date.now()}-${process.pid}-${randomUUID().slice(0, 8)}`
 let fails = 0
 const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(`${ok ? '✅' : '❌'} ${n}${d ? '\n       ' + d : ''}`) }
 

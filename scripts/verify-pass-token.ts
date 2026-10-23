@@ -25,12 +25,19 @@
 
 import { createClient } from '@supabase/supabase-js'
 import fs from 'fs'
+import { randomUUID } from 'crypto'
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const db = createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
 const anon = createClient(url, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, { auth: { persistSession: false } })
 
-const S = Date.now()
+// 🔴 Date.now() ALONE IS NOT UNIQUE. Two runs started in the same
+// millisecond produced the same probe property name, and
+// properties_company_name_ci_unique rejected the second — the setup
+// threw, the whole database half was skipped, and the run still
+// summarised as "1 failed". Observed 2026-10-23 by running two
+// instances concurrently. pid + random closes it.
+const S = `${Date.now()}-${process.pid}-${randomUUID().slice(0, 8)}`
 const ON = `zzpass-on-${S}`
 const OFF = `zzpass-off-${S}`
 const WANT = ['plate', 'property', 'status', 'valid', 'valid_until'].sort()
@@ -41,7 +48,20 @@ const ids: number[] = []
 const propIds: number[] = []
 
 let fails = 0
-const chk = (n: string, ok: boolean, d = '') => { if (!ok) fails++; console.log(`${ok ? '✅' : '❌'} ${n}${d ? '\n       ' + d : ''}`) }
+// 🔴 COUNT WHAT ACTUALLY RAN. The five page checks below read source
+// files and pass with no database at all, so when setup threw, this
+// gate printed five greens and "1 failed" for a run in which the token,
+// the reader, the grants and the four refusals were never exercised.
+// A missing measurement must not read as a small failure.
+let ran = 0
+// A clean run REACHES 19 assertions. Not the number of chk() call
+// sites in the file (21 incl. the declaration): the leak check has two
+// call sites and only one ever runs, the real-answer branch or the
+// NOT EXERCISED branch. Counted off a known-green run, and the first
+// value I wrote here was wrong because `grep '^✅'` also matched the
+// summary line — so it is asserted by running, not by reading.
+const EXPECTED = 19
+const chk = (n: string, ok: boolean, d = '') => { ran++; if (!ok) fails++; console.log(`${ok ? '✅' : '❌'} ${n}${d ? '\n       ' + d : ''}`) }
 
 const read = async (token: string | null) =>
   (await anon.rpc('get_visitor_pass_by_token', { p_token: token })).data as Record<string, unknown> | null
@@ -228,6 +248,14 @@ async function main() {
     !/visitor_name|visiting_unit|vehicle_desc/.test(page),
     'the card sits on a windscreen, readable by anyone walking past')
 
+  // 🔴 Did every assertion get to run? If setup threw, the database
+  // half never executed and a green-looking tail means nothing.
+  if (ran < EXPECTED) {
+    console.log(`\n🔴 NOTHING WAS VERIFIED: only ${ran} of ${EXPECTED} assertions executed.`)
+    console.log('   The setup failed, so the token, the reader, the grants and the refusals')
+    console.log('   were never exercised. The checks that did pass read source files only.')
+    process.exit(2)
+  }
   console.log(fails === 0 ? '\n✅ all green\n' : `\n❌ ${fails} failed\n`)
   process.exit(fails === 0 ? 0 : 1)
 }
