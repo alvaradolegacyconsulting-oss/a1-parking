@@ -11,7 +11,13 @@ related: ["property-management-overview", "resident-management", "resident-self-
 
 Visitor passes let a guest's vehicle park at your property without being towed. This guide covers how passes work, who can issue them, and the limits that apply.
 
-Visitor passes are part of **PM Starter**, **PM Pro** and **Operator Pro**.
+Visitor passes work on every plan, but not in the same way:
+
+| Plan | How a guest gets a pass |
+|---|---|
+| **PM Starter**, **PM Pro** | The property's visitor QR code, or a resident issues one from their portal |
+| **Operator Pro** | The same two ways. Both are run by your property managers, in the manager portal |
+| **Operator Starter** | The visitor QR code only — there's no resident portal on that plan |
 
 ## When visitor passes are needed
 

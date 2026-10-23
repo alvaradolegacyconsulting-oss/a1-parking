@@ -64,9 +64,11 @@ Both Operator plans include:
 - **Storage facilities**: your storage partners and their license details, printed on tow tickets
 - **Property managers**, with no cap on accounts
 
-**Operator Pro** adds the full resident and visitor toolset at your properties: resident self-registration, visitor passes, reserved parking (Spaces) and guest authorizations. It's the plan for operators who run parking at a property end to end.
+**Operator Pro** adds the full resident and visitor toolset at your properties: the resident portal and resident self-registration, resident-issued visitor passes, reserved parking (Spaces) and guest authorizations. It's the plan for operators who run parking at a property end to end.
 
-<!-- REVIEW: confirm the exact Starter vs Pro feature split against TIER_CONFIG (app/lib/tier-config.ts). See REVIEW_NOTES.md #1. -->
+**Those resident and visitor surfaces are run by your property managers, in the manager portal.** The Company Admin portal on an Operator plan stays focused on the enforcement side — properties, people, storage partners and enforcement activity. That's deliberate: the company admin sets up the operation, and the managers run the day-to-day at each property.
+
+**On Operator Starter**, visitor parking works one way: a guest scans the property's visitor QR code and gets a pass. There's no resident portal on that plan, so residents can't issue passes themselves, and reserved parking and guest authorizations aren't included. Residents are added by the office.
 
 ### Elite
 

@@ -13,6 +13,8 @@ Reserved-space management on ShieldMyLot™ lets a property manager track which 
 
 Reserved spaces are part of **PM Starter**, **PM Pro** and **Operator Pro**. **Operator Starter** doesn't include them: it covers the enforcement workflow, not on-site parking assignments.
 
+On **Operator Pro**, reserved parking is run by your property managers in the manager portal. The Company Admin portal on an Operator plan stays focused on the enforcement side, so there's no cross-property Spaces view there.
+
 Reserved-space management is included at no additional cost.
 
 ## What a "space" is on ShieldMyLot
@@ -42,11 +44,11 @@ The manager can:
 - Reassign a space (equivalent to free + assign)
 - Approve or decline a resident space request
 
-### Company admin — the Spaces tab (cross-property)
+### Company admin — the Spaces tab (cross-property, PM plans)
 
-Company admins see a **Spaces** tab in their portal that spans **all** the company's properties. This is a cross-property single-view of the same data the property manager sees, with a property selector to focus. Useful for portfolio owners who want to see space utilization across their whole footprint without switching portals.
+On **PM Starter** and **PM Pro**, company admins see a **Spaces** tab in their portal that spans **all** the company's properties: a cross-property view of the same data the property manager sees, with a property selector to focus. Useful for portfolio owners who want to see space utilization across their whole footprint without switching portals. The CA has the same assign / reassign / free / decision actions on that view.
 
-The CA has the same assign / reassign / free / decision actions available on their view.
+On **Operator Pro** there is no Spaces tab in the Company Admin portal. Reserved parking is run per property by the property managers, in the manager portal.
 
 ### Resident — the resident portal
 

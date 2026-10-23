@@ -51,15 +51,42 @@ open, and #1 is the only one still carrying an `<!-- REVIEW -->` marker in a doc
   (`app/help/[slug]/page.tsx:257`) for any value but `"any"`. Doc 12 set to `"any"`, and the live
   `docs/help/12` hotfixed, because the published page was showing a `pm_only_or_legacy` badge.
 
-### 🔴 Open — with Jose
-- **#1 the plan feature split.** The effective product — tier flags × render track-gating × the
-  server's `my_tier_enforcement_capable()` — disagrees with the public home-page comparison table
-  in several cells. Measured in full in the Oct 22 report. Docs 03, 04, 08, 09 and 12 are rewritten
-  once in one pass after the ruling, which is why #1 keeps the only remaining marker.
-- **#10 carried over, unverified against the SaaS agreement:** the dunning schedule, 30-day
-  retention, 30-day price notice, ACH, upgrade/downgrade timing, and doc 15's driver-contact
-  claims. Until checked, the docs keep the agreement's wording or say "per your subscription
-  agreement" rather than a number.
+### Closed — ruled by Jose, 2026-10-23
+- **#1 the plan feature split.** The effective product disagreed with the public comparison table
+  in five cells. Rulings and outcomes:
+  - **PM Pro loses enforcement** (cell 1). It is sold as a property-management plan, and a PM firm
+    stamping tow tickets is a Chapter 2308 exposure. Zero companies were on
+    property_management/legacy, so nobody lost anything. The flags are dropped; the server half is
+    `my_tier_enforcement_capable()` reading `tier_type` plus a BEFORE INSERT trigger on
+    `violations` that closes the two direct client inserts.
+  - **"Office-issued" visitor passes removed from the home page** (cell 2). No plan had that write
+    path. Filed as a feature; the claim returns if it ships.
+  - **Operator Pro's CA tabs: no change** (cell 3). The plan includes visitor passes, guest
+    authorizations and Spaces, and they are run by the **property managers in the manager portal**.
+    The docs now say exactly that, in 03, 04, 09 and 12.
+  - **Priority support is Elite only** (cell 4). The flag is off for all four self-serve plans;
+    Elite and negotiated accounts get it through their proposal code's `feature_overrides`, which
+    is how A1 keeps it.
+  - **The manager portal is gated by track × tier** (cell 5). Operator Starter managers no longer
+    see Spaces or Authorized Guests; Visitors, Residents and Vehicles stay.
+- **#10 the unverified numbers.** Ruled: the docs say **"as set out in your subscription
+  agreement"** for the dunning schedule, data retention, price-change notice and
+  upgrade/downgrade timing. No numbers, so a help doc cannot drift from a signed document.
+  Priority support likewise reads Elite-only, with everything else on the agreement's terms.
+
+### The final matrix the docs describe
+
+| | PM Starter | PM Pro | Operator Starter | Operator Pro |
+|---|---|---|---|---|
+| Full enforcement | — | — | ✓ | ✓ |
+| Resident portal + self-registration | ✓ | ✓ | — (office adds) | ✓ |
+| Visitor passes | QR + resident | QR + resident | QR only | QR + resident |
+| Reserved spaces | ✓ | ✓ | — | ✓ |
+| Guest authorizations | ✓ | ✓ | — | ✓ |
+| Priority support | — | — | — | — |
+
+On Operator Pro, the resident and visitor surfaces are run by property managers in the manager
+portal; the Company Admin portal on an Operator plan stays on the enforcement side.
 
 ## Rev 2 fixes (from Mateo's review)
 - **08**: removed the "concurrent / monthly cap / max duration" visitor-pass wording in both

@@ -110,7 +110,9 @@ Exempt plates aren't counted against the property's visitor pass limit (the numb
 
 ### Visitor pass settings (managed in the manager portal)
 
-Operator Starter customers can skip this section: visitor passes are part of the PM plans and Operator Pro.
+Operator Starter customers can skip this section: on that plan a guest gets a pass from the property's visitor QR code and there is nothing to configure beyond the limit and the exemption list.
+
+On **Operator Pro**, as on the PM plans, these settings live in the manager portal and are run by the property's manager.
 
 The visitor pass limit and the exemption list (above) are both set from the **manager portal's Settings tab**, one property at a time. The Company Admin portal doesn't have controls for these.
 
