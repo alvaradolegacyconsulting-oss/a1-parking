@@ -12,6 +12,29 @@ import { displayTowReason } from '../lib/tow-reasons'
 // scoping server-side regardless. Flag is true on every tier across
 // both tracks (B75 expanded from PM-only).
 import { hasFeature, getCompanyContext } from '../lib/tier'
+
+// ════════════════════════════════════════════════════════════════════
+// Cell 5 (Jose, 2026-10-23) — which plans run Spaces and Guest Auths
+// ════════════════════════════════════════════════════════════════════
+//
+// Operator Starter is the enforcement workflow: violations, tow tickets,
+// plate lookup. It does not run on-site parking assignment or vetted
+// multi-week guests, so its managers should not be offered those tabs.
+// Its visitor-pass VIEW stays, because QR passes exist on that plan, and
+// residents/vehicles stay, because residents are office-added there.
+//
+// 🔴 DELIBERATELY NOT THE SAME PREDICATE AS THE CA PORTAL'S. The CA
+// portal hides Visitors/Guests/Spaces for the WHOLE enforcement track,
+// including Operator Pro — ruled cell 3, Oct 23: an enforcement-track
+// company admin does not need them because their property managers run
+// those surfaces here. So the two predicates differ on purpose, and
+// sharing one helper between them would be the bug, not the fix.
+//
+// enforcement/legacy (Operator Pro, A1's shape) keeps everything.
+function pmSurfacesForManager(): boolean {
+  const c = getCompanyContext()
+  return c.tier_type === 'property_management' || c.tier === 'legacy'
+}
 import { tierCanSeeTowLog } from '../lib/tow-log-writes'
 // Permit-Door Piece 1 §1/§2 — centralized vehicle-insert state helper
 // (PM-Only → pending → approval is the metering chokepoint; all other
@@ -4042,7 +4065,9 @@ export default function ManagerPortal() {
               Approvals{(pendingVehicles.length + pendingSpaceRequests.length) > 0 && <span style={{ background:'#B71C1C', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingVehicles.length + pendingSpaceRequests.length}</span>}
             </button>
           )}
-          <button style={tabStyle('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
+          {pmSurfacesForManager() && (
+            <button style={tabStyle('spaces')} onClick={() => setActiveTab('spaces')}>Spaces</button>
+          )}
           <button style={tabStyle('residents')} onClick={() => setActiveTab('residents')}>
             Residents{pendingResidents.length > 0 && <span style={{ background:'#a16207', color:'white', borderRadius:'10px', fontSize:'9px', padding:'1px 6px', marginLeft:'4px', fontWeight:'bold' }}>{pendingResidents.length}</span>}
           </button>
@@ -4053,7 +4078,9 @@ export default function ManagerPortal() {
               right now beyond the registered residents" — but different
               record type: visitor passes are anon/24h, guest auths are
               manager-vetted/multi-week. */}
-          <button style={tabStyle('guest-auth')} onClick={() => setActiveTab('guest-auth')}>Authorized Guests</button>
+          {pmSurfacesForManager() && (
+            <button style={tabStyle('guest-auth')} onClick={() => setActiveTab('guest-auth')}>Authorized Guests</button>
+          )}
           {/* AP-UI-REFINE (2026-07-24): Authorized Plates tab. Adjacent to
               Authorized Guests — same category (who is allowed on the
               property beyond registered residents), different record type
@@ -4450,7 +4477,7 @@ export default function ManagerPortal() {
             fetch returns ≤ pageSize rows (25 mobile / 50 desktop). All
             mutations route through the 6 DEFINER RPCs via the modal
             handlers above. */}
-        {activeTab === 'spaces' && (
+        {activeTab === 'spaces' && pmSurfacesForManager() && (
           <div>
             {/* ① OCCUPANCY DASHBOARD — visually dominant, primary read.
                 Cards are clickable: clicking "3 open" filters the list
@@ -6373,7 +6400,7 @@ export default function ManagerPortal() {
         {/* AUTHORIZED GUESTS (B214) — manager-vetted multi-week vehicle authorizations.
             Two visible sub-sections: (1) collapsible "+ New" create form with overlap
             soft-warning, (2) active list with renew/revoke per card. */}
-        {activeTab === 'guest-auth' && (
+        {activeTab === 'guest-auth' && pmSurfacesForManager() && (
           <div>
             {/* HEADER + NEW BUTTON */}
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
