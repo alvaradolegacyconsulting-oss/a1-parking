@@ -73,7 +73,8 @@
     "verify:propertycap": "tsx scripts/verify-property-cap-message.ts",
     "verify:prioritysupport": "tsx --env-file=.env.local scripts/verify-priority-support-elite-only.ts",
     "verify:homepageclaims": "tsx scripts/verify-homepage-claims.ts",
-    "verify:managertrackgating": "tsx scripts/verify-manager-track-gating.ts"
+    "verify:managertrackgating": "tsx scripts/verify-manager-track-gating.ts",
+    "verify:pmpronoenforcement": "tsx --env-file=.env.local scripts/verify-pm-pro-no-enforcement.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

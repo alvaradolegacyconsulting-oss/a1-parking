@@ -472,23 +472,42 @@ const PM_LEGACY: TierConfigShape = {
   // that audit. Elite gets priority support through its proposal code's
   // feature_overrides, which hasFeature() consults BEFORE this map.
   [F.PRIORITY_SUPPORT]: false,
-  // ── Enforcement-track core ──
-  [F.AI_PLATE_SCANNING]: true,
-  [F.VIOLATION_DOCUMENTATION]: true,
-  [F.TOW_TICKET_GENERATION]: true,
-  [F.TOWING_AUTHORIZATION_UI]: true,
-  [F.DRIVER_PORTAL]: true,
-  [F.STORAGE_FACILITY_MANAGEMENT]: true,
-  [F.PHOTO_UPLOADS]: true,
-  [F.FINDMYTOWEDCAR_LINKS]: true,
+  // ── 🔴 NO ENFORCEMENT. Ruled by Jose 2026-10-23 (cell 1). ──────────
+  // This shape is PM Pro: property_management + legacy. `legacy` is the
+  // backend key for BOTH Pro plans, which is how a property-management
+  // plan came to carry the whole enforcement toolset — the CA Activity
+  // tab rendered, drivers were invitable, tow tickets were stampable.
+  // The public comparison table has always said "—" for full
+  // enforcement on PM Pro, so the product was the thing that was wrong.
+  //
+  // A PM firm stamping tow tickets is a Chapter 2308 exposure and it
+  // undercuts Operator Pro. Zero companies were on this (track, tier)
+  // pair when this landed, so no subscriber lost anything.
+  //
+  // The flags are the RENDER half. The server half is
+  // my_tier_enforcement_capable(), which now reads tier_type, plus the
+  // violations_require_enforcement_capability trigger that catches the
+  // two direct client inserts which never reach a gated RPC.
+  // See docs/backlog/wip-20261023_pm_pro_loses_enforcement.sql.
+  [F.AI_PLATE_SCANNING]: false,
+  [F.VIOLATION_DOCUMENTATION]: false,   // hides the CA Activity tab
+  [F.TOW_TICKET_GENERATION]: false,
+  [F.TOWING_AUTHORIZATION_UI]: false,
+  [F.DRIVER_PORTAL]: false,
+  [F.STORAGE_FACILITY_MANAGEMENT]: false,  // hides the Partners nav
+  [F.PHOTO_UPLOADS]: false,
+  [F.FINDMYTOWEDCAR_LINKS]: false,
+  [F.TOWBOOK_CSV_EXPORT]: false,        // tow records: no tow tickets, no export
+  [F.VIDEO_UPLOADS_FULL]: false,        // violation media; nothing to film
+  // Kept: neither of these is enforcement-specific.
   [F.CSV_EXPORT_BASIC]: true,
-  // ── Tiered enforcement-only ──
-  [F.TOWBOOK_CSV_EXPORT]: true,
   [F.API_ACCESS_READ_ONLY]: true,
-  [F.VIDEO_UPLOADS_FULL]: true,   // (VIDEO_UPLOADS_LIMITED stays inherited-false from PM chain)
   // ── Numeric caps ──
+  // MAX_DRIVERS stays -1 rather than 0: DRIVER_PORTAL is the gate, and
+  // a cap of 0 would make an "upgrade to add drivers" prompt appear on
+  // a plan that has no driver surface at all.
   [F.MAX_DRIVERS]: -1,
-  [F.VIDEO_MAX_DURATION_SECONDS]: 120,
+  [F.VIDEO_MAX_DURATION_SECONDS]: 0,
   [F.MAX_PHOTOS_PER_VIOLATION]: -1,
 }
 
