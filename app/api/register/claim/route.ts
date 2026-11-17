@@ -91,6 +91,64 @@ const answer = async (startedAt: number) => {
 
 const ACTION = 'RESIDENT_CLAIM_INVITE'
 
+// ════════════════════════════════════════════════════════════════════
+// done() — ONE audit row per call, carrying the outcome
+// ════════════════════════════════════════════════════════════════════
+//
+// 🔴 WHY. Before 2026-11-16 this route audited ONLY the success path, so
+// its three no-op branches — no matching record, a staff role on the
+// address, an address that already has a login — left no trace at all.
+// The screen tells the visitor "we have emailed you a link", and for an
+// address that already has a login we deliberately send nothing. That
+// combination is a false assurance, and it was unmeasurable: the 30 days
+// to 11-16 carried 15 refusals from the /register precheck, 12 of them
+// from people who already had a login, and ZERO claim rows — which could
+// equally mean nobody pressed the button or everybody who pressed it hit
+// a silent branch. Those two must stop being the same reading.
+//
+// Same rule as issue_visitor_pass: exactly one row per call, carrying
+// the outcome. One write site, and the gate asserts no bare
+// `return answer(` survives, so a branch added later cannot be unlogged.
+//
+// The write happens BEFORE answer(), so the response floor absorbs its
+// latency rather than adding to it — every branch pays the same cost,
+// which is what keeps the branches indistinguishable by timing.
+//
+// Never throws: a failed audit must not turn a successful invite into an
+// error, and must not change the single response body.
+type ClaimOutcome =
+  | 'invite_sent'
+  | 'already_has_login'
+  | 'staff_role'
+  | 'no_match'
+  | 'residents_read_failed'
+  | 'roles_read_failed'
+  | 'auth_lookup_failed'
+  | 'role_row_failed'
+  | 'invite_failed'
+
+async function done(
+  db: ReturnType<typeof createSupabaseServiceClient>,
+  startedAt: number,
+  outcome: ClaimOutcome,
+  detail: Record<string, unknown>,
+  notes?: string,
+) {
+  try {
+    await db.from('audit_logs').insert({
+      user_email: 'resident-claim',
+      action: ACTION,
+      table_name: 'residents',
+      record_id: typeof detail.email === 'string' ? detail.email : null,
+      new_values: { outcome, ...detail },
+      notes: notes ?? `Claim request: ${outcome}.`,
+    })
+  } catch (e) {
+    console.error('[register/claim] outcome audit failed:', (e as Error).message)
+  }
+  return answer(startedAt)
+}
+
 export async function POST(req: NextRequest) {
   const t0 = Date.now()
   let body: { email?: unknown; property?: unknown; captchaToken?: unknown }
@@ -136,12 +194,12 @@ export async function POST(req: NextRequest) {
     .from('residents').select('id, email, name, unit, property, company, is_active, status')
   if (resErr) {
     console.error('[register/claim] residents read failed:', resErr)
-    return answer(t0)
+    return done(db, t0, 'residents_read_failed', { email, property, ip: remoteIp })
   }
   const match = (residents ?? []).find(r =>
     norm(r.email) === email && norm(r.property) === norm(property)
     && r.is_active === true && r.status === 'active')
-  if (!match) return answer(t0)
+  if (!match) return done(db, t0, 'no_match', { email, property, ip: remoteIp })
 
   // 🔴 A STAFF ROLE ON THIS ADDRESS → SEND NOTHING. One address can
   // hold a resident record AND a staff role; amandacanchol@gmail.com
@@ -156,12 +214,15 @@ export async function POST(req: NextRequest) {
     .from('user_roles').select('role').ilike('email', match.email as string)
   if (roleErr) {
     console.error('[register/claim] user_roles read failed:', roleErr)
-    return answer(t0)
+    return done(db, t0, 'roles_read_failed', { email, property, ip: remoteIp })
   }
   const staff = (anyRole ?? []).filter(r => String(r.role) !== 'resident')
   if (staff.length > 0) {
     console.warn(`[register/claim] ${email} holds a staff role (${staff.map(r => r.role).join(', ')}) — no invite sent`)
-    return answer(t0)
+    return done(db, t0, 'staff_role', {
+      email, property: match.property, resident_id: match.id, ip: remoteIp,
+      staff_roles: staff.map(r => String(r.role)),
+    }, `Claim refused: ${email} carries a staff role, so no invite was sent.`)
   }
 
   // 🔴 Already has a login → send nothing. inviteUserByEmail would fail
@@ -172,11 +233,17 @@ export async function POST(req: NextRequest) {
   const { data: uid, error: lookErr } = await db.rpc('get_auth_user_id_by_email', { p_email: email })
   if (lookErr) {
     console.error('[register/claim] auth lookup failed:', lookErr)
-    return answer(t0)
+    return done(db, t0, 'auth_lookup_failed', { email, property: match.property, ip: remoteIp })
   }
   if (uid) {
     console.info(`[register/claim] ${email} already has a login — no invite sent`)
-    return answer(t0)
+    // 🔴 The screen has just told this person an email is coming, and
+    // nothing will arrive. That is the case this outcome exists to make
+    // countable; the deferred mailbox notice is the fix.
+    return done(db, t0, 'already_has_login', {
+      email, property: match.property, unit: match.unit ?? null,
+      resident_id: match.id, ip: remoteIp,
+    }, `Claim no-op: ${email} already has a login, so no setup link was sent. The screen still promised one.`)
   }
 
   // ── the role row, BEFORE the invite ─────────────────────────────
@@ -208,7 +275,10 @@ export async function POST(req: NextRequest) {
       // That is fine: the row exists, which is all this step wanted.
       if (ins.error.code !== '23505') {
         console.error(`[register/claim] could not create the resident role row for ${email} — refusing to invite into a blank portal:`, ins.error)
-        return answer(t0)
+        return done(db, t0, 'role_row_failed', {
+          email, property: match.property, resident_id: match.id, ip: remoteIp,
+          code: ins.error.code ?? null,
+        })
       }
     }
   }
@@ -244,21 +314,14 @@ export async function POST(req: NextRequest) {
   })
   if (invErr) {
     console.error(`[register/claim] invite failed for ${email}:`, invErr)
-    return answer(t0)
+    return done(db, t0, 'invite_failed', {
+      email, property: match.property, resident_id: match.id, ip: remoteIp,
+    })
   }
 
-  await db.from('audit_logs').insert({
-    user_email: 'resident-claim',
-    action: ACTION,
-    table_name: 'residents',
-    record_id: email,
-    new_values: {
-      email, property: match.property, unit: match.unit ?? null,
-      resident_id: match.id, ip: remoteIp,
-      role_row: (existingRole ?? []).length === 0 ? 'created' : 'already_present',
-    },
-    notes: `Setup link sent to ${email} for ${match.property}${match.unit ? ` unit ${match.unit}` : ''}. Requested from ${remoteIp}.`,
-  })
-
-  return answer(t0)
+  return done(db, t0, 'invite_sent', {
+    email, property: match.property, unit: match.unit ?? null,
+    resident_id: match.id, ip: remoteIp,
+    role_row: (existingRole ?? []).length === 0 ? 'created' : 'already_present',
+  }, `Setup link sent to ${email} for ${match.property}${match.unit ? ` unit ${match.unit}` : ''}. Requested from ${remoteIp}.`)
 }

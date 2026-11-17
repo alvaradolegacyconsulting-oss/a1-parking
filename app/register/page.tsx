@@ -276,8 +276,17 @@ function RegisterForm() {
         setCaptchaToken(null)
         setOfferClaim(true)
         setError(
-          'We could not set up a new account for this email here. '
-          + 'If you already have a sign-in, use the Log in page and then reopen this registration link. '
+          // 🔴 2026-11-16 — THE LOG-IN SENTENCE LEADS. Measured over the
+          // 30 days to 11-16: 15 of these refusals came from 5 people,
+          // and 12 of the 15 were from someone who ALREADY had a working
+          // login — four of them re-submitting within minutes of their
+          // own successful registration. Opening with "we could not set
+          // up a new account" told the majority that something had
+          // failed when nothing had. Same four sentences, same message
+          // for every records-bearing address, so the enumeration
+          // posture is unchanged; only the order moved.
+          'If you already have a sign-in, use the Log in page and then reopen this registration link. '
+          + 'We could not set up a new account for this email here. '
           // 🔴 Forgot password is named because it is the RECOVERY path
           // for anyone who already received a setup link and lost it or
           // let it expire. Proven by execution 2026-10-15: a recovery

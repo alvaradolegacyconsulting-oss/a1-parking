@@ -74,7 +74,8 @@
     "verify:prioritysupport": "tsx --env-file=.env.local scripts/verify-priority-support-elite-only.ts",
     "verify:homepageclaims": "tsx scripts/verify-homepage-claims.ts",
     "verify:managertrackgating": "tsx scripts/verify-manager-track-gating.ts",
-    "verify:pmpronoenforcement": "tsx --env-file=.env.local scripts/verify-pm-pro-no-enforcement.ts"
+    "verify:pmpronoenforcement": "tsx --env-file=.env.local scripts/verify-pm-pro-no-enforcement.ts",
+    "verify:claimfunnel": "tsx scripts/verify-register-claim-funnel.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",
